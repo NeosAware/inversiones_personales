@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in | Personal Investments Hub{% endblock %}
+
+{% block content %}
+  <div style="max-width:520px; margin:48px auto 0;">
+    <section class="card">
+      <p class="section-title">Household access</p>
+      <h2 style="margin-top:0;">Sign in to continue</h2>
+      <p class="muted" style="margin-top:0;">Use one of the household users to review investments, imports, snapshots and alerts.</p>
+      <form method="post" class="stack" style="margin-top:18px;">
+        {% csrf_token %}
+        <div>
+          <label for="{{ form.username.id_for_label }}">Username</label>
+          {{ form.username }}
+        </div>
+        <div>
+          <label for="{{ form.password.id_for_label }}">Password</label>
+          {{ form.password }}
+        </div>
+        {% if form.non_field_errors %}
+          <div class="warn">{{ form.non_field_errors|striptags }}</div>
+        {% endif %}
+        {% if next %}
+          <input type="hidden" name="next" value="{{ next }}">
+        {% endif %}
+        <div>
+          <button class="button" type="submit">Sign in</button>
+        </div>
+      </form>
+    </section>
+  </div>
+{% endblock %}

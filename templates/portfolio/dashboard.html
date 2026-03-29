@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard | Personal Investments Hub{% endblock %}
+
+{% block content %}
+  <div class="split">
+    <section class="card">
+      <p class="section-title">Overview</p>
+      <p class="muted" style="margin-top:0;">Quick split between group companies, IBEX listed shares and bank liquidity.</p>
+      <div class="grid cols-4">
+        <section class="card">
+          <div class="metric-label">Total wealth</div>
+          <div class="metric-value">{{ overview.total_current_value|floatformat:2 }} EUR</div>
+          <div class="metric-sub">
+            {% if overview.other_buckets_current_value > 0 %}
+              Includes {{ overview.other_buckets_current_value|floatformat:2 }} EUR in other buckets shown below.
+            {% else %}
+              Sum of the highlighted buckets shown at right.
+            {% endif %}
+          </div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Neos group companies</div>
+          <div class="metric-value">{{ overview.neos_group_current_value|floatformat:2 }} EUR</div>
+          <div class="metric-sub">
+            {{ overview.neos_group_share_pct|floatformat:2 }} % of total household wealth.
+          </div>
+        </section>
+        <section class="card">
+          <div class="metric-label">IBEX equities</div>
+          <div class="metric-value">{{ overview.ibex_equities_current_value|floatformat:2 }} EUR</div>
+          <div class="metric-sub">
+            {{ overview.ibex_equities_share_pct|floatformat:2 }} % of total household wealth.
+          </div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Bank liquidity</div>
+          <div class="metric-value">{{ overview.liquid_cash|floatformat:2 }} EUR</div>
+          <div class="metric-sub">
+            {{ overview.liquid_cash_share_pct|floatformat:2 }} % of total household wealth.
+          </div>
+        </section>
+      </div>
+    </section>
+    <section class="card">
+      <p class="section-title">Household mode</p>
+      <h2 style="margin-top:0;">Daily operations</h2>
+      <p class="muted" style="margin-top:0;">Use this area to keep a daily time series of the household portfolio and review spending alerts.</p>
+      <form method="post" style="margin-top:18px;">
+        {% csrf_token %}
+        <button class="button" type="submit">Capture today snapshot</button>
+      </form>
+      <div class="meta">
+        <span class="pill">{{ request.user.username }}</span>
+        {% if alert_settings %}<span class="pill">Expense cap {{ alert_settings.total_monthly_expense_limit|floatformat:0 }} EUR</span>{% endif %}
+        {% if alerts_latest_month %}<span class="pill">Alerts month {{ alerts_latest_month }}</span>{% endif %}
+        <span class="pill">{{ snapshot_count }} snapshots</span>
+      </div>
+    </section>
+  </div>
+
+  <p class="section-title" style="margin-top:28px;">Bank liquidity</p>
+  <div class="grid cols-4">
+    <section class="card">
+      <div class="metric-label">Current liquid cash</div>
+      <div class="metric-value">{{ bank_liquidity.current_value|floatformat:2 }} EUR</div>
+      <div class="metric-sub">Latest imported closing balance per current account.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Tracked accounts</div>
+      <div class="metric-value">{{ bank_liquidity.accounts_count }}</div>
+      <div class="metric-sub">Accounts with imported statements contributing to liquid cash.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Weight in total portfolio</div>
+      <div class="metric-value">{{ bank_liquidity.current_share_pct|floatformat:2 }} %</div>
+      <div class="metric-sub">Share of liquid bank cash over current household portfolio value.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Latest bank month</div>
+      <div class="metric-value">{{ bank_liquidity.latest_month|default:"-" }}</div>
+      <div class="metric-sub">Monthly liquidity history is built from imported statement closing balances.</div>
+    </section>
+  </div>
+
+  <div class="split" style="margin-top:18px;">
+    <section class="card">
+      <h2 style="margin-top:0;">Imported cash evolution</h2>
+      {% if bank_liquidity.history_line %}
+        <svg viewBox="0 0 720 220" width="100%" height="220" style="background:#f6fafc; border:1px solid #e4edf4; border-radius:18px;">
+          <line x1="18" y1="202" x2="702" y2="202" stroke="#d3e1ea" stroke-width="1" />
+          <line x1="18" y1="18" x2="18" y2="202" stroke="#d3e1ea" stroke-width="1" />
+          <polyline fill="none" stroke="#2f9dd1" stroke-width="4" points="{{ bank_liquidity.history_line }}" />
+        </svg>
+        <div class="meta">
+          {% if bank_liquidity.latest_month %}<span class="pill">Latest month {{ bank_liquidity.latest_month }}</span>{% endif %}
+          <span class="pill">{{ bank_liquidity.accounts_count }} imported accounts</span>
+        </div>
+      {% else %}
+        <div class="metric-sub">Import at least two monthly extracts to see the liquidity trend of your current accounts.</div>
+      {% endif %}
+    </section>
+    <section class="card table-card">
+      <table>
+        <thead>
+          <tr>
+            <th>Month</th>
+            <th>Accounts</th>
+            <th>Income</th>
+            <th>Expenses</th>
+            <th>Net cash flow</th>
+            <th>Closing liquidity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for month in bank_liquidity.history reversed %}
+            <tr>
+              <td>{{ month.label }}</td>
+              <td>{{ month.accounts_count }}</td>
+              <td class="good">{{ month.income|floatformat:2 }}</td>
+              <td>{{ month.expenses|floatformat:2 }}</td>
+              <td class="{% if month.net_cash_flow >= 0 %}good{% else %}warn{% endif %}">{{ month.net_cash_flow|floatformat:2 }}</td>
+              <td><strong>{{ month.closing_balance|floatformat:2 }}</strong></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" class="muted">No imported liquidity history yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <p class="section-title" style="margin-top:28px;">Historical portfolio value</p>
+  <div class="split">
+    <section class="card">
+      {% if snapshot_line %}
+        <svg viewBox="0 0 720 220" width="100%" height="220" style="background:#f6fafc; border:1px solid #e4edf4; border-radius:18px;">
+          <line x1="18" y1="202" x2="702" y2="202" stroke="#d3e1ea" stroke-width="1" />
+          <line x1="18" y1="18" x2="18" y2="202" stroke="#d3e1ea" stroke-width="1" />
+          <polyline fill="none" stroke="#0f5f88" stroke-width="4" points="{{ snapshot_line }}" />
+        </svg>
+        <div class="meta">
+          {% if latest_snapshot %}<span class="pill">Latest value {{ latest_snapshot.current_value|floatformat:2 }} EUR</span>{% endif %}
+          {% if current_change_pct is not None %}<span class="pill">Day change {{ current_change_pct|floatformat:2 }} %</span>{% endif %}
+        </div>
+      {% else %}
+        <div class="metric-sub">Capture a few snapshots to start seeing the household investment history.</div>
+      {% endif %}
+    </section>
+    <section class="card table-card">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Invested</th>
+            <th>Current value</th>
+            <th>Total return</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for snapshot in snapshots %}
+            <tr>
+              <td>{{ snapshot.snapshot_date|date:"Y-m-d" }}</td>
+              <td>{{ snapshot.invested_amount|floatformat:2 }}</td>
+              <td>{{ snapshot.current_value|floatformat:2 }}</td>
+              <td>{{ snapshot.total_return_pct|floatformat:2 }} %</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="muted">No snapshots yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <p class="section-title" style="margin-top:28px;">Spending alerts</p>
+  <section class="card table-card">
+    <table>
+      <thead>
+        <tr>
+          <th>Severity</th>
+          <th>Scope</th>
+          <th>Month</th>
+          <th>Current amount</th>
+          <th>Reference</th>
+          <th>Alert</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for alert in spending_alerts %}
+          <tr>
+            <td class="{% if alert.severity == 'High' %}warn{% else %}good{% endif %}">{{ alert.severity }}</td>
+            <td>{{ alert.scope }}</td>
+            <td>{{ alert.month }}</td>
+            <td>{{ alert.current_amount|floatformat:2 }}</td>
+            <td>{{ alert.reference_amount|floatformat:2 }}</td>
+            <td>{{ alert.message }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="muted">No uncontrolled-spend alerts right now.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <p class="section-title" style="margin-top:28px;">Allocation by bucket</p>
+  <div class="grid cols-2">
+    {% for section in sections %}
+      <section class="card">
+        <div class="app-summary">
+          <div>
+            <h3>{{ section.title }}</h3>
+            <div class="pill">{{ section.items_count }} positions</div>
+          </div>
+          <a class="link" href="{% url section.app_url_name %}">Open module</a>
+        </div>
+        <table style="margin-top:16px;">
+          <tbody>
+            <tr>
+              <th>Invested</th>
+              <td>{{ section.invested_amount|floatformat:2 }} EUR</td>
+            </tr>
+            <tr>
+              <th>Current value</th>
+              <td>{{ section.current_value|floatformat:2 }} EUR</td>
+            </tr>
+            <tr>
+              <th>Annual income</th>
+              <td>{{ section.annual_income|floatformat:2 }} EUR</td>
+            </tr>
+            <tr>
+              <th>Total return</th>
+              <td class="{% if section.total_return_pct >= 0 %}good{% else %}warn{% endif %}">
+                {{ section.total_return_pct|floatformat:2 }} % ({{ section.total_return_eur|floatformat:2 }} EUR)
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    {% endfor %}
+  </div>
+
+  <p class="section-title" style="margin-top:28px;">Top positions by return</p>
+  <section class="card table-card">
+    <table>
+      <thead>
+        <tr>
+          <th>Position</th>
+          <th>Type</th>
+          <th>Invested</th>
+          <th>Current value</th>
+          <th>Annual income</th>
+          <th>Total return EUR</th>
+          <th>Total return %</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for position in top_positions %}
+          <tr>
+            <td>{{ position.label }}</td>
+            <td>{{ position.asset_type }}</td>
+            <td>{{ position.invested_amount|floatformat:2 }}</td>
+            <td>{{ position.current_value|floatformat:2 }}</td>
+            <td>{{ position.annual_income|floatformat:2 }}</td>
+            <td>{{ position.total_return_eur|floatformat:2 }}</td>
+            <td class="{% if position.total_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ position.total_return_pct|floatformat:2 }} %</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="7" class="muted">No positions yet. Add records in the admin to start analysing the portfolio.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

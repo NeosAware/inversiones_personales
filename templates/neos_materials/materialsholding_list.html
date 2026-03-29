@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Neos Materials | Personal Investments Hub{% endblock %}
+
+{% block content %}
+  <p class="section-title">{{ page_title }}</p>
+  <div class="grid cols-3">
+    <section class="card"><div class="metric-label">Invested amount</div><div class="metric-value">{{ summary.invested_amount|floatformat:2 }} EUR</div></section>
+    <section class="card"><div class="metric-label">Current valuation</div><div class="metric-value">{{ summary.current_value|floatformat:2 }} EUR</div></section>
+    <section class="card"><div class="metric-label">Annual dividends</div><div class="metric-value">{{ summary.annual_income|floatformat:2 }} EUR</div></section>
+  </div>
+  <section class="card table-card" style="margin-top:24px;">
+    <table>
+      <thead><tr><th>Investment</th><th>Invested</th><th>Current valuation</th><th>Annual dividend</th><th>Notes</th></tr></thead>
+      <tbody>
+        {% for holding in holdings %}
+          <tr>
+            <td>{{ holding.investment_name }}</td>
+            <td>{{ holding.invested_amount|floatformat:2 }}</td>
+            <td>{{ holding.current_valuation|floatformat:2 }}</td>
+            <td>{{ holding.annual_dividend_income|floatformat:2 }}</td>
+            <td>{{ holding.notes|default:"-" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="muted">No Neos Materials investments yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

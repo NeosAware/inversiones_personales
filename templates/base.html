@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Personal Investments Hub{% endblock %}</title>
+  <style>
+    :root{
+      --bg:#f3f7fb;
+      --card:#ffffff;
+      --ink:#132535;
+      --muted:#677b8f;
+      --line:#dbe6ef;
+      --accent:#0f5f88;
+      --accent-2:#2f9dd1;
+      --good:#177245;
+      --warn:#a85f00;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      color:var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(47,157,209,.12), transparent 24%),
+        linear-gradient(180deg, #f9fbfd 0%, var(--bg) 100%);
+    }
+    a{ color:inherit; text-decoration:none; }
+    .shell{ max-width:1450px; margin:0 auto; padding:24px; }
+    .topbar{
+      display:flex; justify-content:space-between; align-items:center; gap:16px;
+      padding:20px 24px; border-radius:24px;
+      background:linear-gradient(135deg, #10344d 0%, var(--accent) 55%, #8ccbe7 100%);
+      color:#fff; box-shadow:0 24px 48px rgba(16,52,77,.18);
+    }
+    .topbar h1{ margin:0; font-size:30px; }
+    .topbar p{ margin:8px 0 0; color:rgba(255,255,255,.82); max-width:760px; }
+    .admin-link{
+      padding:10px 16px; border-radius:999px; background:rgba(255,255,255,.14);
+      border:1px solid rgba(255,255,255,.22); white-space:nowrap;
+    }
+    .top-actions{
+      display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end;
+    }
+    .top-user{
+      font-size:13px; color:rgba(255,255,255,.86);
+    }
+    .nav{
+      display:flex; flex-wrap:wrap; gap:10px; margin:20px 0 28px;
+    }
+    .nav a{
+      padding:10px 14px; border-radius:999px; border:1px solid var(--line);
+      background:rgba(255,255,255,.78); color:#214157; font-weight:600;
+    }
+    .nav a:hover{ border-color:var(--accent-2); color:var(--accent); }
+    .section-title{ margin:0 0 16px; font-size:14px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); }
+    .grid{ display:grid; gap:18px; }
+    .grid.cols-3{ grid-template-columns:repeat(3, minmax(0,1fr)); }
+    .grid.cols-2{ grid-template-columns:repeat(2, minmax(0,1fr)); }
+    .grid.cols-4{ grid-template-columns:repeat(4, minmax(0,1fr)); }
+    .card{
+      background:linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+      border:1px solid var(--line); border-radius:22px; padding:20px;
+      box-shadow:0 16px 36px rgba(18,37,53,.06);
+    }
+    .card h2, .card h3{ margin:0 0 10px; }
+    .metric-label{ font-size:13px; color:var(--muted); margin-bottom:8px; }
+    .metric-value{ font-size:28px; font-weight:800; font-variant-numeric:tabular-nums; }
+    .metric-sub{ font-size:13px; color:var(--muted); margin-top:8px; }
+    .table-card{ overflow:auto; }
+    table{
+      width:100%; border-collapse:collapse; font-size:14px;
+    }
+    th, td{
+      padding:12px 10px; border-bottom:1px solid #ecf2f7; text-align:left;
+      font-variant-numeric:tabular-nums;
+    }
+    th{
+      color:#476075; background:#f4f8fb; font-size:12px; text-transform:uppercase; letter-spacing:.08em;
+    }
+    tr:last-child td{ border-bottom:none; }
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:6px 10px; border-radius:999px; font-size:12px;
+      border:1px solid var(--line); color:#476075; background:#f9fcfe;
+    }
+    .good{ color:var(--good); }
+    .warn{ color:var(--warn); }
+    .muted{ color:var(--muted); }
+    .app-summary{
+      display:flex; justify-content:space-between; align-items:flex-start; gap:16px;
+    }
+    .app-summary h3{ font-size:20px; }
+    .app-summary .link{
+      color:var(--accent); font-weight:700;
+    }
+    .stack{ display:flex; flex-direction:column; gap:14px; }
+    .split{ display:grid; gap:18px; grid-template-columns:1.2fr .8fr; }
+    .meta{ display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; }
+    form label{
+      display:block; font-size:13px; color:var(--muted); margin-bottom:6px;
+    }
+    input[type="text"], input[type="password"], input[type="email"], input[type="file"], input[type="number"], textarea, select{
+      width:100%; padding:12px 14px; border-radius:14px; border:1px solid var(--line);
+      background:#fff; color:var(--ink); font:inherit;
+    }
+    .button{
+      display:inline-flex; align-items:center; justify-content:center; gap:8px;
+      padding:12px 18px; border:none; border-radius:14px; cursor:pointer;
+      background:linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+      color:#fff; font-weight:700;
+    }
+    .button.secondary{
+      background:#f4f8fb; color:var(--ink); border:1px solid var(--line);
+    }
+    .button.danger{
+      background:linear-gradient(135deg, #a33131 0%, #d55a5a 100%);
+      color:#fff;
+    }
+    .button.small{
+      padding:8px 12px; border-radius:10px; font-size:12px;
+    }
+    .messages{
+      display:flex; flex-direction:column; gap:10px; margin-bottom:18px;
+    }
+    .message{
+      padding:14px 16px; border-radius:16px; border:1px solid var(--line);
+      background:#ffffff;
+    }
+    .message.success{ border-color:rgba(23,114,69,.22); background:rgba(23,114,69,.08); }
+    .message.warning{ border-color:rgba(168,95,0,.22); background:rgba(168,95,0,.08); }
+    .message.error{ border-color:rgba(163,31,31,.22); background:rgba(163,31,31,.08); }
+    .message.info{ border-color:rgba(15,95,136,.22); background:rgba(15,95,136,.08); }
+    @media (max-width: 980px){
+      .grid.cols-3, .grid.cols-2, .grid.cols-4, .split{ grid-template-columns:1fr; }
+      .topbar{ flex-direction:column; align-items:flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <h1>Personal Investments Hub</h1>
+        <p>Joint view of cash, listed equities, Neos business stakes and real estate to optimise return, income generation and capital allocation.</p>
+      </div>
+      <div class="top-actions">
+        {% if request.user.is_authenticated %}
+          <div class="top-user">Signed in as {{ request.user.username }}</div>
+          {% if request.user.is_staff %}
+            <a class="admin-link" href="/admin/">Open admin</a>
+          {% endif %}
+          <form method="post" action="{% url 'logout' %}">
+            {% csrf_token %}
+            <button class="admin-link" type="submit" style="cursor:pointer;">Sign out</button>
+          </form>
+        {% else %}
+          <a class="admin-link" href="{% url 'login' %}">Sign in</a>
+        {% endif %}
+      </div>
+    </header>
+
+    {% if request.user.is_authenticated %}
+      <nav class="nav">
+        <a href="{% url 'portfolio:dashboard' %}">Dashboard</a>
+        <a href="{% url 'banking:list' %}">Bank balances</a>
+        <a href="{% url 'equities:list' %}">Equities</a>
+        <a href="{% url 'neos_additives:list' %}">Neos Additives</a>
+        <a href="{% url 'neos_ceramica:list' %}">Neos Ceramica</a>
+        <a href="{% url 'neos_materials:list' %}">Neos Materials</a>
+        <a href="{% url 'real_estate:list' %}">Real estate</a>
+      </nav>
+    {% endif %}
+
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="message {{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>
