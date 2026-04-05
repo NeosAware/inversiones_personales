@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import BankBalance, BankInvestmentPosition, BankMovement, BankStatementImport
+from .models import BankBalance, BankConnection, BankExternalAccount, BankInvestmentPosition, BankMovement, BankStatementImport
 
 
 @admin.register(BankBalance)
@@ -31,6 +31,7 @@ class BankStatementImportAdmin(admin.ModelAdmin):
     list_display = (
         "month_label",
         "account_name",
+        "import_source",
         "ownership_category",
         "import_status",
         "total_income",
@@ -40,7 +41,7 @@ class BankStatementImportAdmin(admin.ModelAdmin):
         "imported_at",
     )
     search_fields = ("source_filename", "iban", "holder_name", "account_label")
-    list_filter = ("ownership_category", "import_status", "currency", "period_end")
+    list_filter = ("import_source", "statement_kind", "ownership_category", "import_status", "currency", "period_end")
     readonly_fields = (
         "file_checksum",
         "import_status",
@@ -79,3 +80,33 @@ class BankInvestmentPositionAdmin(admin.ModelAdmin):
     )
     search_fields = ("institution", "product_name", "notes")
     list_filter = ("ownership_category", "institution", "product_type")
+
+
+@admin.register(BankConnection)
+class BankConnectionAdmin(admin.ModelAdmin):
+    list_display = (
+        "institution_name",
+        "provider",
+        "ownership_category",
+        "country_code",
+        "requisition_status",
+        "active",
+        "last_synced_at",
+    )
+    search_fields = ("institution_name", "institution_id", "reference", "requisition_id")
+    list_filter = ("provider", "ownership_category", "country_code", "active", "requisition_status")
+    readonly_fields = ("reference", "agreement_id", "requisition_id", "requisition_link", "last_synced_at", "last_error")
+
+
+@admin.register(BankExternalAccount)
+class BankExternalAccountAdmin(admin.ModelAdmin):
+    list_display = (
+        "account_label",
+        "institution",
+        "statement_kind",
+        "ownership_category",
+        "is_active",
+        "last_imported_at",
+    )
+    search_fields = ("account_label", "iban", "holder_name", "provider_account_id")
+    list_filter = ("statement_kind", "ownership_category", "institution", "is_active")

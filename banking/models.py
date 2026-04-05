@@ -37,6 +37,10 @@ class BankBalance(models.Model):
 
 
 class BankStatementImport(models.Model):
+    class ImportSource(models.TextChoices):
+        UPLOAD = "upload", "Subida manual"
+        OPEN_BANKING = "open_banking", "Open banking"
+
     class StatementKind(models.TextChoices):
         ACCOUNT = "account", "Cuenta"
         CARD = "card", "Tarjeta"
@@ -51,6 +55,25 @@ class BankStatementImport(models.Model):
         choices=AssetOwnershipCategory.choices,
         default=AssetOwnershipCategory.JOINT,
     )
+    connection = models.ForeignKey(
+        "BankConnection",
+        on_delete=models.SET_NULL,
+        related_name="statement_imports",
+        null=True,
+        blank=True,
+    )
+    external_account = models.ForeignKey(
+        "BankExternalAccount",
+        on_delete=models.SET_NULL,
+        related_name="statement_imports",
+        null=True,
+        blank=True,
+    )
+    import_source = models.CharField(
+        max_length=20,
+        choices=ImportSource.choices,
+        default=ImportSource.UPLOAD,
+    )
     institution = models.CharField(max_length=120, blank=True)
     account_label = models.CharField(max_length=120, blank=True)
     iban = models.CharField(max_length=34, blank=True)
@@ -63,7 +86,7 @@ class BankStatementImport(models.Model):
     holder_name = models.CharField(max_length=180, blank=True)
     period_start = models.DateField(null=True, blank=True)
     period_end = models.DateField(null=True, blank=True)
-    source_file = models.FileField(upload_to="banking/statements/%Y/%m")
+    source_file = models.FileField(upload_to="banking/statements/%Y/%m", blank=True)
     source_filename = models.CharField(max_length=255)
     file_checksum = models.CharField(max_length=64, unique=True)
     import_status = models.CharField(
@@ -121,6 +144,74 @@ class BankStatementImport(models.Model):
         if self.period_start:
             return self.period_start.strftime("%Y-%m")
         return "Sin periodo"
+
+
+class BankConnection(models.Model):
+    class Provider(models.TextChoices):
+        GOCARDLESS = "gocardless", "GoCardless Open Banking"
+
+    ownership_category = models.CharField(
+        max_length=12,
+        choices=AssetOwnershipCategory.choices,
+        default=AssetOwnershipCategory.JOINT,
+    )
+    provider = models.CharField(max_length=32, choices=Provider.choices, default=Provider.GOCARDLESS)
+    institution_name = models.CharField(max_length=160)
+    institution_id = models.CharField(max_length=160)
+    country_code = models.CharField(max_length=2, default="ES")
+    reference = models.CharField(max_length=80, unique=True)
+    agreement_id = models.CharField(max_length=64, blank=True)
+    requisition_id = models.CharField(max_length=64, blank=True)
+    requisition_link = models.URLField(blank=True)
+    requisition_status = models.CharField(max_length=16, blank=True)
+    consent_expires_at = models.DateField(null=True, blank=True)
+    active = models.BooleanField(default=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["institution_name", "created_at"]
+
+    def __str__(self):
+        return f"{self.institution_name} ({self.get_ownership_category_display()})"
+
+
+class BankExternalAccount(models.Model):
+    connection = models.ForeignKey(
+        BankConnection,
+        on_delete=models.CASCADE,
+        related_name="external_accounts",
+    )
+    ownership_category = models.CharField(
+        max_length=12,
+        choices=AssetOwnershipCategory.choices,
+        default=AssetOwnershipCategory.JOINT,
+    )
+    statement_kind = models.CharField(
+        max_length=16,
+        choices=BankStatementImport.StatementKind.choices,
+        default=BankStatementImport.StatementKind.ACCOUNT,
+    )
+    provider_account_id = models.CharField(max_length=80, unique=True)
+    institution = models.CharField(max_length=120, blank=True)
+    account_label = models.CharField(max_length=180)
+    iban = models.CharField(max_length=34, blank=True)
+    currency = models.CharField(max_length=8, default="EUR")
+    holder_name = models.CharField(max_length=180, blank=True)
+    linked_account_name = models.CharField(max_length=180, blank=True)
+    raw_details = models.JSONField(default=dict, blank=True)
+    is_active = models.BooleanField(default=True)
+    last_imported_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["institution", "account_label", "created_at"]
+
+    def __str__(self):
+        return f"{self.account_label} ({self.get_statement_kind_display()})"
 
 
 class BankMovement(models.Model):

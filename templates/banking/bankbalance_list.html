@@ -169,6 +169,229 @@
     </section>
   </div>
 
+  <p class="section-title" style="margin-top:28px;">Automatizacion bancaria</p>
+  <div class="grid cols-4">
+    <section class="card">
+      <div class="metric-label">Conexiones activas</div>
+      <div class="metric-value">{{ open_banking_summary.active_connections_count }}</div>
+      <div class="metric-sub">Bancos conectados por Open Banking con sincronizacion lista para ejecutarse.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Cuentas externas</div>
+      <div class="metric-value">{{ open_banking_summary.accounts_count }}</div>
+      <div class="metric-sub">Cuentas detectadas desde las conexiones abiertas.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Tarjetas externas</div>
+      <div class="metric-value">{{ open_banking_summary.cards_count }}</div>
+      <div class="metric-sub">Tarjetas detectadas y separadas para el analisis de gasto.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Ultima sincronizacion</div>
+      <div class="metric-value">
+        {% if open_banking_summary.last_synced_at %}
+          {{ open_banking_summary.last_synced_at|date:"Y-m-d H:i" }}
+        {% else %}
+          -
+        {% endif %}
+      </div>
+      <div class="metric-sub">Marca la ultima vez que se actualizaron conexiones bancarias automáticas.</div>
+    </section>
+  </div>
+
+  <div class="split" style="margin-top:24px;">
+    <section class="card">
+      <p class="section-title">Paso 1</p>
+      <h2 style="margin-top:0;">Buscar banco</h2>
+      <p class="muted" style="margin-top:0;">Busca tu banco en Open Banking y luego crea la conexion segura para cuentas y tarjetas compatibles.</p>
+      <form method="post" class="stack" style="margin-top:18px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="search_institutions">
+        <div class="grid cols-2">
+          <div>
+            <label for="{{ institution_search_form.country_code.id_for_label }}">{{ institution_search_form.country_code.label }}</label>
+            {{ institution_search_form.country_code }}
+            {% if institution_search_form.country_code.help_text %}<div class="metric-sub">{{ institution_search_form.country_code.help_text }}</div>{% endif %}
+            {% for error in institution_search_form.country_code.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ institution_search_form.query.id_for_label }}">{{ institution_search_form.query.label }}</label>
+            {{ institution_search_form.query }}
+            {% if institution_search_form.query.help_text %}<div class="metric-sub">{{ institution_search_form.query.help_text }}</div>{% endif %}
+            {% for error in institution_search_form.query.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+        </div>
+        <button class="button" type="submit">Buscar bancos</button>
+      </form>
+
+      {% if institution_results %}
+        <table style="margin-top:20px;">
+          <thead>
+            <tr>
+              <th>Banco</th>
+              <th>ID</th>
+              <th>Acceso maximo</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for institution in institution_results %}
+              <tr>
+                <td>{{ institution.name }}</td>
+                <td><code>{{ institution.id }}</code></td>
+                <td>{{ institution.max_access_valid_for_days|default:"-" }} dias</td>
+                <td>
+                  <form method="post" style="display:flex; gap:8px; flex-wrap:wrap;">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="create_connection">
+                    <input type="hidden" name="country_code" value="{{ institution_search_form.country_code.value|default:'ES' }}">
+                    <input type="hidden" name="institution_id" value="{{ institution.id }}">
+                    <input type="hidden" name="institution_name" value="{{ institution.name }}">
+                    <select name="ownership_category">
+                      {% for value, label in ownership_choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                    <button class="button secondary small" type="submit">Conectar</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="metric-sub" style="margin-top:16px;">Cuando busques un banco, te aparecera aqui la lista para enlazarlo con un clic.</div>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <p class="section-title">Paso 2</p>
+      <h2 style="margin-top:0;">Crear conexion manual</h2>
+      <p class="muted" style="margin-top:0;">Si ya conoces el identificador del banco en GoCardless, puedes crear la conexion sin pasar por la busqueda.</p>
+      <form method="post" class="stack" style="margin-top:18px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create_connection">
+        <div class="grid cols-2">
+          <div>
+            <label for="{{ connection_form.ownership_category.id_for_label }}">{{ connection_form.ownership_category.label }}</label>
+            {{ connection_form.ownership_category }}
+            {% for error in connection_form.ownership_category.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ connection_form.country_code.id_for_label }}">{{ connection_form.country_code.label }}</label>
+            {{ connection_form.country_code }}
+            {% for error in connection_form.country_code.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ connection_form.institution_name.id_for_label }}">{{ connection_form.institution_name.label }}</label>
+            {{ connection_form.institution_name }}
+            {% for error in connection_form.institution_name.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ connection_form.institution_id.id_for_label }}">{{ connection_form.institution_id.label }}</label>
+            {{ connection_form.institution_id }}
+            {% for error in connection_form.institution_id.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+        </div>
+        <button class="button" type="submit">Abrir autorizacion bancaria</button>
+      </form>
+      <div class="metric-sub" style="margin-top:16px;">No se guarda tu clave del banco. La autenticacion se hace en la pasarela segura del proveedor Open Banking.</div>
+    </section>
+  </div>
+
+  <section class="card table-card" style="margin-top:24px;">
+    <p class="section-title">Conexiones abiertas</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Banco</th>
+          <th>Titular</th>
+          <th>Estado</th>
+          <th>Ultima sincronizacion</th>
+          <th>Error</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for connection in bank_connections %}
+          <tr>
+            <td>{{ connection.institution_name }}</td>
+            <td>{{ connection.get_ownership_category_display }}</td>
+            <td>{{ connection.requisition_status|default:"Pendiente de autorizacion" }}</td>
+            <td>{{ connection.last_synced_at|date:"Y-m-d H:i"|default:"-" }}</td>
+            <td>{{ connection.last_error|default:"-" }}</td>
+            <td>
+              <form method="post" style="display:flex; gap:8px; flex-wrap:wrap;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="run_connection_sync">
+                <input type="hidden" name="connection_id" value="{{ connection.id }}">
+                <button class="button secondary small" type="submit">Sincronizar ahora</button>
+                {% if connection.requisition_link %}
+                  <a class="button small" href="{{ connection.requisition_link }}">Reautorizar</a>
+                {% endif %}
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="muted">Todavia no hay bancos enlazados por Open Banking.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card table-card" style="margin-top:24px;">
+    <p class="section-title">Cuentas y tarjetas automaticas</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Banco</th>
+          <th>Cuenta o tarjeta</th>
+          <th>Tipo</th>
+          <th>Titular</th>
+          <th>Activa</th>
+          <th>Ultima importacion</th>
+          <th>Configuracion</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for external_account in external_bank_accounts %}
+          <tr>
+            <td>{{ external_account.institution|default:external_account.connection.institution_name }}</td>
+            <td>{{ external_account.account_label }}</td>
+            <td>{{ external_account.get_statement_kind_display }}</td>
+            <td>{{ external_account.get_ownership_category_display }}</td>
+            <td>{% if external_account.is_active %}Si{% else %}No{% endif %}</td>
+            <td>{{ external_account.last_imported_at|date:"Y-m-d H:i"|default:"-" }}</td>
+            <td>
+              <form method="post" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_external_account">
+                <input type="hidden" name="external_account_id" value="{{ external_account.id }}">
+                <select name="statement_kind">
+                  {% for value, label in statement_kind_choices %}
+                    <option value="{{ value }}"{% if external_account.statement_kind == value %} selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <select name="ownership_category">
+                  {% for value, label in ownership_choices %}
+                    <option value="{{ value }}"{% if external_account.ownership_category == value %} selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <label style="display:flex; align-items:center; gap:6px;">
+                  <input type="checkbox" name="is_active"{% if external_account.is_active %} checked{% endif %}>
+                  Activa
+                </label>
+                <button class="button secondary small" type="submit">Guardar</button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="muted">Las cuentas y tarjetas detectadas automaticamente apareceran aqui tras autorizar un banco.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
   <p class="section-title" style="margin-top:28px;">Productos bancarios y custodia</p>
   <div class="grid cols-4">
     <section class="card">

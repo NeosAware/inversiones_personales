@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import unicodedata
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -14,14 +15,18 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
 from portfolio.ownership import AssetOwnershipCategory
 
-from .models import BankBalance, BankMovement, BankStatementImport
+from .models import BankBalance, BankConnection, BankExternalAccount, BankMovement, BankStatementImport
 
 
 ZERO = Decimal("0.00")
@@ -48,6 +53,11 @@ CARD_CREDIT_SECTION_LABELS = {
     "MOVIMENTOS DE ABONO",
     "MOVIMIENTOS DE ABONO",
 }
+CARD_ACCOUNT_KEYWORDS = ("CARD", "TARJETA", "TARGETA", "VISA", "MASTERCARD", "AMEX")
+GOCARDLESS_API_BASE_URL = os.environ.get(
+    "GOCARDLESS_BANK_DATA_BASE_URL",
+    "https://bankaccountdata.gocardless.com/api/v2",
+).rstrip("/")
 PLAN_KEYWORDS = ("PLAN AHORRO", "PLAN DE PENSION", "PENSION", "APORTACION PERIODICA POL.")
 DIVIDEND_KEYWORDS = ("DIVID", "DIVIDENDO", "COBRO DIVIDENDO", "ABONO DIVIDENDO")
 RENT_INCOME_KEYWORDS = ("ALQUILER", "PISO", "ADRIAN")
@@ -186,6 +196,10 @@ def import_statement(statement_import: BankStatementImport) -> BankStatementImpo
         statement_import.save(update_fields=["import_status", "error_message", "processed_at"])
         raise StatementImportError(str(exc)) from exc
 
+    return apply_parsed_statement(statement_import, parsed)
+
+
+def apply_parsed_statement(statement_import: BankStatementImport, parsed: dict) -> BankStatementImport:
     with transaction.atomic():
         statement_import.movements.all().delete()
 
@@ -232,7 +246,12 @@ def import_statement(statement_import: BankStatementImport) -> BankStatementImpo
         statement_import.period_start = parsed["metadata"].get("period_start")
         statement_import.period_end = parsed["metadata"].get("period_end")
         statement_import.account_label = parsed["metadata"].get("account_label", statement_import.account_label)
-        statement_import.ownership_category = resolve_statement_ownership_category(statement_import, parsed["metadata"])
+        if statement_import.external_account_id:
+            statement_import.ownership_category = statement_import.external_account.ownership_category
+        elif statement_import.connection_id:
+            statement_import.ownership_category = statement_import.connection.ownership_category
+        else:
+            statement_import.ownership_category = resolve_statement_ownership_category(statement_import, parsed["metadata"])
         statement_import.opening_balance = parsed["metadata"].get("opening_balance")
         statement_import.closing_balance = parsed["metadata"].get("closing_balance")
         statement_import.total_income = total_income
@@ -1412,4 +1431,490 @@ def build_card_spending_overview() -> dict:
         "monthly_summaries": monthly_summaries,
         "expense_months": expense_months,
         "expense_matrix": expense_matrix,
+    }
+
+
+def get_gocardless_credentials() -> tuple[str, str]:
+    secret_id = os.environ.get("GOCARDLESS_BANK_DATA_SECRET_ID", "").strip()
+    secret_key = os.environ.get("GOCARDLESS_BANK_DATA_SECRET_KEY", "").strip()
+    if not secret_id or not secret_key:
+        raise ValidationError(
+            "Faltan GOCARDLESS_BANK_DATA_SECRET_ID y GOCARDLESS_BANK_DATA_SECRET_KEY en el entorno."
+        )
+    return secret_id, secret_key
+
+
+def gocardless_api_request(
+    method: str,
+    path: str,
+    payload: dict | None = None,
+    access_token: str | None = None,
+    query: dict | None = None,
+):
+    path = path if path.startswith("/") else f"/{path}"
+    url = f"{GOCARDLESS_API_BASE_URL}{path}"
+    if query:
+        encoded_query = urllib_parse.urlencode({key: value for key, value in query.items() if value not in {None, ""}})
+        if encoded_query:
+            url = f"{url}?{encoded_query}"
+
+    data = None
+    headers = {
+        "Accept": "application/json",
+    }
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+
+    request = urllib_request.Request(url, data=data, headers=headers, method=method.upper())
+    try:
+        with urllib_request.urlopen(request, timeout=30) as response:
+            raw_body = response.read()
+    except urllib_error.HTTPError as exc:
+        response_body = exc.read().decode("utf-8", errors="replace")
+        try:
+            parsed_body = json.loads(response_body)
+        except Exception:
+            parsed_body = response_body
+        raise ValidationError(f"Open Banking ha devuelto un error: {parsed_body}") from exc
+    except urllib_error.URLError as exc:
+        raise ValidationError(f"No se ha podido conectar con Open Banking: {exc.reason}") from exc
+
+    if not raw_body:
+        return {}
+    return json.loads(raw_body.decode("utf-8"))
+
+
+def get_gocardless_access_token() -> str:
+    secret_id, secret_key = get_gocardless_credentials()
+    refresh_payload = gocardless_api_request(
+        "POST",
+        "/token/new/",
+        payload={"secret_id": secret_id, "secret_key": secret_key},
+    )
+    token_payload = gocardless_api_request(
+        "POST",
+        "/token/refresh/",
+        payload={"refresh": refresh_payload["refresh"]},
+    )
+    return token_payload["access"]
+
+
+def search_gocardless_institutions(country_code: str, query: str = "") -> list[dict]:
+    access_token = get_gocardless_access_token()
+    institutions = gocardless_api_request(
+        "GET",
+        "/institutions/",
+        access_token=access_token,
+        query={"country": country_code.lower()},
+    )
+    normalized_query = normalize_lookup_text(query)
+    if not normalized_query:
+        return institutions[:20]
+    filtered = [
+        institution
+        for institution in institutions
+        if normalized_query in normalize_lookup_text(institution.get("name", ""))
+    ]
+    return filtered[:20]
+
+
+def create_open_banking_connection(connection: BankConnection, redirect_url: str) -> str:
+    if connection.provider != BankConnection.Provider.GOCARDLESS:
+        raise ValidationError("Proveedor de Open Banking no compatible.")
+
+    access_token = get_gocardless_access_token()
+    agreement_payload = gocardless_api_request(
+        "POST",
+        "/agreements/enduser/",
+        access_token=access_token,
+        payload={
+            "institution_id": connection.institution_id,
+            "max_historical_days": 90,
+            "access_valid_for_days": 90,
+            "access_scope": ["balances", "details", "transactions"],
+        },
+    )
+    requisition_payload = gocardless_api_request(
+        "POST",
+        "/requisitions/",
+        access_token=access_token,
+        payload={
+            "redirect": redirect_url,
+            "institution_id": connection.institution_id,
+            "reference": connection.reference,
+            "agreement": agreement_payload["id"],
+            "user_language": "ES",
+        },
+    )
+
+    connection.agreement_id = agreement_payload.get("id", "")
+    connection.requisition_id = requisition_payload.get("id", "")
+    connection.requisition_link = requisition_payload.get("link", "")
+    connection.requisition_status = requisition_payload.get("status", "")
+    connection.last_error = ""
+    connection.save(
+        update_fields=[
+            "agreement_id",
+            "requisition_id",
+            "requisition_link",
+            "requisition_status",
+            "last_error",
+            "updated_at",
+        ]
+    )
+    return connection.requisition_link
+
+
+def infer_external_account_kind(details: dict, account_label: str) -> str:
+    normalized_text = normalize_lookup_text(
+        " ".join(
+            [
+                str(details.get("name", "")),
+                str(details.get("displayName", "")),
+                str(details.get("product", "")),
+                str(details.get("details", "")),
+                str(details.get("cashAccountType", "")),
+                str(details.get("linkedAccounts", "")),
+                account_label,
+            ]
+        )
+    )
+    if any(keyword in normalized_text for keyword in CARD_ACCOUNT_KEYWORDS):
+        return BankStatementImport.StatementKind.CARD
+    if details.get("linkedAccounts") and not details.get("iban"):
+        return BankStatementImport.StatementKind.CARD
+    return BankStatementImport.StatementKind.ACCOUNT
+
+
+def choose_external_account_label(details: dict, connection: BankConnection) -> str:
+    for key in ("displayName", "name", "product", "details"):
+        value = str(details.get(key, "")).strip()
+        if value:
+            return value[:180]
+    if details.get("iban"):
+        return f"Cuenta {str(details['iban'])[-4:]}"
+    return f"{connection.institution_name} {details.get('resourceId', '').strip()}".strip()
+
+
+def parse_balance_amount(balance_value) -> Decimal | None:
+    if balance_value is None or balance_value == "":
+        return None
+    if isinstance(balance_value, dict):
+        if "amount" in balance_value:
+            return Decimal(str(balance_value.get("amount")))
+        nested = balance_value.get("balanceAmount")
+        if isinstance(nested, dict) and "amount" in nested:
+            return Decimal(str(nested.get("amount")))
+        return None
+    return Decimal(str(balance_value))
+
+
+def pick_closing_balance(balance_payload: dict) -> Decimal | None:
+    balances = balance_payload.get("balances", []) if isinstance(balance_payload, dict) else []
+    if not balances:
+        return None
+    priority = ("closingAvailable", "expected", "closingBooked", "interimAvailable")
+    best = None
+    best_rank = len(priority) + 1
+    for item in balances:
+        balance_type = str(item.get("balanceType", ""))
+        amount = parse_balance_amount(item)
+        if amount is None:
+            continue
+        try:
+            rank = priority.index(balance_type)
+        except ValueError:
+            rank = len(priority)
+        if best is None or rank < best_rank:
+            best = amount
+            best_rank = rank
+    return best
+
+
+def parse_open_banking_transaction(raw_transaction: dict) -> ParsedMovement:
+    amount = parse_balance_amount(raw_transaction.get("transactionAmount")) or ZERO
+    concept = (
+        raw_transaction.get("remittanceInformationUnstructured")
+        or raw_transaction.get("additionalInformation")
+        or raw_transaction.get("bankTransactionCode")
+        or raw_transaction.get("proprietaryBankTransactionCode")
+        or raw_transaction.get("creditorName")
+        or raw_transaction.get("debtorName")
+        or "Movimiento bancario"
+    )
+    reference_1 = raw_transaction.get("creditorName") or raw_transaction.get("debtorName") or ""
+    reference_2 = (
+        raw_transaction.get("entryReference")
+        or raw_transaction.get("internalTransactionId")
+        or raw_transaction.get("transactionId")
+        or ""
+    )
+    balance = parse_balance_amount(raw_transaction.get("balanceAfterTransaction"))
+    return ParsedMovement(
+        booking_date=parse_spanish_date(
+            raw_transaction.get("bookingDate") or raw_transaction.get("valueDate") or raw_transaction.get("bookingDateTime")
+        ),
+        value_date=parse_optional_date(raw_transaction.get("valueDate", "")),
+        concept=str(concept).strip(),
+        amount=amount,
+        balance=balance,
+        reference_1=str(reference_1).strip(),
+        reference_2=str(reference_2).strip(),
+    )
+
+
+def build_open_banking_statement_checksum(external_account: BankExternalAccount, month_label: str) -> str:
+    identity = (
+        f"open-banking:{external_account.provider_account_id}:{external_account.statement_kind}:{month_label}"
+    )
+    return sha256(identity.encode("utf-8")).hexdigest()
+
+
+def upsert_external_account(connection: BankConnection, account_id: str, details: dict) -> BankExternalAccount:
+    account_label = choose_external_account_label(details, connection)
+    external_account, created = BankExternalAccount.objects.get_or_create(
+        provider_account_id=account_id,
+        defaults={
+            "connection": connection,
+            "ownership_category": connection.ownership_category,
+            "statement_kind": infer_external_account_kind(details, account_label),
+            "institution": connection.institution_name,
+            "account_label": account_label,
+            "iban": details.get("iban", "") or details.get("bban", ""),
+            "currency": details.get("currency", "EUR") or "EUR",
+            "holder_name": details.get("ownerName", ""),
+            "linked_account_name": details.get("linkedAccounts", ""),
+            "raw_details": details,
+        },
+    )
+    if created:
+        return external_account
+
+    updated_fields = []
+    if external_account.connection_id != connection.id:
+        external_account.connection = connection
+        updated_fields.append("connection")
+    if external_account.institution != connection.institution_name:
+        external_account.institution = connection.institution_name
+        updated_fields.append("institution")
+    if external_account.account_label != account_label:
+        external_account.account_label = account_label
+        updated_fields.append("account_label")
+    if details.get("iban", "") or details.get("bban", ""):
+        iban = details.get("iban", "") or details.get("bban", "")
+        if external_account.iban != iban:
+            external_account.iban = iban
+            updated_fields.append("iban")
+    currency = details.get("currency", "EUR") or "EUR"
+    if external_account.currency != currency:
+        external_account.currency = currency
+        updated_fields.append("currency")
+    holder_name = details.get("ownerName", "")
+    if holder_name and external_account.holder_name != holder_name:
+        external_account.holder_name = holder_name
+        updated_fields.append("holder_name")
+    linked_account_name = details.get("linkedAccounts", "")
+    if external_account.linked_account_name != linked_account_name:
+        external_account.linked_account_name = linked_account_name
+        updated_fields.append("linked_account_name")
+    inferred_kind = infer_external_account_kind(details, account_label)
+    if not external_account.statement_imports.exists() and external_account.statement_kind != inferred_kind:
+        external_account.statement_kind = inferred_kind
+        updated_fields.append("statement_kind")
+    if external_account.raw_details != details:
+        external_account.raw_details = details
+        updated_fields.append("raw_details")
+    if updated_fields:
+        updated_fields.append("updated_at")
+        external_account.save(update_fields=updated_fields)
+    return external_account
+
+
+def build_open_banking_parsed_payload(
+    external_account: BankExternalAccount,
+    movements: list[ParsedMovement],
+    closing_balance: Decimal | None,
+) -> dict:
+    period_start = min((movement.booking_date for movement in movements), default=None)
+    period_end = max((movement.booking_date for movement in movements), default=None)
+    metadata = {
+        "currency": external_account.currency or "EUR",
+        "account_label": external_account.account_label,
+        "iban": external_account.iban,
+        "holder_name": external_account.holder_name,
+        "period_start": period_start,
+        "period_end": period_end,
+        "opening_balance": None,
+        "closing_balance": closing_balance,
+    }
+    return {
+        "metadata": metadata,
+        "movements": sorted(movements, key=lambda movement: (movement.booking_date, movement.concept), reverse=True),
+    }
+
+
+def sync_open_banking_connection(connection: BankConnection) -> dict:
+    if not connection.active:
+        return {"imported_statements": 0, "external_accounts": 0}
+    if not connection.requisition_id:
+        raise ValidationError("La conexion todavia no tiene una requisicion activa.")
+
+    access_token = get_gocardless_access_token()
+    requisition_payload = gocardless_api_request(
+        "GET",
+        f"/requisitions/{connection.requisition_id}/",
+        access_token=access_token,
+    )
+    connection.requisition_status = requisition_payload.get("status", connection.requisition_status)
+    accounts = requisition_payload.get("accounts", [])
+
+    imported_statements = 0
+    imported_accounts = 0
+    now = timezone.now()
+
+    with transaction.atomic():
+        for account_id in accounts:
+            details_response = gocardless_api_request(
+                "GET",
+                f"/accounts/{account_id}/details/",
+                access_token=access_token,
+            )
+            details = details_response.get("account", details_response)
+            external_account = upsert_external_account(connection, account_id, details)
+            imported_accounts += 1
+
+            if not external_account.is_active:
+                continue
+
+            balances_payload = gocardless_api_request(
+                "GET",
+                f"/accounts/{account_id}/balances/",
+                access_token=access_token,
+            )
+            transactions_payload = gocardless_api_request(
+                "GET",
+                f"/accounts/{account_id}/transactions/",
+                access_token=access_token,
+            )
+            booked_transactions = transactions_payload.get("transactions", {}).get("booked", [])
+            parsed_movements = [parse_open_banking_transaction(item) for item in booked_transactions]
+            closing_balance = pick_closing_balance(balances_payload)
+
+            month_map: dict[str, list[ParsedMovement]] = defaultdict(list)
+            for movement in parsed_movements:
+                month_map[month_label_for_date(movement.booking_date)].append(movement)
+
+            for month_label, month_movements in month_map.items():
+                checksum = build_open_banking_statement_checksum(external_account, month_label)
+                statement_import, _created = BankStatementImport.objects.get_or_create(
+                    file_checksum=checksum,
+                    defaults={
+                        "connection": connection,
+                        "external_account": external_account,
+                        "ownership_category": external_account.ownership_category,
+                        "import_source": BankStatementImport.ImportSource.OPEN_BANKING,
+                        "institution": external_account.institution or connection.institution_name,
+                        "account_label": external_account.account_label,
+                        "iban": external_account.iban,
+                        "statement_kind": external_account.statement_kind,
+                        "currency": external_account.currency or "EUR",
+                        "holder_name": external_account.holder_name,
+                        "source_filename": f"{connection.institution_name}-{external_account.account_label}-{month_label}.openbanking",
+                    },
+                )
+                statement_import.connection = connection
+                statement_import.external_account = external_account
+                statement_import.ownership_category = external_account.ownership_category
+                statement_import.import_source = BankStatementImport.ImportSource.OPEN_BANKING
+                statement_import.institution = external_account.institution or connection.institution_name
+                statement_import.account_label = external_account.account_label
+                statement_import.iban = external_account.iban
+                statement_import.statement_kind = external_account.statement_kind
+                statement_import.currency = external_account.currency or "EUR"
+                statement_import.holder_name = external_account.holder_name
+                statement_import.source_filename = (
+                    f"{connection.institution_name}-{external_account.account_label}-{month_label}.openbanking"
+                )[:255]
+                closing_balance_for_month = closing_balance if month_label == max(month_map.keys()) else None
+                parsed_payload = build_open_banking_parsed_payload(
+                    external_account=external_account,
+                    movements=month_movements,
+                    closing_balance=closing_balance_for_month,
+                )
+                apply_parsed_statement(statement_import, parsed_payload)
+                imported_statements += 1
+
+            if closing_balance is not None and external_account.statement_kind == BankStatementImport.StatementKind.ACCOUNT:
+                manual_account = BankBalance.objects.filter(
+                    institution=external_account.institution or connection.institution_name,
+                    account_name=external_account.account_label,
+                ).first()
+                if manual_account:
+                    manual_account.ownership_category = external_account.ownership_category
+                    manual_account.current_balance = closing_balance
+                    if not manual_account.notes.strip():
+                        manual_account.notes = "Saldo sincronizado automaticamente por Open Banking."
+                    manual_account.save(update_fields=["ownership_category", "current_balance", "notes", "updated_at"])
+                else:
+                    BankBalance.objects.create(
+                        ownership_category=external_account.ownership_category,
+                        institution=external_account.institution or connection.institution_name,
+                        account_name=external_account.account_label,
+                        deposited_amount=ZERO,
+                        current_balance=closing_balance,
+                        annual_interest_income=ZERO,
+                        notes="Saldo sincronizado automaticamente por Open Banking.",
+                    )
+
+            external_account.last_imported_at = now
+            external_account.save(update_fields=["last_imported_at", "updated_at"])
+
+        connection.last_synced_at = now
+        connection.last_error = ""
+        connection.save(update_fields=["requisition_status", "last_synced_at", "last_error", "updated_at"])
+
+    return {
+        "imported_statements": imported_statements,
+        "external_accounts": imported_accounts,
+    }
+
+
+def sync_open_banking_connections() -> dict:
+    summary = {"connections": 0, "external_accounts": 0, "imported_statements": 0, "errors": []}
+    for connection in BankConnection.objects.filter(active=True):
+        try:
+            result = sync_open_banking_connection(connection)
+        except Exception as exc:
+            connection.last_error = str(exc)
+            connection.save(update_fields=["last_error", "updated_at"])
+            summary["errors"].append(f"{connection.institution_name}: {exc}")
+            continue
+        summary["connections"] += 1
+        summary["external_accounts"] += result["external_accounts"]
+        summary["imported_statements"] += result["imported_statements"]
+    return summary
+
+
+def build_open_banking_dashboard() -> dict:
+    connections = list(BankConnection.objects.prefetch_related("external_accounts").order_by("institution_name", "id"))
+    external_accounts = list(BankExternalAccount.objects.select_related("connection").order_by("institution", "account_label", "id"))
+    summary = {
+        "connections_count": len(connections),
+        "active_connections_count": sum(1 for connection in connections if connection.active),
+        "external_accounts_count": len(external_accounts),
+        "cards_count": sum(
+            1 for account in external_accounts if account.statement_kind == BankStatementImport.StatementKind.CARD
+        ),
+        "accounts_count": sum(
+            1 for account in external_accounts if account.statement_kind == BankStatementImport.StatementKind.ACCOUNT
+        ),
+        "last_synced_at": max((connection.last_synced_at for connection in connections if connection.last_synced_at), default=None),
+    }
+    return {
+        "summary": summary,
+        "connections": connections,
+        "external_accounts": external_accounts,
     }

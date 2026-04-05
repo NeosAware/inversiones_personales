@@ -2,7 +2,7 @@ from django import forms
 
 from portfolio.ownership import AssetOwnershipCategory
 
-from .models import BankStatementImport
+from .models import BankConnection, BankExternalAccount, BankStatementImport
 
 
 class MultipleFileInput(forms.ClearableFileInput):
@@ -73,3 +73,70 @@ class BankBalanceForm(forms.Form):
         if cleaned_data.get("annual_interest_income") is None:
             cleaned_data["annual_interest_income"] = 0
         return cleaned_data
+
+
+class BankInstitutionSearchForm(forms.Form):
+    country_code = forms.CharField(
+        max_length=2,
+        initial="ES",
+        label="Pais",
+        help_text="Codigo ISO del pais. Para Espana usa ES.",
+    )
+    query = forms.CharField(
+        max_length=120,
+        label="Banco",
+        help_text="Escribe una parte del nombre del banco para buscarlo en Open Banking.",
+    )
+
+    def clean_country_code(self):
+        return self.cleaned_data["country_code"].strip().upper()
+
+    def clean_query(self):
+        return self.cleaned_data["query"].strip()
+
+
+class BankConnectionForm(forms.Form):
+    ownership_category = forms.ChoiceField(
+        choices=AssetOwnershipCategory.choices,
+        initial=AssetOwnershipCategory.JOINT,
+        label="Titular",
+    )
+    country_code = forms.CharField(
+        max_length=2,
+        initial="ES",
+        label="Pais",
+    )
+    institution_id = forms.CharField(max_length=160, label="ID del banco")
+    institution_name = forms.CharField(max_length=160, label="Banco")
+
+    def clean_country_code(self):
+        return self.cleaned_data["country_code"].strip().upper()
+
+    def clean_institution_id(self):
+        return self.cleaned_data["institution_id"].strip()
+
+    def clean_institution_name(self):
+        return self.cleaned_data["institution_name"].strip()
+
+
+class BankExternalAccountForm(forms.Form):
+    ownership_category = forms.ChoiceField(
+        choices=AssetOwnershipCategory.choices,
+        label="Titular",
+    )
+    statement_kind = forms.ChoiceField(
+        choices=BankStatementImport.StatementKind.choices,
+        label="Tipo",
+    )
+    is_active = forms.BooleanField(
+        required=False,
+        initial=True,
+        label="Activa",
+    )
+
+
+class BankConnectionSyncForm(forms.Form):
+    connection_id = forms.IntegerField(widget=forms.HiddenInput)
+
+    def clean_connection_id(self):
+        return int(self.cleaned_data["connection_id"])
