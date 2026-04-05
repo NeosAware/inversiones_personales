@@ -105,25 +105,46 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         ticker = form.cleaned_data["ticker"]
         broker = form.cleaned_data["broker"]
         ownership_category = form.cleaned_data["ownership_category"]
-        position, created = EquityPosition.objects.update_or_create(
+        defaults = {
+            "company_name": form.cleaned_data["company_name"],
+            "quote_symbol": form.cleaned_data["quote_symbol"],
+            "benchmark_symbol": form.cleaned_data["benchmark_symbol"],
+            "benchmark_name": form.cleaned_data["benchmark_name"],
+            "shares": form.cleaned_data["shares"],
+            "average_cost_per_share": form.cleaned_data["average_cost_per_share"],
+            "current_price_per_share": form.cleaned_data["current_price_per_share"],
+            "annual_dividend_income": form.cleaned_data["annual_dividend_income"],
+            "notes": form.cleaned_data["notes"],
+        }
+        matches = EquityPosition.objects.filter(
             broker=broker,
             ticker=ticker,
             ownership_category=ownership_category,
-            defaults={
-                "company_name": form.cleaned_data["company_name"],
-                "quote_symbol": form.cleaned_data["quote_symbol"],
-                "benchmark_symbol": form.cleaned_data["benchmark_symbol"],
-                "benchmark_name": form.cleaned_data["benchmark_name"],
-                "shares": form.cleaned_data["shares"],
-                "average_cost_per_share": form.cleaned_data["average_cost_per_share"],
-                "current_price_per_share": form.cleaned_data["current_price_per_share"],
-                "annual_dividend_income": form.cleaned_data["annual_dividend_income"],
-                "notes": form.cleaned_data["notes"],
-            },
         )
+        if matches.exists():
+            position = matches.order_by("-updated_at", "-id").first()
+            for field_name, value in defaults.items():
+                setattr(position, field_name, value)
+            position.save(update_fields=[*defaults.keys(), "updated_at"])
+            created = False
+            duplicate_count = matches.count()
+        else:
+            position = EquityPosition.objects.create(
+                broker=broker,
+                ticker=ticker,
+                ownership_category=ownership_category,
+                **defaults,
+            )
+            created = True
+            duplicate_count = 0
 
         if created:
             messages.success(request, f"Posicion {position.ticker} creada correctamente.")
         else:
             messages.success(request, f"Posicion {position.ticker} actualizada correctamente.")
+            if duplicate_count > 1:
+                messages.warning(
+                    request,
+                    f"Se han detectado {duplicate_count} posiciones repetidas para {position.ticker}. Se ha actualizado la mas reciente.",
+                )
         return redirect("equities:list")

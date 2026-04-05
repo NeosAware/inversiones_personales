@@ -166,6 +166,59 @@ class EquitiesViewTests(TestCase):
             ).exists()
         )
 
+    def test_updating_position_does_not_fail_if_duplicate_rows_already_exist(self):
+        first = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.XIMO,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola antigua",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("9.0000"),
+            current_price_per_share=Decimal("10.0000"),
+        )
+        EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.XIMO,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola duplicada",
+            shares=Decimal("12.0000"),
+            average_cost_per_share=Decimal("9.5000"),
+            current_price_per_share=Decimal("10.5000"),
+        )
+
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "create_position",
+                "ownership_category": AssetOwnershipCategory.XIMO,
+                "broker": "Interactive Brokers",
+                "ticker": "IBE",
+                "company_name": "Iberdrola revisada",
+                "quote_symbol": "IBE.MC",
+                "benchmark_symbol": "^IBEX",
+                "benchmark_name": "IBEX 35",
+                "shares": "25",
+                "average_cost_per_share": "10,5000",
+                "current_price_per_share": "11,2500",
+                "annual_dividend_income": "20,00",
+                "notes": "Actualizada",
+            },
+        )
+
+        self.assertRedirects(response, reverse("equities:list"))
+        self.assertEqual(EquityPosition.objects.filter(broker="Interactive Brokers", ticker="IBE").count(), 2)
+        first.refresh_from_db()
+        self.assertEqual(first.company_name, "Iberdrola antigua")
+        latest = EquityPosition.objects.order_by("-updated_at", "-id").first()
+        self.assertEqual(latest.company_name, "Iberdrola revisada")
+        self.assertEqual(latest.shares, Decimal("25.0000"))
+
     def test_can_prefill_equity_form_from_xls_document(self):
         document = SimpleUploadedFile(
             "posicion.xls",
