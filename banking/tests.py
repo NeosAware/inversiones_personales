@@ -60,6 +60,62 @@ class BankingServicesTests(TestCase):
 </html>
 """
 
+    def _build_card_statement_html(self) -> str:
+        return """
+<html>
+  <body>
+    <table>
+      <tr><td>Saldos i moviments</td></tr>
+      <tr><td>Contracte</td><td>004273514883</td><td>Compte relacionat</td><td>0081-0278-14-0006302439</td></tr>
+      <tr><td>Titular</td><td>PIQUER MARTI ,JOAQUIN</td></tr>
+      <tr><td>Targeta:</td><td>5402________3026</td><td>BS CARD MASTERCARD</td></tr>
+      <tr><td>Titular targeta</td><td>PIQUER MARTI ,JOAQUIN</td></tr>
+      <tr><td>MOVIMIENTOS DE DEBITO</td></tr>
+      <tr>
+        <td>DATA</td>
+        <td>CONCEPTE</td>
+        <td>LOCALITAT</td>
+        <td>SIT. MOV.</td>
+        <td>IMPORT</td>
+      </tr>
+      <tr>
+        <td>05/04</td>
+        <td>WWW.AMAZON</td>
+        <td>LUXEMBOURG</td>
+        <td>AUT</td>
+        <td>19,99</td>
+      </tr>
+      <tr>
+        <td>03/04</td>
+        <td>APPLE.COM/BILL</td>
+        <td>CORK</td>
+        <td>AUT</td>
+        <td>2,99</td>
+      </tr>
+      <tr><td></td><td></td><td>TOTAL OPERACIONS</td><td>22,98</td><td>EUR</td></tr>
+      <tr>
+        <td>DATA</td>
+        <td>CONCEPTE</td>
+        <td>LOCALITAT</td>
+        <td>IMPORT</td>
+      </tr>
+      <tr>
+        <td>31/03</td>
+        <td>WWW.AMAZON* NB99W7NE4</td>
+        <td>LUXEMBOURG</td>
+        <td>7,53</td>
+      </tr>
+      <tr>
+        <td>30/03</td>
+        <td>MERCADONA AVDA CONSTITUCI</td>
+        <td>ONDA</td>
+        <td>55,07</td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+
     def test_parse_spanish_decimal(self):
         self.assertEqual(parse_spanish_decimal("3.126,77"), Decimal("3126.77"))
         self.assertEqual(parse_spanish_decimal("-171,05"), Decimal("-171.05"))
@@ -532,6 +588,26 @@ class BankingServicesTests(TestCase):
         self.assertEqual(parsed["movements"][1].amount, Decimal("-45.10"))
         self.assertEqual(parsed["metadata"]["holder_name"], "Monica")
 
+    def test_parse_statement_file_accepts_card_layout_with_short_dates(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            statement_path = Path(temp_dir) / "05042026_5402________3026.xls"
+            statement_path.write_text(self._build_card_statement_html(), encoding="utf-8")
+
+            parsed = parse_statement_file(
+                str(statement_path),
+                statement_kind=BankStatementImport.StatementKind.CARD,
+            )
+
+        self.assertEqual(parsed["metadata"]["account_label"], "BS CARD MASTERCARD 3026")
+        self.assertEqual(parsed["metadata"]["holder_name"], "PIQUER MARTI ,JOAQUIN")
+        self.assertEqual(parsed["metadata"]["period_start"].isoformat(), "2026-03-30")
+        self.assertEqual(parsed["metadata"]["period_end"].isoformat(), "2026-04-05")
+        self.assertEqual(len(parsed["movements"]), 4)
+        self.assertEqual(parsed["movements"][0].amount, Decimal("-19.99"))
+        self.assertEqual(parsed["movements"][0].reference_1, "LUXEMBOURG")
+        self.assertEqual(parsed["movements"][0].reference_2, "AUT")
+        self.assertEqual(parsed["movements"][-1].amount, Decimal("-55.07"))
+
     def test_load_rows_from_xls_reads_legacy_workbook_with_xlrd(self):
         import xlrd
         from xlrd.xldate import xldate_from_date_tuple
@@ -781,6 +857,61 @@ class BankingViewTests(TestCase):
 </html>
 """
 
+    def _legacy_card_statement_html(self) -> str:
+        return """
+<html>
+  <body>
+    <table>
+      <tr><td>Saldos i moviments</td></tr>
+      <tr><td>Contracte</td><td>004273514883</td><td>Compte relacionat</td><td>0081-0278-14-0006302439</td></tr>
+      <tr><td>Titular</td><td>PIQUER MARTI ,JOAQUIN</td></tr>
+      <tr><td>Targeta:</td><td>5402________3026</td><td>BS CARD MASTERCARD</td></tr>
+      <tr><td>Titular targeta</td><td>PIQUER MARTI ,JOAQUIN</td></tr>
+      <tr><td>MOVIMIENTOS DE DEBITO</td></tr>
+      <tr>
+        <td>DATA</td>
+        <td>CONCEPTE</td>
+        <td>LOCALITAT</td>
+        <td>SIT. MOV.</td>
+        <td>IMPORT</td>
+      </tr>
+      <tr>
+        <td>05/04</td>
+        <td>WWW.AMAZON</td>
+        <td>LUXEMBOURG</td>
+        <td>AUT</td>
+        <td>19,99</td>
+      </tr>
+      <tr>
+        <td>03/04</td>
+        <td>APPLE.COM/BILL</td>
+        <td>CORK</td>
+        <td>AUT</td>
+        <td>2,99</td>
+      </tr>
+      <tr>
+        <td>DATA</td>
+        <td>CONCEPTE</td>
+        <td>LOCALITAT</td>
+        <td>IMPORT</td>
+      </tr>
+      <tr>
+        <td>31/03</td>
+        <td>WWW.AMAZON* NB99W7NE4</td>
+        <td>LUXEMBOURG</td>
+        <td>7,53</td>
+      </tr>
+      <tr>
+        <td>30/03</td>
+        <td>MERCADONA AVDA CONSTITUCI</td>
+        <td>ONDA</td>
+        <td>55,07</td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+
     def test_can_create_bank_account_with_selected_owner(self):
         response = self.client.post(
             reverse("banking:list"),
@@ -822,6 +953,30 @@ class BankingViewTests(TestCase):
         self.assertRedirects(response, reverse("banking:list"))
         statement = BankStatementImport.objects.get(source_filename="visa.xls")
         self.assertEqual(statement.statement_kind, BankStatementImport.StatementKind.CARD)
+
+    def test_can_import_legacy_card_statement_with_short_dates(self):
+        document = SimpleUploadedFile(
+            "05042026_5402________3026.xls",
+            self._legacy_card_statement_html().encode("utf-8"),
+            content_type="application/vnd.ms-excel",
+        )
+
+        response = self.client.post(
+            reverse("banking:list"),
+            {
+                "action": "import",
+                "statement_kind": BankStatementImport.StatementKind.CARD,
+                "files": document,
+            },
+        )
+
+        self.assertRedirects(response, reverse("banking:list"))
+        statement = BankStatementImport.objects.get(source_filename="05042026_5402________3026.xls")
+        self.assertEqual(statement.statement_kind, BankStatementImport.StatementKind.CARD)
+        self.assertEqual(statement.account_label, "BS CARD MASTERCARD 3026")
+        self.assertEqual(statement.period_end.isoformat(), "2026-04-05")
+        self.assertEqual(statement.total_expenses, Decimal("85.58"))
+        self.assertEqual(statement.movements.count(), 4)
 
     def test_can_update_bank_account_owner_from_list(self):
         account = BankBalance.objects.create(

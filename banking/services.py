@@ -35,6 +35,19 @@ DEFAULT_STATEMENT_COLUMN_MAP = {
     "reference_1": 5,
     "reference_2": 6,
 }
+CARD_DEBIT_SECTION_LABELS = {
+    "MOVIMIENTOS DE DEBITO",
+    "MOVIMIENTOS DE DEBIT",
+    "MOVIMENTOS DE DEBITO",
+    "MOVIMENTS DE DEBIT",
+}
+CARD_CREDIT_SECTION_LABELS = {
+    "MOVIMIENTOS DE CREDITO",
+    "MOVIMIENTOS DE CREDITO",
+    "MOVIMENTS DE CREDIT",
+    "MOVIMENTOS DE ABONO",
+    "MOVIMIENTOS DE ABONO",
+}
 PLAN_KEYWORDS = ("PLAN AHORRO", "PLAN DE PENSION", "PENSION", "APORTACION PERIODICA POL.")
 DIVIDEND_KEYWORDS = ("DIVID", "DIVIDENDO", "COBRO DIVIDENDO", "ABONO DIVIDENDO")
 RENT_INCOME_KEYWORDS = ("ALQUILER", "PISO", "ADRIAN")
@@ -162,7 +175,10 @@ def resolve_statement_ownership_category(statement_import: BankStatementImport, 
 
 def import_statement(statement_import: BankStatementImport) -> BankStatementImport:
     try:
-        parsed = parse_statement_file(statement_import.source_file)
+        parsed = parse_statement_file(
+            statement_import.source_file,
+            statement_kind=statement_import.statement_kind,
+        )
     except Exception as exc:
         statement_import.import_status = BankStatementImport.ImportStatus.FAILED
         statement_import.error_message = str(exc)
@@ -257,12 +273,25 @@ def read_source_bytes(source) -> bytes:
             source.close()
 
 
-def parse_statement_file(source) -> dict:
+def parse_statement_file(source, statement_kind: str | None = None) -> dict:
     rows = load_rows_from_workbook(source)
     if not rows:
         raise ValidationError("El extracto esta vacio.")
 
-    metadata = extract_statement_metadata(rows)
+    source_name = get_source_name(source)
+    metadata = extract_statement_metadata(rows, source_name=source_name)
+
+    try:
+        return parse_standard_statement_rows(rows, metadata)
+    except ValidationError as standard_error:
+        if statement_kind == BankStatementImport.StatementKind.ACCOUNT:
+            raise standard_error
+        if statement_kind == BankStatementImport.StatementKind.CARD or looks_like_card_statement(rows):
+            return parse_card_statement_rows(rows, metadata, source_name=source_name)
+        raise standard_error
+
+
+def parse_standard_statement_rows(rows: list[list[str]], metadata: dict) -> dict:
     data_start_index, column_map = find_statement_layout(rows)
     movements = []
 
@@ -535,7 +564,23 @@ try {{
         Path(temp_path).unlink(missing_ok=True)
 
 
-def extract_statement_metadata(rows: list[list[str]]) -> dict:
+def looks_like_iban(value: str) -> bool:
+    compact = normalize_iban(value)
+    return bool(re.match(r"^[A-Z]{2}\d{2}[A-Z0-9]{8,30}$", compact))
+
+
+def infer_reference_date_from_source_name(source_name: str) -> date | None:
+    stem = Path(source_name).stem
+    for match in re.finditer(r"(?<!\d)(\d{2})(\d{2})(\d{4})(?!\d)", stem):
+        day, month, year = match.groups()
+        try:
+            return date(int(year), int(month), int(day))
+        except ValueError:
+            continue
+    return None
+
+
+def extract_statement_metadata(rows: list[list[str]], source_name: str = "") -> dict:
     metadata = {
         "currency": "EUR",
         "account_label": "",
@@ -545,6 +590,7 @@ def extract_statement_metadata(rows: list[list[str]]) -> dict:
         "period_end": None,
         "opening_balance": None,
         "closing_balance": None,
+        "reference_date": infer_reference_date_from_source_name(source_name),
     }
     date_pattern = re.compile(
         r"(?:Desde|Del)\s+(\d{2}/\d{2}/\d{4})\s+(?:hasta|al)\s+(\d{2}/\d{2}/\d{4})",
@@ -555,19 +601,41 @@ def extract_statement_metadata(rows: list[list[str]]) -> dict:
         text = " ".join(str(cell).strip() for cell in row if str(cell).strip())
         if not text:
             continue
+        row_label = normalize_header_label(get_row_cell(row, 0))
+        second_cell = get_row_cell(row, 1)
+        third_cell = get_row_cell(row, 2)
+
         match = date_pattern.search(text)
         if match:
             metadata["period_start"] = parse_spanish_date(match.group(1))
             metadata["period_end"] = parse_spanish_date(match.group(2))
+            metadata["reference_date"] = metadata["period_end"]
 
         normalized_text = normalize_header_text(text)
+        if row_label in {"TARGETA", "TARJETA"}:
+            card_number = second_cell
+            card_name = third_cell
+            if card_name:
+                last_digits = re.sub(r"\D", "", card_number)[-4:]
+                metadata["account_label"] = f"{card_name} {last_digits}".strip() if last_digits else card_name
+            elif card_number:
+                metadata["account_label"] = f"Tarjeta {re.sub(r'\\D', '', card_number)[-4:]}"
+            continue
+        if row_label in {"TITULAR TARGETA", "TITULAR TARJETA"} and second_cell:
+            metadata["holder_name"] = second_cell
+            continue
+
         if normalized_text.startswith("CUENTA:"):
-            metadata["iban"] = text.split("Cuenta:", 1)[1].strip()
-            if metadata["iban"]:
-                metadata["account_label"] = f"Cuenta {metadata['iban'][-4:]}"
+            account_value = text.split(":", 1)[1].strip()
+            if looks_like_iban(account_value):
+                metadata["iban"] = account_value
+                if not metadata["account_label"]:
+                    metadata["account_label"] = f"Cuenta {metadata['iban'][-4:]}"
+            elif not metadata["account_label"]:
+                metadata["account_label"] = account_value
         elif normalized_text.startswith("IBAN:"):
             metadata["iban"] = text.split(":", 1)[1].strip()
-            if metadata["iban"]:
+            if metadata["iban"] and not metadata["account_label"]:
                 metadata["account_label"] = f"Cuenta {metadata['iban'][-4:]}"
         elif normalized_text.startswith("DIVISA:"):
             metadata["currency"] = text.split("Divisa:", 1)[1].strip() or "EUR"
@@ -594,7 +662,7 @@ def get_row_cell(row: list[str], index: int | None) -> str:
 def is_booking_date_header(label: str) -> bool:
     if not label:
         return False
-    if label in {"F OPERATIVA", "F OPERACION", "FECHA OPERATIVA", "FECHA OPERACION", "FECHA"}:
+    if label in {"F OPERATIVA", "F OPERACION", "FECHA OPERATIVA", "FECHA OPERACION", "FECHA", "DATA"}:
         return True
     return label.startswith("FECHA OPER")
 
@@ -610,13 +678,13 @@ def is_value_date_header(label: str) -> bool:
 def is_concept_header(label: str) -> bool:
     if not label:
         return False
-    return any(token in label for token in ("CONCEPTO", "DESCRIPCION", "DETALLE")) or label == "MOVIMIENTO"
+    return any(token in label for token in ("CONCEPTO", "CONCEPTE", "DESCRIPCION", "DETALLE")) or label == "MOVIMIENTO"
 
 
 def is_amount_header(label: str) -> bool:
     if not label:
         return False
-    return label.startswith("IMPORTE")
+    return label.startswith("IMPORTE") or label.startswith("IMPORT")
 
 
 def is_debit_header(label: str) -> bool:
@@ -640,13 +708,13 @@ def is_balance_header(label: str) -> bool:
 def is_reference_1_header(label: str) -> bool:
     if not label:
         return False
-    return label in {"REFERENCIA 1", "REF 1", "REFERENCIA1"}
+    return label in {"REFERENCIA 1", "REF 1", "REFERENCIA1", "LOCALITAT", "LOCALIDAD"}
 
 
 def is_reference_2_header(label: str) -> bool:
     if not label:
         return False
-    return label in {"REFERENCIA 2", "REF 2", "REFERENCIA2"}
+    return label in {"REFERENCIA 2", "REF 2", "REFERENCIA2", "SIT MOV", "SIT MOV.", "ESTADO", "ESTADO MOV"}
 
 
 def build_statement_column_map(row: list[str]) -> dict[str, int]:
@@ -722,6 +790,128 @@ def row_looks_like_statement_data(row: list[str], column_map: dict[str, int]) ->
         return False
 
     return True
+
+
+def looks_like_card_statement(rows: list[list[str]]) -> bool:
+    for row in rows:
+        text = " ".join(str(cell).strip() for cell in row if str(cell).strip())
+        normalized_text = normalize_header_text(text)
+        if not normalized_text:
+            continue
+        if (
+            normalized_text in CARD_DEBIT_SECTION_LABELS
+            or normalized_text in CARD_CREDIT_SECTION_LABELS
+            or normalized_text.startswith("TARGETA:")
+            or normalized_text.startswith("TARJETA:")
+            or normalized_text.startswith("TITULAR TARGETA")
+            or normalized_text.startswith("TITULAR TARJETA")
+        ):
+            return True
+    return False
+
+
+def parse_card_statement_date(value: str, reference_date: date | None) -> date:
+    text = str(value).strip()
+    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", text):
+        return parse_spanish_date(text)
+    if re.fullmatch(r"\d{2}/\d{2}", text):
+        anchor = reference_date or timezone.localdate()
+        day, month = (int(part) for part in text.split("/"))
+        candidate = date(anchor.year, month, day)
+        if candidate > anchor:
+            candidate = date(anchor.year - 1, month, day)
+        return candidate
+    raise ValueError(f"Fecha no compatible: {value}")
+
+
+def parse_card_row_amount(row: list[str], column_map: dict[str, int], section_sign: int | None) -> Decimal:
+    raw_amount = get_row_cell(row, column_map.get("amount"))
+    amount = parse_spanish_decimal(raw_amount)
+    if amount < ZERO or raw_amount.strip().startswith("-"):
+        return amount
+    if section_sign == 1:
+        return abs(amount)
+    return -abs(amount)
+
+
+def row_looks_like_card_statement_data(
+    row: list[str],
+    column_map: dict[str, int],
+    reference_date: date | None,
+) -> bool:
+    booking_value = get_row_cell(row, column_map.get("booking_date"))
+    concept_value = get_row_cell(row, column_map.get("concept"))
+    if not booking_value or not concept_value:
+        return False
+
+    try:
+        parse_card_statement_date(booking_value, reference_date)
+    except Exception:
+        return False
+
+    amount_value = get_row_cell(row, column_map.get("amount"))
+    if not amount_value:
+        return False
+
+    try:
+        parse_spanish_decimal(amount_value)
+    except Exception:
+        return False
+
+    return True
+
+
+def parse_card_statement_rows(rows: list[list[str]], metadata: dict, source_name: str = "") -> dict:
+    reference_date = metadata.get("period_end") or metadata.get("reference_date") or infer_reference_date_from_source_name(source_name)
+    current_column_map: dict[str, int] | None = None
+    current_section_sign = -1
+    movements: list[ParsedMovement] = []
+
+    for raw_row in rows:
+        row = list(raw_row)
+        text = " ".join(str(cell).strip() for cell in row if str(cell).strip())
+        normalized_text = normalize_header_text(text)
+        if normalized_text in CARD_DEBIT_SECTION_LABELS:
+            current_section_sign = -1
+            continue
+        if normalized_text in CARD_CREDIT_SECTION_LABELS:
+            current_section_sign = 1
+            continue
+
+        candidate_column_map = build_statement_column_map(row)
+        if has_required_statement_columns(candidate_column_map):
+            current_column_map = candidate_column_map
+            continue
+
+        if not current_column_map:
+            continue
+        if not row_looks_like_card_statement_data(row, current_column_map, reference_date):
+            continue
+
+        booking_date = parse_card_statement_date(get_row_cell(row, current_column_map.get("booking_date")), reference_date)
+        movements.append(
+            ParsedMovement(
+                booking_date=booking_date,
+                value_date=parse_optional_date(get_row_cell(row, current_column_map.get("value_date"))),
+                concept=get_row_cell(row, current_column_map.get("concept")),
+                amount=parse_card_row_amount(row, current_column_map, current_section_sign),
+                balance=None,
+                reference_1=get_row_cell(row, current_column_map.get("reference_1")),
+                reference_2=get_row_cell(row, current_column_map.get("reference_2")),
+            )
+        )
+
+    if not movements:
+        raise ValidationError("No se han encontrado movimientos de tarjeta en el documento.")
+
+    if not metadata.get("period_start"):
+        metadata["period_start"] = min((movement.booking_date for movement in movements), default=None)
+    if not metadata.get("period_end"):
+        metadata["period_end"] = max((movement.booking_date for movement in movements), default=None)
+    if not metadata.get("reference_date") and metadata.get("period_end"):
+        metadata["reference_date"] = metadata["period_end"]
+
+    return {"metadata": metadata, "movements": movements}
 
 
 def find_statement_layout(rows: list[list[str]]) -> tuple[int, dict[str, int]]:
