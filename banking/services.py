@@ -26,6 +26,15 @@ from .models import BankBalance, BankMovement, BankStatementImport
 
 ZERO = Decimal("0.00")
 HEADER_ROW = ["F. Operativa", "Concepto", "F. Valor", "Importe", "Saldo"]
+DEFAULT_STATEMENT_COLUMN_MAP = {
+    "booking_date": 0,
+    "concept": 1,
+    "value_date": 2,
+    "amount": 3,
+    "balance": 4,
+    "reference_1": 5,
+    "reference_2": 6,
+}
 PLAN_KEYWORDS = ("PLAN AHORRO", "PLAN DE PENSION", "PENSION", "APORTACION PERIODICA POL.")
 DIVIDEND_KEYWORDS = ("DIVID", "DIVIDENDO", "COBRO DIVIDENDO", "ABONO DIVIDENDO")
 RENT_INCOME_KEYWORDS = ("ALQUILER", "PISO", "ADRIAN")
@@ -254,22 +263,22 @@ def parse_statement_file(source) -> dict:
         raise ValidationError("El extracto esta vacio.")
 
     metadata = extract_statement_metadata(rows)
-    header_index = find_header_row_index(rows)
+    data_start_index, column_map = find_statement_layout(rows)
     movements = []
 
-    for raw_row in rows[header_index + 1 :]:
-        row = list(raw_row) + [""] * max(0, 7 - len(raw_row))
-        if not str(row[0]).strip() or not str(row[1]).strip() or not str(row[3]).strip():
+    for raw_row in rows[data_start_index:]:
+        row = list(raw_row)
+        if not row_looks_like_statement_data(row, column_map):
             continue
         movements.append(
             ParsedMovement(
-                booking_date=parse_spanish_date(row[0]),
-                value_date=parse_spanish_date(row[2]) if str(row[2]).strip() else None,
-                concept=str(row[1]).strip(),
-                amount=parse_spanish_decimal(row[3]),
-                balance=parse_spanish_decimal(row[4]) if str(row[4]).strip() else None,
-                reference_1=str(row[5]).strip(),
-                reference_2=str(row[6]).strip(),
+                booking_date=parse_spanish_date(get_row_cell(row, column_map.get("booking_date"))),
+                value_date=parse_optional_date(get_row_cell(row, column_map.get("value_date"))),
+                concept=get_row_cell(row, column_map.get("concept")),
+                amount=parse_row_amount(row, column_map),
+                balance=parse_optional_decimal(get_row_cell(row, column_map.get("balance"))),
+                reference_1=get_row_cell(row, column_map.get("reference_1")),
+                reference_2=get_row_cell(row, column_map.get("reference_2")),
             )
         )
 
@@ -537,7 +546,10 @@ def extract_statement_metadata(rows: list[list[str]]) -> dict:
         "opening_balance": None,
         "closing_balance": None,
     }
-    date_pattern = re.compile(r"Desde (\d{2}/\d{2}/\d{4}) hasta (\d{2}/\d{2}/\d{4})")
+    date_pattern = re.compile(
+        r"(?:Desde|Del)\s+(\d{2}/\d{2}/\d{4})\s+(?:hasta|al)\s+(\d{2}/\d{2}/\d{4})",
+        re.IGNORECASE,
+    )
 
     for row in rows:
         text = " ".join(str(cell).strip() for cell in row if str(cell).strip())
@@ -553,19 +565,180 @@ def extract_statement_metadata(rows: list[list[str]]) -> dict:
             metadata["iban"] = text.split("Cuenta:", 1)[1].strip()
             if metadata["iban"]:
                 metadata["account_label"] = f"Cuenta {metadata['iban'][-4:]}"
+        elif normalized_text.startswith("IBAN:"):
+            metadata["iban"] = text.split(":", 1)[1].strip()
+            if metadata["iban"]:
+                metadata["account_label"] = f"Cuenta {metadata['iban'][-4:]}"
         elif normalized_text.startswith("DIVISA:"):
             metadata["currency"] = text.split("Divisa:", 1)[1].strip() or "EUR"
-        elif normalized_text.startswith("TITULAR:"):
-            metadata["holder_name"] = text.split("Titular:", 1)[1].strip()
+        elif normalized_text.startswith("MONEDA:"):
+            metadata["currency"] = text.split(":", 1)[1].strip() or "EUR"
+        elif normalized_text.startswith("TITULAR:") or normalized_text.startswith("TITULARES:"):
+            metadata["holder_name"] = text.split(":", 1)[1].strip()
 
     return metadata
 
 
-def find_header_row_index(rows: list[list[str]]) -> int:
+def normalize_header_label(text: str) -> str:
+    normalized = normalize_header_text(text)
+    normalized = re.sub(r"[^A-Z0-9]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def get_row_cell(row: list[str], index: int | None) -> str:
+    if index is None or index < 0 or index >= len(row):
+        return ""
+    return str(row[index]).strip()
+
+
+def is_booking_date_header(label: str) -> bool:
+    if not label:
+        return False
+    if label in {"F OPERATIVA", "F OPERACION", "FECHA OPERATIVA", "FECHA OPERACION", "FECHA"}:
+        return True
+    return label.startswith("FECHA OPER")
+
+
+def is_value_date_header(label: str) -> bool:
+    if not label:
+        return False
+    if label in {"F VALOR", "FECHA VALOR", "VALOR"}:
+        return True
+    return "FECHA VALOR" in label
+
+
+def is_concept_header(label: str) -> bool:
+    if not label:
+        return False
+    return any(token in label for token in ("CONCEPTO", "DESCRIPCION", "DETALLE")) or label == "MOVIMIENTO"
+
+
+def is_amount_header(label: str) -> bool:
+    if not label:
+        return False
+    return label.startswith("IMPORTE")
+
+
+def is_debit_header(label: str) -> bool:
+    if not label:
+        return False
+    return label in {"CARGO", "CARGOS", "DEBE", "DEBITO"} or label.startswith("CARGO ")
+
+
+def is_credit_header(label: str) -> bool:
+    if not label:
+        return False
+    return label in {"ABONO", "ABONOS", "HABER", "CREDITO", "INGRESO"} or label.startswith("ABONO ")
+
+
+def is_balance_header(label: str) -> bool:
+    if not label:
+        return False
+    return label.startswith("SALDO") or label == "DISPONIBLE"
+
+
+def is_reference_1_header(label: str) -> bool:
+    if not label:
+        return False
+    return label in {"REFERENCIA 1", "REF 1", "REFERENCIA1"}
+
+
+def is_reference_2_header(label: str) -> bool:
+    if not label:
+        return False
+    return label in {"REFERENCIA 2", "REF 2", "REFERENCIA2"}
+
+
+def build_statement_column_map(row: list[str]) -> dict[str, int]:
+    column_map: dict[str, int] = {}
+    for index, cell in enumerate(row):
+        label = normalize_header_label(str(cell))
+        if not label:
+            continue
+        if "reference_2" not in column_map and is_reference_2_header(label):
+            column_map["reference_2"] = index
+        elif "reference_1" not in column_map and is_reference_1_header(label):
+            column_map["reference_1"] = index
+        elif "balance" not in column_map and is_balance_header(label):
+            column_map["balance"] = index
+        elif "amount" not in column_map and is_amount_header(label):
+            column_map["amount"] = index
+        elif "debit_amount" not in column_map and is_debit_header(label):
+            column_map["debit_amount"] = index
+        elif "credit_amount" not in column_map and is_credit_header(label):
+            column_map["credit_amount"] = index
+        elif "value_date" not in column_map and is_value_date_header(label):
+            column_map["value_date"] = index
+        elif "concept" not in column_map and is_concept_header(label):
+            column_map["concept"] = index
+        elif "booking_date" not in column_map and is_booking_date_header(label):
+            column_map["booking_date"] = index
+    return column_map
+
+
+def has_required_statement_columns(column_map: dict[str, int]) -> bool:
+    has_amount = "amount" in column_map or "debit_amount" in column_map or "credit_amount" in column_map
+    return "booking_date" in column_map and "concept" in column_map and has_amount
+
+
+def parse_optional_date(value: str) -> date | None:
+    return parse_spanish_date(value) if str(value).strip() else None
+
+
+def parse_optional_decimal(value: str) -> Decimal | None:
+    return parse_spanish_decimal(value) if str(value).strip() else None
+
+
+def parse_row_amount(row: list[str], column_map: dict[str, int]) -> Decimal:
+    if "amount" in column_map:
+        return parse_spanish_decimal(get_row_cell(row, column_map["amount"]))
+
+    debit = parse_optional_decimal(get_row_cell(row, column_map.get("debit_amount"))) or ZERO
+    credit = parse_optional_decimal(get_row_cell(row, column_map.get("credit_amount"))) or ZERO
+    return credit - debit
+
+
+def row_looks_like_statement_data(row: list[str], column_map: dict[str, int]) -> bool:
+    booking_value = get_row_cell(row, column_map.get("booking_date"))
+    concept_value = get_row_cell(row, column_map.get("concept"))
+    if not booking_value or not concept_value:
+        return False
+
+    try:
+        parse_spanish_date(booking_value)
+    except Exception:
+        return False
+
+    has_amount_value = any(
+        get_row_cell(row, column_map.get(field_name))
+        for field_name in ("amount", "debit_amount", "credit_amount")
+    )
+    if not has_amount_value:
+        return False
+
+    try:
+        parse_row_amount(row, column_map)
+    except Exception:
+        return False
+
+    return True
+
+
+def find_statement_layout(rows: list[list[str]]) -> tuple[int, dict[str, int]]:
     for index, row in enumerate(rows):
         padded = [str(cell).strip() for cell in row[:5]]
         if padded == HEADER_ROW:
-            return index
+            return index + 1, DEFAULT_STATEMENT_COLUMN_MAP.copy()
+
+    for index, row in enumerate(rows):
+        column_map = build_statement_column_map(row)
+        if has_required_statement_columns(column_map):
+            return index + 1, column_map
+
+    for index, row in enumerate(rows):
+        if row_looks_like_statement_data(row, DEFAULT_STATEMENT_COLUMN_MAP):
+            return index, DEFAULT_STATEMENT_COLUMN_MAP.copy()
+
     raise ValidationError("No se ha encontrado la fila de cabecera del extracto.")
 
 

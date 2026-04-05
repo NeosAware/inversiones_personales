@@ -331,6 +331,98 @@ class BankingServicesTests(TestCase):
         self.assertEqual(parsed["movements"][0].amount, Decimal("1200.50"))
         self.assertEqual(parsed["movements"][1].amount, Decimal("-45.10"))
 
+    def test_parse_statement_file_accepts_flexible_header_names(self):
+        html = """
+<html>
+  <body>
+    <table>
+      <tr><td>IBAN: ES98 7654 3210 9876</td></tr>
+      <tr><td>Titulares: Ximo y Monica</td></tr>
+      <tr><td>Moneda: EUR</td></tr>
+      <tr><td>Del 01/04/2026 al 05/04/2026</td></tr>
+      <tr>
+        <td>Fecha operacion</td>
+        <td>Descripcion</td>
+        <td>Fecha valor</td>
+        <td>Importe EUR</td>
+        <td>Saldo contable</td>
+      </tr>
+      <tr>
+        <td>05/04/2026</td>
+        <td>NOMINA ABRIL</td>
+        <td>05/04/2026</td>
+        <td>1.200,50</td>
+        <td>3.400,75</td>
+      </tr>
+      <tr>
+        <td>04/04/2026</td>
+        <td>MERCADONA</td>
+        <td>04/04/2026</td>
+        <td>-45,10</td>
+        <td>2.200,25</td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            statement_path = Path(temp_dir) / "statement-flex.xls"
+            statement_path.write_text(html, encoding="utf-8")
+
+            parsed = parse_statement_file(str(statement_path))
+
+        self.assertEqual(parsed["metadata"]["iban"], "ES98 7654 3210 9876")
+        self.assertEqual(parsed["metadata"]["holder_name"], "Ximo y Monica")
+        self.assertEqual(parsed["metadata"]["period_start"].isoformat(), "2026-04-01")
+        self.assertEqual(parsed["metadata"]["period_end"].isoformat(), "2026-04-05")
+        self.assertEqual(parsed["movements"][0].amount, Decimal("1200.50"))
+        self.assertEqual(parsed["movements"][1].amount, Decimal("-45.10"))
+
+    def test_parse_statement_file_accepts_debit_and_credit_columns(self):
+        html = """
+<html>
+  <body>
+    <table>
+      <tr><td>Cuenta: ES12 3456 7890 1234</td></tr>
+      <tr><td>Titular: Monica</td></tr>
+      <tr><td>Divisa: EUR</td></tr>
+      <tr><td>Desde 01/04/2026 hasta 05/04/2026</td></tr>
+      <tr>
+        <td>Fecha</td>
+        <td>Descripcion</td>
+        <td>Cargo</td>
+        <td>Abono</td>
+        <td>Saldo</td>
+      </tr>
+      <tr>
+        <td>05/04/2026</td>
+        <td>NOMINA ABRIL</td>
+        <td></td>
+        <td>1.200,50</td>
+        <td>3.400,75</td>
+      </tr>
+      <tr>
+        <td>04/04/2026</td>
+        <td>MERCADONA</td>
+        <td>45,10</td>
+        <td></td>
+        <td>2.200,25</td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            statement_path = Path(temp_dir) / "statement-debit-credit.xls"
+            statement_path.write_text(html, encoding="utf-8")
+
+            parsed = parse_statement_file(str(statement_path))
+
+        self.assertEqual(len(parsed["movements"]), 2)
+        self.assertEqual(parsed["movements"][0].amount, Decimal("1200.50"))
+        self.assertEqual(parsed["movements"][1].amount, Decimal("-45.10"))
+        self.assertEqual(parsed["metadata"]["holder_name"], "Monica")
+
     def test_load_rows_from_xls_reads_legacy_workbook_with_xlrd(self):
         import xlrd
         from xlrd.xldate import xldate_from_date_tuple
