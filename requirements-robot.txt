@@ -1,0 +1,4 @@
+-r requirements.txt
+keyring>=25.0,<26.0
+playwright>=1.52,<2.0
+requests>=2.32,<3.0

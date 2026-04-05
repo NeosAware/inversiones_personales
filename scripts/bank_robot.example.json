@@ -1,0 +1,95 @@
+{
+  "server": {
+    "upload_url": "https://personal.neosaware.ai/banking/robot/upload/",
+    "upload_token_env": "BANK_ROBOT_IMPORT_TOKEN",
+    "verify_ssl": true
+  },
+  "jobs": [
+    {
+      "id": "sabadell-cuenta-ximo",
+      "description": "Cuenta corriente de Ximo en Banco Sabadell",
+      "bank": "Banco Sabadell",
+      "institution": "Banco Sabadell",
+      "statement_kind": "account",
+      "ownership_category": "ximo",
+      "headless": false,
+      "browser": "chromium",
+      "download_dir": "C:/Users/Gerencia/Downloads/bank-robot/sabadell/ximo/cuenta",
+      "storage_state_path": "C:/Users/Gerencia/Documents/inversiones_personales/secrets/sabadell-cuenta-ximo-state.json",
+      "secrets_service": "inversiones_personales.bank_robot.sabadell-cuenta-ximo",
+      "secret_fields": [
+        "username",
+        "password"
+      ],
+      "steps": [
+        {
+          "action": "goto",
+          "url": "https://www.tu-banco.es/login"
+        },
+        {
+          "action": "fill",
+          "selector": "input[name='username']",
+          "value": "${username}"
+        },
+        {
+          "action": "fill",
+          "selector": "input[name='password']",
+          "value": "${password}"
+        },
+        {
+          "action": "click",
+          "selector": "button[type='submit']"
+        },
+        {
+          "action": "manual_pause",
+          "message": "Completa la autenticacion MFA de Sabadell si hace falta y pulsa Enter."
+        },
+        {
+          "action": "goto",
+          "url": "https://www.tu-banco.es/extractos"
+        },
+        {
+          "action": "wait_for",
+          "selector": "text=Exportar XLS"
+        },
+        {
+          "action": "download",
+          "selector": "text=Exportar XLS",
+          "filename": "sabadell-cuenta-ximo.xls"
+        }
+      ]
+    },
+    {
+      "id": "sabadell-tarjeta-ximo",
+      "description": "Tarjeta de Ximo en Banco Sabadell",
+      "bank": "Banco Sabadell",
+      "institution": "Banco Sabadell",
+      "statement_kind": "card",
+      "ownership_category": "ximo",
+      "headless": false,
+      "browser": "chromium",
+      "download_dir": "C:/Users/Gerencia/Downloads/bank-robot/sabadell/ximo/tarjeta",
+      "storage_state_path": "C:/Users/Gerencia/Documents/inversiones_personales/secrets/sabadell-cuenta-ximo-state.json",
+      "secrets_service": "inversiones_personales.bank_robot.sabadell-cuenta-ximo",
+      "secret_fields": [
+        "username",
+        "password"
+      ],
+      "steps": [
+        {
+          "action": "goto",
+          "url": "https://www.tu-banco.es/tarjetas/movimientos"
+        },
+        {
+          "action": "wait_for",
+          "selector": "text=Exportar XLS"
+        },
+        {
+          "action": "download",
+          "selector": "text=Exportar XLS",
+          "filename": "sabadell-tarjeta-ximo.xls"
+        }
+      ]
+    }
+  ]
+}

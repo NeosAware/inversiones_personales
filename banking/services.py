@@ -119,6 +119,34 @@ def build_uploaded_file_checksum(uploaded_file) -> str:
     return digest.hexdigest()
 
 
+def import_uploaded_statement_file(
+    uploaded_file,
+    *,
+    statement_kind: str,
+    ownership_category: str | None = None,
+    import_source: str = BankStatementImport.ImportSource.UPLOAD,
+    institution: str = "",
+    account_label: str = "",
+) -> tuple[BankStatementImport, bool]:
+    checksum = build_uploaded_file_checksum(uploaded_file)
+    existing_statement = BankStatementImport.objects.filter(file_checksum=checksum).first()
+    if existing_statement:
+        return existing_statement, False
+
+    statement = BankStatementImport.objects.create(
+        source_file=uploaded_file,
+        source_filename=getattr(uploaded_file, "name", "documento-bancario"),
+        file_checksum=checksum,
+        statement_kind=statement_kind,
+        ownership_category=ownership_category or AssetOwnershipCategory.JOINT,
+        import_source=import_source,
+        institution=institution,
+        account_label=account_label,
+    )
+    import_statement(statement)
+    return statement, True
+
+
 def normalize_lookup_text(value: str) -> str:
     return re.sub(r"\s+", " ", normalize_header_text(value)).strip()
 

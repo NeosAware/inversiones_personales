@@ -40,6 +40,7 @@ class BankStatementImport(models.Model):
     class ImportSource(models.TextChoices):
         UPLOAD = "upload", "Subida manual"
         OPEN_BANKING = "open_banking", "Open banking"
+        ROBOT = "robot", "Robot local"
 
     class StatementKind(models.TextChoices):
         ACCOUNT = "account", "Cuenta"

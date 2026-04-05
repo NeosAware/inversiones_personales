@@ -1247,6 +1247,56 @@ class BankingViewTests(TestCase):
         messages = list(response.wsgi_request._messages)
         self.assertTrue(any("Sincronizacion completada" in str(message) for message in messages))
 
+    @override_settings(BANK_ROBOT_IMPORT_TOKEN="robot-token")
+    def test_robot_upload_endpoint_imports_statement_without_login(self):
+        self.client.logout()
+        document = SimpleUploadedFile(
+            "robot-visa.xls",
+            self._legacy_card_statement_html().encode("utf-8"),
+            content_type="application/vnd.ms-excel",
+        )
+
+        response = self.client.post(
+            reverse("banking:robot_upload"),
+            {
+                "statement_kind": BankStatementImport.StatementKind.CARD,
+                "ownership_category": AssetOwnershipCategory.XIMO,
+                "institution": "Banco Sabadell",
+                "files": document,
+            },
+            HTTP_X_BANK_ROBOT_TOKEN="robot-token",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["imported_count"], 1)
+        statement = BankStatementImport.objects.get(source_filename="robot-visa.xls")
+        self.assertEqual(statement.import_source, BankStatementImport.ImportSource.ROBOT)
+        self.assertEqual(statement.statement_kind, BankStatementImport.StatementKind.CARD)
+        self.assertEqual(statement.ownership_category, AssetOwnershipCategory.XIMO)
+
+    @override_settings(BANK_ROBOT_IMPORT_TOKEN="robot-token")
+    def test_robot_upload_endpoint_rejects_invalid_token(self):
+        self.client.logout()
+        document = SimpleUploadedFile(
+            "robot-cuenta.xls",
+            self._card_statement_html(holder_name="Monica").encode("utf-8"),
+            content_type="application/vnd.ms-excel",
+        )
+
+        response = self.client.post(
+            reverse("banking:robot_upload"),
+            {
+                "statement_kind": BankStatementImport.StatementKind.CARD,
+                "files": document,
+            },
+            HTTP_X_BANK_ROBOT_TOKEN="wrong-token",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(BankStatementImport.objects.filter(source_filename="robot-cuenta.xls").exists())
+
     def test_can_create_bank_account_with_selected_owner(self):
         response = self.client.post(
             reverse("banking:list"),

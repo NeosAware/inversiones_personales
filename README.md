@@ -246,3 +246,101 @@ Example cron entry at 03:15 every day:
 ```cron
 15 3 * * * cd /root/personal && set -a && . ./.env && set +a && cd /root/personal/app && /root/personal/venv/bin/python3 manage.py sync_bank_connections >> /root/personal/bank-sync.log 2>&1
 ```
+
+## Local bank robot for personal use
+
+If you do not want a paid Open Banking connector, you can automate the bank website locally on your own Windows PC and upload the downloaded XLS/XLSX files to this Django app.
+
+Server-side requirement:
+
+```text
+BANK_ROBOT_IMPORT_TOKEN=your-long-random-token
+```
+
+The robot uploads to:
+
+```text
+POST /banking/robot/upload/
+```
+
+using the header:
+
+```text
+X-Bank-Robot-Token: your-long-random-token
+```
+
+### Install the local robot on Windows
+
+```powershell
+cd C:\Users\Gerencia\Documents\inversiones_personales
+python -m pip install -r requirements-robot.txt
+python -m playwright install chromium
+```
+
+### Save bank credentials in Windows Credential Manager
+
+```powershell
+python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name username
+python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name password
+```
+
+The script stores secrets under the service name:
+
+```text
+inversiones_personales.bank_robot.<job-id>
+```
+
+### Configure one job per bank/account/card
+
+Copy the example file and edit selectors/URLs for each bank:
+
+```powershell
+Copy-Item .\scripts\bank_robot.example.json .\scripts\bank_robot.config.json
+```
+
+Each job can represent:
+
+- one current account
+- one savings account
+- one card
+
+Recommended pattern:
+
+- one job per bank login profile
+- one job per account/card export page
+- reuse the same `storage_state_path` inside one bank if the session is shared
+
+### Run the robot manually
+
+```powershell
+setx BANK_ROBOT_IMPORT_TOKEN "your-long-random-token"
+.\scripts\run_bank_robot.ps1 -ConfigPath .\scripts\bank_robot.config.json -Job sabadell-cuenta-ximo -Headed
+```
+
+Useful flags:
+
+- `-Headed` shows the browser
+- `-Headless` runs hidden
+- `-DryRun` downloads but does not upload
+- `-SkipUpload` keeps files local only
+
+### Schedule it in Windows Task Scheduler
+
+Create the task automatically:
+
+```powershell
+.\scripts\register_bank_robot_task.ps1 -TaskName "Robot bancos" -Time "08:00" -ConfigPath .\scripts\bank_robot.config.json
+```
+
+Or run only selected jobs:
+
+```powershell
+.\scripts\register_bank_robot_task.ps1 -TaskName "Robot Sabadell" -Time "08:00" -ConfigPath .\scripts\bank_robot.config.json -Job sabadell-cuenta-ximo -Job sabadell-tarjeta-ximo
+```
+
+### Practical notes
+
+- the robot runs on your PC, not on the server
+- your bank password stays in Windows Credential Manager, not in the server
+- cards and accounts are separated using `statement_kind = card/account`
+- if a bank changes its website, update only that job's steps in `bank_robot.config.json`
