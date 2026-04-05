@@ -1,2 +1,4 @@
 Django>=5.2,<5.3
 openpyxl>=3.1,<4.0
+xlrd>=2.0,<3.0
+cryptography>=43.0,<45.0

@@ -1,48 +1,126 @@
 {% extends "base.html" %}
 
-{% block title %}Equities | Personal Investments Hub{% endblock %}
+{% block title %}Acciones | Centro de inversiones personales{% endblock %}
 
 {% block content %}
   <div class="split">
     <section class="card">
       <p class="section-title">{{ page_title }}</p>
-      <h2 style="margin-top:0;">Live equity tracking</h2>
-      <p class="muted" style="margin-top:0;">Each position can be linked to its market symbol and benchmark index so the app can refresh the latest price and show the evolution versus the index.</p>
+      <h2 style="margin-top:0;">Seguimiento de acciones</h2>
+      <p class="muted" style="margin-top:0;">Cada posicion puede vincularse a su simbolo de mercado y a un indice de referencia para actualizar precios y comparar su evolucion.</p>
       <div class="grid cols-4" style="margin-top:20px;">
-        <section class="card"><div class="metric-label">Invested amount</div><div class="metric-value">{{ summary.invested_amount|floatformat:2 }} EUR</div></section>
-        <section class="card"><div class="metric-label">Current value</div><div class="metric-value">{{ summary.current_value|floatformat:2 }} EUR</div></section>
-        <section class="card"><div class="metric-label">Annual dividends</div><div class="metric-value">{{ summary.annual_income|floatformat:2 }} EUR</div></section>
-        <section class="card"><div class="metric-label">Positions synced</div><div class="metric-value">{{ summary.synced_positions }}</div></section>
+        <section class="card"><div class="metric-label">Capital invertido</div><div class="metric-value">{{ summary.invested_amount|floatformat:2 }} EUR</div></section>
+        <section class="card"><div class="metric-label">Valor actual</div><div class="metric-value">{{ summary.current_value|floatformat:2 }} EUR</div></section>
+        <section class="card"><div class="metric-label">Dividendos anuales</div><div class="metric-value">{{ summary.annual_income|floatformat:2 }} EUR</div></section>
+        <section class="card"><div class="metric-label">Posiciones sincronizadas</div><div class="metric-value">{{ summary.synced_positions }}</div></section>
       </div>
     </section>
     <section class="card">
-      <p class="section-title">Refresh quotes</p>
-      <h2 style="margin-top:0;">Market sync</h2>
-      <p class="muted" style="margin-top:0;">Fetches the latest price and one year of daily history for each equity and its reference index.</p>
-      <form method="post" style="margin-top:18px;">
+      <p class="section-title">Alta rapida</p>
+      <h2 style="margin-top:0;">Registrar o actualizar posicion</h2>
+      <p class="muted" style="margin-top:0;">Aqui puedes cargar tus valores de acciones. Si ya existe el mismo `ticker` para el mismo broker, la posicion se actualiza.</p>
+      <form method="post" class="stack" style="margin-top:18px;">
         {% csrf_token %}
-        <button class="button" type="submit">Refresh market data</button>
+        <input type="hidden" name="action" value="create_position">
+        {% if position_form.non_field_errors %}
+          <div class="warn">{{ position_form.non_field_errors|striptags }}</div>
+        {% endif %}
+        <div class="grid cols-2">
+          <div>
+            <label for="{{ position_form.ownership_category.id_for_label }}">{{ position_form.ownership_category.label }}</label>
+            {{ position_form.ownership_category }}
+            {% for error in position_form.ownership_category.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ position_form.broker.id_for_label }}">{{ position_form.broker.label }}</label>
+            {{ position_form.broker }}
+            {% for error in position_form.broker.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ position_form.ticker.id_for_label }}">{{ position_form.ticker.label }}</label>
+            {{ position_form.ticker }}
+            {% for error in position_form.ticker.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ position_form.company_name.id_for_label }}">{{ position_form.company_name.label }}</label>
+            {{ position_form.company_name }}
+            {% for error in position_form.company_name.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ position_form.quote_symbol.id_for_label }}">{{ position_form.quote_symbol.label }}</label>
+            {{ position_form.quote_symbol }}
+            {% for error in position_form.quote_symbol.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ position_form.benchmark_symbol.id_for_label }}">{{ position_form.benchmark_symbol.label }}</label>
+            {{ position_form.benchmark_symbol }}
+            {% for error in position_form.benchmark_symbol.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ position_form.benchmark_name.id_for_label }}">{{ position_form.benchmark_name.label }}</label>
+            {{ position_form.benchmark_name }}
+            {% for error in position_form.benchmark_name.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ position_form.shares.id_for_label }}">{{ position_form.shares.label }}</label>
+            {{ position_form.shares }}
+            {% for error in position_form.shares.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ position_form.average_cost_per_share.id_for_label }}">{{ position_form.average_cost_per_share.label }}</label>
+            {{ position_form.average_cost_per_share }}
+            {% for error in position_form.average_cost_per_share.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ position_form.current_price_per_share.id_for_label }}">{{ position_form.current_price_per_share.label }}</label>
+            {{ position_form.current_price_per_share }}
+            {% for error in position_form.current_price_per_share.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ position_form.annual_dividend_income.id_for_label }}">{{ position_form.annual_dividend_income.label }}</label>
+            {{ position_form.annual_dividend_income }}
+            {% for error in position_form.annual_dividend_income.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+        </div>
+        <div>
+          <label for="{{ position_form.notes.id_for_label }}">{{ position_form.notes.label }}</label>
+          {{ position_form.notes }}
+          {% for error in position_form.notes.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
+        <button class="button" type="submit">Guardar posicion</button>
       </form>
-      <div class="metric-sub" style="margin-top:14px;">Examples: `IBE.MC`, `ENG.MC` and benchmark `^IBEX`.</div>
+      <div class="metric-sub" style="margin-top:14px;">Ejemplos: `IBE.MC`, `ENG.MC` y como indice `^IBEX`.</div>
     </section>
   </div>
 
+  <section class="card" style="margin-top:24px;">
+    <p class="section-title">Sincronizacion</p>
+    <h2 style="margin-top:0;">Actualizar mercado</h2>
+    <p class="muted" style="margin-top:0;">Carga el ultimo precio y un ano de historico diario para cada accion y su indice de referencia.</p>
+    <form method="post" style="margin-top:18px;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="sync_market_data">
+      <button class="button" type="submit">Actualizar datos de mercado</button>
+    </form>
+  </section>
+
   <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Position snapshot</p>
+    <p class="section-title">Resumen de posiciones</p>
     <table>
       <thead>
         <tr>
           <th>Ticker</th>
-          <th>Quote symbol</th>
-          <th>Benchmark</th>
-          <th>Company</th>
+          <th>Simbolo</th>
+          <th>Indice</th>
+          <th>Empresa</th>
           <th>Broker</th>
-          <th>Shares</th>
-          <th>Avg cost/share</th>
-          <th>Current price</th>
-          <th>Latest price date</th>
-          <th>Current value</th>
-          <th>Dividends</th>
+          <th>Origen</th>
+          <th>Acciones</th>
+          <th>Coste medio/acc.</th>
+          <th>Precio actual</th>
+          <th>Fecha de precio</th>
+          <th>Valor actual</th>
+          <th>Dividendos</th>
         </tr>
       </thead>
       <tbody>
@@ -53,6 +131,7 @@
             <td>{{ position.benchmark_name|default:position.benchmark_symbol|default:"-" }}</td>
             <td>{{ position.company_name }}</td>
             <td>{{ position.broker }}</td>
+            <td>{{ position.get_ownership_category_display }}</td>
             <td>{{ position.shares|floatformat:4 }}</td>
             <td>{{ position.average_cost_per_share|floatformat:4 }}</td>
             <td>{{ position.current_price_per_share|floatformat:4 }}</td>
@@ -61,25 +140,28 @@
             <td>{{ position.annual_dividend_income|floatformat:2 }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="11" class="muted">No equity positions yet.</td></tr>
+          <tr><td colspan="12" class="muted">Todavia no hay posiciones de acciones.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </section>
 
-  <p class="section-title" style="margin-top:28px;">Historical performance vs index</p>
+  <p class="section-title" style="margin-top:28px;">Evolucion historica frente al indice</p>
   <div class="grid cols-2">
     {% for card in history_cards %}
       <section class="card">
         <div class="app-summary">
           <div>
             <h3>{{ card.position.company_name }}</h3>
-            <div class="pill">{{ card.position.ticker }} · {{ card.position.quote_symbol|default:"No symbol" }}</div>
+            <div class="pill">{{ card.position.ticker }} - {{ card.position.quote_symbol|default:"Sin simbolo" }}</div>
           </div>
-          <div class="pill">{{ card.position.benchmark_name|default:card.position.benchmark_symbol|default:"No benchmark" }}</div>
+          <div class="meta">
+            <span class="pill">{{ card.position.get_ownership_category_display }}</span>
+            <span class="pill">{{ card.position.benchmark_name|default:card.position.benchmark_symbol|default:"Sin indice" }}</span>
+          </div>
         </div>
         {% if card.has_history %}
-          <div class="metric-sub" style="margin:10px 0 14px;">Base 100 from {{ card.start_date|date:"Y-m-d" }} to {{ card.end_date|date:"Y-m-d" }} · {{ card.points_count }} points</div>
+          <div class="metric-sub" style="margin:10px 0 14px;">Base 100 desde {{ card.start_date|date:"Y-m-d" }} hasta {{ card.end_date|date:"Y-m-d" }} - {{ card.points_count }} puntos</div>
           <svg viewBox="0 0 640 220" width="100%" height="220" style="background:#f6fafc; border:1px solid #e4edf4; border-radius:18px;">
             <line x1="18" y1="202" x2="622" y2="202" stroke="#d3e1ea" stroke-width="1" />
             <line x1="18" y1="18" x2="18" y2="202" stroke="#d3e1ea" stroke-width="1" />
@@ -89,16 +171,16 @@
             <polyline fill="none" stroke="#0f5f88" stroke-width="4" points="{{ card.stock_line }}" />
           </svg>
           <div class="meta">
-            <span class="pill">Stock: {{ card.stock_return_pct|floatformat:2 }} %</span>
-            {% if card.benchmark_return_pct is not None %}<span class="pill">Index: {{ card.benchmark_return_pct|floatformat:2 }} %</span>{% endif %}
-            <span class="pill">Current value: {{ card.position.current_value|floatformat:2 }} EUR</span>
+            <span class="pill">Accion: {{ card.stock_return_pct|floatformat:2 }} %</span>
+            {% if card.benchmark_return_pct is not None %}<span class="pill">Indice: {{ card.benchmark_return_pct|floatformat:2 }} %</span>{% endif %}
+            <span class="pill">Valor actual: {{ card.position.current_value|floatformat:2 }} EUR</span>
           </div>
         {% else %}
-          <div class="metric-sub" style="margin-top:14px;">No history yet. Use “Refresh market data” to load prices and benchmark evolution.</div>
+          <div class="metric-sub" style="margin-top:14px;">Todavia no hay historico. Usa "Actualizar datos de mercado" para cargar precios y evolucion frente al indice.</div>
         {% endif %}
       </section>
     {% empty %}
-      <section class="card"><div class="metric-sub">No equity positions yet.</div></section>
+      <section class="card"><div class="metric-sub">Todavia no hay posiciones de acciones.</div></section>
     {% endfor %}
   </div>
 {% endblock %}

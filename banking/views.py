@@ -17,7 +17,7 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         accounts = list(BankBalance.objects.all())
         investment_positions = list(BankInvestmentPosition.objects.all())
-        context["page_title"] = "Bank balances"
+        context["page_title"] = "Banca"
         context["accounts"] = accounts
         context["investment_positions"] = investment_positions
         context["summary"] = {
@@ -56,7 +56,7 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         for uploaded_file in uploaded_files:
             checksum = build_uploaded_file_checksum(uploaded_file)
             if BankStatementImport.objects.filter(file_checksum=checksum).exists():
-                messages.warning(request, f"{uploaded_file.name} was already imported and has been skipped.")
+                messages.warning(request, f"{uploaded_file.name} ya estaba importado y se ha omitido.")
                 continue
 
             statement = BankStatementImport.objects.create(
@@ -68,12 +68,12 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
                 import_statement(statement)
                 imported_count += 1
             except Exception as exc:
-                messages.error(request, f"{uploaded_file.name} could not be imported: {exc}")
+                messages.error(request, f"No se ha podido importar {uploaded_file.name}: {exc}")
 
         if imported_count:
-            messages.success(request, f"{imported_count} statement(s) imported successfully.")
+            messages.success(request, f"Se han importado correctamente {imported_count} extracto(s).")
         elif uploaded_files:
-            messages.info(request, "No new statements were imported.")
+            messages.info(request, "No se ha importado ningun extracto nuevo.")
 
         return redirect("banking:list")
 
@@ -81,7 +81,7 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         statement = get_object_or_404(BankStatementImport, pk=request.POST.get("statement_id"))
         source_name = statement.source_filename
         statement.delete()
-        messages.success(request, f"{source_name} was deleted. You can import it again now.")
+        messages.success(request, f"{source_name} se ha eliminado. Ya puedes volver a importarlo.")
         return redirect("banking:list")
 
     def _delete_all_statements(self, request):
@@ -93,9 +93,9 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         if deleted_count:
             messages.success(
                 request,
-                f"{deleted_count} statement(s) deleted. The banking summary is now clean and ready for a fresh import.",
+                f"Se han eliminado {deleted_count} extracto(s). El resumen bancario ha quedado limpio para una nueva importacion.",
             )
         else:
-            messages.info(request, "There were no imported statements to delete.")
+            messages.info(request, "No habia extractos importados para eliminar.")
 
         return redirect("banking:list")

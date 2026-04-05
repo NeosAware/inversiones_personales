@@ -124,13 +124,13 @@ def build_bank_liquidity_context():
         balance = statement.closing_balance or ZERO
         positions.append(
             build_metrics(
-                label=f"{statement.account_name} liquidity",
-                asset_type="Bank cash",
+                label=f"Liquidez {statement.account_name} ({statement.get_ownership_category_display()})",
+                asset_type="Efectivo bancario",
                 invested_amount=balance,
                 current_value=balance,
                 annual_income=ZERO,
                 app_url_name="banking:list",
-                notes=f"Latest imported closing balance from {statement.month_label}.",
+                notes=f"Ultimo saldo final importado de {statement.month_label}.",
             )
         )
 
@@ -164,7 +164,7 @@ def build_overview_metrics(state):
         ),
         ZERO,
     )
-    ibex_equities_current_value = section_map.get("Listed equities", {}).get("current_value", ZERO)
+    ibex_equities_current_value = section_map.get("Acciones cotizadas", {}).get("current_value", ZERO)
     highlighted_buckets_current_value = neos_group_current_value + ibex_equities_current_value + liquid_cash
     other_buckets_current_value = total_current_value - highlighted_buckets_current_value
 
@@ -187,12 +187,12 @@ def build_current_portfolio_state():
     bank_liquidity = build_bank_liquidity_context()
     sections = [
         summarise_section(
-            "Bank liquidity",
+            "Liquidez bancaria",
             bank_liquidity["positions"],
             "banking:list",
         ),
         summarise_section(
-            "Banking & custody",
+            "Banca y custodia",
             [
                 *[obj.as_portfolio_position() for obj in BankBalance.objects.all()],
                 *[obj.as_portfolio_position() for obj in BankInvestmentPosition.objects.all()],
@@ -200,7 +200,7 @@ def build_current_portfolio_state():
             "banking:list",
         ),
         summarise_section(
-            "Listed equities",
+            "Acciones cotizadas",
             [obj.as_portfolio_position() for obj in EquityPosition.objects.all()],
             "equities:list",
         ),
@@ -220,7 +220,7 @@ def build_current_portfolio_state():
             "neos_materials:list",
         ),
         summarise_section(
-            "Real estate",
+            "Inmuebles",
             [obj.as_portfolio_position() for obj in PropertyInvestment.objects.all()],
             "real_estate:list",
         ),
@@ -359,23 +359,23 @@ def build_spending_alerts():
     if latest_total > settings.total_monthly_expense_limit:
         alerts.append(
             {
-                "scope": "Total monthly expenses",
-                "severity": "High",
+                "scope": "Gasto mensual total",
+                "severity": "Alta",
                 "month": latest_month,
                 "current_amount": latest_total,
                 "reference_amount": settings.total_monthly_expense_limit,
-                "message": "Total monthly expenses are above the household cap.",
+                "message": "El gasto mensual total supera el limite del hogar.",
             }
         )
     if avg_previous_total and latest_total > avg_previous_total * (Decimal("1") + settings.expense_spike_threshold_pct / Decimal("100")):
         alerts.append(
             {
-                "scope": "Total monthly expenses",
-                "severity": "Medium",
+                "scope": "Gasto mensual total",
+                "severity": "Media",
                 "month": latest_month,
                 "current_amount": latest_total,
                 "reference_amount": avg_previous_total,
-                "message": "Total monthly expenses are materially above the recent average.",
+                "message": "El gasto mensual total esta claramente por encima de la media reciente.",
             }
         )
 
@@ -387,11 +387,11 @@ def build_spending_alerts():
             alerts.append(
                 {
                     "scope": concept,
-                    "severity": "High",
+                    "severity": "Alta",
                     "month": latest_month,
                     "current_amount": current_amount,
                     "reference_amount": settings.concept_monthly_expense_limit,
-                    "message": "This expense concept is above the per-concept monthly cap.",
+                    "message": "Este concepto de gasto supera el limite mensual por concepto.",
                 }
             )
         previous_values = [month_values.get(month, ZERO) for month in previous_months if month_values.get(month, ZERO) > ZERO]
@@ -401,15 +401,15 @@ def build_spending_alerts():
                 alerts.append(
                     {
                         "scope": concept,
-                        "severity": "Medium",
+                        "severity": "Media",
                         "month": latest_month,
                         "current_amount": current_amount,
                         "reference_amount": avg_previous,
-                        "message": "This expense concept is significantly above its recent average.",
+                        "message": "Este concepto de gasto esta muy por encima de su media reciente.",
                     }
                 )
 
-    alerts.sort(key=lambda item: (item["severity"] != "High", -item["current_amount"]))
+    alerts.sort(key=lambda item: (item["severity"] != "Alta", -item["current_amount"]))
     return {"alerts": alerts, "latest_month": latest_month, "settings": settings}
 
 
@@ -424,7 +424,7 @@ def build_portfolio_dashboard():
         )
 
     return {
-        "page_title": "Personal Investments Hub",
+        "page_title": "Centro de inversiones personales",
         "overview": build_overview_metrics(state),
         **state,
         **snapshot_context,

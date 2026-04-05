@@ -26,6 +26,51 @@ function Get-PreferredLocalIp {
   return "127.0.0.1"
 }
 
+function Get-StoredPostgresPassword {
+  if ($env:POSTGRES_PASSWORD) {
+    return $env:POSTGRES_PASSWORD
+  }
+
+  $userValue = [Environment]::GetEnvironmentVariable("POSTGRES_PASSWORD", "User")
+  if ($userValue) {
+    return $userValue
+  }
+
+  return [Environment]::GetEnvironmentVariable("POSTGRES_PASSWORD", "Machine")
+}
+
+function Configure-DatabaseEnvironment {
+  $requestedDbEngine = ""
+  if ($env:DB_ENGINE) {
+    $requestedDbEngine = $env:DB_ENGINE.Trim().ToLowerInvariant()
+  }
+
+  if ($requestedDbEngine -and $requestedDbEngine -notin @("postgres", "postgresql")) {
+    Write-Host "Using DB engine from current environment: $($env:DB_ENGINE)"
+    return
+  }
+
+  $storedPostgresPassword = Get-StoredPostgresPassword
+  if ($storedPostgresPassword) {
+    $env:DB_ENGINE = "postgresql"
+    $env:POSTGRES_DB = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { "inversiones_personales" }
+    $env:POSTGRES_USER = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { "postgres" }
+    $env:POSTGRES_HOST = if ($env:POSTGRES_HOST) { $env:POSTGRES_HOST } else { "127.0.0.1" }
+    $env:POSTGRES_PORT = if ($env:POSTGRES_PORT) { $env:POSTGRES_PORT } else { "5432" }
+    $env:POSTGRES_PASSWORD = $storedPostgresPassword
+    Write-Host "Using PostgreSQL because POSTGRES_PASSWORD is configured."
+    return
+  }
+
+  Remove-Item Env:DB_ENGINE -ErrorAction SilentlyContinue
+  if ($requestedDbEngine -in @("postgres", "postgresql")) {
+    Write-Warning "DB_ENGINE=postgresql is set but POSTGRES_PASSWORD is not configured. Falling back to SQLite (db.sqlite3) to avoid Django 500 errors on startup."
+  }
+  else {
+    Write-Warning "POSTGRES_PASSWORD is not configured. Falling back to SQLite (db.sqlite3) to avoid Django 500 errors on startup."
+  }
+}
+
 function Stop-ExistingDjangoServer {
   $listeners = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
   foreach ($listener in $listeners) {
@@ -78,20 +123,7 @@ $trustedOrigins = @(
   "http://$localIp`:8000"
 ) | Select-Object -Unique
 
-$storedPostgresPassword = $env:POSTGRES_PASSWORD
-if (-not $storedPostgresPassword) {
-  $storedPostgresPassword = [Environment]::GetEnvironmentVariable("POSTGRES_PASSWORD", "User")
-}
-if (-not $storedPostgresPassword) {
-  $storedPostgresPassword = [Environment]::GetEnvironmentVariable("POSTGRES_PASSWORD", "Machine")
-}
-
-$env:DB_ENGINE = "postgresql"
-$env:POSTGRES_DB = "inversiones_personales"
-$env:POSTGRES_USER = "postgres"
-$env:POSTGRES_HOST = "127.0.0.1"
-$env:POSTGRES_PORT = "5432"
-$env:POSTGRES_PASSWORD = $storedPostgresPassword
+Configure-DatabaseEnvironment
 $env:APP_HOME_NETWORK_MODE = "1"
 $env:APP_ALLOWED_HOSTS = ($hostNames -join ",")
 $env:APP_CSRF_TRUSTED_ORIGINS = ($trustedOrigins -join ",")

@@ -1,21 +1,21 @@
 {% extends "base.html" %}
 
-{% block title %}Sign in | Personal Investments Hub{% endblock %}
+{% block title %}Iniciar sesion | Centro de inversiones personales{% endblock %}
 
 {% block content %}
   <div style="max-width:520px; margin:48px auto 0;">
     <section class="card">
-      <p class="section-title">Household access</p>
-      <h2 style="margin-top:0;">Sign in to continue</h2>
-      <p class="muted" style="margin-top:0;">Use one of the household users to review investments, imports, snapshots and alerts.</p>
+      <p class="section-title">Acceso</p>
+      <h2 style="margin-top:0;">Inicia sesion para continuar</h2>
+      <p class="muted" style="margin-top:0;">Usa uno de los usuarios del hogar para revisar inversiones, importaciones, fotos de cartera y alertas.</p>
       <form method="post" class="stack" style="margin-top:18px;">
         {% csrf_token %}
         <div>
-          <label for="{{ form.username.id_for_label }}">Username</label>
+          <label for="{{ form.username.id_for_label }}">Usuario</label>
           {{ form.username }}
         </div>
         <div>
-          <label for="{{ form.password.id_for_label }}">Password</label>
+          <label for="{{ form.password.id_for_label }}">Contrasena</label>
           {{ form.password }}
         </div>
         {% if form.non_field_errors %}
@@ -25,7 +25,7 @@
           <input type="hidden" name="next" value="{{ next }}">
         {% endif %}
         <div>
-          <button class="button" type="submit">Sign in</button>
+          <button class="button" type="submit">Entrar</button>
         </div>
       </form>
     </section>

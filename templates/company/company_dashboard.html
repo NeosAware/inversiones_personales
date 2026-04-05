@@ -1,36 +1,36 @@
 {% extends "base.html" %}
 
-{% block title %}{{ page_title }} | Personal Investments Hub{% endblock %}
+{% block title %}{{ page_title }} | Centro de inversiones personales{% endblock %}
 
 {% block content %}
   <div class="split">
     <section class="card">
       <p class="section-title">{{ page_title }}</p>
-      <h2 style="margin-top:0;">Annual fiscal valuation</h2>
+      <h2 style="margin-top:0;">Valoracion fiscal anual</h2>
       <p class="muted" style="margin-top:0;">{{ module_blurb }}</p>
       <div class="grid cols-4" style="margin-top:20px;">
         <section class="card">
-          <div class="metric-label">Years loaded</div>
+          <div class="metric-label">Ejercicios cargados</div>
           <div class="metric-value">{{ annual_summary.years_loaded }}</div>
-          <div class="metric-sub">{% if annual_summary.latest_year %}Latest year {{ annual_summary.latest_year }}{% else %}Upload the first annual file set.{% endif %}</div>
+          <div class="metric-sub">{% if annual_summary.latest_year %}Ultimo ejercicio {{ annual_summary.latest_year }}{% else %}Sube el primer juego anual de documentos.{% endif %}</div>
         </section>
         <section class="card">
-          <div class="metric-label">AEAT company value</div>
+          <div class="metric-label">Valor AEAT de la empresa</div>
           <div class="metric-value">{{ annual_summary.company_value|floatformat:2 }} EUR</div>
-          <div class="metric-sub">Latest fiscal value under the Spanish wealth-tax rule.</div>
+          <div class="metric-sub">Ultimo valor fiscal segun la regla del Impuesto sobre el Patrimonio.</div>
         </section>
         <section class="card">
-          <div class="metric-label">Your stake value</div>
+          <div class="metric-label">Valor de tu participacion</div>
           <div class="metric-value">{{ annual_summary.owner_value|floatformat:2 }} EUR</div>
           <div class="metric-sub">
-            {% if annual_summary.ownership_pct is not None %}Ownership {{ annual_summary.ownership_pct|floatformat:2 }} %{% else %}Add ownership in the annual upload form.{% endif %}
+            {% if annual_summary.ownership_pct is not None %}Participacion {{ annual_summary.ownership_pct|floatformat:2 }} %{% else %}Anade tu participacion en el formulario anual.{% endif %}
           </div>
         </section>
         <section class="card">
-          <div class="metric-label">Method used</div>
+          <div class="metric-label">Metodo aplicado</div>
           <div class="metric-value" style="font-size:18px;">{{ annual_summary.method }}</div>
           <div class="metric-sub">
-            {% if annual_summary.capitalised_value is not None %}Capitalised earnings {{ annual_summary.capitalised_value|floatformat:2 }} EUR{% else %}3-year capitalised value pending data.{% endif %}
+            {% if annual_summary.capitalised_value is not None %}Valor capitalizado {{ annual_summary.capitalised_value|floatformat:2 }} EUR{% else %}Pendiente el valor capitalizado a 3 anos por falta de datos.{% endif %}
           </div>
         </section>
       </div>
@@ -40,9 +40,9 @@
     </section>
 
     <section class="card">
-      <p class="section-title">Load annual files</p>
-      <h2 style="margin-top:0;">Upload balance, P&amp;L or IS</h2>
-      <p class="muted" style="margin-top:0;">You can upload one, two or the three PDFs for the same year. Manual figures override the parser if needed.</p>
+      <p class="section-title">Carga anual</p>
+      <h2 style="margin-top:0;">Subir balance, PyG o IS</h2>
+      <p class="muted" style="margin-top:0;">Puedes subir uno, dos o los tres PDF del mismo ejercicio. Si hace falta, las cifras manuales prevalecen sobre el parser.</p>
       <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
         {% csrf_token %}
         {% if annual_form.non_field_errors %}
@@ -89,28 +89,28 @@
           <label style="display:flex; align-items:center; gap:8px; margin:0;">{{ annual_form.audited_favorable }} {{ annual_form.audited_favorable.label }}</label>
         </div>
         <div>
-          <button class="button" type="submit">Save annual valuation</button>
+          <button class="button" type="submit">Guardar valoracion anual</button>
         </div>
       </form>
     </section>
   </div>
 
   <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Annual valuation history</p>
+    <p class="section-title">Historico de valoraciones anuales</p>
     <table>
       <thead>
         <tr>
-          <th>Year</th>
-          <th>Ownership</th>
-          <th>Net equity</th>
-          <th>Share capital</th>
-          <th>Profit after tax</th>
-          <th>3y avg profit</th>
-          <th>Capitalised value</th>
-          <th>AEAT company value</th>
-          <th>Your value</th>
-          <th>Method</th>
-          <th>Documents</th>
+          <th>Ejercicio</th>
+          <th>Participacion</th>
+          <th>Patrimonio neto</th>
+          <th>Capital social</th>
+          <th>Resultado del ejercicio</th>
+          <th>Media beneficio 3a</th>
+          <th>Valor capitalizado</th>
+          <th>Valor AEAT empresa</th>
+          <th>Tu valor</th>
+          <th>Metodo</th>
+          <th>Documentos</th>
         </tr>
       </thead>
       <tbody>
@@ -129,7 +129,7 @@
             <td>
               <div style="display:flex; gap:8px; flex-wrap:wrap;">
                 {% if valuation.balance_pdf %}<a class="pill" href="{{ valuation.balance_pdf.url }}" target="_blank">Balance</a>{% endif %}
-                {% if valuation.profit_loss_pdf %}<a class="pill" href="{{ valuation.profit_loss_pdf.url }}" target="_blank">P&amp;L</a>{% endif %}
+                {% if valuation.profit_loss_pdf %}<a class="pill" href="{{ valuation.profit_loss_pdf.url }}" target="_blank">PyG</a>{% endif %}
                 {% if valuation.corporate_tax_pdf %}<a class="pill" href="{{ valuation.corporate_tax_pdf.url }}" target="_blank">IS</a>{% endif %}
               </div>
             </td>
@@ -140,22 +140,22 @@
             </tr>
           {% endif %}
         {% empty %}
-          <tr><td colspan="11" class="muted">No annual valuations yet.</td></tr>
+          <tr><td colspan="11" class="muted">Todavia no hay valoraciones anuales.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </section>
 
   <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Portfolio position</p>
+    <p class="section-title">Posicion en cartera</p>
     <table>
       <thead>
         <tr>
-          <th>Investment</th>
-          <th>Invested</th>
-          <th>Current valuation</th>
-          <th>Annual dividend</th>
-          <th>Notes</th>
+          <th>Inversion</th>
+          <th>Invertido</th>
+          <th>Valor actual</th>
+          <th>Dividendo anual</th>
+          <th>Notas</th>
         </tr>
       </thead>
       <tbody>
@@ -168,7 +168,7 @@
             <td>{{ holding.notes|default:"-" }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="5" class="muted">No portfolio positions yet. The module will create one automatically once an annual valuation has a stake value.</td></tr>
+          <tr><td colspan="5" class="muted">Todavia no hay posiciones en cartera. El modulo creara una automaticamente cuando una valoracion anual tenga valor para el socio.</td></tr>
         {% endfor %}
       </tbody>
     </table>

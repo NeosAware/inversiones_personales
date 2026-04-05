@@ -16,5 +16,5 @@ class PortfolioDashboardView(LoginRequiredMixin, TemplateView):
 
     def post(self, request, *args, **kwargs):
         capture_portfolio_snapshot()
-        messages.success(request, "Portfolio snapshot captured for today.")
+        messages.success(request, "Se ha guardado la foto de cartera de hoy.")
         return redirect("portfolio:dashboard")

@@ -31,6 +31,38 @@ function Get-StoredPostgresPassword {
   return [Environment]::GetEnvironmentVariable("POSTGRES_PASSWORD", "Machine")
 }
 
+function Configure-DatabaseEnvironment {
+  $requestedDbEngine = ""
+  if ($env:DB_ENGINE) {
+    $requestedDbEngine = $env:DB_ENGINE.Trim().ToLowerInvariant()
+  }
+
+  if ($requestedDbEngine -and $requestedDbEngine -notin @("postgres", "postgresql")) {
+    Write-Host "Using DB engine from current environment: $($env:DB_ENGINE)"
+    return
+  }
+
+  $storedPostgresPassword = Get-StoredPostgresPassword
+  if ($storedPostgresPassword) {
+    $env:DB_ENGINE = "postgresql"
+    $env:POSTGRES_DB = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { "inversiones_personales" }
+    $env:POSTGRES_USER = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { "postgres" }
+    $env:POSTGRES_HOST = if ($env:POSTGRES_HOST) { $env:POSTGRES_HOST } else { "127.0.0.1" }
+    $env:POSTGRES_PORT = if ($env:POSTGRES_PORT) { $env:POSTGRES_PORT } else { "5432" }
+    $env:POSTGRES_PASSWORD = $storedPostgresPassword
+    Write-Host "Using PostgreSQL because POSTGRES_PASSWORD is configured."
+    return
+  }
+
+  Remove-Item Env:DB_ENGINE -ErrorAction SilentlyContinue
+  if ($requestedDbEngine -in @("postgres", "postgresql")) {
+    Write-Warning "DB_ENGINE=postgresql is set but POSTGRES_PASSWORD is not configured. Falling back to SQLite (db.sqlite3) to avoid Django 500 errors on startup."
+  }
+  else {
+    Write-Warning "POSTGRES_PASSWORD is not configured. Falling back to SQLite (db.sqlite3) to avoid Django 500 errors on startup."
+  }
+}
+
 function Get-CloudflaredPath {
   $command = Get-Command cloudflared -ErrorAction SilentlyContinue
   if ($command) {
@@ -53,14 +85,7 @@ if (-not $cloudflaredPath) {
   throw "cloudflared is not installed or could not be located. Install it first with: winget install --id Cloudflare.cloudflared"
 }
 
-$storedPostgresPassword = Get-StoredPostgresPassword
-
-$env:DB_ENGINE = "postgresql"
-$env:POSTGRES_DB = "inversiones_personales"
-$env:POSTGRES_USER = "postgres"
-$env:POSTGRES_HOST = "127.0.0.1"
-$env:POSTGRES_PORT = "5432"
-$env:POSTGRES_PASSWORD = $storedPostgresPassword
+Configure-DatabaseEnvironment
 $env:APP_HOME_NETWORK_MODE = "0"
 $env:APP_ALLOWED_HOSTS = "127.0.0.1,localhost,.trycloudflare.com"
 $env:APP_CSRF_TRUSTED_ORIGINS = "http://127.0.0.1:8000,http://localhost:8000,https://*.trycloudflare.com"

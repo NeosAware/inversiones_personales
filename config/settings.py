@@ -166,7 +166,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
-LANGUAGE_CODE = "en-gb"
+LANGUAGE_CODE = "es-es"
 TIME_ZONE = "Europe/Madrid"
 USE_I18N = True
 USE_TZ = True
@@ -177,6 +177,17 @@ STATICFILES_DIRS = [BASE_DIR / "static"] if (BASE_DIR / "static").exists() else 
 STATIC_ROOT = parse_path(os.environ.get("APP_STATIC_ROOT"), BASE_DIR / "staticfiles")
 MEDIA_URL = os.environ.get("APP_MEDIA_URL", "/media/")
 MEDIA_ROOT = parse_path(os.environ.get("APP_MEDIA_ROOT"), BASE_DIR / "media")
+APP_MEDIA_ENCRYPTION_KEY = os.environ.get("APP_MEDIA_ENCRYPTION_KEY", "").strip()
+MEDIA_ENCRYPTION_ENABLED = bool(APP_MEDIA_ENCRYPTION_KEY)
+
+STORAGES = {
+    "default": {
+        "BACKEND": "config.storage.EncryptedFileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "portfolio:dashboard"

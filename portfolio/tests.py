@@ -184,7 +184,7 @@ class PortfolioServicesTests(TestCase):
 
         alerts = build_spending_alerts()["alerts"]
 
-        self.assertTrue(any(alert["scope"] == "Total monthly expenses" for alert in alerts))
+        self.assertTrue(any(alert["scope"] == "Gasto mensual total" for alert in alerts))
         self.assertTrue(any(alert["scope"] == "Tarjeta de credito" for alert in alerts))
 
     def test_dashboard_includes_snapshot_history_context(self):

@@ -1,9 +1,15 @@
 from django.db import models
 
 from portfolio.metrics import build_metrics
+from portfolio.ownership import AssetOwnershipCategory
 
 
 class BankBalance(models.Model):
+    ownership_category = models.CharField(
+        max_length=12,
+        choices=AssetOwnershipCategory.choices,
+        default=AssetOwnershipCategory.JOINT,
+    )
     institution = models.CharField(max_length=120)
     account_name = models.CharField(max_length=120)
     deposited_amount = models.DecimalField(max_digits=14, decimal_places=2)
@@ -20,8 +26,8 @@ class BankBalance(models.Model):
 
     def as_portfolio_position(self):
         return build_metrics(
-            label=str(self),
-            asset_type="Banking",
+            label=f"{self} ({self.get_ownership_category_display()})",
+            asset_type="Banca",
             invested_amount=self.deposited_amount,
             current_value=self.current_balance,
             annual_income=self.annual_interest_income,
@@ -32,10 +38,15 @@ class BankBalance(models.Model):
 
 class BankStatementImport(models.Model):
     class ImportStatus(models.TextChoices):
-        PENDING = "pending", "Pending"
-        IMPORTED = "imported", "Imported"
-        FAILED = "failed", "Failed"
+        PENDING = "pending", "Pendiente"
+        IMPORTED = "imported", "Importado"
+        FAILED = "failed", "Fallido"
 
+    ownership_category = models.CharField(
+        max_length=12,
+        choices=AssetOwnershipCategory.choices,
+        default=AssetOwnershipCategory.JOINT,
+    )
     institution = models.CharField(max_length=120, blank=True)
     account_label = models.CharField(max_length=120, blank=True)
     iban = models.CharField(max_length=34, blank=True)
@@ -65,7 +76,7 @@ class BankStatementImport(models.Model):
         ordering = ["-period_end", "-imported_at"]
 
     def __str__(self):
-        period = self.period_end.strftime("%Y-%m") if self.period_end else "No period"
+        period = self.period_label
         return f"{self.account_name} - {period}"
 
     def delete(self, using=None, keep_parents=False):
@@ -88,15 +99,27 @@ class BankStatementImport(models.Model):
     def month_label(self):
         if self.period_end:
             return self.period_end.strftime("%Y-%m")
-        return "No month"
+        return "Sin mes"
+
+    @property
+    def period_label(self):
+        if self.period_start and self.period_end:
+            start_label = self.period_start.strftime("%Y-%m")
+            end_label = self.period_end.strftime("%Y-%m")
+            return start_label if start_label == end_label else f"{start_label} a {end_label}"
+        if self.period_end:
+            return self.period_end.strftime("%Y-%m")
+        if self.period_start:
+            return self.period_start.strftime("%Y-%m")
+        return "Sin periodo"
 
 
 class BankMovement(models.Model):
     class MovementGroup(models.TextChoices):
-        INCOME = "income", "Income"
-        EXPENSE = "expense", "Expense"
-        PENSION = "pension", "Pension contribution"
-        DIVIDEND = "dividend", "Stock dividend"
+        INCOME = "income", "Ingreso"
+        EXPENSE = "expense", "Gasto"
+        PENSION = "pension", "Aportacion a plan"
+        DIVIDEND = "dividend", "Dividendo"
 
     statement_import = models.ForeignKey(
         BankStatementImport,
@@ -123,11 +146,16 @@ class BankMovement(models.Model):
 
 class BankInvestmentPosition(models.Model):
     class ProductType(models.TextChoices):
-        SAVINGS_PLAN = "savings_plan", "Savings plan"
-        LIFE_SAVINGS = "life_savings", "Life savings"
-        BROKERED_EQUITY = "brokered_equity", "Brokered equity"
-        OTHER = "other", "Other"
+        SAVINGS_PLAN = "savings_plan", "Plan de ahorro"
+        LIFE_SAVINGS = "life_savings", "Ahorro vida"
+        BROKERED_EQUITY = "brokered_equity", "Acciones en custodia"
+        OTHER = "other", "Otro"
 
+    ownership_category = models.CharField(
+        max_length=12,
+        choices=AssetOwnershipCategory.choices,
+        default=AssetOwnershipCategory.JOINT,
+    )
     institution = models.CharField(max_length=120)
     product_name = models.CharField(max_length=180)
     product_type = models.CharField(max_length=24, choices=ProductType.choices, default=ProductType.OTHER)
@@ -152,8 +180,8 @@ class BankInvestmentPosition(models.Model):
 
     def as_portfolio_position(self):
         return build_metrics(
-            label=str(self),
-            asset_type="Banking",
+            label=f"{self} ({self.get_ownership_category_display()})",
+            asset_type="Banca",
             invested_amount=self.invested_amount,
             current_value=self.current_value,
             annual_income=self.annual_income,

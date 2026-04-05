@@ -2,7 +2,11 @@ from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import reverse
+
+from portfolio.ownership import AssetOwnershipCategory
 
 from .models import EquityPosition
 from .services import MarketSeries, build_equity_history_cards, sync_equity_market_data
@@ -76,3 +80,43 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(cards[0]["stock_return_pct"], Decimal("20.00"))
         self.assertEqual(cards[0]["benchmark_return_pct"], Decimal("10.00"))
         self.assertTrue(cards[0]["stock_line"])
+
+
+class EquitiesViewTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="equity-owner",
+            password="StrongPass123!",
+        )
+        self.client.force_login(self.user)
+
+    def test_can_create_equity_position_from_page_form(self):
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "create_position",
+                "ownership_category": AssetOwnershipCategory.XIMO,
+                "broker": "Interactive Brokers",
+                "ticker": "ibe",
+                "company_name": "Iberdrola",
+                "quote_symbol": "ibe.mc",
+                "benchmark_symbol": "^ibex",
+                "benchmark_name": "IBEX 35",
+                "shares": "125,5000",
+                "average_cost_per_share": "10,2500",
+                "current_price_per_share": "",
+                "annual_dividend_income": "72,50",
+                "notes": "Posicion principal",
+            },
+        )
+
+        self.assertRedirects(response, reverse("equities:list"))
+        position = EquityPosition.objects.get(ticker="IBE", broker="Interactive Brokers")
+        self.assertEqual(position.company_name, "Iberdrola")
+        self.assertEqual(position.quote_symbol, "IBE.MC")
+        self.assertEqual(position.benchmark_symbol, "^IBEX")
+        self.assertEqual(position.ownership_category, AssetOwnershipCategory.XIMO)
+        self.assertEqual(position.shares, Decimal("125.5000"))
+        self.assertEqual(position.average_cost_per_share, Decimal("10.2500"))
+        self.assertEqual(position.current_price_per_share, Decimal("10.2500"))
+        self.assertEqual(position.annual_dividend_income, Decimal("72.50"))

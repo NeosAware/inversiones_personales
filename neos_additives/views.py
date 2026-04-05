@@ -19,7 +19,7 @@ class AdditivesHoldingListView(LoginRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         context["page_title"] = "Neos Additives"
         context["module_blurb"] = (
-            "Upload annual balance, P&L or corporate tax PDFs to calculate the AEAT tax value of the company and your stake."
+            "Sube el balance anual, la cuenta de resultados o el impuesto de sociedades en PDF para calcular el valor fiscal AEAT de la empresa y de tu participacion."
         )
         context["annual_form"] = kwargs.get("annual_form", AnnualCompanyValuationForm())
         context.update(build_company_valuation_context(AdditivesHolding, AdditivesAnnualValuation))
@@ -37,5 +37,5 @@ class AdditivesHoldingListView(LoginRequiredMixin, TemplateView):
             AdditivesHolding,
             AUTO_HOLDING_NAME,
         )
-        messages.success(request, f"Neos Additives {record.year} valuation recalculated successfully.")
+        messages.success(request, f"La valoracion de Neos Additives de {record.year} se ha recalculado correctamente.")
         return redirect("neos_additives:list")

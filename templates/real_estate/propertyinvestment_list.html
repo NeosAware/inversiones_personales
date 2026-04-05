@@ -1,17 +1,17 @@
 {% extends "base.html" %}
 
-{% block title %}Real estate | Personal Investments Hub{% endblock %}
+{% block title %}Inmuebles | Centro de inversiones personales{% endblock %}
 
 {% block content %}
   <p class="section-title">{{ page_title }}</p>
   <div class="grid cols-3">
-    <section class="card"><div class="metric-label">Equity invested</div><div class="metric-value">{{ summary.invested_amount|floatformat:2 }} EUR</div></section>
-    <section class="card"><div class="metric-label">Current equity value</div><div class="metric-value">{{ summary.current_value|floatformat:2 }} EUR</div></section>
-    <section class="card"><div class="metric-label">Net annual rental income</div><div class="metric-value">{{ summary.annual_income|floatformat:2 }} EUR</div></section>
+    <section class="card"><div class="metric-label">Capital invertido</div><div class="metric-value">{{ summary.invested_amount|floatformat:2 }} EUR</div></section>
+    <section class="card"><div class="metric-label">Valor patrimonial actual</div><div class="metric-value">{{ summary.current_value|floatformat:2 }} EUR</div></section>
+    <section class="card"><div class="metric-label">Renta neta anual</div><div class="metric-value">{{ summary.annual_income|floatformat:2 }} EUR</div></section>
   </div>
   <section class="card table-card" style="margin-top:24px;">
     <table>
-      <thead><tr><th>Property</th><th>City</th><th>Equity invested</th><th>Market value</th><th>Mortgage</th><th>Current equity</th><th>Net annual income</th></tr></thead>
+      <thead><tr><th>Inmueble</th><th>Ciudad</th><th>Capital invertido</th><th>Valor de mercado</th><th>Hipoteca</th><th>Patrimonio actual</th><th>Renta neta anual</th></tr></thead>
       <tbody>
         {% for property_item in properties %}
           <tr>
@@ -24,7 +24,7 @@
             <td>{{ property_item.annual_income|floatformat:2 }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="7" class="muted">No real estate assets yet.</td></tr>
+          <tr><td colspan="7" class="muted">Todavia no hay activos inmobiliarios.</td></tr>
         {% endfor %}
       </tbody>
     </table>

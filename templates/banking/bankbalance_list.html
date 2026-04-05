@@ -1,33 +1,33 @@
 {% extends "base.html" %}
 
-{% block title %}Bank balances | Personal Investments Hub{% endblock %}
+{% block title %}Banca | Centro de inversiones personales{% endblock %}
 
 {% block content %}
   <div class="split">
     <section class="card">
       <p class="section-title">{{ page_title }}</p>
-      <h2 style="margin-top:0;">Current cash positions</h2>
-      <p class="muted" style="margin-top:0;">Static balances for deposits and accounts, kept separate from monthly movement imports.</p>
+      <h2 style="margin-top:0;">Posiciones de efectivo</h2>
+      <p class="muted" style="margin-top:0;">Saldos estaticos de cuentas y depositos, separados de la importacion mensual de movimientos.</p>
       <div class="grid cols-3" style="margin-top:20px;">
         <section class="card">
-          <div class="metric-label">Deposited amount</div>
+          <div class="metric-label">Capital depositado</div>
           <div class="metric-value">{{ summary.invested_amount|floatformat:2 }} EUR</div>
         </section>
         <section class="card">
-          <div class="metric-label">Current balance</div>
+          <div class="metric-label">Saldo actual</div>
           <div class="metric-value">{{ summary.current_value|floatformat:2 }} EUR</div>
         </section>
         <section class="card">
-          <div class="metric-label">Annual interest income</div>
+          <div class="metric-label">Interes anual</div>
           <div class="metric-value">{{ summary.annual_income|floatformat:2 }} EUR</div>
         </section>
       </div>
     </section>
 
     <section class="card">
-      <p class="section-title">Import monthly extracts</p>
-      <h2 style="margin-top:0;">Load current account Excel files</h2>
-      <p class="muted" style="margin-top:0;">The app stores only a simplified cash-flow view: income, expenses by concept, plan contributions and stock dividends.</p>
+      <p class="section-title">Importacion</p>
+      <h2 style="margin-top:0;">Cargar extractos de cuenta</h2>
+      <p class="muted" style="margin-top:0;">La aplicacion guarda una vista simplificada del flujo de caja: ingresos, gastos por concepto, aportaciones a planes y dividendos.</p>
       <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
         {% csrf_token %}
         <input type="hidden" name="action" value="import">
@@ -38,61 +38,63 @@
           {% for error in form.files.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
         </div>
         <div style="display:flex; flex-wrap:wrap; gap:12px;">
-          <button class="button" type="submit">Import statements</button>
+          <button class="button" type="submit">Importar extractos</button>
         </div>
       </form>
+      <div class="metric-sub" style="margin-top:14px;">La categoria de origen de cada extracto se intenta reconocer automaticamente por el titular o por importaciones previas de la misma cuenta.</div>
       <div class="meta">
-        <span class="pill">{{ statement_summary.statements_count }} imports</span>
-        <span class="pill">{{ statement_summary.months_count }} months</span>
-        <span class="pill">{{ statement_summary.accounts_count }} accounts</span>
+        <span class="pill">{{ statement_summary.statements_count }} importaciones</span>
+        <span class="pill">{{ statement_summary.months_count }} meses</span>
+        <span class="pill">{{ statement_summary.accounts_count }} cuentas</span>
       </div>
-      <div class="metric-sub" style="margin-top:14px;">You can delete one import or clear all of them below, then upload the same files again to recalculate the monthly view from scratch.</div>
-      <form method="post" style="margin-top:14px;" onsubmit="return confirm('This will delete all imported extracts and their movements. Do you want to continue?');">
+      <div class="metric-sub" style="margin-top:14px;">Puedes borrar una importacion o vaciarlas todas y volver a cargar los mismos ficheros para recalcular la vista mensual desde cero.</div>
+      <form method="post" style="margin-top:14px;" onsubmit="return confirm('Esto eliminara todos los extractos importados y sus movimientos. Quieres continuar?');">
         {% csrf_token %}
         <input type="hidden" name="action" value="delete_all_statements">
-        <button class="button danger small" type="submit">Delete all imports</button>
+        <button class="button danger small" type="submit">Borrar todas las importaciones</button>
       </form>
     </section>
   </div>
 
-  <p class="section-title" style="margin-top:28px;">Bank products and custody</p>
+  <p class="section-title" style="margin-top:28px;">Productos bancarios y custodia</p>
   <div class="grid cols-4">
     <section class="card">
-      <div class="metric-label">Investment products</div>
+      <div class="metric-label">Productos de inversion</div>
       <div class="metric-value">{{ investment_summary.positions_count }}</div>
-      <div class="metric-sub">Savings plans, life-savings products and any other bank-held positions.</div>
+      <div class="metric-sub">Planes de ahorro, productos de ahorro-vida y otras posiciones custodiadas por el banco.</div>
     </section>
     <section class="card">
-      <div class="metric-label">Estimated invested capital</div>
+      <div class="metric-label">Capital invertido estimado</div>
       <div class="metric-value">{{ investment_summary.invested_amount|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Uses current value when cost basis is still unknown.</div>
+      <div class="metric-sub">Usa el valor actual cuando todavia no se conoce el coste de compra.</div>
     </section>
     <section class="card">
-      <div class="metric-label">Current value</div>
+      <div class="metric-label">Valor actual</div>
       <div class="metric-value">{{ investment_summary.current_value|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Total valuation of bank-held investment products.</div>
+      <div class="metric-sub">Valoracion total de los productos de inversion mantenidos en el banco.</div>
     </section>
     <section class="card">
-      <div class="metric-label">Annual income</div>
+      <div class="metric-label">Renta anual</div>
       <div class="metric-value">{{ investment_summary.annual_income|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Optional income estimate for these products.</div>
+      <div class="metric-sub">Estimacion opcional de rentas para estos productos.</div>
     </section>
   </div>
 
   <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Bank investment positions</p>
+    <p class="section-title">Posiciones bancarias de inversion</p>
     <table>
       <thead>
         <tr>
-          <th>Institution</th>
-          <th>Product</th>
-          <th>Type</th>
-          <th>Units</th>
-          <th>Estimated invested</th>
-          <th>Current value</th>
-          <th>Price date</th>
-          <th>Portfolio weight</th>
-          <th>Notes</th>
+          <th>Entidad</th>
+          <th>Producto</th>
+          <th>Origen</th>
+          <th>Tipo</th>
+          <th>Unidades</th>
+          <th>Invertido estimado</th>
+          <th>Valor actual</th>
+          <th>Fecha de precio</th>
+          <th>Peso en cartera</th>
+          <th>Notas</th>
         </tr>
       </thead>
       <tbody>
@@ -100,6 +102,7 @@
           <tr>
             <td>{{ position.institution }}</td>
             <td>{{ position.product_name }}</td>
+            <td>{{ position.get_ownership_category_display }}</td>
             <td>{{ position.get_product_type_display }}</td>
             <td>{{ position.units|default_if_none:"-" }}</td>
             <td>{{ position.invested_amount|floatformat:2 }}</td>
@@ -109,49 +112,49 @@
             <td>{{ position.notes|default:"-" }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="9" class="muted">No bank investment products yet.</td></tr>
+          <tr><td colspan="10" class="muted">Todavia no hay productos bancarios de inversion.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </section>
 
-  <p class="section-title" style="margin-top:28px;">Imported cash flow</p>
+  <p class="section-title" style="margin-top:28px;">Flujo de caja importado</p>
   <div class="grid cols-4">
     <section class="card">
-      <div class="metric-label">Income</div>
+      <div class="metric-label">Ingresos</div>
       <div class="metric-value">{{ statement_summary.total_income|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Salaries, transfers and refunds.</div>
+      <div class="metric-sub">Nominas, transferencias y abonos.</div>
     </section>
     <section class="card">
-      <div class="metric-label">Expenses</div>
+      <div class="metric-label">Gastos</div>
       <div class="metric-value">{{ statement_summary.total_expenses|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Split by concept below.</div>
+      <div class="metric-sub">Desglosados por concepto mas abajo.</div>
     </section>
     <section class="card">
-      <div class="metric-label">Plan contributions</div>
+      <div class="metric-label">Aportaciones a planes</div>
       <div class="metric-value">{{ statement_summary.total_pension_contributions|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Savings or pension plan flows detected.</div>
+      <div class="metric-sub">Movimientos detectados de ahorro o planes de pensiones.</div>
     </section>
     <section class="card">
-      <div class="metric-label">Stock dividends</div>
+      <div class="metric-label">Dividendos</div>
       <div class="metric-value">{{ statement_summary.total_dividends|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Dividend income captured in the extract.</div>
+      <div class="metric-sub">Dividendos capturados en los extractos.</div>
     </section>
   </div>
 
   <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Monthly summary</p>
+    <p class="section-title">Resumen mensual</p>
     <table>
       <thead>
         <tr>
-          <th>Month</th>
-          <th>Accounts</th>
-          <th>Income</th>
-          <th>Expenses</th>
-          <th>Plan contributions</th>
-          <th>Dividends</th>
-          <th>Net cash flow</th>
-          <th>Closing balance</th>
+          <th>Mes</th>
+          <th>Cuentas</th>
+          <th>Ingresos</th>
+          <th>Gastos</th>
+          <th>Aportaciones a planes</th>
+          <th>Dividendos</th>
+          <th>Flujo neto</th>
+          <th>Saldo final</th>
         </tr>
       </thead>
       <tbody>
@@ -167,18 +170,18 @@
             <td>{{ month.closing_balance|floatformat:2 }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="8" class="muted">No statement imports yet.</td></tr>
+          <tr><td colspan="8" class="muted">Todavia no hay extractos importados.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </section>
 
   <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Income by concept</p>
+    <p class="section-title">Ingresos por concepto</p>
     <table>
       <thead>
         <tr>
-          <th>Concept</th>
+          <th>Concepto</th>
           {% for month in income_months %}
             <th>{{ month }}</th>
           {% endfor %}
@@ -195,18 +198,18 @@
             <td><strong>{{ row.total|floatformat:2 }}</strong></td>
           </tr>
         {% empty %}
-          <tr><td colspan="{{ income_months|length|add:2 }}" class="muted">Income concepts will appear here after importing statements.</td></tr>
+          <tr><td colspan="{{ income_months|length|add:2 }}" class="muted">Los conceptos de ingreso apareceran aqui tras importar extractos.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </section>
 
   <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Expenses by concept</p>
+    <p class="section-title">Gastos por concepto</p>
     <table>
       <thead>
         <tr>
-          <th>Concept</th>
+          <th>Concepto</th>
           {% for month in expense_months %}
             <th>{{ month }}</th>
           {% endfor %}
@@ -223,67 +226,70 @@
             <td><strong>{{ row.total|floatformat:2 }}</strong></td>
           </tr>
         {% empty %}
-          <tr><td colspan="{{ expense_months|length|add:2 }}" class="muted">Expense concepts will appear here after importing statements.</td></tr>
+          <tr><td colspan="{{ expense_months|length|add:2 }}" class="muted">Los conceptos de gasto apareceran aqui tras importar extractos.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </section>
 
   <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Imported files</p>
+    <p class="section-title">Ficheros importados</p>
     <table>
       <thead>
         <tr>
-          <th>Month</th>
-          <th>Account</th>
-          <th>File</th>
-          <th>Status</th>
-          <th>Opening balance</th>
-          <th>Closing balance</th>
-          <th>Actions</th>
+          <th>Periodo</th>
+          <th>Cuenta</th>
+          <th>Origen</th>
+          <th>Fichero</th>
+          <th>Estado</th>
+          <th>Saldo inicial</th>
+          <th>Saldo final</th>
+          <th>Acciones</th>
         </tr>
       </thead>
       <tbody>
         {% for statement in recent_imports %}
           <tr>
-            <td>{{ statement.month_label }}</td>
+            <td>{{ statement.period_label }}</td>
             <td>{{ statement.account_name }}</td>
+            <td>{{ statement.get_ownership_category_display }}</td>
             <td>{{ statement.source_filename }}</td>
             <td>{{ statement.get_import_status_display }}</td>
             <td>{{ statement.opening_balance|default_if_none:"-" }}</td>
             <td>{{ statement.closing_balance|default_if_none:"-" }}</td>
             <td>
-              <form method="post" onsubmit="return confirm('Delete {{ statement.source_filename|escapejs }} and all its imported movements?');">
+              <form method="post" onsubmit="return confirm('Eliminar {{ statement.source_filename|escapejs }} y todos sus movimientos importados?');">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="delete_statement">
                 <input type="hidden" name="statement_id" value="{{ statement.id }}">
-                <button class="button secondary small" type="submit">Delete</button>
+                <button class="button secondary small" type="submit">Borrar</button>
               </form>
             </td>
           </tr>
         {% empty %}
-          <tr><td colspan="7" class="muted">No imports stored yet.</td></tr>
+          <tr><td colspan="8" class="muted">Todavia no hay importaciones guardadas.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </section>
 
   <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Static bank balances</p>
+    <p class="section-title">Saldos bancarios estaticos</p>
     <table>
-      <thead><tr><th>Institution</th><th>Account</th><th>Deposited</th><th>Current balance</th><th>Annual interest</th><th>Notes</th></tr></thead>
+      <thead><tr><th>Entidad</th><th>Cuenta</th><th>Origen</th><th>Depositado</th><th>Saldo actual</th><th>Interes anual</th><th>Notas</th></tr></thead>
       <tbody>
         {% for account in accounts %}
           <tr>
             <td>{{ account.institution }}</td>
             <td>{{ account.account_name }}</td>
+            <td>{{ account.get_ownership_category_display }}</td>
             <td>{{ account.deposited_amount|floatformat:2 }}</td>
             <td>{{ account.current_balance|floatformat:2 }}</td>
             <td>{{ account.annual_interest_income|floatformat:2 }}</td>
             <td>{{ account.notes|default:"-" }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="6" class="muted">No bank balances yet.</td></tr>
+          <tr><td colspan="7" class="muted">Todavia no hay saldos bancarios cargados.</td></tr>
         {% endfor %}
       </tbody>
     </table>

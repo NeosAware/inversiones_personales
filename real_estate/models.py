@@ -31,7 +31,7 @@ class PropertyInvestment(models.Model):
     def as_portfolio_position(self):
         return build_metrics(
             label=f"{self.property_name} ({self.city})",
-            asset_type="Real estate",
+            asset_type="Inmuebles",
             invested_amount=self.invested_equity,
             current_value=self.current_value,
             annual_income=self.annual_income,

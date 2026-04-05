@@ -1,9 +1,15 @@
 from django.db import models
 
 from portfolio.metrics import build_metrics
+from portfolio.ownership import AssetOwnershipCategory
 
 
 class EquityPosition(models.Model):
+    ownership_category = models.CharField(
+        max_length=12,
+        choices=AssetOwnershipCategory.choices,
+        default=AssetOwnershipCategory.JOINT,
+    )
     broker = models.CharField(max_length=120)
     ticker = models.CharField(max_length=20)
     quote_symbol = models.CharField(max_length=40, blank=True)
@@ -35,8 +41,8 @@ class EquityPosition(models.Model):
 
     def as_portfolio_position(self):
         return build_metrics(
-            label=str(self),
-            asset_type="Equities",
+            label=f"{self} ({self.get_ownership_category_display()})",
+            asset_type="Acciones",
             invested_amount=self.invested_amount,
             current_value=self.current_value,
             annual_income=self.annual_dividend_income,

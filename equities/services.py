@@ -38,7 +38,7 @@ def fetch_market_series(symbol: str, range_key: str = "1y", interval: str = "1d"
 
     error = payload.get("chart", {}).get("error")
     if error:
-        raise MarketDataError(error.get("description", f"Unable to load market data for {symbol}."))
+        raise MarketDataError(error.get("description", f"No se han podido cargar los datos de mercado de {symbol}."))
 
     result = payload["chart"]["result"][0]
     meta = result["meta"]
@@ -57,7 +57,7 @@ def fetch_market_series(symbol: str, range_key: str = "1y", interval: str = "1d"
         )
 
     if not points:
-        raise MarketDataError(f"No historical prices were returned for {symbol}.")
+        raise MarketDataError(f"No se han recibido precios historicos para {symbol}.")
 
     latest_raw = meta.get("regularMarketPrice")
     latest_timestamp = meta.get("regularMarketTime") or timestamps[-1]
@@ -75,7 +75,7 @@ def fetch_market_series(symbol: str, range_key: str = "1y", interval: str = "1d"
 
 def sync_equity_market_data(position: EquityPosition) -> EquityPosition:
     if not position.quote_symbol:
-        raise MarketDataError(f"{position.ticker} has no market quote symbol configured.")
+        raise MarketDataError(f"{position.ticker} no tiene configurado un simbolo de cotizacion.")
 
     position_series = fetch_market_series(position.quote_symbol)
     benchmark_series = fetch_market_series(position.benchmark_symbol) if position.benchmark_symbol else None

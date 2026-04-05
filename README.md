@@ -50,6 +50,7 @@ cd C:\Users\Gerencia\Documents\inversiones_personales
 ```
 
 That script exposes the app on `0.0.0.0:8000` and prepares local-network hosts automatically.
+If `POSTGRES_PASSWORD` is not configured, it now falls back to the local SQLite database instead of forcing PostgreSQL and leaving the site returning `500`.
 
 ### Share without touching the router
 
@@ -73,6 +74,8 @@ The script:
 1. starts Django on `127.0.0.1:8000`
 2. allows the temporary `trycloudflare.com` hostname in Django
 3. opens a Cloudflare Quick Tunnel to your local server
+
+If `POSTGRES_PASSWORD` is not configured, the tunnel script also falls back to SQLite automatically.
 
 Share the HTTPS URL printed by `cloudflared` with Monica.
 
@@ -180,4 +183,29 @@ The `banking` module can import monthly account extracts and summarise them into
 Supported files:
 
 - `.xlsx` directly
-- `.xls` on Windows with Microsoft Excel installed, using Excel automation behind the scenes
+- `.xls` directly through Python (`xlrd` for legacy Excel files, plus HTML-table fallback for bank exports)
+
+## Encrypted uploads
+
+Uploaded documents can be encrypted at rest with a Fernet key stored outside the codebase.
+
+Set `APP_MEDIA_ENCRYPTION_KEY` in your environment and restart the app:
+
+```powershell
+@'
+from cryptography.fernet import Fernet
+print(Fernet.generate_key().decode())
+'@ | python -
+```
+
+Then put the generated value into `.env` as:
+
+```text
+APP_MEDIA_ENCRYPTION_KEY=YOUR_GENERATED_FERNET_KEY
+```
+
+When this setting is active:
+
+- uploaded files are stored encrypted inside `MEDIA_ROOT`
+- document links are served through an authenticated Django route instead of exposing raw files directly
+- existing unencrypted files remain readable, but they are not retroactively encrypted until you upload them again

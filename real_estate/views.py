@@ -14,7 +14,7 @@ class PropertyInvestmentListView(LoginRequiredMixin, ListView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         properties = list(context["properties"])
-        context["page_title"] = "Real estate"
+        context["page_title"] = "Inmuebles"
         context["summary"] = {
             "invested_amount": sum((property_item.invested_equity for property_item in properties), Decimal("0")),
             "current_value": sum((property_item.current_value for property_item in properties), Decimal("0")),

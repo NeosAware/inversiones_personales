@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Personal Investments Hub{% endblock %}</title>
+  <title>{% block title %}Centro de inversiones personales{% endblock %}</title>
   <style>
     :root{
       --bg:#f3f7fb;
@@ -141,34 +141,34 @@
   <div class="shell">
     <header class="topbar">
       <div>
-        <h1>Personal Investments Hub</h1>
-        <p>Joint view of cash, listed equities, Neos business stakes and real estate to optimise return, income generation and capital allocation.</p>
+        <h1>Centro de inversiones personales</h1>
+        <p>Vista conjunta de liquidez, acciones cotizadas, participaciones empresariales Neos e inmuebles para optimizar rentabilidad, generacion de ingresos y asignacion de capital.</p>
       </div>
       <div class="top-actions">
         {% if request.user.is_authenticated %}
-          <div class="top-user">Signed in as {{ request.user.username }}</div>
+          <div class="top-user">Sesion iniciada como {{ request.user.username }}</div>
           {% if request.user.is_staff %}
-            <a class="admin-link" href="/admin/">Open admin</a>
+            <a class="admin-link" href="/admin/">Abrir administracion</a>
           {% endif %}
           <form method="post" action="{% url 'logout' %}">
             {% csrf_token %}
-            <button class="admin-link" type="submit" style="cursor:pointer;">Sign out</button>
+            <button class="admin-link" type="submit" style="cursor:pointer;">Cerrar sesion</button>
           </form>
         {% else %}
-          <a class="admin-link" href="{% url 'login' %}">Sign in</a>
+          <a class="admin-link" href="{% url 'login' %}">Iniciar sesion</a>
         {% endif %}
       </div>
     </header>
 
     {% if request.user.is_authenticated %}
       <nav class="nav">
-        <a href="{% url 'portfolio:dashboard' %}">Dashboard</a>
-        <a href="{% url 'banking:list' %}">Bank balances</a>
-        <a href="{% url 'equities:list' %}">Equities</a>
+        <a href="{% url 'portfolio:dashboard' %}">Resumen</a>
+        <a href="{% url 'banking:list' %}">Banca</a>
+        <a href="{% url 'equities:list' %}">Acciones</a>
         <a href="{% url 'neos_additives:list' %}">Neos Additives</a>
         <a href="{% url 'neos_ceramica:list' %}">Neos Ceramica</a>
         <a href="{% url 'neos_materials:list' %}">Neos Materials</a>
-        <a href="{% url 'real_estate:list' %}">Real estate</a>
+        <a href="{% url 'real_estate:list' %}">Inmuebles</a>
       </nav>
     {% endif %}
 

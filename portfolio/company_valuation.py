@@ -81,14 +81,20 @@ def extract_financial_metrics_from_pages(pages: list[str]) -> dict:
     }
 
 
-def read_pdf_pages(file_path: str) -> list[str]:
+def read_pdf_pages(file_source) -> list[str]:
     try:
         from pypdf import PdfReader
     except ImportError as exc:
-        raise ValidationError("pypdf is required to parse annual valuation PDFs.") from exc
+        raise ValidationError("Se necesita pypdf para procesar los PDF de valoracion anual.") from exc
 
-    reader = PdfReader(file_path)
-    return [(page.extract_text() or "") for page in reader.pages]
+    if hasattr(file_source, "open"):
+        file_source.open("rb")
+    try:
+        reader = PdfReader(file_source)
+        return [(page.extract_text() or "") for page in reader.pages]
+    finally:
+        if hasattr(file_source, "close"):
+            file_source.close()
 
 
 def extract_financial_metrics_from_record(record) -> dict:
@@ -104,7 +110,7 @@ def extract_financial_metrics_from_record(record) -> dict:
     for source in balance_sources:
         if not source:
             continue
-        parsed = extract_financial_metrics_from_pages(read_pdf_pages(source.path))
+        parsed = extract_financial_metrics_from_pages(read_pdf_pages(source))
         if metrics["net_equity"] is None and parsed["net_equity"] is not None:
             metrics["net_equity"] = parsed["net_equity"]
         if metrics["share_capital"] is None and parsed["share_capital"] is not None:
@@ -113,7 +119,7 @@ def extract_financial_metrics_from_record(record) -> dict:
     for source in profit_sources:
         if not source:
             continue
-        parsed = extract_financial_metrics_from_pages(read_pdf_pages(source.path))
+        parsed = extract_financial_metrics_from_pages(read_pdf_pages(source))
         if parsed["profit_after_tax"] is not None:
             metrics["profit_after_tax"] = parsed["profit_after_tax"]
             break
@@ -158,15 +164,17 @@ def recalculate_company_valuations(valuation_model):
             missing_years = [str(year) for year in required_years if profit_map.get(year) is None]
             if missing_years:
                 calculation_notes.append(
-                    f"Capitalised earnings value pending. Missing profit data for: {', '.join(missing_years)}."
+                    f"El valor por capitalizacion de beneficios esta pendiente. Faltan datos de resultado para: {', '.join(missing_years)}."
                 )
 
         if theoretical_value is None:
-            calculation_notes.append("Missing net equity from the latest balance.")
+            calculation_notes.append("Falta el patrimonio neto del ultimo balance.")
         if nominal_value is None:
-            calculation_notes.append("Missing share capital.")
+            calculation_notes.append("Falta el capital social.")
         if record.balance_approved and not record.audited_favorable:
-            calculation_notes.append("Approved balance loaded without favorable audit. AEAT comparison uses the greater-of-three rule.")
+            calculation_notes.append(
+                "Se ha cargado un balance aprobado sin auditoria favorable. La comparacion AEAT usa la regla del mayor de tres."
+            )
 
         owner_value = None
         if tax_company_value is not None:
@@ -202,15 +210,15 @@ def sync_latest_valuation_to_holding(valuation_model, holding_model, holding_nam
             "invested_amount": latest.owner_value or ZERO,
             "current_valuation": latest.owner_value or ZERO,
             "annual_dividend_income": ZERO,
-            "notes": f"Auto-synced from annual AEAT valuation for {latest.year}.",
+            "notes": f"Sincronizado automaticamente desde la valoracion AEAT anual de {latest.year}.",
         },
     )
     holding.current_valuation = latest.owner_value or holding.current_valuation
     if created or not holding.invested_amount:
         holding.invested_amount = latest.owner_value or ZERO
     holding.notes = (
-        f"Auto-synced from annual AEAT valuation. "
-        f"Latest year {latest.year}, ownership {latest.ownership_pct}%, method {latest.get_valuation_method_display().lower()}."
+        f"Sincronizado automaticamente desde la valoracion AEAT anual. "
+        f"Ultimo ejercicio {latest.year}, participacion {latest.ownership_pct} %, metodo {latest.get_valuation_method_display().lower()}."
     )
     holding.save()
     return holding

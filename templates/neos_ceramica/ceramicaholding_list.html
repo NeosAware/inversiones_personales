@@ -1,17 +1,17 @@
 {% extends "base.html" %}
 
-{% block title %}Neos Ceramica | Personal Investments Hub{% endblock %}
+{% block title %}Neos Ceramica | Centro de inversiones personales{% endblock %}
 
 {% block content %}
   <p class="section-title">{{ page_title }}</p>
   <div class="grid cols-3">
-    <section class="card"><div class="metric-label">Invested amount</div><div class="metric-value">{{ summary.invested_amount|floatformat:2 }} EUR</div></section>
-    <section class="card"><div class="metric-label">Current valuation</div><div class="metric-value">{{ summary.current_value|floatformat:2 }} EUR</div></section>
-    <section class="card"><div class="metric-label">Annual dividends</div><div class="metric-value">{{ summary.annual_income|floatformat:2 }} EUR</div></section>
+    <section class="card"><div class="metric-label">Capital invertido</div><div class="metric-value">{{ summary.invested_amount|floatformat:2 }} EUR</div></section>
+    <section class="card"><div class="metric-label">Valor actual</div><div class="metric-value">{{ summary.current_value|floatformat:2 }} EUR</div></section>
+    <section class="card"><div class="metric-label">Dividendos anuales</div><div class="metric-value">{{ summary.annual_income|floatformat:2 }} EUR</div></section>
   </div>
   <section class="card table-card" style="margin-top:24px;">
     <table>
-      <thead><tr><th>Investment</th><th>Invested</th><th>Current valuation</th><th>Annual dividend</th><th>Notes</th></tr></thead>
+      <thead><tr><th>Inversion</th><th>Invertido</th><th>Valor actual</th><th>Dividendo anual</th><th>Notas</th></tr></thead>
       <tbody>
         {% for holding in holdings %}
           <tr>
@@ -22,7 +22,7 @@
             <td>{{ holding.notes|default:"-" }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="5" class="muted">No Neos Ceramica investments yet.</td></tr>
+          <tr><td colspan="5" class="muted">Todavia no hay inversiones en Neos Ceramica.</td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -31,10 +31,10 @@ class CeramicaHolding(models.Model):
 
 class CeramicaAnnualValuation(models.Model):
     class ValuationMethod(models.TextChoices):
-        AUDITED_BALANCE = "audited_balance", "Audited approved balance"
-        THEORETICAL_VALUE = "theoretical_value", "Theoretical book value"
-        EARNINGS_CAPITALISATION = "earnings_capitalisation", "Capitalised 3-year earnings"
-        NOMINAL_VALUE = "nominal_value", "Nominal share capital"
+        AUDITED_BALANCE = "audited_balance", "Balance aprobado auditado"
+        THEORETICAL_VALUE = "theoretical_value", "Valor teorico contable"
+        EARNINGS_CAPITALISATION = "earnings_capitalisation", "Capitalizacion del beneficio a 3 anos"
+        NOMINAL_VALUE = "nominal_value", "Capital social nominal"
 
     year = models.PositiveIntegerField(unique=True)
     ownership_pct = models.DecimalField(max_digits=5, decimal_places=2, default=100)

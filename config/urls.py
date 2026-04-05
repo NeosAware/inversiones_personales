@@ -4,7 +4,7 @@ from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from .views import PortalLoginView, healthcheck_view
+from .views import PortalLoginView, healthcheck_view, secure_media_download_view
 
 
 urlpatterns = [
@@ -12,6 +12,7 @@ urlpatterns = [
     path("login/", PortalLoginView.as_view(), name="login"),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("health/", healthcheck_view, name="healthcheck"),
+    path("secure-media/<path:path>/", secure_media_download_view, name="secure_media_download"),
     path("", include("portfolio.urls")),
     path("banking/", include("banking.urls")),
     path("equities/", include("equities.urls")),
@@ -21,5 +22,5 @@ urlpatterns = [
     path("real-estate/", include("real_estate.urls")),
 ]
 
-if settings.DEBUG:
+if settings.DEBUG and not settings.MEDIA_ENCRYPTION_ENABLED:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

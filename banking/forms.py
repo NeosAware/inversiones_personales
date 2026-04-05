@@ -17,7 +17,7 @@ class MultipleFileField(forms.FileField):
 
 class StatementUploadForm(forms.Form):
     files = MultipleFileField(
-        label="Monthly account extracts",
+        label="Extractos bancarios",
         widget=MultipleFileInput(attrs={"accept": ".xls,.xlsx"}),
-        help_text="Upload one or several monthly bank extracts in XLS or XLSX format.",
+        help_text="Sube uno o varios extractos bancarios en formato XLS o XLSX.",
     )

@@ -11,6 +11,7 @@ class EquityPositionAdmin(admin.ModelAdmin):
         "benchmark_symbol",
         "company_name",
         "broker",
+        "ownership_category",
         "shares",
         "average_cost_per_share",
         "current_price_per_share",
@@ -18,6 +19,7 @@ class EquityPositionAdmin(admin.ModelAdmin):
         "last_synced_at",
     )
     search_fields = ("ticker", "quote_symbol", "company_name", "broker")
+    list_filter = ("ownership_category", "broker")
 
 
 @admin.register(EquityPriceHistory)

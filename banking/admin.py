@@ -5,8 +5,17 @@ from .models import BankBalance, BankInvestmentPosition, BankMovement, BankState
 
 @admin.register(BankBalance)
 class BankBalanceAdmin(admin.ModelAdmin):
-    list_display = ("institution", "account_name", "deposited_amount", "current_balance", "annual_interest_income", "updated_at")
+    list_display = (
+        "institution",
+        "account_name",
+        "ownership_category",
+        "deposited_amount",
+        "current_balance",
+        "annual_interest_income",
+        "updated_at",
+    )
     search_fields = ("institution", "account_name")
+    list_filter = ("ownership_category", "institution")
 
 
 class BankMovementInline(admin.TabularInline):
@@ -22,6 +31,7 @@ class BankStatementImportAdmin(admin.ModelAdmin):
     list_display = (
         "month_label",
         "account_name",
+        "ownership_category",
         "import_status",
         "total_income",
         "total_expenses",
@@ -30,7 +40,7 @@ class BankStatementImportAdmin(admin.ModelAdmin):
         "imported_at",
     )
     search_fields = ("source_filename", "iban", "holder_name", "account_label")
-    list_filter = ("import_status", "currency", "period_end")
+    list_filter = ("ownership_category", "import_status", "currency", "period_end")
     readonly_fields = (
         "file_checksum",
         "import_status",
@@ -59,6 +69,7 @@ class BankInvestmentPositionAdmin(admin.ModelAdmin):
     list_display = (
         "institution",
         "product_name",
+        "ownership_category",
         "product_type",
         "invested_amount_override",
         "current_value",
@@ -67,4 +78,4 @@ class BankInvestmentPositionAdmin(admin.ModelAdmin):
         "updated_at",
     )
     search_fields = ("institution", "product_name", "notes")
-    list_filter = ("institution", "product_type")
+    list_filter = ("ownership_category", "institution", "product_type")

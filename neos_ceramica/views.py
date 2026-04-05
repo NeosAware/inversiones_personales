@@ -19,7 +19,7 @@ class CeramicaHoldingListView(LoginRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         context["page_title"] = "Neos Ceramica"
         context["module_blurb"] = (
-            "Upload annual balance, P&L or corporate tax PDFs to calculate the AEAT tax value of the company and your stake."
+            "Sube el balance anual, la cuenta de resultados o el impuesto de sociedades en PDF para calcular el valor fiscal AEAT de la empresa y de tu participacion."
         )
         context["annual_form"] = kwargs.get("annual_form", AnnualCompanyValuationForm())
         context.update(build_company_valuation_context(CeramicaHolding, CeramicaAnnualValuation))
@@ -37,5 +37,5 @@ class CeramicaHoldingListView(LoginRequiredMixin, TemplateView):
             CeramicaHolding,
             AUTO_HOLDING_NAME,
         )
-        messages.success(request, f"Neos Ceramica {record.year} valuation recalculated successfully.")
+        messages.success(request, f"La valoracion de Neos Ceramica de {record.year} se ha recalculado correctamente.")
         return redirect("neos_ceramica:list")
