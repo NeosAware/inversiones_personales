@@ -638,7 +638,8 @@ def extract_statement_metadata(rows: list[list[str]], source_name: str = "") -> 
                 last_digits = re.sub(r"\D", "", card_number)[-4:]
                 metadata["account_label"] = f"{card_name} {last_digits}".strip() if last_digits else card_name
             elif card_number:
-                metadata["account_label"] = f"Tarjeta {re.sub(r'\\D', '', card_number)[-4:]}"
+                last_digits = re.sub(r"\D", "", card_number)[-4:]
+                metadata["account_label"] = f"Tarjeta {last_digits}" if last_digits else "Tarjeta"
             continue
         if row_label in {"TITULAR TARGETA", "TITULAR TARJETA"} and second_cell:
             metadata["holder_name"] = second_cell
