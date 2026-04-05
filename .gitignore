@@ -27,6 +27,8 @@ data.json
 .env
 .env.*
 !.env.example
+scripts/bank_robot.config.json
+secrets/
 
 # Editors and OS files
 .DS_Store
