@@ -186,7 +186,7 @@
     <section class="card">
       <div class="metric-label">Asistente en este ordenador</div>
       <div class="metric-value" id="robot-bridge-status">Comprobando...</div>
-      <div class="metric-sub" id="robot-bridge-status-text">La web esta buscando el asistente local para poder abrir el banco desde este Windows.</div>
+      <div class="metric-sub" id="robot-bridge-status-text">La web esta buscando el asistente local para vigilar la carpeta Descargas de este Windows.</div>
     </section>
     <section class="card">
       <div class="metric-label">Conexiones guardadas aqui</div>
@@ -228,7 +228,7 @@
       <section class="card">
         <p class="section-title">Tu banco</p>
         <h2 style="margin-top:0;">Enlazar una cuenta o tarjeta</h2>
-        <p class="muted" style="margin-top:0;">Rellena esto una vez y, desde entonces, podras pulsar <strong>Descargar ahora</strong> desde esta misma pantalla. El banco se abrira en tu navegador normal, tu entraras como siempre y el asistente recogera el XLS o XLSX cuando se descargue en este ordenador.</p>
+        <p class="muted" style="margin-top:0;">Rellena esto una vez y, desde entonces, podras pulsar <strong>Esperar descarga</strong> desde esta misma pantalla. Luego abres el banco en tu navegador habitual, entras como siempre y el asistente recoge el XLS o XLSX cuando se descargue en este ordenador.</p>
         <div class="stack" style="margin-top:18px;">
           <div class="grid cols-2">
             <div>
@@ -255,14 +255,13 @@
           </div>
           <div style="display:flex; gap:12px; flex-wrap:wrap;">
             <button class="button" id="robot-save-job" type="button">Guardar banco en este ordenador</button>
-            <button class="button secondary" id="robot-save-and-run-job" type="button">Guardar y descargar ahora</button>
+            <button class="button secondary" id="robot-save-and-run-job" type="button">Guardar y esperar descarga</button>
           </div>
           <div class="soft-panel">
             <h3 class="soft-title">Lo que pasara al pulsar el boton</h3>
-            <div class="metric-sub">1. Se abrira el banco en tu navegador normal de Windows.</div>
-            <div class="metric-sub">2. Tu haras el acceso y la validacion del movil como siempre.</div>
+            <div class="metric-sub">1. El asistente se quedara vigilando la carpeta Descargas de este ordenador.</div>
+            <div class="metric-sub">2. Tu abriras el banco en tu navegador habitual y haras el acceso y la validacion del movil como siempre.</div>
             <div class="metric-sub">3. Cuando el banco descargue el XLS/XLSX, el asistente lo subira solo a esta web.</div>
-            <div class="metric-sub">Si ya tienes el banco abierto en tu navegador, podras usar el boton de solo esperar descarga sin abrir una pestaña nueva.</div>
           </div>
         </div>
       </section>
@@ -270,7 +269,7 @@
       <section class="card">
         <p class="section-title">Botones sencillos</p>
         <h2 style="margin-top:0;">Usarlo sin tecnicismos</h2>
-        <p class="muted" style="margin-top:0;">La primera vez solo instala el asistente local. Despues veras aqui tus bancos guardados con botones de <strong>Descargar ahora</strong> y <strong>Borrar</strong>. No intentamos controlar el banco para evitar bloqueos.</p>
+        <p class="muted" style="margin-top:0;">La primera vez solo instala el asistente local. Despues veras aqui tus bancos guardados con botones de <strong>Esperar descarga</strong>, <strong>Abrir web del banco</strong> y <strong>Borrar</strong>. No intentamos controlar el banco para evitar bloqueos.</p>
         <div class="stack" style="margin-top:18px;">
           <div style="display:flex; gap:12px; flex-wrap:wrap;">
             <a class="button secondary" href="{{ robot_installer_url }}">Descargar instalador</a>
@@ -1276,8 +1275,8 @@
                 '<span class="pill">' + kindLabel + '</span>' +
               '</div>' +
               '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">' +
-                '<button class="button secondary small" type="button" data-run-job="' + escapeHtml(job.id) + '">Descargar ahora</button>' +
-                '<button class="button secondary small" type="button" data-watch-job="' + escapeHtml(job.id) + '">Solo esperar descarga</button>' +
+                '<button class="button secondary small" type="button" data-run-job="' + escapeHtml(job.id) + '">Esperar descarga</button>' +
+                (job.login_url ? '<button class="button secondary small" type="button" data-open-url="' + escapeHtml(job.login_url) + '">Abrir web del banco</button>' : '') +
                 '<button class="button secondary small" type="button" data-delete-job="' + escapeHtml(job.id) + '">Borrar</button>' +
               '</div>' +
             '</section>'
@@ -1289,7 +1288,7 @@
         try {
           const status = await bridgeFetch("/status", {}, 4000);
           setBridgeStatus(true, status.jobs.length, "El asistente local esta listo en este Windows.");
-          setFeedback("Asistente local listo", "Ya puedes guardar conexiones y pulsar Descargar ahora. El banco se abrira en tu navegador normal.", "success");
+          setFeedback("Asistente local listo", "Ya puedes guardar conexiones y pulsar Esperar descarga. Luego abre el banco en tu navegador habitual y descarga el fichero.", "success");
           renderJobs(status.jobs);
           return status;
         } catch (error) {
@@ -1339,7 +1338,7 @@
 
       async function runJob(jobId, reloadAfterFinish, options) {
         const settings = options || {};
-        const openUrl = settings.openUrl !== false;
+        const openUrl = settings.openUrl === true;
         if (openUrl) {
           setFeedback("Descargando desde tu banco", "Se abrira tu navegador normal. Entra en el banco, valida en el movil si hace falta y descarga el XLS/XLSX; el asistente lo detectara automaticamente.", "info");
         } else {
@@ -1421,19 +1420,15 @@
         const runButton = event.target.closest("[data-run-job]");
         if (runButton) {
           try {
-            await runJob(runButton.dataset.runJob, true, { openUrl: true });
+            await runJob(runButton.dataset.runJob, true, { openUrl: false });
           } catch (error) {
             setFeedback("No se ha podido descargar", error.message, "error");
           }
           return;
         }
-        const watchButton = event.target.closest("[data-watch-job]");
-        if (watchButton) {
-          try {
-            await runJob(watchButton.dataset.watchJob, true, { openUrl: false });
-          } catch (error) {
-            setFeedback("No se ha podido recoger la descarga", error.message, "error");
-          }
+        const openButton = event.target.closest("[data-open-url]");
+        if (openButton) {
+          window.open(openButton.dataset.openUrl, "_blank", "noopener");
           return;
         }
         const deleteButton = event.target.closest("[data-delete-job]");

@@ -169,7 +169,7 @@ def snapshot_directory(directory: Path, extensions: set[str]) -> dict[str, tuple
     return snapshot
 
 
-def run_manual_download_job(job: dict, *, open_url: bool = True) -> list[Path]:
+def run_manual_download_job(job: dict, *, open_url: bool = False) -> list[Path]:
     watch_dir = Path(job.get("watch_dir", str(DEFAULT_WATCH_DIR))).expanduser().resolve()
     ensure_directory(watch_dir)
     allowed_extensions = {
@@ -246,7 +246,7 @@ class RobotBridgeState:
             config["jobs"] = remaining_jobs
             save_bridge_config(self.config_path, config)
 
-    def run_job(self, job_id: str, *, headed: bool = True, open_url: bool = True) -> dict:
+    def run_job(self, job_id: str, *, headed: bool = True, open_url: bool = False) -> dict:
         config = load_bridge_config(self.config_path)
         job = next((item for item in config.get("jobs", []) if item.get("id") == job_id), None)
         if not job:
@@ -364,7 +364,7 @@ class RobotBridgeHandler(BaseHTTPRequestHandler):
                 result = self.state.run_job(
                     str(payload.get("job_id", "")),
                     headed=bool(payload.get("headed", True)),
-                    open_url=bool(payload.get("open_url", True)),
+                    open_url=bool(payload.get("open_url", False)),
                 )
                 return self._send_json(result)
         except KeyError as exc:
