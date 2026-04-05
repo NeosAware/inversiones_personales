@@ -57,6 +57,7 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
             return self.render_to_response(context, status=400)
 
         uploaded_files = form.cleaned_data["files"]
+        statement_kind = form.cleaned_data["statement_kind"]
         imported_count = 0
 
         for uploaded_file in uploaded_files:
@@ -69,6 +70,7 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
                 source_file=uploaded_file,
                 source_filename=uploaded_file.name,
                 file_checksum=checksum,
+                statement_kind=statement_kind,
             )
             try:
                 import_statement(statement)
@@ -77,7 +79,8 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
                 messages.error(request, f"No se ha podido importar {uploaded_file.name}: {exc}")
 
         if imported_count:
-            messages.success(request, f"Se han importado correctamente {imported_count} extracto(s).")
+            document_label = "documento(s)" if statement_kind == BankStatementImport.StatementKind.CARD else "extracto(s)"
+            messages.success(request, f"Se han importado correctamente {imported_count} {document_label}.")
         elif uploaded_files:
             messages.info(request, "No se ha importado ningun extracto nuevo.")
 
@@ -106,7 +109,10 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         else:
             messages.success(request, f"La cuenta {account.account_name} se ha actualizado correctamente.")
 
-        synced_statements = BankStatementImport.objects.filter(account_label__iexact=account.account_name).update(
+        synced_statements = BankStatementImport.objects.filter(
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
+            account_label__iexact=account.account_name,
+        ).update(
             ownership_category=account.ownership_category
         )
         if synced_statements:
@@ -130,7 +136,10 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
 
         account.ownership_category = ownership_category
         account.save(update_fields=["ownership_category", "updated_at"])
-        synced_statements = BankStatementImport.objects.filter(account_label__iexact=account.account_name).update(
+        synced_statements = BankStatementImport.objects.filter(
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
+            account_label__iexact=account.account_name,
+        ).update(
             ownership_category=ownership_category
         )
         messages.success(request, f"Titular actualizado para la cuenta {account.account_name}.")
@@ -157,10 +166,13 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
             statement.save(update_fields=["ownership_category"])
             updated = 1
 
-        synced_accounts = BankBalance.objects.filter(account_name__iexact=statement.account_name).update(
-            ownership_category=ownership_category
-        )
-        messages.success(request, f"Titular actualizado para {updated} extracto(s) de {statement.account_name}.")
+        synced_accounts = 0
+        if statement.statement_kind == BankStatementImport.StatementKind.ACCOUNT:
+            synced_accounts = BankBalance.objects.filter(account_name__iexact=statement.account_name).update(
+                ownership_category=ownership_category
+            )
+        document_label = "tarjeta(s)" if statement.statement_kind == BankStatementImport.StatementKind.CARD else "extracto(s)"
+        messages.success(request, f"Titular actualizado para {updated} {document_label} de {statement.account_name}.")
         if synced_accounts:
             messages.info(request, f"Tambien se ha actualizado el titular en {synced_accounts} cuenta(s) manuales.")
         return redirect("banking:list")

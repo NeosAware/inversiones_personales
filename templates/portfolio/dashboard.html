@@ -6,7 +6,7 @@
   <div class="split">
     <section class="card">
       <p class="section-title">Resumen</p>
-      <p class="muted" style="margin-top:0;">Vista rapida entre empresas del grupo, acciones cotizadas y liquidez bancaria.</p>
+      <p class="muted" style="margin-top:0;">Vista rapida entre empresas del grupo, acciones cotizadas y el bloque completo de banca.</p>
       <div class="grid cols-4">
         <section class="card">
           <div class="metric-label">Patrimonio total</div>
@@ -34,10 +34,10 @@
           </div>
         </section>
         <section class="card">
-          <div class="metric-label">Liquidez bancaria</div>
-          <div class="metric-value">{{ overview.liquid_cash|floatformat:2 }} EUR</div>
+          <div class="metric-label">Banca</div>
+          <div class="metric-value">{{ overview.banking_current_value|floatformat:2 }} EUR</div>
           <div class="metric-sub">
-            {{ overview.liquid_cash_share_pct|floatformat:2 }} % del patrimonio del hogar.
+            {{ overview.banking_share_pct|floatformat:2 }} % del patrimonio del hogar. Liquidez incluida: {{ overview.liquid_cash|floatformat:2 }} EUR.
           </div>
         </section>
       </div>

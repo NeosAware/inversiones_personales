@@ -128,6 +128,7 @@ class PortfolioServicesTests(TestCase):
         overview = build_overview_metrics(dashboard)
 
         self.assertEqual(overview["total_current_value"], Decimal("2320.00"))
+        self.assertEqual(overview["banking_current_value"], Decimal("1500.00"))
         self.assertEqual(overview["liquid_cash"], Decimal("1500.00"))
         self.assertEqual(overview["neos_group_current_value"], Decimal("700.00"))
         self.assertEqual(overview["ibex_equities_current_value"], Decimal("120.00"))
@@ -210,6 +211,25 @@ class PortfolioServicesTests(TestCase):
 
         self.assertTrue(any(alert["scope"] == "Gasto mensual total" for alert in alerts))
         self.assertTrue(any(alert["scope"] == "Tarjeta de credito" for alert in alerts))
+
+    def test_card_statements_do_not_alter_liquidity_or_account_alerts(self):
+        BankStatementImport.objects.create(
+            source_filename="visa-mar.xls",
+            source_file="banking/statements/visa-mar.xls",
+            file_checksum="portfolio-card-only-mar",
+            statement_kind=BankStatementImport.StatementKind.CARD,
+            account_label="Visa Monica",
+            period_end="2026-03-31",
+            total_expenses=Decimal("900.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+
+        liquidity = build_bank_liquidity_context()
+        alerts = build_spending_alerts()
+
+        self.assertEqual(liquidity["accounts_count"], 0)
+        self.assertEqual(liquidity["current_value"], Decimal("0.00"))
+        self.assertEqual(alerts["alerts"], [])
 
     def test_dashboard_includes_snapshot_history_context(self):
         capture_portfolio_snapshot(date(2026, 3, 21))

@@ -71,6 +71,7 @@ def build_bank_liquidity_context():
     imported_statements = list(
         BankStatementImport.objects.filter(
             import_status=BankStatementImport.ImportStatus.IMPORTED,
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
             period_end__isnull=False,
         )
         .exclude(closing_balance__isnull=True)
@@ -157,6 +158,7 @@ def build_overview_metrics(state):
     section_map = {section["title"]: section for section in state["sections"]}
     total_current_value = state["summary"]["current_value"]
     liquid_cash = state["bank_liquidity"]["current_value"]
+    banking_current_value = section_map.get("Banca", {}).get("current_value", ZERO)
     neos_group_current_value = sum(
         (
             section_map.get("Neos Additives", {}).get("current_value", ZERO),
@@ -166,7 +168,7 @@ def build_overview_metrics(state):
         ZERO,
     )
     ibex_equities_current_value = section_map.get("Acciones cotizadas", {}).get("current_value", ZERO)
-    highlighted_buckets_current_value = neos_group_current_value + ibex_equities_current_value + liquid_cash
+    highlighted_buckets_current_value = neos_group_current_value + ibex_equities_current_value + banking_current_value
     other_buckets_current_value = total_current_value - highlighted_buckets_current_value
 
     def share_of_total(value):
@@ -174,6 +176,8 @@ def build_overview_metrics(state):
 
     return {
         "total_current_value": total_current_value,
+        "banking_current_value": banking_current_value,
+        "banking_share_pct": share_of_total(banking_current_value),
         "liquid_cash": liquid_cash,
         "liquid_cash_share_pct": share_of_total(liquid_cash),
         "neos_group_current_value": neos_group_current_value,
@@ -189,21 +193,18 @@ def build_current_portfolio_state():
     linked_manual_account_ids = {
         account["account_id"] for account in bank_liquidity["accounts"] if account.get("account_id")
     }
+    banking_items = [
+        *bank_liquidity["positions"],
+        *[
+            obj.as_portfolio_position()
+            for obj in BankBalance.objects.exclude(id__in=linked_manual_account_ids)
+        ],
+        *[obj.as_portfolio_position() for obj in BankInvestmentPosition.objects.all()],
+    ]
     sections = [
         summarise_section(
-            "Liquidez bancaria",
-            bank_liquidity["positions"],
-            "banking:list",
-        ),
-        summarise_section(
-            "Banca y custodia",
-            [
-                *[
-                    obj.as_portfolio_position()
-                    for obj in BankBalance.objects.exclude(id__in=linked_manual_account_ids)
-                ],
-                *[obj.as_portfolio_position() for obj in BankInvestmentPosition.objects.all()],
-            ],
+            "Banca",
+            banking_items,
             "banking:list",
         ),
         summarise_section(
@@ -328,6 +329,7 @@ def build_spending_alerts():
     imported_statements = list(
         BankStatementImport.objects.filter(
             import_status=BankStatementImport.ImportStatus.IMPORTED,
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
             period_end__isnull=False,
         )
     )
@@ -345,6 +347,7 @@ def build_spending_alerts():
     expense_movements = (
         BankMovement.objects.filter(
             statement_import__import_status=BankStatementImport.ImportStatus.IMPORTED,
+            statement_import__statement_kind=BankStatementImport.StatementKind.ACCOUNT,
             statement_import__period_end__isnull=False,
             movement_group=BankMovement.MovementGroup.EXPENSE,
         )

@@ -37,6 +37,10 @@ class BankBalance(models.Model):
 
 
 class BankStatementImport(models.Model):
+    class StatementKind(models.TextChoices):
+        ACCOUNT = "account", "Cuenta"
+        CARD = "card", "Tarjeta"
+
     class ImportStatus(models.TextChoices):
         PENDING = "pending", "Pendiente"
         IMPORTED = "imported", "Importado"
@@ -50,6 +54,11 @@ class BankStatementImport(models.Model):
     institution = models.CharField(max_length=120, blank=True)
     account_label = models.CharField(max_length=120, blank=True)
     iban = models.CharField(max_length=34, blank=True)
+    statement_kind = models.CharField(
+        max_length=16,
+        choices=StatementKind.choices,
+        default=StatementKind.ACCOUNT,
+    )
     currency = models.CharField(max_length=8, default="EUR")
     holder_name = models.CharField(max_length=180, blank=True)
     period_start = models.DateField(null=True, blank=True)

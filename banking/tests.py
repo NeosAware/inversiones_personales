@@ -17,6 +17,7 @@ from .models import BankBalance, BankInvestmentPosition, BankMovement, BankState
 from .services import (
     build_bank_account_overview,
     build_banking_dashboard,
+    build_card_spending_overview,
     classify_movement,
     import_statement,
     load_rows_from_xls,
@@ -302,6 +303,77 @@ class BankingServicesTests(TestCase):
         self.assertEqual(overview["accounts"][0]["source_label"], "Manual + extracto")
         self.assertEqual(overview["accounts"][0]["ownership_category"], AssetOwnershipCategory.MONICA)
         self.assertEqual(overview["accounts"][0]["statement_count"], 1)
+
+    def test_build_card_spending_overview_separates_card_expenses_from_account_flow(self):
+        account_statement = BankStatementImport.objects.create(
+            source_filename="cuenta-mar.xls",
+            source_file="banking/statements/cuenta-mar.xls",
+            file_checksum="dashboard-account-mar",
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
+            account_label="Cuenta 1234",
+            period_end="2026-03-31",
+            total_income=Decimal("2000.00"),
+            total_expenses=Decimal("500.00"),
+            closing_balance=Decimal("4500.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+        card_statement = BankStatementImport.objects.create(
+            source_filename="visa-mar.xls",
+            source_file="banking/statements/visa-mar.xls",
+            file_checksum="dashboard-card-mar",
+            statement_kind=BankStatementImport.StatementKind.CARD,
+            account_label="Visa Monica",
+            period_end="2026-03-31",
+            total_income=Decimal("50.00"),
+            total_expenses=Decimal("700.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+        BankMovement.objects.create(
+            statement_import=account_statement,
+            booking_date="2026-03-10",
+            concept="NOMINA",
+            normalized_concept="NOMINA",
+            amount=Decimal("2000.00"),
+            movement_group=BankMovement.MovementGroup.INCOME,
+            concept_bucket="Nomina",
+        )
+        BankMovement.objects.create(
+            statement_import=account_statement,
+            booking_date="2026-03-11",
+            concept="PAGO BIZUM",
+            normalized_concept="PAGO BIZUM",
+            amount=Decimal("-500.00"),
+            movement_group=BankMovement.MovementGroup.EXPENSE,
+            concept_bucket="Bizum",
+        )
+        BankMovement.objects.create(
+            statement_import=card_statement,
+            booking_date="2026-03-12",
+            concept="MERCADONA",
+            normalized_concept="MERCADONA",
+            amount=Decimal("-650.00"),
+            movement_group=BankMovement.MovementGroup.EXPENSE,
+            concept_bucket="Supermercado",
+        )
+        BankMovement.objects.create(
+            statement_import=card_statement,
+            booking_date="2026-03-13",
+            concept="DEVOLUCION AMAZON",
+            normalized_concept="DEVOLUCION AMAZON",
+            amount=Decimal("50.00"),
+            movement_group=BankMovement.MovementGroup.INCOME,
+            concept_bucket="Devoluciones y abonos",
+        )
+
+        dashboard = build_banking_dashboard()
+        card_overview = build_card_spending_overview()
+
+        self.assertEqual(dashboard["statement_summary"]["total_expenses"], Decimal("500.00"))
+        self.assertEqual(dashboard["card_summary"]["total_spent"], Decimal("700.00"))
+        self.assertEqual(dashboard["card_summary"]["total_refunds"], Decimal("50.00"))
+        self.assertEqual(dashboard["tracked_cards"][0]["card_name"], "Visa Monica")
+        self.assertEqual(card_overview["monthly_summaries"][0]["net_spent"], Decimal("600.00"))
+        self.assertEqual(card_overview["expense_matrix"][0]["concept"], "Supermercado")
 
     def test_bank_investment_position_uses_current_value_when_cost_basis_missing(self):
         position = BankInvestmentPosition.objects.create(
@@ -683,6 +755,32 @@ class BankingViewTests(TestCase):
         )
         self.client.force_login(self.user)
 
+    def _card_statement_html(self, holder_name: str = "Monica") -> str:
+        return f"""
+<html>
+  <body>
+    <table>
+      <tr><td>Cuenta: VISA MONICA</td></tr>
+      <tr><td>Titular: {holder_name}</td></tr>
+      <tr><td>Divisa: EUR</td></tr>
+      <tr><td>Desde 01/04/2026 hasta 05/04/2026</td></tr>
+      <tr>
+        <td>F. Operativa</td>
+        <td>Concepto</td>
+        <td>F. Valor</td>
+        <td>Importe</td>
+      </tr>
+      <tr>
+        <td>05/04/2026</td>
+        <td>MERCADONA</td>
+        <td>05/04/2026</td>
+        <td>-120,50</td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+
     def test_can_create_bank_account_with_selected_owner(self):
         response = self.client.post(
             reverse("banking:list"),
@@ -704,6 +802,26 @@ class BankingViewTests(TestCase):
         self.assertEqual(account.deposited_amount, Decimal("10000.00"))
         self.assertEqual(account.current_balance, Decimal("10250.40"))
         self.assertEqual(account.annual_interest_income, Decimal("125.50"))
+
+    def test_can_import_card_statement_with_explicit_type(self):
+        document = SimpleUploadedFile(
+            "visa.xls",
+            self._card_statement_html(holder_name="Monica").encode("utf-8"),
+            content_type="application/vnd.ms-excel",
+        )
+
+        response = self.client.post(
+            reverse("banking:list"),
+            {
+                "action": "import",
+                "statement_kind": BankStatementImport.StatementKind.CARD,
+                "files": document,
+            },
+        )
+
+        self.assertRedirects(response, reverse("banking:list"))
+        statement = BankStatementImport.objects.get(source_filename="visa.xls")
+        self.assertEqual(statement.statement_kind, BankStatementImport.StatementKind.CARD)
 
     def test_can_update_bank_account_owner_from_list(self):
         account = BankBalance.objects.create(
@@ -796,6 +914,40 @@ class BankingViewTests(TestCase):
         statement.refresh_from_db()
         self.assertEqual(account.ownership_category, AssetOwnershipCategory.XIMO)
         self.assertEqual(statement.ownership_category, AssetOwnershipCategory.XIMO)
+
+    def test_updating_card_owner_does_not_modify_manual_bank_accounts(self):
+        account = BankBalance.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            institution="Banco Sabadell",
+            account_name="Visa Monica",
+            deposited_amount=Decimal("5000.00"),
+            current_balance=Decimal("5250.00"),
+            annual_interest_income=Decimal("15.00"),
+        )
+        statement = BankStatementImport.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            source_filename="visa.xls",
+            source_file=SimpleUploadedFile("visa.xls", b"visa", content_type="application/vnd.ms-excel"),
+            file_checksum="statement-card-owner",
+            statement_kind=BankStatementImport.StatementKind.CARD,
+            account_label="Visa Monica",
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+
+        response = self.client.post(
+            reverse("banking:list"),
+            {
+                "action": "update_statement_ownership",
+                "statement_id": statement.id,
+                "ownership_category": AssetOwnershipCategory.MONICA,
+            },
+        )
+
+        self.assertRedirects(response, reverse("banking:list"))
+        account.refresh_from_db()
+        statement.refresh_from_db()
+        self.assertEqual(account.ownership_category, AssetOwnershipCategory.JOINT)
+        self.assertEqual(statement.ownership_category, AssetOwnershipCategory.MONICA)
 
 
 class EncryptedMediaTests(TestCase):

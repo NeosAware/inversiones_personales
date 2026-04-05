@@ -84,11 +84,17 @@
 
     <section class="card">
       <p class="section-title">Importacion</p>
-      <h2 style="margin-top:0;">Cargar extractos de cuenta</h2>
-      <p class="muted" style="margin-top:0;">La aplicacion guarda una vista simplificada del flujo de caja: ingresos, gastos por concepto, aportaciones a planes y dividendos.</p>
+      <h2 style="margin-top:0;">Cargar cuentas o tarjetas</h2>
+      <p class="muted" style="margin-top:0;">Las cuentas alimentan la liquidez y el flujo de caja. Las tarjetas se guardan aparte para analizar mejor el gasto sin mezclarlas con los saldos bancarios.</p>
       <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
         {% csrf_token %}
         <input type="hidden" name="action" value="import">
+        <div>
+          <label for="{{ form.statement_kind.id_for_label }}">{{ form.statement_kind.label }}</label>
+          {{ form.statement_kind }}
+          {% if form.statement_kind.help_text %}<div class="metric-sub">{{ form.statement_kind.help_text }}</div>{% endif %}
+          {% for error in form.statement_kind.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
         <div>
           <label for="{{ form.files.id_for_label }}">{{ form.files.label }}</label>
           {{ form.files }}
@@ -99,11 +105,11 @@
           <button class="button" type="submit">Importar extractos</button>
         </div>
       </form>
-      <div class="metric-sub" style="margin-top:14px;">El titular de cada extracto se intenta reconocer automaticamente por el nombre del titular o por importaciones previas de la misma cuenta.</div>
+      <div class="metric-sub" style="margin-top:14px;">El titular se intenta reconocer automaticamente por el nombre del titular o por importaciones previas del mismo documento bancario.</div>
       <div class="meta">
-        <span class="pill">{{ statement_summary.statements_count }} importaciones</span>
-        <span class="pill">{{ statement_summary.months_count }} meses</span>
-        <span class="pill">{{ statement_summary.accounts_count }} cuentas</span>
+        <span class="pill">{{ statement_summary.statements_count }} extractos de cuenta</span>
+        <span class="pill">{{ card_summary.statements_count }} extractos de tarjeta</span>
+        <span class="pill">{{ statement_summary.months_count }} meses de cuentas</span>
       </div>
       <div class="metric-sub" style="margin-top:14px;">Puedes borrar una importacion o vaciarlas todas y volver a cargar los mismos ficheros para recalcular la vista mensual desde cero.</div>
       <form method="post" style="margin-top:14px;" onsubmit="return confirm('Esto eliminara todos los extractos importados y sus movimientos. Quieres continuar?');">
@@ -248,6 +254,7 @@
       <div class="metric-sub">Dividendos capturados en los extractos.</div>
     </section>
   </div>
+  <div class="metric-sub" style="margin-top:12px;">Este bloque usa solo extractos de cuenta. Las tarjetas se analizan aparte para no duplicar gasto con la liquidacion bancaria.</div>
 
   <section class="card table-card" style="margin-top:24px;">
     <p class="section-title">Resumen mensual</p>
@@ -339,14 +346,137 @@
     </table>
   </section>
 
+  <p class="section-title" style="margin-top:28px;">Tarjetas importadas</p>
+  <div class="grid cols-4">
+    <section class="card">
+      <div class="metric-label">Tarjetas seguidas</div>
+      <div class="metric-value">{{ card_summary.cards_count }}</div>
+      <div class="metric-sub">Tarjetas con al menos un extracto importado.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Gasto total en tarjetas</div>
+      <div class="metric-value">{{ card_summary.total_spent|floatformat:2 }} EUR</div>
+      <div class="metric-sub">Suma de cargos detectados en los extractos de tarjeta.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Devoluciones</div>
+      <div class="metric-value">{{ card_summary.total_refunds|floatformat:2 }} EUR</div>
+      <div class="metric-sub">Abonos y devoluciones detectados en las tarjetas.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Ultimo mes de tarjetas</div>
+      <div class="metric-value">{{ card_summary.latest_month|default:"-" }}</div>
+      <div class="metric-sub">Ultimo periodo con gasto de tarjeta importado.</div>
+    </section>
+  </div>
+
+  <section class="card table-card" style="margin-top:24px;">
+    <p class="section-title">Tarjetas actuales</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Tarjeta</th>
+          <th>Titular</th>
+          <th>Ultimo mes</th>
+          <th>Gasto ultimo extracto</th>
+          <th>Devoluciones</th>
+          <th>Extractos</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for card in tracked_cards %}
+          <tr>
+            <td>{{ card.card_name }}</td>
+            <td>
+              <form method="post" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_statement_ownership">
+                <input type="hidden" name="statement_id" value="{{ card.statement_id }}">
+                <select name="ownership_category">
+                  {% for value, label in ownership_choices %}
+                    <option value="{{ value }}"{% if card.ownership_category == value %} selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <button class="button secondary small" type="submit">Guardar</button>
+              </form>
+            </td>
+            <td>{{ card.latest_month|default:"-" }}</td>
+            <td><strong>{{ card.latest_spent|floatformat:2 }} EUR</strong></td>
+            <td>{{ card.latest_refunds|floatformat:2 }} EUR</td>
+            <td>{{ card.statement_count }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="muted">Todavia no hay tarjetas importadas. Sube el XLS/XLSX de la tarjeta marcando el tipo Tarjeta.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card table-card" style="margin-top:24px;">
+    <p class="section-title">Gasto mensual en tarjetas</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Mes</th>
+          <th>Tarjetas</th>
+          <th>Gasto</th>
+          <th>Devoluciones</th>
+          <th>Gasto neto</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for month in card_monthly_summaries %}
+          <tr>
+            <td>{{ month.label }}</td>
+            <td>{{ month.cards_count }}</td>
+            <td>{{ month.expenses|floatformat:2 }}</td>
+            <td class="good">{{ month.refunds|floatformat:2 }}</td>
+            <td class="{% if month.net_spent > 0 %}warn{% else %}good{% endif %}">{{ month.net_spent|floatformat:2 }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="muted">Todavia no hay meses de gasto en tarjetas importados.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card table-card" style="margin-top:24px;">
+    <p class="section-title">Gasto de tarjetas por concepto</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Concepto</th>
+          {% for month in card_expense_months %}
+            <th>{{ month }}</th>
+          {% endfor %}
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in card_expense_matrix %}
+          <tr>
+            <td>{{ row.concept }}</td>
+            {% for value in row.values %}
+              <td>{{ value|floatformat:2 }}</td>
+            {% endfor %}
+            <td><strong>{{ row.total|floatformat:2 }}</strong></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="{{ card_expense_months|length|add:2 }}" class="muted">Los conceptos de gasto de tarjeta apareceran aqui cuando subas extractos marcados como Tarjeta.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
   <section class="card table-card" style="margin-top:24px;">
     <p class="section-title">Ficheros importados</p>
     <table>
       <thead>
         <tr>
+          <th>Tipo</th>
           <th>Periodo</th>
           <th>Cuenta</th>
-          <th>Origen</th>
+          <th>Titular</th>
           <th>Fichero</th>
           <th>Estado</th>
           <th>Saldo inicial</th>
@@ -357,6 +487,7 @@
       <tbody>
         {% for statement in recent_imports %}
           <tr>
+            <td>{{ statement.get_statement_kind_display }}</td>
             <td>{{ statement.period_label }}</td>
             <td>{{ statement.account_name }}</td>
             <td>
@@ -386,7 +517,7 @@
             </td>
           </tr>
         {% empty %}
-          <tr><td colspan="8" class="muted">Todavia no hay importaciones guardadas.</td></tr>
+          <tr><td colspan="9" class="muted">Todavia no hay importaciones guardadas.</td></tr>
         {% endfor %}
       </tbody>
     </table>

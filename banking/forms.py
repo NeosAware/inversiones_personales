@@ -2,6 +2,8 @@ from django import forms
 
 from portfolio.ownership import AssetOwnershipCategory
 
+from .models import BankStatementImport
+
 
 class MultipleFileInput(forms.ClearableFileInput):
     allow_multiple_selected = True
@@ -28,10 +30,16 @@ class MultipleFileField(forms.FileField):
 
 
 class StatementUploadForm(forms.Form):
+    statement_kind = forms.ChoiceField(
+        choices=BankStatementImport.StatementKind.choices,
+        initial=BankStatementImport.StatementKind.ACCOUNT,
+        label="Tipo de documento",
+        help_text="Elige Cuenta para extractos bancarios y Tarjeta para liquidaciones o movimientos exportados de la tarjeta.",
+    )
     files = MultipleFileField(
-        label="Extractos bancarios",
+        label="Documentos bancarios",
         widget=MultipleFileInput(attrs={"accept": ".xls,.xlsx"}),
-        help_text="Sube uno o varios extractos bancarios en formato XLS o XLSX.",
+        help_text="Sube uno o varios documentos bancarios en formato XLS o XLSX.",
     )
 
 

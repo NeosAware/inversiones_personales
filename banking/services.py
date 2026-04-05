@@ -833,6 +833,7 @@ def classify_movement(concept: str, amount: Decimal) -> ClassifiedMovement:
 
 def build_banking_dashboard() -> dict:
     account_overview = build_bank_account_overview()
+    card_overview = build_card_spending_overview()
     statements = list(
         BankStatementImport.objects.prefetch_related("movements").order_by("-period_end", "-imported_at")
     )
@@ -840,6 +841,7 @@ def build_banking_dashboard() -> dict:
         statement
         for statement in statements
         if statement.import_status == BankStatementImport.ImportStatus.IMPORTED
+        and statement.statement_kind == BankStatementImport.StatementKind.ACCOUNT
     ]
 
     monthly_labels = set()
@@ -957,12 +959,17 @@ def build_banking_dashboard() -> dict:
     return {
         "accounts_summary": account_overview["summary"],
         "tracked_accounts": account_overview["accounts"],
+        "card_summary": card_overview["summary"],
+        "tracked_cards": card_overview["cards"],
         "statement_summary": overall_summary,
         "monthly_summaries": monthly_summaries,
         "income_months": expense_months,
         "income_matrix": income_matrix,
         "expense_months": expense_months,
         "expense_matrix": expense_matrix,
+        "card_monthly_summaries": card_overview["monthly_summaries"],
+        "card_expense_months": card_overview["expense_months"],
+        "card_expense_matrix": card_overview["expense_matrix"],
         "recent_imports": statements[:12],
     }
 
@@ -970,7 +977,10 @@ def build_banking_dashboard() -> dict:
 def build_bank_account_overview() -> dict:
     manual_accounts = list(BankBalance.objects.order_by("institution", "account_name", "id"))
     imported_statements = list(
-        BankStatementImport.objects.filter(import_status=BankStatementImport.ImportStatus.IMPORTED)
+        BankStatementImport.objects.filter(
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
+        )
         .exclude(closing_balance__isnull=True)
         .order_by("period_end", "imported_at", "id")
     )
@@ -1089,4 +1099,127 @@ def build_bank_account_overview() -> dict:
     return {
         "accounts": tracked_accounts,
         "summary": summary,
+    }
+
+
+def build_card_spending_overview() -> dict:
+    card_statements = list(
+        BankStatementImport.objects.filter(
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+            statement_kind=BankStatementImport.StatementKind.CARD,
+        )
+        .prefetch_related("movements")
+        .order_by("period_end", "imported_at", "id")
+    )
+    if not card_statements:
+        return {
+            "cards": [],
+            "summary": {
+                "cards_count": 0,
+                "statements_count": 0,
+                "months_count": 0,
+                "total_spent": ZERO,
+                "total_refunds": ZERO,
+                "latest_month": None,
+            },
+            "monthly_summaries": [],
+            "expense_months": [],
+            "expense_matrix": [],
+        }
+
+    latest_by_card: dict[str, BankStatementImport] = {}
+    statement_counts: dict[str, int] = defaultdict(int)
+    month_map = defaultdict(
+        lambda: {
+            "label": "",
+            "cards": set(),
+            "expenses": ZERO,
+            "refunds": ZERO,
+        }
+    )
+    expense_map = defaultdict(lambda: defaultdict(lambda: ZERO))
+    monthly_labels = set()
+
+    for statement in card_statements:
+        card_key = normalize_iban(statement.iban) or normalize_lookup_text(statement.account_name) or str(statement.pk)
+        latest_by_card[card_key] = statement
+        statement_counts[card_key] += 1
+
+        statement_month = statement.month_label if statement.period_end else None
+        if statement_month:
+            monthly_labels.add(statement_month)
+
+        for movement in statement.movements.all():
+            movement_month = month_label_for_date(movement.booking_date)
+            monthly_labels.add(movement_month)
+            bucket = month_map[movement_month]
+            bucket["label"] = movement_month
+            bucket["cards"].add(card_key)
+
+            amount_abs = abs(movement.amount)
+            if movement.movement_group == BankMovement.MovementGroup.EXPENSE:
+                bucket["expenses"] += amount_abs
+                expense_map[movement.concept_bucket][movement_month] += amount_abs
+            elif movement.movement_group == BankMovement.MovementGroup.INCOME:
+                bucket["refunds"] += amount_abs
+
+    tracked_cards = []
+    for card_key, statement in latest_by_card.items():
+        tracked_cards.append(
+            {
+                "card_name": statement.account_name,
+                "ownership_category": statement.ownership_category,
+                "ownership_label": statement.get_ownership_category_display(),
+                "latest_month": statement.month_label if statement.period_end else None,
+                "latest_spent": statement.total_expenses,
+                "latest_refunds": statement.total_income,
+                "statement_count": statement_counts[card_key],
+                "statement_id": statement.id,
+                "source_filename": statement.source_filename,
+            }
+        )
+
+    tracked_cards.sort(
+        key=lambda item: (item["latest_spent"], item["latest_month"] or "", item["card_name"]),
+        reverse=True,
+    )
+
+    monthly_summaries = []
+    for month_label in sorted(month_map.keys(), reverse=True):
+        row = month_map[month_label]
+        row["cards_count"] = len(row["cards"])
+        row["net_spent"] = row["expenses"] - row["refunds"]
+        monthly_summaries.append(row)
+
+    expense_months = sorted(monthly_labels)
+    expense_matrix = []
+    for concept_bucket, values in sorted(
+        expense_map.items(),
+        key=lambda item: sum(item[1].values()),
+        reverse=True,
+    ):
+        row_values = [values.get(month_label, ZERO) for month_label in expense_months]
+        expense_matrix.append(
+            {
+                "concept": concept_bucket,
+                "values": row_values,
+                "total": sum(row_values, ZERO),
+            }
+        )
+
+    summary = {
+        "cards_count": len(tracked_cards),
+        "statements_count": len(card_statements),
+        "months_count": len(monthly_labels),
+        "total_spent": sum((statement.total_expenses for statement in card_statements), ZERO),
+        "total_refunds": sum((statement.total_income for statement in card_statements), ZERO),
+        "latest_month": max((card["latest_month"] for card in tracked_cards if card["latest_month"]), default=None),
+    }
+
+    return {
+        "cards": tracked_cards,
+        "summary": summary,
+        "monthly_summaries": monthly_summaries,
+        "expense_months": expense_months,
+        "expense_matrix": expense_matrix,
     }
