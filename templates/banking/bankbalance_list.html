@@ -216,7 +216,7 @@
       <section class="card">
         <p class="section-title">Tu banco</p>
         <h2 style="margin-top:0;">Enlazar una cuenta o tarjeta</h2>
-        <p class="muted" style="margin-top:0;">Rellena esto una vez y, desde entonces, podras pulsar <strong>Descargar ahora</strong> desde esta misma pantalla. Si el banco pide identificacion, se abrira su web en tu ordenador y el asistente recogera el XLS o XLSX automaticamente.</p>
+        <p class="muted" style="margin-top:0;">Rellena esto una vez y, desde entonces, podras pulsar <strong>Descargar ahora</strong> desde esta misma pantalla. El banco se abrira en tu navegador normal, tu entraras como siempre y el asistente recogera el XLS o XLSX cuando se descargue en este ordenador.</p>
         <div class="stack" style="margin-top:18px;">
           <div class="grid cols-2">
             <div>
@@ -239,7 +239,7 @@
           <div>
             <label for="{{ robot_setup_form.login_url.id_for_label }}">{{ robot_setup_form.login_url.label }}</label>
             {{ robot_setup_form.login_url }}
-            <div class="metric-sub">Si no la pones, el asistente abrira una ventana vacia y podras entrar al banco manualmente desde ahi.</div>
+            <div class="metric-sub">Pon la pagina donde normalmente entras a movimientos o extractos. El asistente no controlara el banco: solo abrira tu navegador y esperara la descarga.</div>
           </div>
           <div style="display:flex; gap:12px; flex-wrap:wrap;">
             <button class="button" id="robot-save-job" type="button">Guardar banco en este ordenador</button>
@@ -247,9 +247,9 @@
           </div>
           <div class="soft-panel">
             <h3 class="soft-title">Lo que pasara al pulsar el boton</h3>
-            <div class="metric-sub">1. El asistente local abrira la banca online en este Windows.</div>
-            <div class="metric-sub">2. Cuando el banco descargue el XLS/XLSX, se subira solo a esta web.</div>
-            <div class="metric-sub">3. El analisis mensual se recalculara sin que tengas que arrastrar archivos.</div>
+            <div class="metric-sub">1. Se abrira el banco en tu navegador normal de Windows.</div>
+            <div class="metric-sub">2. Tu haras el acceso y la validacion del movil como siempre.</div>
+            <div class="metric-sub">3. Cuando el banco descargue el XLS/XLSX, el asistente lo subira solo a esta web.</div>
           </div>
         </div>
       </section>
@@ -257,7 +257,7 @@
       <section class="card">
         <p class="section-title">Botones sencillos</p>
         <h2 style="margin-top:0;">Usarlo sin tecnicismos</h2>
-        <p class="muted" style="margin-top:0;">La primera vez solo instala el asistente local. Despues veras aqui tus bancos guardados con botones de <strong>Descargar ahora</strong> y <strong>Borrar</strong>.</p>
+        <p class="muted" style="margin-top:0;">La primera vez solo instala el asistente local. Despues veras aqui tus bancos guardados con botones de <strong>Descargar ahora</strong> y <strong>Borrar</strong>. No intentamos controlar el banco para evitar bloqueos.</p>
         <div class="stack" style="margin-top:18px;">
           <div style="display:flex; gap:12px; flex-wrap:wrap;">
             <a class="button secondary" href="{{ robot_installer_url }}">Descargar instalador</a>
@@ -1074,22 +1074,11 @@
             account_label: accountLabel,
             statement_kind: statementKind,
             ownership_category: ownershipCategory,
-            headless: false,
-            browser: "chromium",
-            download_dir: "C:/Users/Gerencia/Downloads/bank-robot/" + bankSlug + "/" + ownerSlug + "/" + statementSlug,
-            storage_state_path: "C:/Users/Gerencia/Documents/inversiones_personales/secrets/" + bankSlug + "-" + ownerSlug + "-state.json",
-            steps: [
-              {
-                action: "goto",
-                url: loginUrl
-              },
-              {
-                action: "wait_for_download",
-                timeout_ms: 900000,
-                filename: jobId + ".xls",
-                message: "Entra en " + bankName + ", abre la " + statementLabel.toLowerCase() + " y descarga el XLS o XLSX. En cuanto el banco termine la descarga, este asistente lo subira automaticamente."
-              }
-            ]
+            mode: "manual_download",
+            login_url: loginUrl,
+            watch_dir: "C:/Users/Gerencia/Downloads",
+            allowed_extensions: [".xls", ".xlsx"],
+            manual_timeout_seconds: 900
           }
         };
       }
@@ -1125,7 +1114,7 @@
         try {
           const status = await bridgeFetch("/status", {}, 4000);
           setBridgeStatus(true, status.jobs.length, "El asistente local esta listo en este Windows.");
-          setFeedback("Asistente local listo", "Ya puedes guardar conexiones y pulsar Descargar ahora sin tocar comandos.", "success");
+          setFeedback("Asistente local listo", "Ya puedes guardar conexiones y pulsar Descargar ahora. El banco se abrira en tu navegador normal.", "success");
           renderJobs(status.jobs);
           return status;
         } catch (error) {
@@ -1174,7 +1163,7 @@
       }
 
       async function runJob(jobId, reloadAfterFinish) {
-        setFeedback("Descargando desde tu banco", "Se abrira una ventana del banco en este ordenador. Si te pide entrar o confirmar, hazlo alli y deja que el banco descargue el XLS/XLSX.", "info");
+        setFeedback("Descargando desde tu banco", "Se abrira tu navegador normal. Entra en el banco, valida en el movil si hace falta y descarga el XLS/XLSX; el asistente lo detectara automaticamente.", "info");
         const runPayload = await bridgeFetch("/run", {
           method: "POST",
           body: JSON.stringify({ job_id: jobId, headed: true })

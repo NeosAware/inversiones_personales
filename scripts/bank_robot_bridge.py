@@ -3,6 +3,7 @@ import json
 import os
 import threading
 import time
+import webbrowser
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,7 +12,7 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from bank_robot import DEFAULT_CONFIG_PATH, ensure_directory, run_job
+from bank_robot import DEFAULT_CONFIG_PATH, ensure_directory, run_job as run_playwright_job
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -50,6 +51,7 @@ def summarize_job(job: dict) -> dict:
         if step.get("action") == "goto":
             goto_url = step.get("url", "")
             break
+    login_url = job.get("login_url", "") or goto_url
     return {
         "id": job.get("id", ""),
         "description": job.get("description", ""),
@@ -58,12 +60,15 @@ def summarize_job(job: dict) -> dict:
         "account_label": job.get("account_label", ""),
         "statement_kind": job.get("statement_kind", "account"),
         "ownership_category": job.get("ownership_category", "joint"),
-        "login_url": goto_url,
+        "mode": job.get("mode", "playwright"),
+        "login_url": login_url,
+        "watch_dir": job.get("watch_dir", ""),
     }
 
 
 def validate_job_payload(job: dict) -> dict:
-    required_fields = {
+    mode = str(job.get("mode", "playwright")).strip() or "playwright"
+    common_required_fields = {
         "id",
         "description",
         "bank",
@@ -71,16 +76,65 @@ def validate_job_payload(job: dict) -> dict:
         "account_label",
         "statement_kind",
         "ownership_category",
-        "download_dir",
-        "storage_state_path",
-        "steps",
     }
+    if mode == "manual_download":
+        required_fields = common_required_fields | {"watch_dir"}
+    else:
+        required_fields = common_required_fields | {"download_dir", "storage_state_path", "steps"}
     missing = sorted(field for field in required_fields if not job.get(field))
     if missing:
         raise ValueError(f"Faltan campos obligatorios del trabajo: {', '.join(missing)}")
-    if not isinstance(job["steps"], list):
+    if mode != "manual_download" and not isinstance(job["steps"], list):
         raise ValueError("steps debe ser una lista.")
     return job
+
+
+def snapshot_directory(directory: Path, extensions: set[str]) -> dict[str, tuple[float, int]]:
+    snapshot = {}
+    if not directory.exists():
+        return snapshot
+    for path in directory.iterdir():
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in extensions:
+            continue
+        stat_result = path.stat()
+        snapshot[str(path)] = (stat_result.st_mtime, stat_result.st_size)
+    return snapshot
+
+
+def run_manual_download_job(job: dict) -> list[Path]:
+    watch_dir = Path(job.get("watch_dir", str(Path.home() / "Downloads"))).expanduser().resolve()
+    ensure_directory(watch_dir)
+    allowed_extensions = {
+        extension if str(extension).startswith(".") else f".{extension}"
+        for extension in job.get("allowed_extensions", [".xls", ".xlsx"])
+    }
+    before_snapshot = snapshot_directory(watch_dir, allowed_extensions)
+    login_url = str(job.get("login_url", "")).strip()
+    if login_url and login_url != "about:blank":
+        webbrowser.open(login_url, new=2, autoraise=True)
+    timeout_seconds = int(job.get("manual_timeout_seconds", 900))
+    poll_interval = float(job.get("manual_poll_interval_seconds", 1.0))
+    deadline = time.time() + timeout_seconds
+
+    print(f"[{job['id']}] Esperando una descarga manual en {watch_dir}...")
+    while time.time() < deadline:
+        after_snapshot = snapshot_directory(watch_dir, allowed_extensions)
+        changed_files = []
+        for path_str, details in after_snapshot.items():
+            if before_snapshot.get(path_str) != details:
+                changed_files.append((Path(path_str), details[0]))
+        if changed_files:
+            changed_files.sort(key=lambda item: item[1], reverse=True)
+            selected_file = changed_files[0][0]
+            print(f"[{job['id']}] Detectado fichero descargado: {selected_file}")
+            return [selected_file]
+        time.sleep(poll_interval)
+
+    raise RuntimeError(
+        "No se ha detectado ningun XLS/XLSX nuevo en Descargas. Descarga el extracto desde tu navegador normal y vuelve a intentarlo."
+    )
 
 
 @dataclass
@@ -133,13 +187,16 @@ class RobotBridgeState:
             raise KeyError(job_id)
 
         run_id = uuid4().hex
-        downloaded_files = run_job(
-            job,
-            config,
-            headless_override=(False if headed else True),
-            dry_run=False,
-            skip_upload=True,
-        )
+        if job.get("mode") == "manual_download":
+            downloaded_files = run_manual_download_job(job)
+        else:
+            downloaded_files = run_playwright_job(
+                job,
+                config,
+                headless_override=(False if headed else True),
+                dry_run=False,
+                skip_upload=True,
+            )
         files = []
         for index, file_path in enumerate(downloaded_files):
             file_item = {
