@@ -201,85 +201,157 @@
 
   <div class="split" style="margin-top:24px; grid-template-columns:repeat(2, minmax(0, 1fr)); align-items:start;">
     <section class="card">
-      <p class="section-title">Paso 1</p>
-      <h2 style="margin-top:0;">Configurar el robot local</h2>
-      <p class="muted" style="margin-top:0;">La web ya no depende de un agregador externo. El robot corre en tu ordenador, entra en cada banco, descarga los XLS o PDF y los sube aqui automaticamente.</p>
-      <div class="soft-grid" style="margin-top:18px;">
+      <p class="section-title">Asistente</p>
+      <h2 style="margin-top:0;">Enlazar un banco sin tecnicismos</h2>
+      <p class="muted" style="margin-top:0;">Solo elige el banco, el titular y si quieres descargar una cuenta o una tarjeta. La web te prepara automaticamente la conexion para copiarla en tu ordenador.</p>
+      <form method="post" class="stack" style="margin-top:18px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="preview_robot_setup">
+        <datalist id="robot-bank-suggestions">
+          {% for suggestion in robot_bank_suggestions %}
+            <option value="{{ suggestion }}"></option>
+          {% endfor %}
+        </datalist>
+        <div class="grid cols-2">
+          <div>
+            <label for="{{ robot_setup_form.bank_name.id_for_label }}">{{ robot_setup_form.bank_name.label }}</label>
+            {{ robot_setup_form.bank_name }}
+            {% if robot_setup_form.bank_name.help_text %}<div class="metric-sub">{{ robot_setup_form.bank_name.help_text }}</div>{% endif %}
+            {% for error in robot_setup_form.bank_name.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ robot_setup_form.ownership_category.id_for_label }}">{{ robot_setup_form.ownership_category.label }}</label>
+            {{ robot_setup_form.ownership_category }}
+            {% if robot_setup_form.ownership_category.help_text %}<div class="metric-sub">{{ robot_setup_form.ownership_category.help_text }}</div>{% endif %}
+            {% for error in robot_setup_form.ownership_category.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ robot_setup_form.statement_kind.id_for_label }}">{{ robot_setup_form.statement_kind.label }}</label>
+            {{ robot_setup_form.statement_kind }}
+            {% if robot_setup_form.statement_kind.help_text %}<div class="metric-sub">{{ robot_setup_form.statement_kind.help_text }}</div>{% endif %}
+            {% for error in robot_setup_form.statement_kind.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ robot_setup_form.account_label.id_for_label }}">{{ robot_setup_form.account_label.label }}</label>
+            {{ robot_setup_form.account_label }}
+            {% if robot_setup_form.account_label.help_text %}<div class="metric-sub">{{ robot_setup_form.account_label.help_text }}</div>{% endif %}
+            {% for error in robot_setup_form.account_label.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+        </div>
+        <div>
+          <label for="{{ robot_setup_form.login_url.id_for_label }}">{{ robot_setup_form.login_url.label }}</label>
+          {{ robot_setup_form.login_url }}
+          {% if robot_setup_form.login_url.help_text %}<div class="metric-sub">{{ robot_setup_form.login_url.help_text }}</div>{% endif %}
+          {% for error in robot_setup_form.login_url.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
+        <button class="button" type="submit">Preparar conexion</button>
+      </form>
+
+      <div class="soft-panel" style="margin-top:18px;">
+        <h3 class="soft-title" style="margin-bottom:6px;">Resultado preparado</h3>
+        <div class="meta" style="margin-top:8px;">
+          <span class="pill">{{ robot_setup_guide.bank_name }}</span>
+          <span class="pill">{{ robot_setup_guide.owner_label }}</span>
+          <span class="pill">{{ robot_setup_guide.statement_label }}</span>
+          <span class="pill">{{ robot_setup_guide.short_label }}</span>
+        </div>
+        <div class="soft-grid" style="margin-top:16px;">
+          <section class="soft-panel">
+            <div class="metric-sub">Nombre interno</div>
+            <div class="soft-title" style="margin:6px 0 0;">{{ robot_setup_guide.job_id }}</div>
+          </section>
+          <section class="soft-panel">
+            <div class="metric-sub">Fichero que descargara</div>
+            <div class="soft-title" style="margin:6px 0 0;">{{ robot_setup_guide.filename }}</div>
+          </section>
+          <section class="soft-panel">
+            <div class="metric-sub">Carpeta de descarga</div>
+            <div class="soft-title" style="margin:6px 0 0; font-size:14px;">{{ robot_setup_guide.download_dir }}</div>
+          </section>
+          <section class="soft-panel">
+            <div class="metric-sub">Subira el fichero a</div>
+            <div class="soft-title" style="margin:6px 0 0; font-size:14px;">{{ robot_setup_guide.upload_url }}</div>
+          </section>
+        </div>
+      </div>
+
+      <div class="note-list" style="margin-top:18px;">
         <section class="soft-panel">
           <div class="step-chip">1</div>
-          <h3 class="soft-title">Preparar Windows</h3>
-          <div class="metric-sub">Instala <code>requirements-robot.txt</code> y Chromium con Playwright para que el robot pueda abrir el banco.</div>
+          <h3 class="soft-title">Que hara por ti</h3>
+          <div class="metric-sub">Abrira la banca online, descargara el extracto y lo subira a esta web para actualizar el analisis.</div>
         </section>
         <section class="soft-panel">
           <div class="step-chip">2</div>
-          <h3 class="soft-title">Guardar credenciales</h3>
-          <div class="metric-sub">Usa <code>set_bank_robot_secret.py</code> para dejar usuario y clave en Windows Credential Manager.</div>
+          <h3 class="soft-title">Que haras tu</h3>
+          <div class="metric-sub">La primera vez solo necesitas guardar tu usuario y clave, pegar un bloque en <code>bank_robot.config.json</code> y hacer una prueba.</div>
         </section>
         <section class="soft-panel">
           <div class="step-chip">3</div>
-          <h3 class="soft-title">Crear trabajos</h3>
-          <div class="metric-sub">Crea un trabajo por cuenta y otro por tarjeta dentro de <code>bank_robot.config.json</code>.</div>
+          <h3 class="soft-title">Si tienes cuenta y tarjeta</h3>
+          <div class="metric-sub">Repite el asistente cambiando solo el tipo. Asi el resumen separara bien cuenta y tarjeta.</div>
         </section>
         <section class="soft-panel">
           <div class="step-chip">4</div>
-          <h3 class="soft-title">Probar y programar</h3>
-          <div class="metric-sub">Primero usa <code>-Headed -DryRun</code>; luego quita <code>-DryRun</code> y programa la tarea diaria.</div>
+          <h3 class="soft-title">Seguridad</h3>
+          <div class="metric-sub">La clave del banco se queda en tu Windows. El servidor solo recibe el extracto ya descargado.</div>
         </section>
-      </div>
-
-      <div class="soft-panel" style="margin-top:18px;">
-        <div class="soft-copy">
-          <div class="metric-sub">Ruta del fichero de configuracion</div>
-          <button class="copy-button" type="button" data-copy-target="robot-config-path">Copiar ruta</button>
-        </div>
-        <pre id="robot-config-path"><code>C:\Users\Gerencia\Documents\inversiones_personales\scripts\bank_robot.config.json</code></pre>
-      </div>
-
-      <div class="soft-panel" style="margin-top:14px;">
-        <div class="soft-copy">
-          <div class="metric-sub">URL de subida al servidor</div>
-          <button class="copy-button" type="button" data-copy-target="robot-upload-url">Copiar URL</button>
-        </div>
-        <pre id="robot-upload-url"><code>{{ robot_upload_url }}</code></pre>
       </div>
     </section>
 
     <section class="card">
-      <p class="section-title">Paso 2</p>
-      <h2 style="margin-top:0;">Comandos utiles en Windows</h2>
-      <p class="muted" style="margin-top:0;">Empieza con una ejecucion visible y en seco para revisar selectores, descargas y clasificacion de cuenta o tarjeta.</p>
+      <p class="section-title">Resultado</p>
+      <h2 style="margin-top:0;">Lo que tienes que copiar</h2>
+      <p class="muted" style="margin-top:0;">Sigue este orden. Primero prepara el ordenador una sola vez. Despues guarda la clave, pega el bloque en el fichero de configuracion y haz una prueba.</p>
       <div class="stack" style="margin-top:16px;">
         <section class="soft-panel">
           <div class="soft-copy">
-            <div class="metric-sub">Instalacion inicial</div>
+            <div class="metric-sub">1. Preparar este ordenador</div>
             <button class="copy-button" type="button" data-copy-target="robot-install">Copiar</button>
           </div>
-          <pre id="robot-install"><code>cd C:\Users\Gerencia\Documents\inversiones_personales
-python -m pip install -r requirements-robot.txt
-python -m playwright install chromium
-Copy-Item .\scripts\bank_robot.example.json .\scripts\bank_robot.config.json</code></pre>
+          <pre id="robot-install"><code>{{ robot_setup_guide.install_command }}</code></pre>
         </section>
         <section class="soft-panel">
           <div class="soft-copy">
-            <div class="metric-sub">Guardar usuario y clave</div>
+            <div class="metric-sub">2. Guardar usuario y clave</div>
             <button class="copy-button" type="button" data-copy-target="robot-credentials">Copiar</button>
           </div>
-          <pre id="robot-credentials"><code>python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name username
-python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name password</code></pre>
+          <pre id="robot-credentials"><code>{{ robot_setup_guide.credentials_command }}</code></pre>
         </section>
         <section class="soft-panel">
           <div class="soft-copy">
-            <div class="metric-sub">Prueba manual sin subir</div>
+            <div class="metric-sub">3. Pegar este bloque en el fichero de configuracion</div>
+            <button class="copy-button" type="button" data-copy-target="robot-job-json">Copiar bloque</button>
+          </div>
+          <div class="metric-sub" style="margin-top:0;">Abre <code>{{ robot_setup_guide.config_path }}</code> y pega este bloque dentro de <code>"jobs"</code>.</div>
+          <pre id="robot-job-json"><code>{{ robot_setup_guide.job_json }}</code></pre>
+        </section>
+        <section class="soft-panel">
+          <div class="soft-copy">
+            <div class="metric-sub">4. Probar una vez</div>
             <button class="copy-button" type="button" data-copy-target="robot-dryrun">Copiar</button>
           </div>
-          <pre id="robot-dryrun"><code>.\scripts\run_bank_robot.ps1 -ConfigPath .\scripts\bank_robot.config.json -Job sabadell-cuenta-ximo -Headed -DryRun</code></pre>
+          <div class="metric-sub" style="margin-top:0;">{{ robot_setup_guide.start_text }}</div>
+          <pre id="robot-dryrun"><code>{{ robot_setup_guide.dry_run_command }}</code></pre>
         </section>
         <section class="soft-panel">
           <div class="soft-copy">
-            <div class="metric-sub">Programar ejecucion diaria</div>
+            <div class="metric-sub">5. Dejarlo automatico cada dia</div>
             <button class="copy-button" type="button" data-copy-target="robot-schedule">Copiar</button>
           </div>
-          <pre id="robot-schedule"><code>.\scripts\register_bank_robot_task.ps1 -TaskName "Robot bancos" -Time "08:00" -ConfigPath .\scripts\bank_robot.config.json</code></pre>
+          <pre id="robot-schedule"><code>{{ robot_setup_guide.schedule_command }}</code></pre>
+        </section>
+        <section class="soft-panel">
+          <div class="soft-copy">
+            <div class="metric-sub">Opcional: copia utiles</div>
+            <button class="copy-button" type="button" data-copy-target="robot-config-path">Copiar ruta</button>
+          </div>
+          <pre id="robot-config-path"><code>{{ robot_setup_guide.config_path }}</code></pre>
+          <div class="soft-copy" style="margin-top:14px;">
+            <div class="metric-sub">Servicio donde se guarda la clave</div>
+            <button class="copy-button" type="button" data-copy-target="robot-secret-service">Copiar nombre</button>
+          </div>
+          <pre id="robot-secret-service"><code>{{ robot_setup_guide.secrets_service }}</code></pre>
         </section>
       </div>
     </section>

@@ -15,18 +15,44 @@ from portfolio.ownership import AssetOwnershipCategory
 
 from .forms import (
     BankBalanceForm,
+    ROBOT_BANK_SUGGESTIONS,
+    RobotSetupAssistantForm,
     StatementUploadForm,
 )
 from .models import BankBalance, BankInvestmentPosition, BankStatementImport
 from .services import (
     build_banking_dashboard,
     build_robot_import_dashboard,
+    build_robot_setup_guide,
     import_uploaded_statement_file,
 )
 
 
 class BankBalanceListView(LoginRequiredMixin, TemplateView):
     template_name = "banking/bankbalance_list.html"
+
+    def _default_robot_setup_initial(self):
+        return {
+            "bank_name": "Banco Sabadell",
+            "ownership_category": AssetOwnershipCategory.JOINT,
+            "statement_kind": BankStatementImport.StatementKind.ACCOUNT,
+            "account_label": "",
+            "login_url": "",
+        }
+
+    def _build_robot_setup_preview(self, form, upload_url: str):
+        if form.is_bound and form.is_valid():
+            data = form.cleaned_data
+        else:
+            data = self._default_robot_setup_initial()
+        return build_robot_setup_guide(
+            bank_name=data["bank_name"],
+            ownership_category=data["ownership_category"],
+            statement_kind=data["statement_kind"],
+            account_label=data.get("account_label", ""),
+            login_url=data.get("login_url", ""),
+            upload_url=upload_url,
+        )
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -50,6 +76,12 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         context["recent_robot_imports"] = robot_dashboard["recent_imports"]
         context["robot_upload_url"] = self.request.build_absolute_uri(reverse("banking:robot_upload"))
         context["robot_token_configured"] = bool(settings.BANK_ROBOT_IMPORT_TOKEN)
+        context.setdefault("robot_setup_form", RobotSetupAssistantForm(initial=self._default_robot_setup_initial()))
+        context["robot_bank_suggestions"] = ROBOT_BANK_SUGGESTIONS
+        context.setdefault(
+            "robot_setup_guide",
+            self._build_robot_setup_preview(context["robot_setup_form"], context["robot_upload_url"]),
+        )
         context.update(dashboard)
         return context
 
@@ -65,6 +97,8 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
             return self._delete_statement(request)
         if action == "delete_all_statements":
             return self._delete_all_statements(request)
+        if action == "preview_robot_setup":
+            return self._preview_robot_setup(request)
 
         return self._import_statements(request)
 
@@ -212,6 +246,21 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
             messages.info(request, "No habia extractos importados para eliminar.")
 
         return redirect("banking:list")
+
+    def _preview_robot_setup(self, request):
+        form = RobotSetupAssistantForm(request.POST)
+        upload_url = request.build_absolute_uri(reverse("banking:robot_upload"))
+        guide = self._build_robot_setup_preview(form, upload_url)
+        context = self.get_context_data(
+            robot_setup_form=form,
+            robot_setup_guide=guide,
+        )
+        status = 200
+        if form.is_valid():
+            messages.success(request, f"Conexion preparada para {guide['summary_title']}.")
+        else:
+            status = 400
+        return self.render_to_response(context, status=status)
 
 def _extract_robot_token(request) -> str:
     authorization = request.headers.get("Authorization", "").strip()

@@ -923,11 +923,31 @@ class BankingViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Robot bancario local")
-        self.assertContains(response, "bank_robot.config.json")
-        self.assertContains(response, "BANK_ROBOT_IMPORT_TOKEN")
-        self.assertNotContains(response, "Buscar banco")
+        self.assertContains(response, "Enlazar un banco sin tecnicismos")
+        self.assertContains(response, "Preparar conexion")
+        self.assertContains(response, "Lo que tienes que copiar")
         self.assertNotContains(response, "Open Banking")
         self.assertNotContains(response, "GoCardless")
+
+    def test_can_preview_robot_setup_for_selected_bank(self):
+        response = self.client.post(
+            reverse("banking:list"),
+            {
+                "action": "preview_robot_setup",
+                "bank_name": "Banco Sabadell",
+                "ownership_category": AssetOwnershipCategory.XIMO,
+                "statement_kind": BankStatementImport.StatementKind.CARD,
+                "account_label": "Tarjeta empresa familiar",
+                "login_url": "https://www.bancsabadell.com/",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Banco Sabadell")
+        self.assertContains(response, "Ximo")
+        self.assertContains(response, "Tarjeta")
+        self.assertContains(response, "sabadell-tarjeta-ximo")
+        self.assertContains(response, "https://www.bancsabadell.com/")
 
     @override_settings(BANK_ROBOT_IMPORT_TOKEN="robot-token")
     def test_robot_upload_endpoint_imports_statement_without_login(self):

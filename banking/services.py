@@ -1490,3 +1490,107 @@ def build_robot_import_dashboard() -> dict:
         "summary": summary,
         "recent_imports": robot_statements[:12],
     }
+
+
+def slugify_robot_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_value.lower()).strip("-")
+    return re.sub(r"^(banco|bank)-", "", slug)
+
+
+def build_robot_setup_guide(
+    *,
+    bank_name: str,
+    ownership_category: str,
+    statement_kind: str,
+    account_label: str = "",
+    login_url: str = "",
+    upload_url: str = "",
+) -> dict:
+    ownership_labels = dict(AssetOwnershipCategory.choices)
+    statement_labels = dict(BankStatementImport.StatementKind.choices)
+    owner_label = ownership_labels.get(ownership_category, ownership_category)
+    statement_label = statement_labels.get(statement_kind, statement_kind)
+    bank_slug = slugify_robot_text(bank_name) or "mi-banco"
+    owner_slug = slugify_robot_text(owner_label) or ownership_category
+    statement_slug = "cuenta" if statement_kind == BankStatementImport.StatementKind.ACCOUNT else "tarjeta"
+    short_label = account_label.strip() or ("Cuenta principal" if statement_slug == "cuenta" else "Tarjeta principal")
+    short_label_slug = slugify_robot_text(short_label)
+    job_id = "-".join(part for part in [bank_slug, statement_slug, owner_slug] if part)
+    filename = f"{job_id}.xls"
+    download_dir = f"C:/Users/Gerencia/Downloads/bank-robot/{bank_slug}/{owner_slug}/{statement_slug}"
+    storage_state_path = (
+        f"C:/Users/Gerencia/Documents/inversiones_personales/secrets/{bank_slug}-{owner_slug}-state.json"
+    )
+    secrets_service = f"inversiones_personales.bank_robot.{bank_slug}-{owner_slug}"
+    goto_url = login_url.strip() or "https://TU_WEB_DEL_BANCO"
+    if login_url.strip():
+        start_text = f"Abre la web de {bank_name} usando la direccion que has indicado."
+    else:
+        start_text = f"Abre la web habitual de {bank_name} y entra como siempre."
+    manual_message = (
+        f"Entra en {bank_name}, abre la pantalla de {statement_label.lower()} y deja visible el boton para "
+        f"descargar el extracto en XLS o XLSX. Cuando lo veas, pulsa Enter."
+    )
+    job_payload = {
+        "id": job_id,
+        "description": f"{statement_label} de {owner_label} en {bank_name}",
+        "bank": bank_name,
+        "institution": bank_name,
+        "account_label": short_label,
+        "statement_kind": statement_kind,
+        "ownership_category": ownership_category,
+        "headless": False,
+        "browser": "chromium",
+        "download_dir": download_dir,
+        "storage_state_path": storage_state_path,
+        "secrets_service": secrets_service,
+        "secret_fields": ["username", "password"],
+        "steps": [
+            {"action": "goto", "url": goto_url},
+            {"action": "manual_pause", "message": manual_message},
+            {"action": "download", "selector": "text=XLS", "filename": filename},
+        ],
+    }
+    install_command = (
+        "cd C:\\Users\\Gerencia\\Documents\\inversiones_personales\n"
+        "python -m pip install -r requirements-robot.txt\n"
+        "python -m playwright install chromium\n"
+        "Copy-Item .\\scripts\\bank_robot.example.json .\\scripts\\bank_robot.config.json"
+    )
+    credentials_command = (
+        f"python .\\scripts\\set_bank_robot_secret.py --job {job_id} --name username\n"
+        f"python .\\scripts\\set_bank_robot_secret.py --job {job_id} --name password"
+    )
+    dry_run_command = (
+        f".\\scripts\\run_bank_robot.ps1 -ConfigPath .\\scripts\\bank_robot.config.json "
+        f"-Job {job_id} -Headed -DryRun"
+    )
+    schedule_command = (
+        f".\\scripts\\register_bank_robot_task.ps1 -TaskName \"Robot {bank_name}\" -Time \"08:00\" "
+        f"-ConfigPath .\\scripts\\bank_robot.config.json -Job {job_id}"
+    )
+    summary_title = f"{bank_name} · {owner_label} · {statement_label}"
+    return {
+        "summary_title": summary_title,
+        "bank_name": bank_name,
+        "owner_label": owner_label,
+        "statement_label": statement_label,
+        "short_label": short_label,
+        "job_id": job_id,
+        "filename": filename,
+        "download_dir": download_dir,
+        "storage_state_path": storage_state_path,
+        "secrets_service": secrets_service,
+        "config_path": "C:\\Users\\Gerencia\\Documents\\inversiones_personales\\scripts\\bank_robot.config.json",
+        "upload_url": upload_url,
+        "goto_url": goto_url,
+        "start_text": start_text,
+        "short_label_slug": short_label_slug,
+        "install_command": install_command,
+        "credentials_command": credentials_command,
+        "dry_run_command": dry_run_command,
+        "schedule_command": schedule_command,
+        "job_json": json.dumps(job_payload, indent=2, ensure_ascii=False),
+    }
