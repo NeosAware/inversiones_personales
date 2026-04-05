@@ -15,8 +15,6 @@ from portfolio.ownership import AssetOwnershipCategory
 
 from .models import (
     BankBalance,
-    BankConnection,
-    BankExternalAccount,
     BankInvestmentPosition,
     BankMovement,
     BankStatementImport,
@@ -25,15 +23,11 @@ from .services import (
     build_bank_account_overview,
     build_banking_dashboard,
     build_card_spending_overview,
-    build_open_banking_dashboard,
     classify_movement,
-    create_open_banking_connection,
     import_statement,
     load_rows_from_xls,
     parse_spanish_decimal,
     parse_statement_file,
-    search_gocardless_institutions,
-    sync_open_banking_connection,
 )
 
 
@@ -834,268 +828,6 @@ class BankingImportDeletionTests(TestCase):
                 self.assertTrue(BankStatementImport.objects.filter(pk=replacement.pk).exists())
 
 
-class OpenBankingServicesTests(TestCase):
-    @patch("banking.services.get_gocardless_access_token", return_value="access-token")
-    @patch("banking.services.gocardless_api_request")
-    def test_search_gocardless_institutions_filters_by_name(self, api_request_mock, _token_mock):
-        api_request_mock.return_value = [
-            {"id": "SABADELL_ES", "name": "Banco Sabadell"},
-            {"id": "CAIXA_ES", "name": "CaixaBank"},
-        ]
-
-        results = search_gocardless_institutions("ES", "sabadell")
-
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["id"], "SABADELL_ES")
-
-    @patch("banking.services.get_gocardless_access_token", return_value="access-token")
-    @patch("banking.services.gocardless_api_request")
-    def test_create_open_banking_connection_updates_requisition_fields(self, api_request_mock, _token_mock):
-        connection = BankConnection.objects.create(
-            ownership_category=AssetOwnershipCategory.MONICA,
-            institution_name="Banco Sabadell",
-            institution_id="SABADELL_ES",
-            country_code="ES",
-            reference="bank-ref-123",
-        )
-        api_request_mock.side_effect = [
-            {"id": "agreement-1"},
-            {"id": "req-1", "link": "https://bank.example/authorize", "status": "CR"},
-        ]
-
-        link = create_open_banking_connection(connection, "https://app.example/banking/connections/callback/")
-
-        connection.refresh_from_db()
-        self.assertEqual(link, "https://bank.example/authorize")
-        self.assertEqual(connection.agreement_id, "agreement-1")
-        self.assertEqual(connection.requisition_id, "req-1")
-        self.assertEqual(connection.requisition_status, "CR")
-
-    @patch("banking.services.get_gocardless_access_token", return_value="access-token")
-    @patch("banking.services.gocardless_api_request")
-    def test_sync_open_banking_connection_imports_accounts_and_cards(self, api_request_mock, _token_mock):
-        connection = BankConnection.objects.create(
-            ownership_category=AssetOwnershipCategory.XIMO,
-            institution_name="Banco Sabadell",
-            institution_id="SABADELL_ES",
-            country_code="ES",
-            reference="bank-ref-sync",
-            requisition_id="req-sync",
-        )
-
-        def api_side_effect(method, path, payload=None, access_token=None, query=None):
-            responses = {
-                ("GET", "/requisitions/req-sync/"): {"status": "LN", "accounts": ["acc-main", "acc-card"]},
-                (
-                    "GET",
-                    "/accounts/acc-main/details/",
-                ): {
-                    "account": {
-                        "resourceId": "acc-main",
-                        "displayName": "Cuenta nomina",
-                        "iban": "ES12 3456 7890 1234",
-                        "currency": "EUR",
-                        "ownerName": "Ximo",
-                    }
-                },
-                (
-                    "GET",
-                    "/accounts/acc-main/balances/",
-                ): {
-                    "balances": [
-                        {
-                            "balanceType": "closingBooked",
-                            "balanceAmount": {"amount": "1520.45", "currency": "EUR"},
-                        }
-                    ]
-                },
-                (
-                    "GET",
-                    "/accounts/acc-main/transactions/",
-                ): {
-                    "transactions": {
-                        "booked": [
-                            {
-                                "bookingDate": "2026-04-05",
-                                "transactionAmount": {"amount": "2500.00", "currency": "EUR"},
-                                "remittanceInformationUnstructured": "NOMINA ABRIL",
-                            },
-                            {
-                                "bookingDate": "2026-04-07",
-                                "transactionAmount": {"amount": "-45.10", "currency": "EUR"},
-                                "remittanceInformationUnstructured": "MERCADONA",
-                            },
-                        ]
-                    }
-                },
-                (
-                    "GET",
-                    "/accounts/acc-card/details/",
-                ): {
-                    "account": {
-                        "resourceId": "acc-card",
-                        "displayName": "Visa oro",
-                        "details": "Tarjeta de credito",
-                        "linkedAccounts": "Cuenta nomina",
-                        "currency": "EUR",
-                        "ownerName": "Ximo",
-                    }
-                },
-                (
-                    "GET",
-                    "/accounts/acc-card/balances/",
-                ): {
-                    "balances": [
-                        {
-                            "balanceType": "closingBooked",
-                            "balanceAmount": {"amount": "-320.00", "currency": "EUR"},
-                        }
-                    ]
-                },
-                (
-                    "GET",
-                    "/accounts/acc-card/transactions/",
-                ): {
-                    "transactions": {
-                        "booked": [
-                            {
-                                "bookingDate": "2026-04-02",
-                                "transactionAmount": {"amount": "-120.00", "currency": "EUR"},
-                                "remittanceInformationUnstructured": "AMAZON",
-                            },
-                            {
-                                "bookingDate": "2026-04-03",
-                                "transactionAmount": {"amount": "20.00", "currency": "EUR"},
-                                "remittanceInformationUnstructured": "DEVOLUCION AMAZON",
-                            },
-                        ]
-                    }
-                },
-            }
-            return responses[(method, path)]
-
-        api_request_mock.side_effect = api_side_effect
-
-        result = sync_open_banking_connection(connection)
-
-        self.assertEqual(result["external_accounts"], 2)
-        self.assertEqual(result["imported_statements"], 2)
-        self.assertTrue(
-            BankExternalAccount.objects.filter(
-                provider_account_id="acc-main",
-                statement_kind=BankStatementImport.StatementKind.ACCOUNT,
-            ).exists()
-        )
-        self.assertTrue(
-            BankExternalAccount.objects.filter(
-                provider_account_id="acc-card",
-                statement_kind=BankStatementImport.StatementKind.CARD,
-            ).exists()
-        )
-        self.assertTrue(
-            BankBalance.objects.filter(
-                account_name="Cuenta nomina",
-                current_balance=Decimal("1520.45"),
-            ).exists()
-        )
-        self.assertTrue(
-            BankStatementImport.objects.filter(
-                import_source=BankStatementImport.ImportSource.OPEN_BANKING,
-                statement_kind=BankStatementImport.StatementKind.ACCOUNT,
-                total_income=Decimal("2500.00"),
-                total_expenses=Decimal("45.10"),
-            ).exists()
-        )
-        self.assertTrue(
-            BankStatementImport.objects.filter(
-                import_source=BankStatementImport.ImportSource.OPEN_BANKING,
-                statement_kind=BankStatementImport.StatementKind.CARD,
-                total_income=Decimal("20.00"),
-                total_expenses=Decimal("120.00"),
-            ).exists()
-        )
-
-        dashboard = build_open_banking_dashboard()
-        self.assertEqual(dashboard["summary"]["connections_count"], 1)
-        self.assertEqual(dashboard["summary"]["accounts_count"], 1)
-        self.assertEqual(dashboard["summary"]["cards_count"], 1)
-
-    @patch("banking.services.get_gocardless_access_token", return_value="access-token")
-    @patch("banking.services.gocardless_api_request")
-    def test_sync_open_banking_connection_preserves_manual_account_cost_data(self, api_request_mock, _token_mock):
-        connection = BankConnection.objects.create(
-            ownership_category=AssetOwnershipCategory.MONICA,
-            institution_name="Banco Sabadell",
-            institution_id="SABADELL_ES",
-            country_code="ES",
-            reference="bank-ref-manual",
-            requisition_id="req-manual",
-        )
-        manual_account = BankBalance.objects.create(
-            ownership_category=AssetOwnershipCategory.JOINT,
-            institution="Banco Sabadell",
-            account_name="Cuenta ahorro",
-            deposited_amount=Decimal("12000.00"),
-            current_balance=Decimal("11800.00"),
-            annual_interest_income=Decimal("35.00"),
-            notes="Cuenta principal",
-        )
-
-        def api_side_effect(method, path, payload=None, access_token=None, query=None):
-            responses = {
-                ("GET", "/requisitions/req-manual/"): {"status": "LN", "accounts": ["acc-main"]},
-                (
-                    "GET",
-                    "/accounts/acc-main/details/",
-                ): {
-                    "account": {
-                        "resourceId": "acc-main",
-                        "displayName": "Cuenta ahorro",
-                        "iban": "ES98 7654 3210 1111",
-                        "currency": "EUR",
-                        "ownerName": "Monica",
-                    }
-                },
-                (
-                    "GET",
-                    "/accounts/acc-main/balances/",
-                ): {
-                    "balances": [
-                        {
-                            "balanceType": "closingBooked",
-                            "balanceAmount": {"amount": "12550.00", "currency": "EUR"},
-                        }
-                    ]
-                },
-                (
-                    "GET",
-                    "/accounts/acc-main/transactions/",
-                ): {
-                    "transactions": {
-                        "booked": [
-                            {
-                                "bookingDate": "2026-04-08",
-                                "transactionAmount": {"amount": "750.00", "currency": "EUR"},
-                                "remittanceInformationUnstructured": "TRASPASO",
-                            }
-                        ]
-                    }
-                },
-            }
-            return responses[(method, path)]
-
-        api_request_mock.side_effect = api_side_effect
-
-        sync_open_banking_connection(connection)
-
-        manual_account.refresh_from_db()
-        self.assertEqual(manual_account.deposited_amount, Decimal("12000.00"))
-        self.assertEqual(manual_account.current_balance, Decimal("12550.00"))
-        self.assertEqual(manual_account.annual_interest_income, Decimal("35.00"))
-        self.assertEqual(manual_account.notes, "Cuenta principal")
-        self.assertEqual(manual_account.ownership_category, AssetOwnershipCategory.MONICA)
-
-
 class BankingViewTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
@@ -1185,67 +917,17 @@ class BankingViewTests(TestCase):
 </html>
 """
 
-    @patch("banking.views.search_gocardless_institutions")
-    def test_search_institutions_renders_results(self, search_mock):
-        search_mock.return_value = [
-            {"id": "SABADELL_ES", "name": "Banco Sabadell", "max_access_valid_for_days": "90"},
-        ]
-
-        response = self.client.post(
-            reverse("banking:list"),
-            {
-                "action": "search_institutions",
-                "country_code": "ES",
-                "query": "Sabadell",
-            },
-        )
+    @override_settings(BANK_ROBOT_IMPORT_TOKEN="robot-token")
+    def test_bank_page_shows_robot_automation_section(self):
+        response = self.client.get(reverse("banking:list"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Banco Sabadell")
-        self.assertContains(response, "SABADELL_ES")
-
-    @patch("banking.views.create_open_banking_connection")
-    def test_create_connection_redirects_to_authorisation_url(self, connection_mock):
-        connection_mock.return_value = "https://bank.example/authorize"
-
-        response = self.client.post(
-            reverse("banking:list"),
-            {
-                "action": "create_connection",
-                "ownership_category": AssetOwnershipCategory.MONICA,
-                "country_code": "ES",
-                "institution_id": "SABADELL_ES",
-                "institution_name": "Banco Sabadell",
-            },
-        )
-
-        self.assertRedirects(response, "https://bank.example/authorize", fetch_redirect_response=False)
-        connection = BankConnection.objects.get(institution_id="SABADELL_ES")
-        self.assertEqual(connection.ownership_category, AssetOwnershipCategory.MONICA)
-
-    @patch("banking.views.sync_open_banking_connection")
-    def test_run_connection_sync_shows_success_message(self, sync_mock):
-        sync_mock.return_value = {"external_accounts": 2, "imported_statements": 3}
-        connection = BankConnection.objects.create(
-            ownership_category=AssetOwnershipCategory.JOINT,
-            institution_name="Banco Sabadell",
-            institution_id="SABADELL_ES",
-            country_code="ES",
-            reference="bank-view-sync",
-            requisition_id="req-view-sync",
-        )
-
-        response = self.client.post(
-            reverse("banking:list"),
-            {
-                "action": "run_connection_sync",
-                "connection_id": connection.id,
-            },
-        )
-
-        self.assertRedirects(response, reverse("banking:list"))
-        messages = list(response.wsgi_request._messages)
-        self.assertTrue(any("Sincronizacion completada" in str(message) for message in messages))
+        self.assertContains(response, "Robot bancario local")
+        self.assertContains(response, "bank_robot.config.json")
+        self.assertContains(response, "BANK_ROBOT_IMPORT_TOKEN")
+        self.assertNotContains(response, "Buscar banco")
+        self.assertNotContains(response, "Open Banking")
+        self.assertNotContains(response, "GoCardless")
 
     @override_settings(BANK_ROBOT_IMPORT_TOKEN="robot-token")
     def test_robot_upload_endpoint_imports_statement_without_login(self):

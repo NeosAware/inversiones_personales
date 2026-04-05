@@ -169,7 +169,142 @@
     </section>
   </div>
 
-  <p class="section-title" style="margin-top:28px;">Automatizacion bancaria</p>
+  <p class="section-title" style="margin-top:28px;">Robot bancario local</p>
+  <div class="grid cols-4">
+    <section class="card">
+      <div class="metric-label">Token del robot</div>
+      <div class="metric-value">{% if robot_token_configured %}Activo{% else %}Falta{% endif %}</div>
+      <div class="metric-sub">El servidor necesita <code>BANK_ROBOT_IMPORT_TOKEN</code> para aceptar subidas automaticas.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Extractos recibidos</div>
+      <div class="metric-value">{{ robot_summary.imported_count }}</div>
+      <div class="metric-sub">Ficheros que el robot de Windows ya ha subido e importado en esta web.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Cuentas y tarjetas</div>
+      <div class="metric-value">{{ robot_summary.accounts_count }} / {{ robot_summary.cards_count }}</div>
+      <div class="metric-sub">Separadas como cuentas y tarjetas para que el gasto no quede mezclado.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Ultima subida</div>
+      <div class="metric-value">
+        {% if robot_summary.latest_imported_at %}
+          {{ robot_summary.latest_imported_at|date:"Y-m-d H:i" }}
+        {% else %}
+          -
+        {% endif %}
+      </div>
+      <div class="metric-sub">Momento de la ultima carga automatica enviada desde tu ordenador Windows.</div>
+    </section>
+  </div>
+
+  <div class="split" style="margin-top:24px;">
+    <section class="card">
+      <p class="section-title">Paso 1</p>
+      <h2 style="margin-top:0;">Configurar el robot local</h2>
+      <p class="muted" style="margin-top:0;">La web ya no depende de un agregador externo. El robot corre en tu ordenador, entra en cada banco, descarga los XLS o PDF y los sube aqui automaticamente.</p>
+      <div class="metric-sub" style="margin-top:16px;">Ruta del fichero de configuracion</div>
+      <pre><code>C:\Users\Gerencia\Documents\inversiones_personales\scripts\bank_robot.config.json</code></pre>
+      <div class="metric-sub" style="margin-top:16px;">URL de subida al servidor</div>
+      <pre><code>{{ robot_upload_url }}</code></pre>
+      <div class="metric-sub" style="margin-top:16px;">Flujo recomendado</div>
+      <ul style="margin:12px 0 0; padding-left:18px; color:var(--muted);">
+        <li>Instala <code>requirements-robot.txt</code> y Chromium con Playwright.</li>
+        <li>Guarda las credenciales de cada banco en Windows Credential Manager con <code>set_bank_robot_secret.py</code>.</li>
+        <li>Crea un trabajo por cada cuenta y otro por cada tarjeta dentro de <code>bank_robot.config.json</code>.</li>
+        <li>Lanza el robot con <code>run_bank_robot.ps1</code> o programalo con el Programador de tareas.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <p class="section-title">Paso 2</p>
+      <h2 style="margin-top:0;">Comandos utiles en Windows</h2>
+      <p class="muted" style="margin-top:0;">Empieza con una ejecucion visible y en seco para revisar selectores, descargas y clasificacion de cuenta o tarjeta.</p>
+      <div class="metric-sub" style="margin-top:16px;">Instalacion inicial</div>
+      <pre><code>cd C:\Users\Gerencia\Documents\inversiones_personales
+python -m pip install -r requirements-robot.txt
+python -m playwright install chromium
+Copy-Item .\scripts\bank_robot.example.json .\scripts\bank_robot.config.json</code></pre>
+      <div class="metric-sub" style="margin-top:16px;">Guardar usuario y clave</div>
+      <pre><code>python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name username
+python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name password</code></pre>
+      <div class="metric-sub" style="margin-top:16px;">Prueba manual sin subir</div>
+      <pre><code>.\scripts\run_bank_robot.ps1 -ConfigPath .\scripts\bank_robot.config.json -Job sabadell-cuenta-ximo -Headed -DryRun</code></pre>
+      <div class="metric-sub" style="margin-top:16px;">Programar ejecucion diaria</div>
+      <pre><code>.\scripts\register_bank_robot_task.ps1 -TaskName "Robot bancos" -Time "08:00" -ConfigPath .\scripts\bank_robot.config.json</code></pre>
+    </section>
+  </div>
+
+  <section class="card table-card" style="margin-top:24px;">
+    <p class="section-title">Ultimas importaciones del robot</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Fichero</th>
+          <th>Banco</th>
+          <th>Cuenta o tarjeta</th>
+          <th>Tipo</th>
+          <th>Titular</th>
+          <th>Estado</th>
+          <th>Periodo</th>
+          <th>Subido</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for statement in recent_robot_imports %}
+          <tr>
+            <td>{{ statement.source_filename }}</td>
+            <td>{{ statement.institution|default:"-" }}</td>
+            <td>{{ statement.account_name }}</td>
+            <td>{{ statement.get_statement_kind_display }}</td>
+            <td>{{ statement.get_ownership_category_display }}</td>
+            <td>{{ statement.get_import_status_display }}</td>
+            <td>{{ statement.period_label }}</td>
+            <td>{{ statement.imported_at|date:"Y-m-d H:i" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="8" class="muted">Todavia no hay importaciones enviadas por el robot local.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card table-card" style="margin-top:24px;">
+    <p class="section-title">Notas del robot</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Area</th>
+          <th>Explicacion</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Seguridad</td>
+          <td>La clave del banco se guarda en Windows Credential Manager o DPAPI. El servidor solo recibe el fichero ya descargado.</td>
+        </tr>
+        <tr>
+          <td>Multiples bancos</td>
+          <td>Configura un trabajo por cada cuenta y otro por cada tarjeta. Asi puedes reunir todos tus bancos en el mismo panel.</td>
+        </tr>
+        <tr>
+          <td>Sesiones</td>
+          <td>Si varios productos usan el mismo acceso, comparte el mismo <code>storage_state_path</code> para reutilizar la sesion.</td>
+        </tr>
+        <tr>
+          <td>Clasificacion</td>
+          <td>Marca cada trabajo como <code>account</code> o <code>card</code> para que el analisis mensual salga bien separado.</td>
+        </tr>
+        <tr>
+          <td>Depuracion</td>
+          <td>Empieza con <code>-Headed -DryRun</code>. Cuando veas que descarga bien, quita <code>-DryRun</code> y programa la tarea diaria.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  {% comment %}
   <div class="grid cols-4">
     <section class="card">
       <div class="metric-label">Conexiones activas</div>
@@ -391,6 +526,8 @@
       </tbody>
     </table>
   </section>
+
+  {% endcomment %}
 
   <p class="section-title" style="margin-top:28px;">Productos bancarios y custodia</p>
   <div class="grid cols-4">

@@ -1,4 +1,3 @@
-import uuid
 from decimal import Decimal
 import secrets
 
@@ -16,19 +15,13 @@ from portfolio.ownership import AssetOwnershipCategory
 
 from .forms import (
     BankBalanceForm,
-    BankConnectionForm,
-    BankExternalAccountForm,
-    BankInstitutionSearchForm,
     StatementUploadForm,
 )
-from .models import BankBalance, BankConnection, BankExternalAccount, BankInvestmentPosition, BankStatementImport
+from .models import BankBalance, BankInvestmentPosition, BankStatementImport
 from .services import (
     build_banking_dashboard,
-    build_open_banking_dashboard,
-    create_open_banking_connection,
+    build_robot_import_dashboard,
     import_uploaded_statement_file,
-    search_gocardless_institutions,
-    sync_open_banking_connection,
 )
 
 
@@ -50,16 +43,13 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         }
         context.setdefault("form", StatementUploadForm())
         context.setdefault("account_form", BankBalanceForm())
-        context.setdefault("institution_search_form", BankInstitutionSearchForm())
-        context.setdefault("connection_form", BankConnectionForm())
-        context.setdefault("external_account_form", BankExternalAccountForm())
         context["ownership_choices"] = AssetOwnershipCategory.choices
         context["statement_kind_choices"] = BankStatementImport.StatementKind.choices
-        open_banking = build_open_banking_dashboard()
-        context["open_banking_summary"] = open_banking["summary"]
-        context["bank_connections"] = open_banking["connections"]
-        context["external_bank_accounts"] = open_banking["external_accounts"]
-        context.setdefault("institution_results", [])
+        robot_dashboard = build_robot_import_dashboard()
+        context["robot_summary"] = robot_dashboard["summary"]
+        context["recent_robot_imports"] = robot_dashboard["recent_imports"]
+        context["robot_upload_url"] = self.request.build_absolute_uri(reverse("banking:robot_upload"))
+        context["robot_token_configured"] = bool(settings.BANK_ROBOT_IMPORT_TOKEN)
         context.update(dashboard)
         return context
 
@@ -75,14 +65,6 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
             return self._delete_statement(request)
         if action == "delete_all_statements":
             return self._delete_all_statements(request)
-        if action == "search_institutions":
-            return self._search_institutions(request)
-        if action == "create_connection":
-            return self._create_connection(request)
-        if action == "run_connection_sync":
-            return self._run_connection_sync(request)
-        if action == "update_external_account":
-            return self._update_external_account(request)
 
         return self._import_statements(request)
 
@@ -230,130 +212,6 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
             messages.info(request, "No habia extractos importados para eliminar.")
 
         return redirect("banking:list")
-
-    def _search_institutions(self, request):
-        form = BankInstitutionSearchForm(request.POST)
-        if not form.is_valid():
-            context = self.get_context_data(institution_search_form=form)
-            return self.render_to_response(context, status=400)
-
-        try:
-            institution_results = search_gocardless_institutions(
-                country_code=form.cleaned_data["country_code"],
-                query=form.cleaned_data["query"],
-            )
-        except ValidationError as exc:
-            messages.error(request, str(exc))
-            institution_results = []
-
-        connection_form = BankConnectionForm(
-            initial={
-                "country_code": form.cleaned_data["country_code"],
-            }
-        )
-        context = self.get_context_data(
-            institution_search_form=form,
-            connection_form=connection_form,
-            institution_results=institution_results,
-        )
-        return self.render_to_response(context)
-
-    def _create_connection(self, request):
-        form = BankConnectionForm(request.POST)
-        if not form.is_valid():
-            context = self.get_context_data(connection_form=form)
-            return self.render_to_response(context, status=400)
-
-        connection = BankConnection.objects.create(
-            ownership_category=form.cleaned_data["ownership_category"],
-            institution_name=form.cleaned_data["institution_name"],
-            institution_id=form.cleaned_data["institution_id"],
-            country_code=form.cleaned_data["country_code"],
-            reference=f"bank-{uuid.uuid4().hex[:24]}",
-        )
-        callback_url = request.build_absolute_uri(
-            reverse("banking:connection_callback") + f"?connection_id={connection.id}"
-        )
-        try:
-            requisition_link = create_open_banking_connection(connection, callback_url)
-        except ValidationError as exc:
-            connection.last_error = str(exc)
-            connection.save(update_fields=["last_error", "updated_at"])
-            messages.error(request, str(exc))
-            return redirect("banking:list")
-
-        messages.success(
-            request,
-            f"Conexion preparada para {connection.institution_name}. Autoriza ahora el acceso del banco y volveras automaticamente.",
-        )
-        return redirect(requisition_link)
-
-    def _run_connection_sync(self, request):
-        connection = get_object_or_404(BankConnection, pk=request.POST.get("connection_id"))
-        try:
-            result = sync_open_banking_connection(connection)
-        except ValidationError as exc:
-            messages.error(request, str(exc))
-            return redirect("banking:list")
-        except Exception as exc:
-            messages.error(request, f"No se ha podido sincronizar {connection.institution_name}: {exc}")
-            return redirect("banking:list")
-
-        messages.success(
-            request,
-            f"Sincronizacion completada para {connection.institution_name}: "
-            f"{result['external_accounts']} cuenta(s)/tarjeta(s) revisadas y {result['imported_statements']} periodo(s) actualizados.",
-        )
-        return redirect("banking:list")
-
-    def _update_external_account(self, request):
-        external_account = get_object_or_404(BankExternalAccount, pk=request.POST.get("external_account_id"))
-        form = BankExternalAccountForm(request.POST)
-        if not form.is_valid():
-            context = self.get_context_data(external_account_form=form)
-            return self.render_to_response(context, status=400)
-
-        external_account.ownership_category = form.cleaned_data["ownership_category"]
-        external_account.statement_kind = form.cleaned_data["statement_kind"]
-        external_account.is_active = form.cleaned_data["is_active"]
-        external_account.save(update_fields=["ownership_category", "statement_kind", "is_active", "updated_at"])
-        external_account.statement_imports.update(
-            ownership_category=external_account.ownership_category,
-            statement_kind=external_account.statement_kind,
-        )
-        if external_account.statement_kind == BankStatementImport.StatementKind.ACCOUNT:
-            BankBalance.objects.filter(account_name__iexact=external_account.account_label).update(
-                ownership_category=external_account.ownership_category
-            )
-        else:
-            BankBalance.objects.filter(
-                account_name__iexact=external_account.account_label,
-                notes="Saldo sincronizado automaticamente por Open Banking.",
-            ).delete()
-        messages.success(request, f"Configuracion actualizada para {external_account.account_label}.")
-        return redirect("banking:list")
-
-
-class BankConnectionCallbackView(LoginRequiredMixin, TemplateView):
-    template_name = "banking/connection_callback.html"
-
-    def get(self, request, *args, **kwargs):
-        connection = get_object_or_404(BankConnection, pk=request.GET.get("connection_id"))
-        try:
-            result = sync_open_banking_connection(connection)
-        except Exception as exc:
-            connection.last_error = str(exc)
-            connection.save(update_fields=["last_error", "updated_at"])
-            messages.error(request, f"La autorizacion ha vuelto, pero la primera sincronizacion ha fallado: {exc}")
-            return redirect("banking:list")
-
-        messages.success(
-            request,
-            f"{connection.institution_name} ya esta conectada: "
-            f"{result['external_accounts']} cuenta(s)/tarjeta(s) detectadas.",
-        )
-        return redirect("banking:list")
-
 
 def _extract_robot_token(request) -> str:
     authorization = request.headers.get("Authorization", "").strip()

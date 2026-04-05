@@ -210,46 +210,9 @@ When this setting is active:
 - document links are served through an authenticated Django route instead of exposing raw files directly
 - existing unencrypted files remain readable, but they are not retroactively encrypted until you upload them again
 
-## Automatic bank sync
-
-The banking module can connect banks through GoCardless Bank Account Data so accounts and compatible cards are synchronized without monthly manual uploads.
-
-Environment variables:
-
-```text
-GOCARDLESS_BANK_DATA_SECRET_ID=your-secret-id
-GOCARDLESS_BANK_DATA_SECRET_KEY=your-secret-key
-GOCARDLESS_BANK_DATA_BASE_URL=https://bankaccountdata.gocardless.com/api/v2
-```
-
-How it works:
-
-- go to `Banca`
-- search your bank in the `Automatizacion bancaria` block
-- create the connection and complete the authorization with the bank
-- the app stores the connection metadata, not your online banking password
-- after authorization, use `Sincronizar ahora` or schedule the management command below
-
-Nightly sync example:
-
-```bash
-cd /root/personal
-set -a
-. .env
-set +a
-cd /root/personal/app
-/root/personal/venv/bin/python3 manage.py sync_bank_connections
-```
-
-Example cron entry at 03:15 every day:
-
-```cron
-15 3 * * * cd /root/personal && set -a && . ./.env && set +a && cd /root/personal/app && /root/personal/venv/bin/python3 manage.py sync_bank_connections >> /root/personal/bank-sync.log 2>&1
-```
-
 ## Local bank robot for personal use
 
-If you do not want a paid Open Banking connector, you can automate the bank website locally on your own Windows PC and upload the downloaded XLS/XLSX files to this Django app.
+The banking module now uses a local robot on your own Windows PC. It opens each bank website, downloads the XLS/XLSX or PDF statement, and uploads it to this Django app.
 
 Server-side requirement:
 
