@@ -22,6 +22,55 @@
           <div class="metric-value">{{ summary.annual_income|floatformat:2 }} EUR</div>
         </section>
       </div>
+      <hr style="border:none; border-top:1px solid #dfe8ef; margin:22px 0;">
+      <p class="section-title">Alta rapida</p>
+      <h2 style="margin-top:0;">Registrar o actualizar cuenta</h2>
+      <p class="muted" style="margin-top:0;">Desde aqui puedes cargar cuentas bancarias y elegir el titular de cada una.</p>
+      <form method="post" class="stack" style="margin-top:18px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="save_account">
+        {% if account_form.non_field_errors %}
+          <div class="warn">{{ account_form.non_field_errors|striptags }}</div>
+        {% endif %}
+        <div class="grid cols-2">
+          <div>
+            <label for="{{ account_form.ownership_category.id_for_label }}">{{ account_form.ownership_category.label }}</label>
+            {{ account_form.ownership_category }}
+            {% for error in account_form.ownership_category.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ account_form.institution.id_for_label }}">{{ account_form.institution.label }}</label>
+            {{ account_form.institution }}
+            {% for error in account_form.institution.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ account_form.account_name.id_for_label }}">{{ account_form.account_name.label }}</label>
+            {{ account_form.account_name }}
+            {% for error in account_form.account_name.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ account_form.deposited_amount.id_for_label }}">{{ account_form.deposited_amount.label }}</label>
+            {{ account_form.deposited_amount }}
+            {% for error in account_form.deposited_amount.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ account_form.current_balance.id_for_label }}">{{ account_form.current_balance.label }}</label>
+            {{ account_form.current_balance }}
+            {% for error in account_form.current_balance.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ account_form.annual_interest_income.id_for_label }}">{{ account_form.annual_interest_income.label }}</label>
+            {{ account_form.annual_interest_income }}
+            {% for error in account_form.annual_interest_income.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+        </div>
+        <div>
+          <label for="{{ account_form.notes.id_for_label }}">{{ account_form.notes.label }}</label>
+          {{ account_form.notes }}
+          {% for error in account_form.notes.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
+        <button class="button" type="submit">Guardar cuenta</button>
+      </form>
     </section>
 
     <section class="card">
@@ -41,7 +90,7 @@
           <button class="button" type="submit">Importar extractos</button>
         </div>
       </form>
-      <div class="metric-sub" style="margin-top:14px;">La categoria de origen de cada extracto se intenta reconocer automaticamente por el titular o por importaciones previas de la misma cuenta.</div>
+      <div class="metric-sub" style="margin-top:14px;">El titular de cada extracto se intenta reconocer automaticamente por el nombre del titular o por importaciones previas de la misma cuenta.</div>
       <div class="meta">
         <span class="pill">{{ statement_summary.statements_count }} importaciones</span>
         <span class="pill">{{ statement_summary.months_count }} meses</span>
@@ -87,7 +136,7 @@
         <tr>
           <th>Entidad</th>
           <th>Producto</th>
-          <th>Origen</th>
+          <th>Titular</th>
           <th>Tipo</th>
           <th>Unidades</th>
           <th>Invertido estimado</th>
@@ -252,7 +301,19 @@
           <tr>
             <td>{{ statement.period_label }}</td>
             <td>{{ statement.account_name }}</td>
-            <td>{{ statement.get_ownership_category_display }}</td>
+            <td>
+              <form method="post" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_statement_ownership">
+                <input type="hidden" name="statement_id" value="{{ statement.id }}">
+                <select name="ownership_category">
+                  {% for value, label in ownership_choices %}
+                    <option value="{{ value }}"{% if statement.ownership_category == value %} selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <button class="button secondary small" type="submit">Guardar</button>
+              </form>
+            </td>
             <td>{{ statement.source_filename }}</td>
             <td>{{ statement.get_import_status_display }}</td>
             <td>{{ statement.opening_balance|default_if_none:"-" }}</td>
@@ -276,13 +337,25 @@
   <section class="card table-card" style="margin-top:24px;">
     <p class="section-title">Saldos bancarios estaticos</p>
     <table>
-      <thead><tr><th>Entidad</th><th>Cuenta</th><th>Origen</th><th>Depositado</th><th>Saldo actual</th><th>Interes anual</th><th>Notas</th></tr></thead>
+      <thead><tr><th>Entidad</th><th>Cuenta</th><th>Titular</th><th>Depositado</th><th>Saldo actual</th><th>Interes anual</th><th>Notas</th></tr></thead>
       <tbody>
         {% for account in accounts %}
           <tr>
             <td>{{ account.institution }}</td>
             <td>{{ account.account_name }}</td>
-            <td>{{ account.get_ownership_category_display }}</td>
+            <td>
+              <form method="post" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_account_ownership">
+                <input type="hidden" name="account_id" value="{{ account.id }}">
+                <select name="ownership_category">
+                  {% for value, label in ownership_choices %}
+                    <option value="{{ value }}"{% if account.ownership_category == value %} selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <button class="button secondary small" type="submit">Guardar</button>
+              </form>
+            </td>
             <td>{{ account.deposited_amount|floatformat:2 }}</td>
             <td>{{ account.current_balance|floatformat:2 }}</td>
             <td>{{ account.annual_interest_income|floatformat:2 }}</td>

@@ -5,9 +5,14 @@ from django.contrib import messages
 from django.shortcuts import redirect
 from django.views.generic import TemplateView
 
-from .forms import EquityPositionForm
+from .forms import EquityDocumentImportForm, EquityPositionForm
 from .models import EquityPosition
-from .services import build_equity_history_cards, sync_all_equities_market_data
+from .services import (
+    EquityDocumentImportError,
+    build_equity_history_cards,
+    extract_equity_position_prefill,
+    sync_all_equities_market_data,
+)
 
 
 class EquityPositionListView(LoginRequiredMixin, TemplateView):
@@ -26,12 +31,16 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         }
         context["history_cards"] = build_equity_history_cards(positions)
         context["position_form"] = kwargs.get("position_form", EquityPositionForm())
+        context["document_form"] = kwargs.get("document_form", EquityDocumentImportForm())
+        context["prefill_source_filename"] = kwargs.get("prefill_source_filename")
         return context
 
     def post(self, request, *args, **kwargs):
         action = request.POST.get("action", "create_position")
         if action == "sync_market_data":
             return self._sync_market_data(request)
+        if action == "prefill_from_document":
+            return self._prefill_position_from_document(request)
         return self._save_position(request)
 
     def _sync_market_data(self, request):
@@ -47,6 +56,46 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
 
         return redirect("equities:list")
 
+    def _prefill_position_from_document(self, request):
+        form = EquityDocumentImportForm(request.POST, request.FILES)
+        if not form.is_valid():
+            context = self.get_context_data(document_form=form)
+            return self.render_to_response(context, status=400)
+
+        document = form.cleaned_data["document"]
+        try:
+            prefill = extract_equity_position_prefill(
+                document,
+                default_broker=form.cleaned_data["default_broker"],
+                default_ownership_category=form.cleaned_data["default_ownership_category"],
+            )
+        except EquityDocumentImportError as exc:
+            messages.error(request, str(exc))
+            context = self.get_context_data(document_form=form)
+            return self.render_to_response(context, status=400)
+
+        messages.success(
+            request,
+            f"Formulario rellenado con {len(prefill.detected_fields)} dato(s) detectado(s) en {document.name}.",
+        )
+        if prefill.candidate_count > 1:
+            messages.info(
+                request,
+                "Se han detectado varias posiciones en el documento. Se ha precargado la que parecia mas completa.",
+            )
+
+        context = self.get_context_data(
+            position_form=EquityPositionForm(initial=prefill.data),
+            document_form=EquityDocumentImportForm(
+                initial={
+                    "default_broker": form.cleaned_data["default_broker"],
+                    "default_ownership_category": form.cleaned_data["default_ownership_category"],
+                }
+            ),
+            prefill_source_filename=document.name,
+        )
+        return self.render_to_response(context)
+
     def _save_position(self, request):
         form = EquityPositionForm(request.POST)
         if not form.is_valid():
@@ -55,11 +104,12 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
 
         ticker = form.cleaned_data["ticker"]
         broker = form.cleaned_data["broker"]
+        ownership_category = form.cleaned_data["ownership_category"]
         position, created = EquityPosition.objects.update_or_create(
             broker=broker,
             ticker=ticker,
+            ownership_category=ownership_category,
             defaults={
-                "ownership_category": form.cleaned_data["ownership_category"],
                 "company_name": form.cleaned_data["company_name"],
                 "quote_symbol": form.cleaned_data["quote_symbol"],
                 "benchmark_symbol": form.cleaned_data["benchmark_symbol"],

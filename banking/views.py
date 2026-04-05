@@ -2,10 +2,13 @@ from decimal import Decimal
 
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404, redirect
 from django.views.generic import TemplateView
 
-from .forms import StatementUploadForm
+from portfolio.ownership import AssetOwnershipCategory
+
+from .forms import BankBalanceForm, StatementUploadForm
 from .models import BankBalance, BankInvestmentPosition, BankStatementImport
 from .services import build_banking_dashboard, build_uploaded_file_checksum, import_statement
 
@@ -32,11 +35,19 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
             "annual_income": sum((position.annual_income for position in investment_positions), Decimal("0")),
         }
         context.setdefault("form", StatementUploadForm())
+        context.setdefault("account_form", BankBalanceForm())
+        context["ownership_choices"] = AssetOwnershipCategory.choices
         context.update(build_banking_dashboard())
         return context
 
     def post(self, request, *args, **kwargs):
         action = request.POST.get("action", "import")
+        if action == "save_account":
+            return self._save_account(request)
+        if action == "update_account_ownership":
+            return self._update_account_ownership(request)
+        if action == "update_statement_ownership":
+            return self._update_statement_ownership(request)
         if action == "delete_statement":
             return self._delete_statement(request)
         if action == "delete_all_statements":
@@ -75,6 +86,72 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         elif uploaded_files:
             messages.info(request, "No se ha importado ningun extracto nuevo.")
 
+        return redirect("banking:list")
+
+    def _save_account(self, request):
+        form = BankBalanceForm(request.POST)
+        if not form.is_valid():
+            context = self.get_context_data(account_form=form)
+            return self.render_to_response(context, status=400)
+
+        account, created = BankBalance.objects.update_or_create(
+            institution=form.cleaned_data["institution"],
+            account_name=form.cleaned_data["account_name"],
+            defaults={
+                "ownership_category": form.cleaned_data["ownership_category"],
+                "deposited_amount": form.cleaned_data["deposited_amount"],
+                "current_balance": form.cleaned_data["current_balance"],
+                "annual_interest_income": form.cleaned_data["annual_interest_income"],
+                "notes": form.cleaned_data["notes"],
+            },
+        )
+
+        if created:
+            messages.success(request, f"La cuenta {account.account_name} se ha creado correctamente.")
+        else:
+            messages.success(request, f"La cuenta {account.account_name} se ha actualizado correctamente.")
+        return redirect("banking:list")
+
+    def _parse_ownership_category(self, request) -> str:
+        ownership_category = request.POST.get("ownership_category", "").strip()
+        valid_values = {choice[0] for choice in AssetOwnershipCategory.choices}
+        if ownership_category not in valid_values:
+            raise ValidationError("El titular seleccionado no es valido.")
+        return ownership_category
+
+    def _update_account_ownership(self, request):
+        account = get_object_or_404(BankBalance, pk=request.POST.get("account_id"))
+        try:
+            ownership_category = self._parse_ownership_category(request)
+        except ValidationError as exc:
+            messages.error(request, str(exc))
+            return redirect("banking:list")
+
+        account.ownership_category = ownership_category
+        account.save(update_fields=["ownership_category", "updated_at"])
+        messages.success(request, f"Titular actualizado para la cuenta {account.account_name}.")
+        return redirect("banking:list")
+
+    def _update_statement_ownership(self, request):
+        statement = get_object_or_404(BankStatementImport, pk=request.POST.get("statement_id"))
+        try:
+            ownership_category = self._parse_ownership_category(request)
+        except ValidationError as exc:
+            messages.error(request, str(exc))
+            return redirect("banking:list")
+
+        if statement.iban:
+            updated = BankStatementImport.objects.filter(iban=statement.iban).update(ownership_category=ownership_category)
+        elif statement.account_label:
+            updated = BankStatementImport.objects.filter(account_label=statement.account_label).update(
+                ownership_category=ownership_category
+            )
+        else:
+            statement.ownership_category = ownership_category
+            statement.save(update_fields=["ownership_category"])
+            updated = 1
+
+        messages.success(request, f"Titular actualizado para {updated} extracto(s) de {statement.account_name}.")
         return redirect("banking:list")
 
     def _delete_statement(self, request):

@@ -16,9 +16,43 @@
       </div>
     </section>
     <section class="card">
+      <p class="section-title">Importacion asistida</p>
+      <h2 style="margin-top:0;">Rellenar desde XLS o PDF</h2>
+      <p class="muted" style="margin-top:0;">Sube un documento con una posicion y la aplicacion intentara completar el formulario de alta para que solo tengas que revisarlo.</p>
+      <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="prefill_from_document">
+        {% if document_form.non_field_errors %}
+          <div class="warn">{{ document_form.non_field_errors|striptags }}</div>
+        {% endif %}
+        <div>
+          <label for="{{ document_form.document.id_for_label }}">{{ document_form.document.label }}</label>
+          {{ document_form.document }}
+          {% if document_form.document.help_text %}<div class="metric-sub">{{ document_form.document.help_text }}</div>{% endif %}
+          {% for error in document_form.document.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
+        <div class="grid cols-2">
+          <div>
+            <label for="{{ document_form.default_broker.id_for_label }}">{{ document_form.default_broker.label }}</label>
+            {{ document_form.default_broker }}
+            {% if document_form.default_broker.help_text %}<div class="metric-sub">{{ document_form.default_broker.help_text }}</div>{% endif %}
+            {% for error in document_form.default_broker.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ document_form.default_ownership_category.id_for_label }}">{{ document_form.default_ownership_category.label }}</label>
+            {{ document_form.default_ownership_category }}
+            {% for error in document_form.default_ownership_category.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+        </div>
+        <button class="button secondary" type="submit">Completar formulario</button>
+      </form>
+      {% if prefill_source_filename %}
+        <div class="message info" style="margin-top:16px;">Formulario precargado desde {{ prefill_source_filename }}. Revisa los datos antes de guardar.</div>
+      {% endif %}
+      <hr style="border:none; border-top:1px solid #dfe8ef; margin:22px 0;">
       <p class="section-title">Alta rapida</p>
       <h2 style="margin-top:0;">Registrar o actualizar posicion</h2>
-      <p class="muted" style="margin-top:0;">Aqui puedes cargar tus valores de acciones. Si ya existe el mismo `ticker` para el mismo broker, la posicion se actualiza.</p>
+      <p class="muted" style="margin-top:0;">Aqui puedes cargar tus valores de acciones. Si ya existe el mismo `ticker` para el mismo broker y titular, la posicion se actualiza.</p>
       <form method="post" class="stack" style="margin-top:18px;">
         {% csrf_token %}
         <input type="hidden" name="action" value="create_position">
@@ -114,7 +148,7 @@
           <th>Indice</th>
           <th>Empresa</th>
           <th>Broker</th>
-          <th>Origen</th>
+          <th>Titular</th>
           <th>Acciones</th>
           <th>Coste medio/acc.</th>
           <th>Precio actual</th>

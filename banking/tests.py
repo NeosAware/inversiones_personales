@@ -13,7 +13,7 @@ from django.urls import reverse
 from config.storage import ENCRYPTION_MARKER
 from portfolio.ownership import AssetOwnershipCategory
 
-from .models import BankInvestmentPosition, BankMovement, BankStatementImport
+from .models import BankBalance, BankInvestmentPosition, BankMovement, BankStatementImport
 from .services import (
     build_banking_dashboard,
     classify_movement,
@@ -636,6 +636,95 @@ class BankingImportDeletionTests(TestCase):
                     file_checksum="checksum-sample",
                 )
                 self.assertTrue(BankStatementImport.objects.filter(pk=replacement.pk).exists())
+
+
+class BankingViewTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="banking-editor",
+            password="secret123",
+        )
+        self.client.force_login(self.user)
+
+    def test_can_create_bank_account_with_selected_owner(self):
+        response = self.client.post(
+            reverse("banking:list"),
+            {
+                "action": "save_account",
+                "ownership_category": AssetOwnershipCategory.MONICA,
+                "institution": "Banco Sabadell",
+                "account_name": "Cuenta ahorro",
+                "deposited_amount": "10.000,00",
+                "current_balance": "10.250,40",
+                "annual_interest_income": "125,50",
+                "notes": "Cuenta personal",
+            },
+        )
+
+        self.assertRedirects(response, reverse("banking:list"))
+        account = BankBalance.objects.get(institution="Banco Sabadell", account_name="Cuenta ahorro")
+        self.assertEqual(account.ownership_category, AssetOwnershipCategory.MONICA)
+        self.assertEqual(account.deposited_amount, Decimal("10000.00"))
+        self.assertEqual(account.current_balance, Decimal("10250.40"))
+        self.assertEqual(account.annual_interest_income, Decimal("125.50"))
+
+    def test_can_update_bank_account_owner_from_list(self):
+        account = BankBalance.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            institution="Banco Sabadell",
+            account_name="Cuenta 1234",
+            deposited_amount=Decimal("5000.00"),
+            current_balance=Decimal("5250.00"),
+            annual_interest_income=Decimal("15.00"),
+        )
+
+        response = self.client.post(
+            reverse("banking:list"),
+            {
+                "action": "update_account_ownership",
+                "account_id": account.id,
+                "ownership_category": AssetOwnershipCategory.XIMO,
+            },
+        )
+
+        self.assertRedirects(response, reverse("banking:list"))
+        account.refresh_from_db()
+        self.assertEqual(account.ownership_category, AssetOwnershipCategory.XIMO)
+
+    def test_can_update_statement_owner_for_same_iban(self):
+        first = BankStatementImport.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            source_filename="ene.xls",
+            source_file=SimpleUploadedFile("ene.xls", b"ene", content_type="application/vnd.ms-excel"),
+            file_checksum="statement-ene",
+            iban="ES12 3456 7890 1234",
+            account_label="Cuenta 1234",
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+        second = BankStatementImport.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            source_filename="feb.xls",
+            source_file=SimpleUploadedFile("feb.xls", b"feb", content_type="application/vnd.ms-excel"),
+            file_checksum="statement-feb",
+            iban="ES12 3456 7890 1234",
+            account_label="Cuenta 1234",
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+
+        response = self.client.post(
+            reverse("banking:list"),
+            {
+                "action": "update_statement_ownership",
+                "statement_id": first.id,
+                "ownership_category": AssetOwnershipCategory.MONICA,
+            },
+        )
+
+        self.assertRedirects(response, reverse("banking:list"))
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.ownership_category, AssetOwnershipCategory.MONICA)
+        self.assertEqual(second.ownership_category, AssetOwnershipCategory.MONICA)
 
 
 class EncryptedMediaTests(TestCase):

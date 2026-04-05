@@ -3,6 +3,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.urls import reverse
 
@@ -120,3 +121,147 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(position.average_cost_per_share, Decimal("10.2500"))
         self.assertEqual(position.current_price_per_share, Decimal("10.2500"))
         self.assertEqual(position.annual_dividend_income, Decimal("72.50"))
+
+    def test_can_store_same_ticker_for_same_broker_with_different_owner(self):
+        EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.XIMO,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("9.0000"),
+            current_price_per_share=Decimal("10.0000"),
+        )
+
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "create_position",
+                "ownership_category": AssetOwnershipCategory.MONICA,
+                "broker": "Interactive Brokers",
+                "ticker": "IBE",
+                "company_name": "Iberdrola",
+                "quote_symbol": "IBE.MC",
+                "benchmark_symbol": "^IBEX",
+                "benchmark_name": "IBEX 35",
+                "shares": "25",
+                "average_cost_per_share": "10,5000",
+                "current_price_per_share": "11,2500",
+                "annual_dividend_income": "20,00",
+                "notes": "",
+            },
+        )
+
+        self.assertRedirects(response, reverse("equities:list"))
+        self.assertEqual(EquityPosition.objects.filter(broker="Interactive Brokers", ticker="IBE").count(), 2)
+        self.assertTrue(
+            EquityPosition.objects.filter(
+                broker="Interactive Brokers",
+                ticker="IBE",
+                ownership_category=AssetOwnershipCategory.MONICA,
+                shares=Decimal("25.0000"),
+            ).exists()
+        )
+
+    def test_can_prefill_equity_form_from_xls_document(self):
+        document = SimpleUploadedFile(
+            "posicion.xls",
+            b"""
+<html>
+  <body>
+    <table>
+      <tr><td>Titular: Monica</td></tr>
+      <tr>
+        <td>Broker</td>
+        <td>Ticker</td>
+        <td>Empresa</td>
+        <td>Acciones</td>
+        <td>Coste medio</td>
+        <td>Precio actual</td>
+        <td>Dividendo anual</td>
+      </tr>
+      <tr>
+        <td>ING</td>
+        <td>ENG</td>
+        <td>Enagas</td>
+        <td>150,0000</td>
+        <td>13,4500</td>
+        <td>14,2000</td>
+        <td>95,00</td>
+      </tr>
+    </table>
+  </body>
+</html>
+""",
+            content_type="application/vnd.ms-excel",
+        )
+
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "prefill_from_document",
+                "document": document,
+                "default_broker": "",
+                "default_ownership_category": AssetOwnershipCategory.JOINT,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        form = response.context["position_form"]
+        self.assertEqual(form.initial["broker"], "ING")
+        self.assertEqual(form.initial["ticker"], "ENG")
+        self.assertEqual(form.initial["company_name"], "Enagas")
+        self.assertEqual(form.initial["ownership_category"], AssetOwnershipCategory.MONICA)
+        self.assertEqual(form.initial["shares"], Decimal("150.0000"))
+        self.assertEqual(form.initial["average_cost_per_share"], Decimal("13.4500"))
+        self.assertEqual(form.initial["current_price_per_share"], Decimal("14.2000"))
+        self.assertEqual(form.initial["annual_dividend_income"], Decimal("95.00"))
+        self.assertEqual(response.context["prefill_source_filename"], "posicion.xls")
+
+    def test_can_prefill_equity_form_from_pdf_document(self):
+        document = SimpleUploadedFile(
+            "posicion.pdf",
+            b"%PDF-1.4 fake",
+            content_type="application/pdf",
+        )
+
+        with patch(
+            "equities.services.read_pdf_pages",
+            return_value=[
+                "\n".join(
+                    [
+                        "Titular:\tXimo",
+                        "Broker\tSelf Bank",
+                        "Ticker\tIBE",
+                        "Empresa\tIberdrola",
+                        "Acciones\t125,5000",
+                        "Coste medio\t10,2500",
+                        "Precio actual\t11,0000",
+                        "Dividendos anuales\t72,50",
+                    ]
+                )
+            ],
+        ):
+            response = self.client.post(
+                reverse("equities:list"),
+                {
+                    "action": "prefill_from_document",
+                    "document": document,
+                    "default_broker": "",
+                    "default_ownership_category": AssetOwnershipCategory.JOINT,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        form = response.context["position_form"]
+        self.assertEqual(form.initial["broker"], "Self Bank")
+        self.assertEqual(form.initial["ticker"], "IBE")
+        self.assertEqual(form.initial["company_name"], "Iberdrola")
+        self.assertEqual(form.initial["ownership_category"], AssetOwnershipCategory.XIMO)
+        self.assertEqual(form.initial["shares"], Decimal("125.5000"))
+        self.assertEqual(form.initial["average_cost_per_share"], Decimal("10.2500"))
+        self.assertEqual(form.initial["current_price_per_share"], Decimal("11.0000"))
+        self.assertEqual(form.initial["annual_dividend_income"], Decimal("72.50"))

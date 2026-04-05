@@ -17,7 +17,7 @@ class EquityPositionForm(forms.Form):
     ownership_category = forms.ChoiceField(
         choices=AssetOwnershipCategory.choices,
         initial=AssetOwnershipCategory.JOINT,
-        label="Origen",
+        label="Titular",
     )
     broker = forms.CharField(max_length=120, label="Broker o entidad")
     ticker = forms.CharField(max_length=20, label="Ticker")
@@ -69,3 +69,25 @@ class EquityPositionForm(forms.Form):
         if cleaned_data.get("annual_dividend_income") is None:
             cleaned_data["annual_dividend_income"] = 0
         return cleaned_data
+
+
+class EquityDocumentImportForm(forms.Form):
+    document = forms.FileField(
+        label="Documento de acciones",
+        widget=forms.ClearableFileInput(attrs={"accept": ".xls,.xlsx,.pdf"}),
+        help_text="Sube un XLS, XLSX o PDF con una posicion para rellenar el formulario.",
+    )
+    default_broker = forms.CharField(
+        max_length=120,
+        required=False,
+        label="Broker por defecto",
+        help_text="Se usa si el documento no indica la entidad o broker.",
+    )
+    default_ownership_category = forms.ChoiceField(
+        choices=AssetOwnershipCategory.choices,
+        initial=AssetOwnershipCategory.JOINT,
+        label="Titular por defecto",
+    )
+
+    def clean_default_broker(self):
+        return self.cleaned_data["default_broker"].strip()
