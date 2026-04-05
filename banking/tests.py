@@ -917,37 +917,56 @@ class BankingViewTests(TestCase):
 </html>
 """
 
-    @override_settings(BANK_ROBOT_IMPORT_TOKEN="robot-token")
     def test_bank_page_shows_robot_automation_section(self):
         response = self.client.get(reverse("banking:list"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Robot bancario local")
-        self.assertContains(response, "Enlazar un banco sin tecnicismos")
-        self.assertContains(response, "Preparar conexion")
-        self.assertContains(response, "Lo que tienes que copiar")
+        self.assertContains(response, "Asistente local")
+        self.assertContains(response, "Enlazar una cuenta o tarjeta")
+        self.assertContains(response, "Guardar banco en este ordenador")
+        self.assertContains(response, "Actualizar todas las conexiones")
         self.assertNotContains(response, "Open Banking")
         self.assertNotContains(response, "GoCardless")
 
-    def test_can_preview_robot_setup_for_selected_bank(self):
+    def test_local_robot_import_endpoint_imports_statement_with_login(self):
+        document = SimpleUploadedFile(
+            "robot-local-visa.xls",
+            self._legacy_card_statement_html().encode("utf-8"),
+            content_type="application/vnd.ms-excel",
+        )
+
         response = self.client.post(
-            reverse("banking:list"),
+            reverse("banking:robot_local_import"),
             {
-                "action": "preview_robot_setup",
-                "bank_name": "Banco Sabadell",
-                "ownership_category": AssetOwnershipCategory.XIMO,
                 "statement_kind": BankStatementImport.StatementKind.CARD,
-                "account_label": "Tarjeta empresa familiar",
-                "login_url": "https://www.bancsabadell.com/",
+                "ownership_category": AssetOwnershipCategory.XIMO,
+                "institution": "Banco Sabadell",
+                "account_label": "Tarjeta principal",
+                "files": document,
             },
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Banco Sabadell")
-        self.assertContains(response, "Ximo")
-        self.assertContains(response, "Tarjeta")
-        self.assertContains(response, "sabadell-tarjeta-ximo")
-        self.assertContains(response, "https://www.bancsabadell.com/")
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["imported_count"], 1)
+        statement = BankStatementImport.objects.get(source_filename="robot-local-visa.xls")
+        self.assertEqual(statement.import_source, BankStatementImport.ImportSource.ROBOT)
+        self.assertEqual(statement.statement_kind, BankStatementImport.StatementKind.CARD)
+        self.assertEqual(statement.ownership_category, AssetOwnershipCategory.XIMO)
+
+    def test_robot_installer_download_requires_login_and_returns_script(self):
+        self.client.logout()
+
+        anonymous_response = self.client.get(reverse("banking:robot_installer"))
+        self.assertEqual(anonymous_response.status_code, 302)
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("banking:robot_installer"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("attachment;", response.headers["Content-Disposition"])
+        self.assertIn("instalar_robot_bancario.ps1", response.headers["Content-Disposition"])
 
     @override_settings(BANK_ROBOT_IMPORT_TOKEN="robot-token")
     def test_robot_upload_endpoint_imports_statement_without_login(self):

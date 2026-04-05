@@ -118,6 +118,20 @@ def execute_step(page, step: dict, download_dir: Path, context: dict, downloaded
         downloaded_files.append(destination)
         print(f"[{context['job_id']}] Descargado: {destination}")
         return
+    if action == "wait_for_download":
+        ensure_directory(download_dir)
+        message = step.get(
+            "message",
+            "Completa la descarga en la web del banco. El robot recogera el fichero automaticamente.",
+        )
+        print(f"[{context['job_id']}] {message}")
+        download = page.wait_for_event("download", timeout=timeout)
+        suggested_name = step.get("filename") or download.suggested_filename
+        destination = download_dir / suggested_name
+        download.save_as(str(destination))
+        downloaded_files.append(destination)
+        print(f"[{context['job_id']}] Descargado: {destination}")
+        return
     raise RuntimeError(f"Accion de robot no soportada: {action}")
 
 
@@ -195,15 +209,16 @@ def run_job(job: dict, robot_config: dict, *, headless_override: bool | None, dr
 
     if not downloaded_files:
         print(f"[{context['job_id']}] No se ha descargado ningun fichero.")
-        return
+        return []
 
     if dry_run or skip_upload:
         for downloaded in downloaded_files:
             print(f"[{context['job_id']}] Descarga lista en local: {downloaded}")
-        return
+        return downloaded_files
 
     for downloaded in downloaded_files:
         upload_file(downloaded, job, robot_config, context)
+    return downloaded_files
 
 
 def parse_args() -> argparse.Namespace:

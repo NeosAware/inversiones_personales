@@ -169,22 +169,22 @@
     </section>
   </div>
 
-  <p class="section-title" style="margin-top:28px;">Robot bancario local</p>
+  <p class="section-title" style="margin-top:28px;">Asistente local</p>
   <div class="grid cols-4">
     <section class="card">
-      <div class="metric-label">Token del robot</div>
-      <div class="metric-value">{% if robot_token_configured %}Activo{% else %}Falta{% endif %}</div>
-      <div class="metric-sub">El servidor necesita <code>BANK_ROBOT_IMPORT_TOKEN</code> para aceptar subidas automaticas.</div>
+      <div class="metric-label">Asistente en este ordenador</div>
+      <div class="metric-value" id="robot-bridge-status">Comprobando...</div>
+      <div class="metric-sub" id="robot-bridge-status-text">La web esta buscando el asistente local para poder abrir el banco desde este Windows.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Conexiones guardadas aqui</div>
+      <div class="metric-value" id="robot-bridge-jobs-count">-</div>
+      <div class="metric-sub">Bancos o tarjetas que ya has dejado preparados en este ordenador para descargar con un clic.</div>
     </section>
     <section class="card">
       <div class="metric-label">Extractos recibidos</div>
       <div class="metric-value">{{ robot_summary.imported_count }}</div>
-      <div class="metric-sub">Ficheros que el robot de Windows ya ha subido e importado en esta web.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Cuentas y tarjetas</div>
-      <div class="metric-value">{{ robot_summary.accounts_count }} / {{ robot_summary.cards_count }}</div>
-      <div class="metric-sub">Separadas como cuentas y tarjetas para que el gasto no quede mezclado.</div>
+      <div class="metric-sub">Ficheros que el asistente local ya ha subido e importado en esta web.</div>
     </section>
     <section class="card">
       <div class="metric-label">Ultima subida</div>
@@ -199,162 +199,88 @@
     </section>
   </div>
 
-  <div class="split" style="margin-top:24px; grid-template-columns:repeat(2, minmax(0, 1fr)); align-items:start;">
-    <section class="card">
-      <p class="section-title">Asistente</p>
-      <h2 style="margin-top:0;">Enlazar un banco sin tecnicismos</h2>
-      <p class="muted" style="margin-top:0;">Solo elige el banco, el titular y si quieres descargar una cuenta o una tarjeta. La web te prepara automaticamente la conexion para copiarla en tu ordenador.</p>
-      <form method="post" class="stack" style="margin-top:18px;">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="preview_robot_setup">
-        <datalist id="robot-bank-suggestions">
-          {% for suggestion in robot_bank_suggestions %}
-            <option value="{{ suggestion }}"></option>
-          {% endfor %}
-        </datalist>
-        <div class="grid cols-2">
-          <div>
-            <label for="{{ robot_setup_form.bank_name.id_for_label }}">{{ robot_setup_form.bank_name.label }}</label>
-            {{ robot_setup_form.bank_name }}
-            {% if robot_setup_form.bank_name.help_text %}<div class="metric-sub">{{ robot_setup_form.bank_name.help_text }}</div>{% endif %}
-            {% for error in robot_setup_form.bank_name.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-          </div>
-          <div>
-            <label for="{{ robot_setup_form.ownership_category.id_for_label }}">{{ robot_setup_form.ownership_category.label }}</label>
-            {{ robot_setup_form.ownership_category }}
-            {% if robot_setup_form.ownership_category.help_text %}<div class="metric-sub">{{ robot_setup_form.ownership_category.help_text }}</div>{% endif %}
-            {% for error in robot_setup_form.ownership_category.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-          </div>
-          <div>
-            <label for="{{ robot_setup_form.statement_kind.id_for_label }}">{{ robot_setup_form.statement_kind.label }}</label>
-            {{ robot_setup_form.statement_kind }}
-            {% if robot_setup_form.statement_kind.help_text %}<div class="metric-sub">{{ robot_setup_form.statement_kind.help_text }}</div>{% endif %}
-            {% for error in robot_setup_form.statement_kind.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-          </div>
-          <div>
-            <label for="{{ robot_setup_form.account_label.id_for_label }}">{{ robot_setup_form.account_label.label }}</label>
-            {{ robot_setup_form.account_label }}
-            {% if robot_setup_form.account_label.help_text %}<div class="metric-sub">{{ robot_setup_form.account_label.help_text }}</div>{% endif %}
-            {% for error in robot_setup_form.account_label.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-          </div>
-        </div>
-        <div>
-          <label for="{{ robot_setup_form.login_url.id_for_label }}">{{ robot_setup_form.login_url.label }}</label>
-          {{ robot_setup_form.login_url }}
-          {% if robot_setup_form.login_url.help_text %}<div class="metric-sub">{{ robot_setup_form.login_url.help_text }}</div>{% endif %}
-          {% for error in robot_setup_form.login_url.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-        </div>
-        <button class="button" type="submit">Preparar conexion</button>
-      </form>
+  <div
+    id="robot-local-app"
+    data-bridge-url="{{ robot_bridge_url }}"
+    data-import-url="{{ robot_local_import_url }}"
+    data-installer-url="{{ robot_installer_url }}"
+    style="margin-top:24px;"
+  >
+    <datalist id="robot-bank-suggestions">
+      {% for suggestion in robot_bank_suggestions %}
+        <option value="{{ suggestion }}"></option>
+      {% endfor %}
+    </datalist>
 
-      <div class="soft-panel" style="margin-top:18px;">
-        <h3 class="soft-title" style="margin-bottom:6px;">Resultado preparado</h3>
-        <div class="meta" style="margin-top:8px;">
-          <span class="pill">{{ robot_setup_guide.bank_name }}</span>
-          <span class="pill">{{ robot_setup_guide.owner_label }}</span>
-          <span class="pill">{{ robot_setup_guide.statement_label }}</span>
-          <span class="pill">{{ robot_setup_guide.short_label }}</span>
+    <div class="split" style="grid-template-columns:repeat(2, minmax(0, 1fr)); align-items:start;">
+      <section class="card">
+        <p class="section-title">Tu banco</p>
+        <h2 style="margin-top:0;">Enlazar una cuenta o tarjeta</h2>
+        <p class="muted" style="margin-top:0;">Rellena esto una vez y, desde entonces, podras pulsar <strong>Descargar ahora</strong> desde esta misma pantalla. Si el banco pide identificacion, se abrira su web en tu ordenador y el asistente recogera el XLS o XLSX automaticamente.</p>
+        <div class="stack" style="margin-top:18px;">
+          <div class="grid cols-2">
+            <div>
+              <label for="{{ robot_setup_form.bank_name.id_for_label }}">{{ robot_setup_form.bank_name.label }}</label>
+              {{ robot_setup_form.bank_name }}
+            </div>
+            <div>
+              <label for="{{ robot_setup_form.ownership_category.id_for_label }}">{{ robot_setup_form.ownership_category.label }}</label>
+              {{ robot_setup_form.ownership_category }}
+            </div>
+            <div>
+              <label for="{{ robot_setup_form.statement_kind.id_for_label }}">{{ robot_setup_form.statement_kind.label }}</label>
+              {{ robot_setup_form.statement_kind }}
+            </div>
+            <div>
+              <label for="{{ robot_setup_form.account_label.id_for_label }}">{{ robot_setup_form.account_label.label }}</label>
+              {{ robot_setup_form.account_label }}
+            </div>
+          </div>
+          <div>
+            <label for="{{ robot_setup_form.login_url.id_for_label }}">{{ robot_setup_form.login_url.label }}</label>
+            {{ robot_setup_form.login_url }}
+            <div class="metric-sub">Si no la pones, el asistente abrira una ventana vacia y podras entrar al banco manualmente desde ahi.</div>
+          </div>
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <button class="button" id="robot-save-job" type="button">Guardar banco en este ordenador</button>
+            <button class="button secondary" id="robot-save-and-run-job" type="button">Guardar y descargar ahora</button>
+          </div>
+          <div class="soft-panel">
+            <h3 class="soft-title">Lo que pasara al pulsar el boton</h3>
+            <div class="metric-sub">1. El asistente local abrira la banca online en este Windows.</div>
+            <div class="metric-sub">2. Cuando el banco descargue el XLS/XLSX, se subira solo a esta web.</div>
+            <div class="metric-sub">3. El analisis mensual se recalculara sin que tengas que arrastrar archivos.</div>
+          </div>
         </div>
-        <div class="soft-grid" style="margin-top:16px;">
-          <section class="soft-panel">
-            <div class="metric-sub">Nombre interno</div>
-            <div class="soft-title" style="margin:6px 0 0;">{{ robot_setup_guide.job_id }}</div>
-          </section>
-          <section class="soft-panel">
-            <div class="metric-sub">Fichero que descargara</div>
-            <div class="soft-title" style="margin:6px 0 0;">{{ robot_setup_guide.filename }}</div>
-          </section>
-          <section class="soft-panel">
-            <div class="metric-sub">Carpeta de descarga</div>
-            <div class="soft-title" style="margin:6px 0 0; font-size:14px;">{{ robot_setup_guide.download_dir }}</div>
-          </section>
-          <section class="soft-panel">
-            <div class="metric-sub">Subira el fichero a</div>
-            <div class="soft-title" style="margin:6px 0 0; font-size:14px;">{{ robot_setup_guide.upload_url }}</div>
-          </section>
+      </section>
+
+      <section class="card">
+        <p class="section-title">Botones sencillos</p>
+        <h2 style="margin-top:0;">Usarlo sin tecnicismos</h2>
+        <p class="muted" style="margin-top:0;">La primera vez solo instala el asistente local. Despues veras aqui tus bancos guardados con botones de <strong>Descargar ahora</strong> y <strong>Borrar</strong>.</p>
+        <div class="stack" style="margin-top:18px;">
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <a class="button secondary" href="{{ robot_installer_url }}">Descargar instalador</a>
+            <button class="button secondary" id="robot-check-bridge" type="button">Comprobar asistente</button>
+            <button class="button" id="robot-run-all" type="button">Actualizar todas las conexiones</button>
+          </div>
+          <div class="soft-panel" id="robot-bridge-feedback">
+            <h3 class="soft-title">Estado del asistente local</h3>
+            <div class="metric-sub">Comprobando si el asistente local ya esta activo en este ordenador...</div>
+          </div>
+          <div class="soft-panel">
+            <h3 class="soft-title">Conexiones guardadas en este ordenador</h3>
+            <div class="metric-sub" style="margin-bottom:12px;">Cada conexion queda guardada solo en tu Windows. Aqui podras lanzar una sola o todas.</div>
+            <div class="note-list" id="robot-local-jobs">
+              <section class="soft-panel">
+                <div class="metric-sub">Todavia no se ha comprobado el asistente local.</div>
+              </section>
+            </div>
+          </div>
+          <div class="metric-sub">Si es la primera vez, descarga el instalador, ejecútalo una vez en este ordenador y vuelve aqui. A partir de ese momento, toda la operativa diaria se hace con botones desde esta pantalla.</div>
         </div>
-      </div>
-
-      <div class="note-list" style="margin-top:18px;">
-        <section class="soft-panel">
-          <div class="step-chip">1</div>
-          <h3 class="soft-title">Que hara por ti</h3>
-          <div class="metric-sub">Abrira la banca online, descargara el extracto y lo subira a esta web para actualizar el analisis.</div>
-        </section>
-        <section class="soft-panel">
-          <div class="step-chip">2</div>
-          <h3 class="soft-title">Que haras tu</h3>
-          <div class="metric-sub">La primera vez solo necesitas guardar tu usuario y clave, pegar un bloque en <code>bank_robot.config.json</code> y hacer una prueba.</div>
-        </section>
-        <section class="soft-panel">
-          <div class="step-chip">3</div>
-          <h3 class="soft-title">Si tienes cuenta y tarjeta</h3>
-          <div class="metric-sub">Repite el asistente cambiando solo el tipo. Asi el resumen separara bien cuenta y tarjeta.</div>
-        </section>
-        <section class="soft-panel">
-          <div class="step-chip">4</div>
-          <h3 class="soft-title">Seguridad</h3>
-          <div class="metric-sub">La clave del banco se queda en tu Windows. El servidor solo recibe el extracto ya descargado.</div>
-        </section>
-      </div>
-    </section>
-
-    <section class="card">
-      <p class="section-title">Resultado</p>
-      <h2 style="margin-top:0;">Lo que tienes que copiar</h2>
-      <p class="muted" style="margin-top:0;">Sigue este orden. Primero prepara el ordenador una sola vez. Despues guarda la clave, pega el bloque en el fichero de configuracion y haz una prueba.</p>
-      <div class="stack" style="margin-top:16px;">
-        <section class="soft-panel">
-          <div class="soft-copy">
-            <div class="metric-sub">1. Preparar este ordenador</div>
-            <button class="copy-button" type="button" data-copy-target="robot-install">Copiar</button>
-          </div>
-          <pre id="robot-install"><code>{{ robot_setup_guide.install_command }}</code></pre>
-        </section>
-        <section class="soft-panel">
-          <div class="soft-copy">
-            <div class="metric-sub">2. Guardar usuario y clave</div>
-            <button class="copy-button" type="button" data-copy-target="robot-credentials">Copiar</button>
-          </div>
-          <pre id="robot-credentials"><code>{{ robot_setup_guide.credentials_command }}</code></pre>
-        </section>
-        <section class="soft-panel">
-          <div class="soft-copy">
-            <div class="metric-sub">3. Pegar este bloque en el fichero de configuracion</div>
-            <button class="copy-button" type="button" data-copy-target="robot-job-json">Copiar bloque</button>
-          </div>
-          <div class="metric-sub" style="margin-top:0;">Abre <code>{{ robot_setup_guide.config_path }}</code> y pega este bloque dentro de <code>"jobs"</code>.</div>
-          <pre id="robot-job-json"><code>{{ robot_setup_guide.job_json }}</code></pre>
-        </section>
-        <section class="soft-panel">
-          <div class="soft-copy">
-            <div class="metric-sub">4. Probar una vez</div>
-            <button class="copy-button" type="button" data-copy-target="robot-dryrun">Copiar</button>
-          </div>
-          <div class="metric-sub" style="margin-top:0;">{{ robot_setup_guide.start_text }}</div>
-          <pre id="robot-dryrun"><code>{{ robot_setup_guide.dry_run_command }}</code></pre>
-        </section>
-        <section class="soft-panel">
-          <div class="soft-copy">
-            <div class="metric-sub">5. Dejarlo automatico cada dia</div>
-            <button class="copy-button" type="button" data-copy-target="robot-schedule">Copiar</button>
-          </div>
-          <pre id="robot-schedule"><code>{{ robot_setup_guide.schedule_command }}</code></pre>
-        </section>
-        <section class="soft-panel">
-          <div class="soft-copy">
-            <div class="metric-sub">Opcional: copia utiles</div>
-            <button class="copy-button" type="button" data-copy-target="robot-config-path">Copiar ruta</button>
-          </div>
-          <pre id="robot-config-path"><code>{{ robot_setup_guide.config_path }}</code></pre>
-          <div class="soft-copy" style="margin-top:14px;">
-            <div class="metric-sub">Servicio donde se guarda la clave</div>
-            <button class="copy-button" type="button" data-copy-target="robot-secret-service">Copiar nombre</button>
-          </div>
-          <pre id="robot-secret-service"><code>{{ robot_setup_guide.secrets_service }}</code></pre>
-        </section>
-      </div>
-    </section>
+      </section>
+    </div>
   </div>
 
   <section class="card table-card" style="margin-top:24px;">
@@ -1027,5 +953,328 @@
       </tbody>
     </table>
   </section>
+
+  <script>
+    (function () {
+      const root = document.getElementById("robot-local-app");
+      if (!root) {
+        return;
+      }
+
+      const bridgeUrl = root.dataset.bridgeUrl;
+      const importUrl = root.dataset.importUrl;
+      const installerUrl = root.dataset.installerUrl;
+      const bankField = document.getElementById("{{ robot_setup_form.bank_name.id_for_label }}");
+      const ownerField = document.getElementById("{{ robot_setup_form.ownership_category.id_for_label }}");
+      const kindField = document.getElementById("{{ robot_setup_form.statement_kind.id_for_label }}");
+      const labelField = document.getElementById("{{ robot_setup_form.account_label.id_for_label }}");
+      const loginUrlField = document.getElementById("{{ robot_setup_form.login_url.id_for_label }}");
+      const saveButton = document.getElementById("robot-save-job");
+      const saveAndRunButton = document.getElementById("robot-save-and-run-job");
+      const checkButton = document.getElementById("robot-check-bridge");
+      const runAllButton = document.getElementById("robot-run-all");
+      const jobsContainer = document.getElementById("robot-local-jobs");
+      const feedbackBox = document.getElementById("robot-bridge-feedback");
+      const statusValue = document.getElementById("robot-bridge-status");
+      const statusText = document.getElementById("robot-bridge-status-text");
+      const jobsCountValue = document.getElementById("robot-bridge-jobs-count");
+
+      function getCsrfToken() {
+        const cookieMatch = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+        if (cookieMatch) {
+          return decodeURIComponent(cookieMatch[1]);
+        }
+        const input = document.querySelector("input[name='csrfmiddlewaretoken']");
+        return input ? input.value : "";
+      }
+
+      function slugifyRobotText(value) {
+        return (value || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .replace(/^(banco|bank)-/, "");
+      }
+
+      function getSelectedText(selectElement) {
+        const option = selectElement.selectedOptions[0];
+        return option ? option.textContent.trim() : "";
+      }
+
+      function escapeHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function setFeedback(title, message, tone) {
+        const toneClass =
+          tone === "error" ? "warn" : tone === "success" ? "good" : "";
+        feedbackBox.innerHTML =
+          '<h3 class="soft-title">' + title + '</h3>' +
+          '<div class="metric-sub ' + toneClass + '">' + message + "</div>";
+      }
+
+      function setBridgeStatus(connected, jobsCount, message) {
+        statusValue.textContent = connected ? "Conectado" : "No detectado";
+        statusValue.className = connected ? "metric-value good" : "metric-value warn";
+        statusText.textContent = message;
+        jobsCountValue.textContent = connected ? String(jobsCount) : "-";
+      }
+
+      async function bridgeFetch(path, options, timeoutMs) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs || 10000);
+        try {
+          const response = await fetch(bridgeUrl + path, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            ...options,
+            signal: controller.signal,
+          });
+          const data = await response.json();
+          if (!response.ok || data.ok === false) {
+            throw new Error(data.error || "El asistente local ha devuelto un error.");
+          }
+          return data;
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+
+      function buildJobPayload() {
+        const bankName = bankField.value.trim();
+        if (!bankName) {
+          throw new Error("Escribe el nombre del banco.");
+        }
+        const ownershipCategory = ownerField.value;
+        const ownershipLabel = getSelectedText(ownerField);
+        const statementKind = kindField.value;
+        const statementLabel = getSelectedText(kindField);
+        const accountLabel = labelField.value.trim() || (statementKind === "account" ? "Cuenta principal" : "Tarjeta principal");
+        const bankSlug = slugifyRobotText(bankName) || "mi-banco";
+        const ownerSlug = slugifyRobotText(ownershipLabel) || ownershipCategory;
+        const statementSlug = statementKind === "account" ? "cuenta" : "tarjeta";
+        const jobId = [bankSlug, statementSlug, ownerSlug].filter(Boolean).join("-");
+        const loginUrl = loginUrlField.value.trim() || "about:blank";
+        return {
+          job: {
+            id: jobId,
+            description: statementLabel + " de " + ownershipLabel + " en " + bankName,
+            bank: bankName,
+            institution: bankName,
+            account_label: accountLabel,
+            statement_kind: statementKind,
+            ownership_category: ownershipCategory,
+            headless: false,
+            browser: "chromium",
+            download_dir: "C:/Users/Gerencia/Downloads/bank-robot/" + bankSlug + "/" + ownerSlug + "/" + statementSlug,
+            storage_state_path: "C:/Users/Gerencia/Documents/inversiones_personales/secrets/" + bankSlug + "-" + ownerSlug + "-state.json",
+            steps: [
+              {
+                action: "goto",
+                url: loginUrl
+              },
+              {
+                action: "wait_for_download",
+                timeout_ms: 900000,
+                filename: jobId + ".xls",
+                message: "Entra en " + bankName + ", abre la " + statementLabel.toLowerCase() + " y descarga el XLS o XLSX. En cuanto el banco termine la descarga, este asistente lo subira automaticamente."
+              }
+            ]
+          }
+        };
+      }
+
+      function renderJobs(jobs) {
+        if (!jobs.length) {
+          jobsContainer.innerHTML =
+            '<section class="soft-panel"><div class="metric-sub">Todavia no hay conexiones guardadas en este ordenador. Rellena el formulario de la izquierda y pulsa Guardar.</div></section>';
+          return;
+        }
+
+        jobsContainer.innerHTML = jobs.map(function (job) {
+          const kindLabel = job.statement_kind === "card" ? "Tarjeta" : "Cuenta";
+          return (
+            '<section class="soft-panel">' +
+              '<div class="soft-copy">' +
+                '<div>' +
+                  '<h3 class="soft-title" style="margin-bottom:4px;">' + escapeHtml(job.bank) + '</h3>' +
+                  '<div class="metric-sub">' + escapeHtml(job.account_label) + ' · ' + escapeHtml(kindLabel) + ' · ' + escapeHtml(job.ownership_category) + '</div>' +
+                '</div>' +
+                '<span class="pill">' + kindLabel + '</span>' +
+              '</div>' +
+              '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">' +
+                '<button class="button secondary small" type="button" data-run-job="' + escapeHtml(job.id) + '">Descargar ahora</button>' +
+                '<button class="button secondary small" type="button" data-delete-job="' + escapeHtml(job.id) + '">Borrar</button>' +
+              '</div>' +
+            '</section>'
+          );
+        }).join("");
+      }
+
+      async function refreshBridgeStatus() {
+        try {
+          const status = await bridgeFetch("/status", {}, 4000);
+          setBridgeStatus(true, status.jobs.length, "El asistente local esta listo en este Windows.");
+          setFeedback("Asistente local listo", "Ya puedes guardar conexiones y pulsar Descargar ahora sin tocar comandos.", "success");
+          renderJobs(status.jobs);
+          return status;
+        } catch (error) {
+          setBridgeStatus(false, 0, "Todavia no se detecta el asistente local en este Windows.");
+          setFeedback(
+            "Hace falta instalar el asistente local",
+            "Pulsa Descargar instalador, ejecútalo una sola vez en este ordenador y vuelve a esta pantalla. Despues todo se hara desde aqui con botones normales.",
+            "error"
+          );
+          jobsContainer.innerHTML =
+            '<section class="soft-panel"><div class="metric-sub">El asistente local no responde todavia. Si es la primera vez, descarga el instalador desde <a href="' + installerUrl + '">este boton</a>.</div></section>';
+          throw error;
+        }
+      }
+
+      async function uploadRunFiles(runPayload) {
+        let importedCount = 0;
+        for (const file of runPayload.files) {
+          const fileResponse = await fetch(bridgeUrl + "/runs/" + runPayload.run_id + "/files/" + file.index);
+          if (!fileResponse.ok) {
+            throw new Error("No se ha podido leer el fichero descargado en tu ordenador.");
+          }
+          const blob = await fileResponse.blob();
+          const formData = new FormData();
+          formData.append("files", blob, file.name);
+          formData.append("statement_kind", file.statement_kind);
+          formData.append("ownership_category", file.ownership_category);
+          formData.append("institution", file.institution);
+          formData.append("account_label", file.account_label);
+
+          const response = await fetch(importUrl, {
+            method: "POST",
+            headers: {
+              "X-CSRFToken": getCsrfToken(),
+            },
+            credentials: "same-origin",
+            body: formData
+          });
+          const payload = await response.json();
+          if (!response.ok || payload.ok === false) {
+            throw new Error(payload.error || "No se ha podido importar el extracto descargado.");
+          }
+          importedCount += payload.imported_count || 0;
+        }
+        return importedCount;
+      }
+
+      async function runJob(jobId, reloadAfterFinish) {
+        setFeedback("Descargando desde tu banco", "Se abrira una ventana del banco en este ordenador. Si te pide entrar o confirmar, hazlo alli y deja que el banco descargue el XLS/XLSX.", "info");
+        const runPayload = await bridgeFetch("/run", {
+          method: "POST",
+          body: JSON.stringify({ job_id: jobId, headed: true })
+        }, 960000);
+        const importedCount = await uploadRunFiles(runPayload);
+        setFeedback("Importacion terminada", "Se han importado " + importedCount + " fichero(s) desde tu ordenador.", "success");
+        if (reloadAfterFinish) {
+          window.setTimeout(function () {
+            window.location.reload();
+          }, 900);
+        }
+      }
+
+      async function saveJob(runAfterSave) {
+        const payload = buildJobPayload();
+        const result = await bridgeFetch("/jobs/upsert", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        }, 10000);
+        await refreshBridgeStatus();
+        setFeedback("Conexion guardada", "La conexion de " + result.job.bank + " ya queda preparada en este ordenador.", "success");
+        if (runAfterSave) {
+          await runJob(result.job.id, true);
+        }
+      }
+
+      async function runAllJobs() {
+        const status = await refreshBridgeStatus();
+        if (!status.jobs.length) {
+          throw new Error("Todavia no hay conexiones guardadas en este ordenador.");
+        }
+        setFeedback("Actualizando todas las conexiones", "Se iran abriendo una a una para recoger los extractos que descargues.", "info");
+        for (const job of status.jobs) {
+          await runJob(job.id, false);
+        }
+        window.setTimeout(function () {
+          window.location.reload();
+        }, 900);
+      }
+
+      saveButton.addEventListener("click", async function () {
+        try {
+          await saveJob(false);
+        } catch (error) {
+          setFeedback("No se ha podido guardar", error.message, "error");
+        }
+      });
+
+      saveAndRunButton.addEventListener("click", async function () {
+        try {
+          await saveJob(true);
+        } catch (error) {
+          setFeedback("No se ha podido descargar", error.message, "error");
+        }
+      });
+
+      checkButton.addEventListener("click", async function () {
+        try {
+          await refreshBridgeStatus();
+        } catch (error) {
+          setFeedback("Asistente no detectado", error.message, "error");
+        }
+      });
+
+      runAllButton.addEventListener("click", async function () {
+        try {
+          await runAllJobs();
+        } catch (error) {
+          setFeedback("No se ha podido actualizar todo", error.message, "error");
+        }
+      });
+
+      jobsContainer.addEventListener("click", async function (event) {
+        const runButton = event.target.closest("[data-run-job]");
+        if (runButton) {
+          try {
+            await runJob(runButton.dataset.runJob, true);
+          } catch (error) {
+            setFeedback("No se ha podido descargar", error.message, "error");
+          }
+          return;
+        }
+        const deleteButton = event.target.closest("[data-delete-job]");
+        if (deleteButton) {
+          try {
+            await bridgeFetch("/jobs/delete", {
+              method: "POST",
+              body: JSON.stringify({ job_id: deleteButton.dataset.deleteJob })
+            }, 10000);
+            await refreshBridgeStatus();
+            setFeedback("Conexion borrada", "La conexion se ha eliminado de este ordenador.", "success");
+          } catch (error) {
+            setFeedback("No se ha podido borrar", error.message, "error");
+          }
+        }
+      });
+
+      refreshBridgeStatus().catch(function () {
+        return null;
+      });
+    }());
+  </script>
 
 {% endblock %}

@@ -1,11 +1,13 @@
 from decimal import Decimal
+from pathlib import Path
 import secrets
 
 from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from django.http import HttpResponseNotAllowed, JsonResponse
+from django.http import FileResponse, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.views.generic import TemplateView
@@ -23,7 +25,6 @@ from .models import BankBalance, BankInvestmentPosition, BankStatementImport
 from .services import (
     build_banking_dashboard,
     build_robot_import_dashboard,
-    build_robot_setup_guide,
     import_uploaded_statement_file,
 )
 
@@ -39,20 +40,6 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
             "account_label": "",
             "login_url": "",
         }
-
-    def _build_robot_setup_preview(self, form, upload_url: str):
-        if form.is_bound and form.is_valid():
-            data = form.cleaned_data
-        else:
-            data = self._default_robot_setup_initial()
-        return build_robot_setup_guide(
-            bank_name=data["bank_name"],
-            ownership_category=data["ownership_category"],
-            statement_kind=data["statement_kind"],
-            account_label=data.get("account_label", ""),
-            login_url=data.get("login_url", ""),
-            upload_url=upload_url,
-        )
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -74,14 +61,11 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         robot_dashboard = build_robot_import_dashboard()
         context["robot_summary"] = robot_dashboard["summary"]
         context["recent_robot_imports"] = robot_dashboard["recent_imports"]
-        context["robot_upload_url"] = self.request.build_absolute_uri(reverse("banking:robot_upload"))
-        context["robot_token_configured"] = bool(settings.BANK_ROBOT_IMPORT_TOKEN)
+        context["robot_bridge_url"] = "http://127.0.0.1:8765"
+        context["robot_installer_url"] = reverse("banking:robot_installer")
+        context["robot_local_import_url"] = reverse("banking:robot_local_import")
         context.setdefault("robot_setup_form", RobotSetupAssistantForm(initial=self._default_robot_setup_initial()))
         context["robot_bank_suggestions"] = ROBOT_BANK_SUGGESTIONS
-        context.setdefault(
-            "robot_setup_guide",
-            self._build_robot_setup_preview(context["robot_setup_form"], context["robot_upload_url"]),
-        )
         context.update(dashboard)
         return context
 
@@ -97,8 +81,6 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
             return self._delete_statement(request)
         if action == "delete_all_statements":
             return self._delete_all_statements(request)
-        if action == "preview_robot_setup":
-            return self._preview_robot_setup(request)
 
         return self._import_statements(request)
 
@@ -247,21 +229,6 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
 
         return redirect("banking:list")
 
-    def _preview_robot_setup(self, request):
-        form = RobotSetupAssistantForm(request.POST)
-        upload_url = request.build_absolute_uri(reverse("banking:robot_upload"))
-        guide = self._build_robot_setup_preview(form, upload_url)
-        context = self.get_context_data(
-            robot_setup_form=form,
-            robot_setup_guide=guide,
-        )
-        status = 200
-        if form.is_valid():
-            messages.success(request, f"Conexion preparada para {guide['summary_title']}.")
-        else:
-            status = 400
-        return self.render_to_response(context, status=status)
-
 def _extract_robot_token(request) -> str:
     authorization = request.headers.get("Authorization", "").strip()
     if authorization.lower().startswith("bearer "):
@@ -356,3 +323,88 @@ def robot_statement_import_view(request):
 
 
 robot_statement_import_view.login_required = False
+
+
+@login_required
+def local_bridge_statement_import_view(request):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    uploaded_files = request.FILES.getlist("files") or request.FILES.getlist("file")
+    if not uploaded_files:
+        return JsonResponse({"ok": False, "error": "No se ha enviado ningun fichero."}, status=400)
+
+    statement_kind = request.POST.get("statement_kind", BankStatementImport.StatementKind.ACCOUNT).strip()
+    valid_statement_kinds = {choice[0] for choice in BankStatementImport.StatementKind.choices}
+    if statement_kind not in valid_statement_kinds:
+        return JsonResponse({"ok": False, "error": "statement_kind no valido."}, status=400)
+
+    ownership_category = request.POST.get("ownership_category", AssetOwnershipCategory.JOINT).strip()
+    valid_ownership_values = {choice[0] for choice in AssetOwnershipCategory.choices}
+    if ownership_category not in valid_ownership_values:
+        return JsonResponse({"ok": False, "error": "ownership_category no valido."}, status=400)
+
+    institution = request.POST.get("institution", "").strip()
+    account_label = request.POST.get("account_label", "").strip()
+
+    results = []
+    imported_count = 0
+    skipped_count = 0
+    for uploaded_file in uploaded_files:
+        try:
+            statement, created = import_uploaded_statement_file(
+                uploaded_file,
+                statement_kind=statement_kind,
+                ownership_category=ownership_category,
+                import_source=BankStatementImport.ImportSource.ROBOT,
+                institution=institution,
+                account_label=account_label,
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "filename": uploaded_file.name,
+                    "ok": False,
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        if created:
+            imported_count += 1
+        else:
+            skipped_count += 1
+        results.append(
+            {
+                "filename": uploaded_file.name,
+                "ok": True,
+                "created": created,
+                "statement_id": statement.id,
+                "statement_kind": statement.statement_kind,
+                "ownership_category": statement.ownership_category,
+            }
+        )
+
+    status = 200 if all(item["ok"] for item in results) else 207
+    return JsonResponse(
+        {
+            "ok": all(item["ok"] for item in results),
+            "imported_count": imported_count,
+            "skipped_count": skipped_count,
+            "results": results,
+        },
+        status=status,
+    )
+
+
+@login_required
+def robot_assistant_installer_view(request):
+    installer_path = Path(settings.BASE_DIR) / "scripts" / "install_bank_robot_assistant.ps1"
+    if not installer_path.exists():
+        return JsonResponse({"ok": False, "error": "No se ha encontrado el instalador local."}, status=404)
+    return FileResponse(
+        installer_path.open("rb"),
+        as_attachment=True,
+        filename="instalar_robot_bancario.ps1",
+        content_type="text/plain; charset=utf-8",
+    )
