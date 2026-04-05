@@ -204,17 +204,44 @@
       <p class="section-title">Paso 1</p>
       <h2 style="margin-top:0;">Configurar el robot local</h2>
       <p class="muted" style="margin-top:0;">La web ya no depende de un agregador externo. El robot corre en tu ordenador, entra en cada banco, descarga los XLS o PDF y los sube aqui automaticamente.</p>
-      <div class="metric-sub" style="margin-top:16px;">Ruta del fichero de configuracion</div>
-      <pre><code>C:\Users\Gerencia\Documents\inversiones_personales\scripts\bank_robot.config.json</code></pre>
-      <div class="metric-sub" style="margin-top:16px;">URL de subida al servidor</div>
-      <pre><code>{{ robot_upload_url }}</code></pre>
-      <div class="metric-sub" style="margin-top:16px;">Flujo recomendado</div>
-      <ul style="margin:12px 0 0; padding-left:18px; color:var(--muted);">
-        <li>Instala <code>requirements-robot.txt</code> y Chromium con Playwright.</li>
-        <li>Guarda las credenciales de cada banco en Windows Credential Manager con <code>set_bank_robot_secret.py</code>.</li>
-        <li>Crea un trabajo por cada cuenta y otro por cada tarjeta dentro de <code>bank_robot.config.json</code>.</li>
-        <li>Lanza el robot con <code>run_bank_robot.ps1</code> o programalo con el Programador de tareas.</li>
-      </ul>
+      <div class="soft-grid" style="margin-top:18px;">
+        <section class="soft-panel">
+          <div class="step-chip">1</div>
+          <h3 class="soft-title">Preparar Windows</h3>
+          <div class="metric-sub">Instala <code>requirements-robot.txt</code> y Chromium con Playwright para que el robot pueda abrir el banco.</div>
+        </section>
+        <section class="soft-panel">
+          <div class="step-chip">2</div>
+          <h3 class="soft-title">Guardar credenciales</h3>
+          <div class="metric-sub">Usa <code>set_bank_robot_secret.py</code> para dejar usuario y clave en Windows Credential Manager.</div>
+        </section>
+        <section class="soft-panel">
+          <div class="step-chip">3</div>
+          <h3 class="soft-title">Crear trabajos</h3>
+          <div class="metric-sub">Crea un trabajo por cuenta y otro por tarjeta dentro de <code>bank_robot.config.json</code>.</div>
+        </section>
+        <section class="soft-panel">
+          <div class="step-chip">4</div>
+          <h3 class="soft-title">Probar y programar</h3>
+          <div class="metric-sub">Primero usa <code>-Headed -DryRun</code>; luego quita <code>-DryRun</code> y programa la tarea diaria.</div>
+        </section>
+      </div>
+
+      <div class="soft-panel" style="margin-top:18px;">
+        <div class="soft-copy">
+          <div class="metric-sub">Ruta del fichero de configuracion</div>
+          <button class="copy-button" type="button" data-copy-target="robot-config-path">Copiar ruta</button>
+        </div>
+        <pre id="robot-config-path"><code>C:\Users\Gerencia\Documents\inversiones_personales\scripts\bank_robot.config.json</code></pre>
+      </div>
+
+      <div class="soft-panel" style="margin-top:14px;">
+        <div class="soft-copy">
+          <div class="metric-sub">URL de subida al servidor</div>
+          <button class="copy-button" type="button" data-copy-target="robot-upload-url">Copiar URL</button>
+        </div>
+        <pre id="robot-upload-url"><code>{{ robot_upload_url }}</code></pre>
+      </div>
     </section>
 
     <section class="card">
@@ -222,26 +249,38 @@
       <h2 style="margin-top:0;">Comandos utiles en Windows</h2>
       <p class="muted" style="margin-top:0;">Empieza con una ejecucion visible y en seco para revisar selectores, descargas y clasificacion de cuenta o tarjeta.</p>
       <div class="stack" style="margin-top:16px;">
-        <div>
-          <div class="metric-sub">Instalacion inicial</div>
-          <pre><code>cd C:\Users\Gerencia\Documents\inversiones_personales
+        <section class="soft-panel">
+          <div class="soft-copy">
+            <div class="metric-sub">Instalacion inicial</div>
+            <button class="copy-button" type="button" data-copy-target="robot-install">Copiar</button>
+          </div>
+          <pre id="robot-install"><code>cd C:\Users\Gerencia\Documents\inversiones_personales
 python -m pip install -r requirements-robot.txt
 python -m playwright install chromium
 Copy-Item .\scripts\bank_robot.example.json .\scripts\bank_robot.config.json</code></pre>
-        </div>
-        <div>
-          <div class="metric-sub">Guardar usuario y clave</div>
-          <pre><code>python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name username
+        </section>
+        <section class="soft-panel">
+          <div class="soft-copy">
+            <div class="metric-sub">Guardar usuario y clave</div>
+            <button class="copy-button" type="button" data-copy-target="robot-credentials">Copiar</button>
+          </div>
+          <pre id="robot-credentials"><code>python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name username
 python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name password</code></pre>
-        </div>
-        <div>
-          <div class="metric-sub">Prueba manual sin subir</div>
-          <pre><code>.\scripts\run_bank_robot.ps1 -ConfigPath .\scripts\bank_robot.config.json -Job sabadell-cuenta-ximo -Headed -DryRun</code></pre>
-        </div>
-        <div>
-          <div class="metric-sub">Programar ejecucion diaria</div>
-          <pre><code>.\scripts\register_bank_robot_task.ps1 -TaskName "Robot bancos" -Time "08:00" -ConfigPath .\scripts\bank_robot.config.json</code></pre>
-        </div>
+        </section>
+        <section class="soft-panel">
+          <div class="soft-copy">
+            <div class="metric-sub">Prueba manual sin subir</div>
+            <button class="copy-button" type="button" data-copy-target="robot-dryrun">Copiar</button>
+          </div>
+          <pre id="robot-dryrun"><code>.\scripts\run_bank_robot.ps1 -ConfigPath .\scripts\bank_robot.config.json -Job sabadell-cuenta-ximo -Headed -DryRun</code></pre>
+        </section>
+        <section class="soft-panel">
+          <div class="soft-copy">
+            <div class="metric-sub">Programar ejecucion diaria</div>
+            <button class="copy-button" type="button" data-copy-target="robot-schedule">Copiar</button>
+          </div>
+          <pre id="robot-schedule"><code>.\scripts\register_bank_robot_task.ps1 -TaskName "Robot bancos" -Time "08:00" -ConfigPath .\scripts\bank_robot.config.json</code></pre>
+        </section>
       </div>
     </section>
   </div>
@@ -313,6 +352,30 @@ python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name pass
       </tbody>
     </table>
   </section>
+
+  <script>
+    document.addEventListener("click", function (event) {
+      var trigger = event.target.closest("[data-copy-target]");
+      if (!trigger) {
+        return;
+      }
+      var target = document.getElementById(trigger.getAttribute("data-copy-target"));
+      if (!target) {
+        return;
+      }
+      var text = target.innerText.trim();
+      if (!text) {
+        return;
+      }
+      navigator.clipboard.writeText(text).then(function () {
+        var previous = trigger.textContent;
+        trigger.textContent = "Copiado";
+        window.setTimeout(function () {
+          trigger.textContent = previous;
+        }, 1400);
+      });
+    });
+  </script>
 
   {% comment %}
   <div class="grid cols-4">
