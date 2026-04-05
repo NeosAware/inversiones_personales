@@ -25,6 +25,7 @@ from .models import BankBalance, BankInvestmentPosition, BankStatementImport
 from .services import (
     build_banking_dashboard,
     build_robot_import_dashboard,
+    get_statement_import_feedback,
     import_uploaded_statement_file,
 )
 
@@ -96,12 +97,18 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
 
         for uploaded_file in uploaded_files:
             try:
-                _statement, created = import_uploaded_statement_file(
+                statement, created = import_uploaded_statement_file(
                     uploaded_file,
                     statement_kind=statement_kind,
                 )
                 if created:
                     imported_count += 1
+                    continuity = get_statement_import_feedback(statement)
+                    if continuity["has_issues"]:
+                        messages.warning(
+                            request,
+                            f"{statement.account_name}: {continuity['note']}",
+                        )
                 else:
                     messages.warning(request, f"{uploaded_file.name} ya estaba importado y se ha omitido.")
             except Exception as exc:
@@ -307,6 +314,7 @@ def robot_statement_import_view(request):
                 "statement_id": statement.id,
                 "statement_kind": statement.statement_kind,
                 "ownership_category": statement.ownership_category,
+                "continuity": get_statement_import_feedback(statement),
             }
         )
 
@@ -382,6 +390,7 @@ def local_bridge_statement_import_view(request):
                 "statement_id": statement.id,
                 "statement_kind": statement.statement_kind,
                 "ownership_category": statement.ownership_category,
+                "continuity": get_statement_import_feedback(statement),
             }
         )
 

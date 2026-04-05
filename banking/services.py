@@ -8,7 +8,7 @@ import unicodedata
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from html.parser import HTMLParser
 from hashlib import sha256
@@ -67,7 +67,6 @@ INCOME_BUCKETS = (
     ("BIZUM", "Ingresos Bizum"),
 )
 EXPENSE_BUCKETS = (
-    (("TARJETA CREDITO",), "Tarjeta de credito"),
     (("PAGO BIZUM",), "Bizum"),
     (("MERCADONA", "LIDL", "ALDI", "CARREFOUR", "EROSKI", "CONSUM"), "Supermercado"),
     (("NETFLIX", "SPOTIFY", "APPLE.COM/BILL", "ELPAIS", "PRIME VIDEO", "DISNEY"), "Suscripciones"),
@@ -79,6 +78,20 @@ EXPENSE_BUCKETS = (
     (("AMAZON",), "Compras online"),
     (("ASOCIACION", "SIND"), "Cuotas y asociaciones"),
     (("ADEUDO RECIBO",), "Recibos domiciliados"),
+)
+CARD_SETTLEMENT_BUCKET = "Liquidacion de tarjeta"
+CARD_SETTLEMENT_KEYWORDS = (
+    "TARJETA CREDITO",
+    "TARJETA DE CREDITO",
+    "LIQUIDACION TARJETA",
+    "PAGO TARJETA",
+    "PAGO DE TARJETA",
+    "RECIBO TARJETA",
+    "RECIBO VISA",
+    "RECIBO MASTERCARD",
+    "PAGO VISA",
+    "PAGO MASTERCARD",
+    "CARGO TARJETA CREDITO",
 )
 
 
@@ -1016,6 +1029,228 @@ def month_label_for_date(value: date) -> str:
     return value.strftime("%Y-%m")
 
 
+def get_statement_stream_key(statement: BankStatementImport) -> str:
+    identity = normalize_iban(statement.iban) or normalize_lookup_text(statement.account_name) or f"statement-{statement.pk}"
+    return f"{statement.statement_kind}:{identity}"
+
+
+def get_statement_effective_period(statement: BankStatementImport) -> tuple[date | None, date | None]:
+    start = statement.period_start
+    end = statement.period_end
+    if start and end:
+        return start, end
+
+    prefetched_movements = getattr(statement, "_prefetched_objects_cache", {}).get("movements")
+    movements = list(prefetched_movements) if prefetched_movements is not None else list(statement.movements.all())
+    booking_dates = [movement.booking_date for movement in movements if movement.booking_date]
+    if booking_dates:
+        if not start:
+            start = min(booking_dates)
+        if not end:
+            end = max(booking_dates)
+    return start, end
+
+
+def format_statement_period(start: date | None, end: date | None) -> str:
+    if start and end:
+        return f"{start:%Y-%m-%d} a {end:%Y-%m-%d}"
+    if start:
+        return f"Desde {start:%Y-%m-%d}"
+    if end:
+        return f"Hasta {end:%Y-%m-%d}"
+    return "Sin periodo"
+
+
+def build_statement_continuity_overview(statements: list[BankStatementImport]) -> dict:
+    imported_statements = [
+        statement
+        for statement in statements
+        if statement.import_status == BankStatementImport.ImportStatus.IMPORTED
+    ]
+    groups_by_stream: dict[str, list[tuple[BankStatementImport, date | None, date | None]]] = defaultdict(list)
+    for statement in imported_statements:
+        groups_by_stream[get_statement_stream_key(statement)].append(
+            (
+                statement,
+                *get_statement_effective_period(statement),
+            )
+        )
+
+    groups = []
+    by_statement_id = {}
+    kind_summary = {
+        BankStatementImport.StatementKind.ACCOUNT: {
+            "groups_count": 0,
+            "healthy_groups_count": 0,
+            "groups_with_gap_count": 0,
+            "groups_with_overlap_count": 0,
+        },
+        BankStatementImport.StatementKind.CARD: {
+            "groups_count": 0,
+            "healthy_groups_count": 0,
+            "groups_with_gap_count": 0,
+            "groups_with_overlap_count": 0,
+        },
+    }
+
+    for stream_key, entries in groups_by_stream.items():
+        ordered_entries = sorted(
+            entries,
+            key=lambda item: (
+                item[1] or item[2] or date.min,
+                item[2] or item[1] or date.min,
+                item[0].imported_at or timezone.now(),
+                item[0].id,
+            ),
+        )
+        latest_statement = ordered_entries[-1][0]
+        statement_kind = latest_statement.statement_kind
+        kind_summary[statement_kind]["groups_count"] += 1
+
+        earliest_start = min((start for _, start, _ in ordered_entries if start), default=None)
+        latest_end = max((end or start for _, start, end in ordered_entries if end or start), default=None)
+        statement_messages = defaultdict(list)
+        issue_summaries = []
+        gap_count = 0
+        overlap_count = 0
+        coverage_until = None
+        coverage_anchor_statement = None
+
+        for statement, start, end in ordered_entries:
+            range_end = end or start
+            if coverage_until is not None and start is not None:
+                if start <= coverage_until:
+                    overlap_end = min(coverage_until, range_end or start)
+                    overlap_days = max(1, (overlap_end - start).days + 1)
+                    summary = (
+                        f"Solape de {overlap_days} dia(s) alrededor de {start:%Y-%m-%d}."
+                    )
+                    issue_summaries.append(summary)
+                    statement_messages[statement.id].append(summary)
+                    if coverage_anchor_statement is not None:
+                        statement_messages[coverage_anchor_statement.id].append(summary)
+                    overlap_count += 1
+                elif start > coverage_until + timedelta(days=1):
+                    gap_start = coverage_until + timedelta(days=1)
+                    gap_end = start - timedelta(days=1)
+                    gap_days = max(1, (gap_end - gap_start).days + 1)
+                    summary = (
+                        f"Hueco de {gap_days} dia(s) entre {gap_start:%Y-%m-%d} y {gap_end:%Y-%m-%d}."
+                    )
+                    issue_summaries.append(summary)
+                    statement_messages[statement.id].append(summary)
+                    if coverage_anchor_statement is not None:
+                        statement_messages[coverage_anchor_statement.id].append(summary)
+                    gap_count += 1
+
+            if range_end is not None and (coverage_until is None or range_end >= coverage_until):
+                coverage_until = range_end
+                coverage_anchor_statement = statement
+
+        if gap_count and overlap_count:
+            status_label = "Huecos y solapes"
+        elif gap_count:
+            status_label = "Huecos"
+        elif overlap_count:
+            status_label = "Solapes"
+        else:
+            status_label = "Continuo"
+
+        has_issues = bool(gap_count or overlap_count)
+        if has_issues:
+            note = issue_summaries[0]
+            kind_summary[statement_kind]["groups_with_gap_count"] += int(gap_count > 0)
+            kind_summary[statement_kind]["groups_with_overlap_count"] += int(overlap_count > 0)
+        else:
+            note = (
+                f"{len(ordered_entries)} extracto(s) cubren {format_statement_period(earliest_start, latest_end)}."
+            )
+            kind_summary[statement_kind]["healthy_groups_count"] += 1
+
+        group_info = {
+            "stream_key": stream_key,
+            "statement_kind": statement_kind,
+            "statement_kind_label": latest_statement.get_statement_kind_display(),
+            "account_name": latest_statement.account_name,
+            "ownership_label": latest_statement.get_ownership_category_display(),
+            "coverage_start": earliest_start,
+            "coverage_end": latest_end,
+            "coverage_label": format_statement_period(earliest_start, latest_end),
+            "statement_count": len(ordered_entries),
+            "gap_count": gap_count,
+            "overlap_count": overlap_count,
+            "has_issues": has_issues,
+            "status_label": status_label,
+            "note": note,
+        }
+        groups.append(group_info)
+
+        for statement, _, _ in ordered_entries:
+            messages = statement_messages.get(statement.id) or ([note] if has_issues else [])
+            by_statement_id[statement.id] = {
+                "stream_key": stream_key,
+                "statement_count": len(ordered_entries),
+                "coverage_label": group_info["coverage_label"],
+                "gap_count": gap_count,
+                "overlap_count": overlap_count,
+                "has_issues": has_issues,
+                "status_label": status_label,
+                "note": messages[0] if messages else note,
+                "messages": messages,
+            }
+
+    groups.sort(
+        key=lambda item: (
+            not item["has_issues"],
+            item["statement_kind"] != BankStatementImport.StatementKind.ACCOUNT,
+            item["coverage_end"] or date.min,
+            item["account_name"],
+        ),
+    )
+    overall_summary = {
+        "groups_count": len(groups),
+        "healthy_groups_count": sum(1 for group in groups if not group["has_issues"]),
+        "groups_with_gap_count": sum(1 for group in groups if group["gap_count"]),
+        "groups_with_overlap_count": sum(1 for group in groups if group["overlap_count"]),
+    }
+    return {
+        "groups": groups,
+        "summary": overall_summary,
+        "summary_by_kind": kind_summary,
+        "by_statement_id": by_statement_id,
+    }
+
+
+def get_statement_import_feedback(statement: BankStatementImport) -> dict:
+    related = BankStatementImport.objects.filter(
+        import_status=BankStatementImport.ImportStatus.IMPORTED,
+        statement_kind=statement.statement_kind,
+    ).prefetch_related("movements")
+    target_iban = normalize_iban(statement.iban)
+    target_name = statement.account_name
+    if target_iban:
+        related = related.filter(iban=statement.iban)
+    elif target_name:
+        related = related.filter(account_label__iexact=target_name)
+    else:
+        related = related.filter(pk=statement.pk)
+
+    continuity = build_statement_continuity_overview(list(related))
+    return continuity["by_statement_id"].get(
+        statement.id,
+        {
+            "statement_count": 1,
+            "coverage_label": format_statement_period(statement.period_start, statement.period_end),
+            "gap_count": 0,
+            "overlap_count": 0,
+            "has_issues": False,
+            "status_label": "Continuo",
+            "note": "",
+            "messages": [],
+        },
+    )
+
+
 def classify_movement(concept: str, amount: Decimal) -> ClassifiedMovement:
     normalized = normalize_concept(concept)
 
@@ -1048,6 +1283,12 @@ def classify_movement(concept: str, amount: Decimal) -> ClassifiedMovement:
             bucket="Otros ingresos",
         )
 
+    if any(keyword in normalized for keyword in CARD_SETTLEMENT_KEYWORDS):
+        return ClassifiedMovement(
+            group=BankMovement.MovementGroup.EXPENSE,
+            bucket=CARD_SETTLEMENT_BUCKET,
+        )
+
     for keywords, bucket in EXPENSE_BUCKETS:
         if any(keyword in normalized for keyword in keywords):
             return ClassifiedMovement(
@@ -1067,6 +1308,8 @@ def build_banking_dashboard() -> dict:
     statements = list(
         BankStatementImport.objects.prefetch_related("movements").order_by("-period_end", "-imported_at")
     )
+    continuity_overview = build_statement_continuity_overview(statements)
+    reconciled_spending = build_reconciled_spending_overview(statements)
     imported_statements = [
         statement
         for statement in statements
@@ -1186,17 +1429,58 @@ def build_banking_dashboard() -> dict:
             }
         )
 
+    continuity_by_statement_id = continuity_overview["by_statement_id"]
+    for account in account_overview["accounts"]:
+        continuity = continuity_by_statement_id.get(account.get("latest_statement_id"))
+        if continuity:
+            account["continuity_status_label"] = continuity["status_label"]
+            account["continuity_note"] = continuity["note"]
+            account["continuity_has_issues"] = continuity["has_issues"]
+        else:
+            account["continuity_status_label"] = "Manual"
+            account["continuity_note"] = "Todavia no hay serie importada para esta cuenta."
+            account["continuity_has_issues"] = False
+
+    for card in card_overview["cards"]:
+        continuity = continuity_by_statement_id.get(card.get("statement_id"))
+        if continuity:
+            card["continuity_status_label"] = continuity["status_label"]
+            card["continuity_note"] = continuity["note"]
+            card["continuity_has_issues"] = continuity["has_issues"]
+        else:
+            card["continuity_status_label"] = "Sin serie"
+            card["continuity_note"] = ""
+            card["continuity_has_issues"] = False
+
+    for statement in statements[:12]:
+        continuity = continuity_by_statement_id.get(statement.id)
+        if continuity:
+            statement.continuity_status_label = continuity["status_label"]
+            statement.continuity_note = continuity["note"]
+            statement.continuity_has_issues = continuity["has_issues"]
+        else:
+            statement.continuity_status_label = "Sin analizar"
+            statement.continuity_note = ""
+            statement.continuity_has_issues = False
+
     return {
         "accounts_summary": account_overview["summary"],
         "tracked_accounts": account_overview["accounts"],
         "card_summary": card_overview["summary"],
         "tracked_cards": card_overview["cards"],
+        "continuity_summary": continuity_overview["summary"],
+        "continuity_summary_by_kind": continuity_overview["summary_by_kind"],
+        "continuity_groups": continuity_overview["groups"],
         "statement_summary": overall_summary,
         "monthly_summaries": monthly_summaries,
         "income_months": expense_months,
         "income_matrix": income_matrix,
         "expense_months": expense_months,
         "expense_matrix": expense_matrix,
+        "reconciled_summary": reconciled_spending["summary"],
+        "reconciled_monthly_summaries": reconciled_spending["monthly_summaries"],
+        "reconciled_expense_months": reconciled_spending["expense_months"],
+        "reconciled_expense_matrix": reconciled_spending["expense_matrix"],
         "card_monthly_summaries": card_overview["monthly_summaries"],
         "card_expense_months": card_overview["expense_months"],
         "card_expense_matrix": card_overview["expense_matrix"],
@@ -1448,6 +1732,134 @@ def build_card_spending_overview() -> dict:
 
     return {
         "cards": tracked_cards,
+        "summary": summary,
+        "monthly_summaries": monthly_summaries,
+        "expense_months": expense_months,
+        "expense_matrix": expense_matrix,
+    }
+
+
+def build_reconciled_spending_overview(statements: list[BankStatementImport] | None = None) -> dict:
+    if statements is None:
+        statements = list(
+            BankStatementImport.objects.filter(
+                import_status=BankStatementImport.ImportStatus.IMPORTED,
+            ).prefetch_related("movements")
+        )
+
+    imported_statements = [
+        statement
+        for statement in statements
+        if statement.import_status == BankStatementImport.ImportStatus.IMPORTED
+    ]
+    account_statements = [
+        statement
+        for statement in imported_statements
+        if statement.statement_kind == BankStatementImport.StatementKind.ACCOUNT
+    ]
+    card_statements = [
+        statement
+        for statement in imported_statements
+        if statement.statement_kind == BankStatementImport.StatementKind.CARD
+    ]
+    has_card_details = bool(card_statements)
+
+    month_map = defaultdict(
+        lambda: {
+            "label": "",
+            "cash_account_expenses": ZERO,
+            "card_settlements": ZERO,
+            "card_spending": ZERO,
+            "card_refunds": ZERO,
+            "household_expenses": ZERO,
+        }
+    )
+    expense_map = defaultdict(lambda: defaultdict(lambda: ZERO))
+    monthly_labels = set()
+
+    for statement in account_statements:
+        for movement in statement.movements.all():
+            if movement.movement_group != BankMovement.MovementGroup.EXPENSE:
+                continue
+
+            movement_month = month_label_for_date(movement.booking_date)
+            monthly_labels.add(movement_month)
+            row = month_map[movement_month]
+            row["label"] = movement_month
+            amount_abs = abs(movement.amount)
+
+            if movement.concept_bucket == CARD_SETTLEMENT_BUCKET:
+                row["card_settlements"] += amount_abs
+                if not has_card_details:
+                    row["cash_account_expenses"] += amount_abs
+                    expense_map[CARD_SETTLEMENT_BUCKET][movement_month] += amount_abs
+            else:
+                row["cash_account_expenses"] += amount_abs
+                expense_map[movement.concept_bucket][movement_month] += amount_abs
+
+    for statement in card_statements:
+        for movement in statement.movements.all():
+            movement_month = month_label_for_date(movement.booking_date)
+            monthly_labels.add(movement_month)
+            row = month_map[movement_month]
+            row["label"] = movement_month
+            amount_abs = abs(movement.amount)
+
+            if movement.movement_group == BankMovement.MovementGroup.EXPENSE:
+                row["card_spending"] += amount_abs
+                expense_map[movement.concept_bucket][movement_month] += amount_abs
+            elif movement.movement_group == BankMovement.MovementGroup.INCOME:
+                row["card_refunds"] += amount_abs
+
+    monthly_summaries = []
+    for month_label in sorted(month_map.keys(), reverse=True):
+        row = month_map[month_label]
+        if has_card_details:
+            row["household_expenses"] = (
+                row["cash_account_expenses"] + row["card_spending"] - row["card_refunds"]
+            )
+        else:
+            row["household_expenses"] = row["cash_account_expenses"]
+        monthly_summaries.append(row)
+
+    expense_months = sorted(monthly_labels)
+    expense_matrix = []
+    for concept_bucket, values in sorted(
+        expense_map.items(),
+        key=lambda item: sum(item[1].values()),
+        reverse=True,
+    ):
+        row_values = [values.get(month_label, ZERO) for month_label in expense_months]
+        expense_matrix.append(
+            {
+                "concept": concept_bucket,
+                "values": row_values,
+                "total": sum(row_values, ZERO),
+            }
+        )
+
+    cash_account_expenses_total = sum((row["cash_account_expenses"] for row in monthly_summaries), ZERO)
+    card_settlements_total = sum((row["card_settlements"] for row in monthly_summaries), ZERO)
+    card_spending_total = sum((row["card_spending"] for row in monthly_summaries), ZERO)
+    card_refunds_total = sum((row["card_refunds"] for row in monthly_summaries), ZERO)
+    household_expenses_total = sum((row["household_expenses"] for row in monthly_summaries), ZERO)
+
+    summary = {
+        "has_card_details": has_card_details,
+        "months_count": len(monthly_summaries),
+        "cash_account_expenses_total": cash_account_expenses_total,
+        "card_settlements_total": card_settlements_total,
+        "card_spending_total": card_spending_total,
+        "card_refunds_total": card_refunds_total,
+        "household_expenses_total": household_expenses_total,
+    }
+    summary["note"] = (
+        "Las liquidaciones de tarjeta se separan del gasto de cuenta y se sustituyen por el detalle real de cada tarjeta."
+        if has_card_details
+        else "Todavia no hay extractos de tarjeta: las liquidaciones siguen contando como gasto del hogar."
+    )
+
+    return {
         "summary": summary,
         "monthly_summaries": monthly_summaries,
         "expense_months": expense_months,

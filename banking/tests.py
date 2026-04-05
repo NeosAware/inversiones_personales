@@ -139,6 +139,11 @@ class BankingServicesTests(TestCase):
         self.assertEqual(classified.group, BankMovement.MovementGroup.DIVIDEND)
         self.assertEqual(classified.bucket, "Dividendos de acciones")
 
+    def test_classify_card_settlement_as_non_consumption_expense_bucket(self):
+        classified = classify_movement("LIQUIDACION TARJETA VISA", Decimal("-325.40"))
+        self.assertEqual(classified.group, BankMovement.MovementGroup.EXPENSE)
+        self.assertEqual(classified.bucket, "Liquidacion de tarjeta")
+
     def test_classify_rent_income(self):
         classified = classify_movement("ALQUILER PISO ADRIAN", Decimal("650.00"))
         self.assertEqual(classified.group, BankMovement.MovementGroup.INCOME)
@@ -435,6 +440,135 @@ class BankingServicesTests(TestCase):
         self.assertEqual(dashboard["tracked_cards"][0]["card_name"], "Visa Monica")
         self.assertEqual(card_overview["monthly_summaries"][0]["net_spent"], Decimal("600.00"))
         self.assertEqual(card_overview["expense_matrix"][0]["concept"], "Supermercado")
+
+    def test_build_dashboard_tracks_statement_continuity_gaps_and_overlaps(self):
+        jan_statement = BankStatementImport.objects.create(
+            source_filename="ene.xls",
+            source_file="banking/statements/ene.xls",
+            file_checksum="continuity-ene",
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
+            account_label="Cuenta 1234",
+            period_start="2026-01-01",
+            period_end="2026-01-31",
+            closing_balance=Decimal("1000.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+        feb_overlap_statement = BankStatementImport.objects.create(
+            source_filename="feb-solape.xls",
+            source_file="banking/statements/feb-solape.xls",
+            file_checksum="continuity-feb-overlap",
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
+            account_label="Cuenta 1234",
+            period_start="2026-01-25",
+            period_end="2026-02-20",
+            closing_balance=Decimal("800.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+        apr_gap_statement = BankStatementImport.objects.create(
+            source_filename="abr-hueco.xls",
+            source_file="banking/statements/abr-hueco.xls",
+            file_checksum="continuity-abr-gap",
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
+            account_label="Cuenta 1234",
+            period_start="2026-04-01",
+            period_end="2026-04-30",
+            closing_balance=Decimal("1300.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+
+        for statement, booking_date, amount, balance in (
+            (jan_statement, "2026-01-31", Decimal("1000.00"), Decimal("1000.00")),
+            (feb_overlap_statement, "2026-02-20", Decimal("-200.00"), Decimal("800.00")),
+            (apr_gap_statement, "2026-04-30", Decimal("500.00"), Decimal("1300.00")),
+        ):
+            BankMovement.objects.create(
+                statement_import=statement,
+                booking_date=booking_date,
+                concept="MOVIMIENTO",
+                normalized_concept="MOVIMIENTO",
+                amount=amount,
+                balance=balance,
+                movement_group=BankMovement.MovementGroup.INCOME if amount >= 0 else BankMovement.MovementGroup.EXPENSE,
+                concept_bucket="Nomina" if amount >= 0 else "Otros gastos",
+            )
+
+        dashboard = build_banking_dashboard()
+
+        self.assertEqual(dashboard["continuity_summary"]["groups_count"], 1)
+        self.assertEqual(dashboard["continuity_summary"]["groups_with_gap_count"], 1)
+        self.assertEqual(dashboard["continuity_summary"]["groups_with_overlap_count"], 1)
+        self.assertEqual(dashboard["continuity_groups"][0]["status_label"], "Huecos y solapes")
+        self.assertTrue(dashboard["tracked_accounts"][0]["continuity_has_issues"])
+        self.assertTrue(dashboard["tracked_accounts"][0]["continuity_note"])
+
+    def test_build_dashboard_reconciles_card_settlements_without_double_counting_spend(self):
+        account_statement = BankStatementImport.objects.create(
+            source_filename="cuenta-abr.xls",
+            source_file="banking/statements/cuenta-abr.xls",
+            file_checksum="reconciled-account-abr",
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
+            account_label="Cuenta 1234",
+            period_start="2026-04-01",
+            period_end="2026-04-30",
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+        card_statement = BankStatementImport.objects.create(
+            source_filename="visa-abr.xls",
+            source_file="banking/statements/visa-abr.xls",
+            file_checksum="reconciled-card-abr",
+            statement_kind=BankStatementImport.StatementKind.CARD,
+            account_label="Visa Monica",
+            period_start="2026-04-01",
+            period_end="2026-04-30",
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+
+        BankMovement.objects.create(
+            statement_import=account_statement,
+            booking_date="2026-04-05",
+            concept="LIQUIDACION TARJETA VISA",
+            normalized_concept="LIQUIDACION TARJETA VISA",
+            amount=Decimal("-700.00"),
+            movement_group=BankMovement.MovementGroup.EXPENSE,
+            concept_bucket="Liquidacion de tarjeta",
+        )
+        BankMovement.objects.create(
+            statement_import=account_statement,
+            booking_date="2026-04-12",
+            concept="MERCADONA",
+            normalized_concept="MERCADONA",
+            amount=Decimal("-120.00"),
+            movement_group=BankMovement.MovementGroup.EXPENSE,
+            concept_bucket="Supermercado",
+        )
+        BankMovement.objects.create(
+            statement_import=card_statement,
+            booking_date="2026-04-08",
+            concept="AMAZON",
+            normalized_concept="AMAZON",
+            amount=Decimal("-650.00"),
+            movement_group=BankMovement.MovementGroup.EXPENSE,
+            concept_bucket="Compras online",
+        )
+        BankMovement.objects.create(
+            statement_import=card_statement,
+            booking_date="2026-04-10",
+            concept="DEVOLUCION AMAZON",
+            normalized_concept="DEVOLUCION AMAZON",
+            amount=Decimal("50.00"),
+            movement_group=BankMovement.MovementGroup.INCOME,
+            concept_bucket="Devoluciones y abonos",
+        )
+
+        dashboard = build_banking_dashboard()
+
+        self.assertEqual(dashboard["reconciled_summary"]["card_settlements_total"], Decimal("700.00"))
+        self.assertEqual(dashboard["reconciled_summary"]["cash_account_expenses_total"], Decimal("120.00"))
+        self.assertEqual(dashboard["reconciled_summary"]["card_spending_total"], Decimal("650.00"))
+        self.assertEqual(dashboard["reconciled_summary"]["card_refunds_total"], Decimal("50.00"))
+        self.assertEqual(dashboard["reconciled_summary"]["household_expenses_total"], Decimal("720.00"))
+        self.assertEqual(dashboard["reconciled_monthly_summaries"][0]["household_expenses"], Decimal("720.00"))
+        self.assertEqual(dashboard["reconciled_expense_matrix"][0]["concept"], "Compras online")
 
     def test_bank_investment_position_uses_current_value_when_cost_basis_missing(self):
         position = BankInvestmentPosition.objects.create(

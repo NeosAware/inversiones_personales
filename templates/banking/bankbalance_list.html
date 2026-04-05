@@ -37,6 +37,7 @@
             <th>Saldo actual</th>
             <th>Flujo neto</th>
             <th>Extractos</th>
+            <th>Serie</th>
           </tr>
         </thead>
         <tbody>
@@ -74,9 +75,17 @@
                 {% endif %}
               </td>
               <td>{{ account.statement_count }}</td>
+              <td>
+                <span class="{% if account.continuity_has_issues %}warn{% else %}good{% endif %}">
+                  {{ account.continuity_status_label }}
+                </span>
+                {% if account.continuity_note %}
+                  <div class="metric-sub">{{ account.continuity_note }}</div>
+                {% endif %}
+              </td>
             </tr>
           {% empty %}
-            <tr><td colspan="8" class="muted">Todavia no hay cuentas visibles. Importa extractos o crea una cuenta manual para empezar.</td></tr>
+            <tr><td colspan="9" class="muted">Todavia no hay cuentas visibles. Importa extractos o crea una cuenta manual para empezar.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -110,6 +119,9 @@
         <span class="pill">{{ statement_summary.statements_count }} extractos de cuenta</span>
         <span class="pill">{{ card_summary.statements_count }} extractos de tarjeta</span>
         <span class="pill">{{ statement_summary.months_count }} meses de cuentas</span>
+        <span class="pill">{{ continuity_summary.healthy_groups_count }} series continuas</span>
+        <span class="pill">{{ continuity_summary.groups_with_gap_count }} con huecos</span>
+        <span class="pill">{{ continuity_summary.groups_with_overlap_count }} con solapes</span>
       </div>
       <div class="metric-sub" style="margin-top:14px;">Puedes borrar una importacion o vaciarlas todas y volver a cargar los mismos ficheros para recalcular la vista mensual desde cero.</div>
       <form method="post" style="margin-top:14px;" onsubmit="return confirm('Esto eliminara todos los extractos importados y sus movimientos. Quieres continuar?');">
@@ -250,6 +262,7 @@
             <div class="metric-sub">1. Se abrira el banco en tu navegador normal de Windows.</div>
             <div class="metric-sub">2. Tu haras el acceso y la validacion del movil como siempre.</div>
             <div class="metric-sub">3. Cuando el banco descargue el XLS/XLSX, el asistente lo subira solo a esta web.</div>
+            <div class="metric-sub">Si ya tienes el banco abierto en tu navegador, podras usar el boton de solo esperar descarga sin abrir una pestaña nueva.</div>
           </div>
         </div>
       </section>
@@ -662,6 +675,66 @@
     </table>
   </section>
 
+  <p class="section-title" style="margin-top:28px;">Gemelo digital de extractos</p>
+  <div class="grid cols-4">
+    <section class="card">
+      <div class="metric-label">Series vigiladas</div>
+      <div class="metric-value">{{ continuity_summary.groups_count }}</div>
+      <div class="metric-sub">Cuentas y tarjetas con historial importado.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Series continuas</div>
+      <div class="metric-value">{{ continuity_summary.healthy_groups_count }}</div>
+      <div class="metric-sub">Sin huecos ni solapes detectados.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Series con huecos</div>
+      <div class="metric-value">{{ continuity_summary.groups_with_gap_count }}</div>
+      <div class="metric-sub">Faltan dias o periodos entre extractos.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Series con solapes</div>
+      <div class="metric-value">{{ continuity_summary.groups_with_overlap_count }}</div>
+      <div class="metric-sub">Hay periodos importados dos veces o parcialmente repetidos.</div>
+    </section>
+  </div>
+
+  <section class="card table-card" style="margin-top:24px;">
+    <p class="section-title">Continuidad por cuenta y tarjeta</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Tipo</th>
+          <th>Cuenta o tarjeta</th>
+          <th>Titular</th>
+          <th>Cobertura</th>
+          <th>Extractos</th>
+          <th>Estado</th>
+          <th>Nota</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for group in continuity_groups %}
+          <tr>
+            <td>{{ group.statement_kind_label }}</td>
+            <td>{{ group.account_name }}</td>
+            <td>{{ group.ownership_label }}</td>
+            <td>{{ group.coverage_label }}</td>
+            <td>{{ group.statement_count }}</td>
+            <td>
+              <span class="{% if group.has_issues %}warn{% else %}good{% endif %}">
+                {{ group.status_label }}
+              </span>
+            </td>
+            <td>{{ group.note }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="muted">Todavia no hay suficientes extractos importados para revisar continuidad.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
   <p class="section-title" style="margin-top:28px;">Flujo de caja importado</p>
   <div class="grid cols-4">
     <section class="card">
@@ -777,6 +850,89 @@
     </table>
   </section>
 
+  <p class="section-title" style="margin-top:28px;">Gasto del hogar sin duplicar tarjetas</p>
+  <div class="grid cols-4">
+    <section class="card">
+      <div class="metric-label">Gasto consolidado</div>
+      <div class="metric-value">{{ reconciled_summary.household_expenses_total|floatformat:2 }} EUR</div>
+      <div class="metric-sub">Consumo real del hogar sin contar dos veces la liquidacion de tarjeta.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Gasto directo en cuenta</div>
+      <div class="metric-value">{{ reconciled_summary.cash_account_expenses_total|floatformat:2 }} EUR</div>
+      <div class="metric-sub">Pagos bancarios no ligados a liquidaciones de tarjeta.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Liquidaciones de tarjeta</div>
+      <div class="metric-value">{{ reconciled_summary.card_settlements_total|floatformat:2 }} EUR</div>
+      <div class="metric-sub">Salida de caja en cuenta para pagar tarjetas.</div>
+    </section>
+    <section class="card">
+      <div class="metric-label">Detalle real de tarjeta</div>
+      <div class="metric-value">{{ reconciled_summary.card_spending_total|floatformat:2 }} EUR</div>
+      <div class="metric-sub">Compras leidas de los extractos de tarjeta. Devoluciones: {{ reconciled_summary.card_refunds_total|floatformat:2 }} EUR.</div>
+    </section>
+  </div>
+  <div class="metric-sub" style="margin-top:12px;">{{ reconciled_summary.note }}</div>
+
+  <section class="card table-card" style="margin-top:24px;">
+    <p class="section-title">Resumen mensual consolidado</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Mes</th>
+          <th>Gasto directo en cuenta</th>
+          <th>Liquidaciones de tarjeta</th>
+          <th>Gasto de tarjeta</th>
+          <th>Devoluciones de tarjeta</th>
+          <th>Gasto real del hogar</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for month in reconciled_monthly_summaries %}
+          <tr>
+            <td>{{ month.label }}</td>
+            <td>{{ month.cash_account_expenses|floatformat:2 }}</td>
+            <td>{{ month.card_settlements|floatformat:2 }}</td>
+            <td>{{ month.card_spending|floatformat:2 }}</td>
+            <td class="good">{{ month.card_refunds|floatformat:2 }}</td>
+            <td><strong>{{ month.household_expenses|floatformat:2 }}</strong></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="muted">Todavia no hay gasto consolidado suficiente para construir el gemelo digital del hogar.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card table-card" style="margin-top:24px;">
+    <p class="section-title">Gasto consolidado por concepto</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Concepto</th>
+          {% for month in reconciled_expense_months %}
+            <th>{{ month }}</th>
+          {% endfor %}
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in reconciled_expense_matrix %}
+          <tr>
+            <td>{{ row.concept }}</td>
+            {% for value in row.values %}
+              <td>{{ value|floatformat:2 }}</td>
+            {% endfor %}
+            <td><strong>{{ row.total|floatformat:2 }}</strong></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="{{ reconciled_expense_months|length|add:2 }}" class="muted">Cuando importes cuentas y tarjetas, aqui aparecera el gasto consolidado sin duplicar liquidaciones.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
   <p class="section-title" style="margin-top:28px;">Tarjetas importadas</p>
   <div class="grid cols-4">
     <section class="card">
@@ -812,6 +968,7 @@
           <th>Gasto ultimo extracto</th>
           <th>Devoluciones</th>
           <th>Extractos</th>
+          <th>Serie</th>
         </tr>
       </thead>
       <tbody>
@@ -835,9 +992,17 @@
             <td><strong>{{ card.latest_spent|floatformat:2 }} EUR</strong></td>
             <td>{{ card.latest_refunds|floatformat:2 }} EUR</td>
             <td>{{ card.statement_count }}</td>
+            <td>
+              <span class="{% if card.continuity_has_issues %}warn{% else %}good{% endif %}">
+                {{ card.continuity_status_label }}
+              </span>
+              {% if card.continuity_note %}
+                <div class="metric-sub">{{ card.continuity_note }}</div>
+              {% endif %}
+            </td>
           </tr>
         {% empty %}
-          <tr><td colspan="6" class="muted">Todavia no hay tarjetas importadas. Sube el XLS/XLSX de la tarjeta marcando el tipo Tarjeta.</td></tr>
+          <tr><td colspan="7" class="muted">Todavia no hay tarjetas importadas. Sube el XLS/XLSX de la tarjeta marcando el tipo Tarjeta.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -910,6 +1075,7 @@
           <th>Titular</th>
           <th>Fichero</th>
           <th>Estado</th>
+          <th>Serie</th>
           <th>Saldo inicial</th>
           <th>Saldo final</th>
           <th>Acciones</th>
@@ -936,6 +1102,14 @@
             </td>
             <td>{{ statement.source_filename }}</td>
             <td>{{ statement.get_import_status_display }}</td>
+            <td>
+              <span class="{% if statement.continuity_has_issues %}warn{% else %}good{% endif %}">
+                {{ statement.continuity_status_label }}
+              </span>
+              {% if statement.continuity_note %}
+                <div class="metric-sub">{{ statement.continuity_note }}</div>
+              {% endif %}
+            </td>
             <td>{{ statement.opening_balance|default_if_none:"-" }}</td>
             <td>{{ statement.closing_balance|default_if_none:"-" }}</td>
             <td>
@@ -948,7 +1122,7 @@
             </td>
           </tr>
         {% empty %}
-          <tr><td colspan="9" class="muted">Todavia no hay importaciones guardadas.</td></tr>
+          <tr><td colspan="10" class="muted">Todavia no hay importaciones guardadas.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -1103,6 +1277,7 @@
               '</div>' +
               '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">' +
                 '<button class="button secondary small" type="button" data-run-job="' + escapeHtml(job.id) + '">Descargar ahora</button>' +
+                '<button class="button secondary small" type="button" data-watch-job="' + escapeHtml(job.id) + '">Solo esperar descarga</button>' +
                 '<button class="button secondary small" type="button" data-delete-job="' + escapeHtml(job.id) + '">Borrar</button>' +
               '</div>' +
             '</section>'
@@ -1162,11 +1337,17 @@
         return importedCount;
       }
 
-      async function runJob(jobId, reloadAfterFinish) {
-        setFeedback("Descargando desde tu banco", "Se abrira tu navegador normal. Entra en el banco, valida en el movil si hace falta y descarga el XLS/XLSX; el asistente lo detectara automaticamente.", "info");
+      async function runJob(jobId, reloadAfterFinish, options) {
+        const settings = options || {};
+        const openUrl = settings.openUrl !== false;
+        if (openUrl) {
+          setFeedback("Descargando desde tu banco", "Se abrira tu navegador normal. Entra en el banco, valida en el movil si hace falta y descarga el XLS/XLSX; el asistente lo detectara automaticamente.", "info");
+        } else {
+          setFeedback("Esperando tu descarga manual", "Mantengo la escucha activa en Descargas. Usa tu navegador ya abierto, descarga el XLS/XLSX y en cuanto termine lo recogere automaticamente.", "info");
+        }
         const runPayload = await bridgeFetch("/run", {
           method: "POST",
-          body: JSON.stringify({ job_id: jobId, headed: true })
+          body: JSON.stringify({ job_id: jobId, headed: true, open_url: openUrl })
         }, 960000);
         const importedCount = await uploadRunFiles(runPayload);
         setFeedback("Importacion terminada", "Se han importado " + importedCount + " fichero(s) desde tu ordenador.", "success");
@@ -1240,9 +1421,18 @@
         const runButton = event.target.closest("[data-run-job]");
         if (runButton) {
           try {
-            await runJob(runButton.dataset.runJob, true);
+            await runJob(runButton.dataset.runJob, true, { openUrl: true });
           } catch (error) {
             setFeedback("No se ha podido descargar", error.message, "error");
+          }
+          return;
+        }
+        const watchButton = event.target.closest("[data-watch-job]");
+        if (watchButton) {
+          try {
+            await runJob(watchButton.dataset.watchJob, true, { openUrl: false });
+          } catch (error) {
+            setFeedback("No se ha podido recoger la descarga", error.message, "error");
           }
           return;
         }

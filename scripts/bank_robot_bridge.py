@@ -17,6 +17,7 @@ from bank_robot import DEFAULT_CONFIG_PATH, ensure_directory, run_job as run_pla
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+DEFAULT_WATCH_DIR = (Path.home() / "Downloads").expanduser()
 DEFAULT_ALLOWED_ORIGINS = (
     "https://personal.neosaware.ai",
     "http://127.0.0.1:8000",
@@ -24,6 +25,78 @@ DEFAULT_ALLOWED_ORIGINS = (
     "http://127.0.0.1:8082",
     "http://localhost:8082",
 )
+LEGACY_MANUAL_DOWNLOAD_ACTIONS = {
+    "goto",
+    "wait_for_download",
+    "manual_pause",
+    "sleep",
+    "screenshot",
+}
+
+
+def infer_login_url(job: dict) -> str:
+    if job.get("login_url"):
+        return str(job.get("login_url", "")).strip()
+    for step in job.get("steps", []):
+        if isinstance(step, dict) and step.get("action") == "goto" and step.get("url"):
+            return str(step.get("url", "")).strip()
+    return ""
+
+
+def looks_like_legacy_manual_download_job(job: dict) -> bool:
+    if job.get("mode"):
+        return False
+    steps = job.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return False
+    actions = {str(step.get("action", "")).strip() for step in steps if isinstance(step, dict)}
+    if "wait_for_download" not in actions:
+        return False
+    if job.get("secret_fields"):
+        return False
+    return actions.issubset(LEGACY_MANUAL_DOWNLOAD_ACTIONS)
+
+
+def infer_watch_dir(job: dict) -> str:
+    explicit_watch_dir = str(job.get("watch_dir", "")).strip()
+    if explicit_watch_dir:
+        return explicit_watch_dir
+
+    download_dir = str(job.get("download_dir", "")).strip()
+    if download_dir:
+        resolved_download_dir = Path(download_dir).expanduser()
+        try:
+            if DEFAULT_WATCH_DIR == resolved_download_dir or DEFAULT_WATCH_DIR in resolved_download_dir.parents:
+                return str(DEFAULT_WATCH_DIR)
+        except Exception:
+            pass
+        return str(resolved_download_dir)
+
+    return str(DEFAULT_WATCH_DIR)
+
+
+def normalize_job(job: dict) -> dict:
+    normalized_job = dict(job)
+    inferred_mode = "manual_download" if looks_like_legacy_manual_download_job(normalized_job) else ""
+    mode = str(normalized_job.get("mode") or inferred_mode or "playwright").strip() or "playwright"
+    normalized_job["mode"] = mode
+    if mode == "manual_download":
+        normalized_job["login_url"] = infer_login_url(normalized_job)
+        normalized_job["watch_dir"] = infer_watch_dir(normalized_job)
+        normalized_job.setdefault("allowed_extensions", [".xls", ".xlsx"])
+        normalized_job.setdefault("manual_timeout_seconds", 900)
+        normalized_job.setdefault("manual_poll_interval_seconds", 1.0)
+    return normalized_job
+
+
+def normalize_bridge_config(config: dict) -> dict:
+    normalized = dict(config)
+    normalized["server"] = normalized.get("server", {}) if isinstance(normalized.get("server"), dict) else {}
+    jobs = normalized.get("jobs", [])
+    if not isinstance(jobs, list):
+        jobs = []
+    normalized["jobs"] = [normalize_job(job) for job in jobs if isinstance(job, dict)]
+    return normalized
 
 
 def load_bridge_config(config_path: Path) -> dict:
@@ -31,11 +104,7 @@ def load_bridge_config(config_path: Path) -> dict:
         return {"server": {}, "jobs": []}
     with config_path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
-    if "server" not in data or not isinstance(data["server"], dict):
-        data["server"] = {}
-    if "jobs" not in data or not isinstance(data["jobs"], list):
-        data["jobs"] = []
-    return data
+    return normalize_bridge_config(data)
 
 
 def save_bridge_config(config_path: Path, config: dict) -> None:
@@ -46,12 +115,8 @@ def save_bridge_config(config_path: Path, config: dict) -> None:
 
 
 def summarize_job(job: dict) -> dict:
-    goto_url = ""
-    for step in job.get("steps", []):
-        if step.get("action") == "goto":
-            goto_url = step.get("url", "")
-            break
-    login_url = job.get("login_url", "") or goto_url
+    job = normalize_job(job)
+    login_url = infer_login_url(job)
     return {
         "id": job.get("id", ""),
         "description": job.get("description", ""),
@@ -67,7 +132,8 @@ def summarize_job(job: dict) -> dict:
 
 
 def validate_job_payload(job: dict) -> dict:
-    mode = str(job.get("mode", "playwright")).strip() or "playwright"
+    normalized_job = normalize_job(job)
+    mode = str(normalized_job.get("mode", "playwright")).strip() or "playwright"
     common_required_fields = {
         "id",
         "description",
@@ -81,12 +147,12 @@ def validate_job_payload(job: dict) -> dict:
         required_fields = common_required_fields | {"watch_dir"}
     else:
         required_fields = common_required_fields | {"download_dir", "storage_state_path", "steps"}
-    missing = sorted(field for field in required_fields if not job.get(field))
+    missing = sorted(field for field in required_fields if not normalized_job.get(field))
     if missing:
         raise ValueError(f"Faltan campos obligatorios del trabajo: {', '.join(missing)}")
-    if mode != "manual_download" and not isinstance(job["steps"], list):
+    if mode != "manual_download" and not isinstance(normalized_job["steps"], list):
         raise ValueError("steps debe ser una lista.")
-    return job
+    return normalized_job
 
 
 def snapshot_directory(directory: Path, extensions: set[str]) -> dict[str, tuple[float, int]]:
@@ -103,8 +169,8 @@ def snapshot_directory(directory: Path, extensions: set[str]) -> dict[str, tuple
     return snapshot
 
 
-def run_manual_download_job(job: dict) -> list[Path]:
-    watch_dir = Path(job.get("watch_dir", str(Path.home() / "Downloads"))).expanduser().resolve()
+def run_manual_download_job(job: dict, *, open_url: bool = True) -> list[Path]:
+    watch_dir = Path(job.get("watch_dir", str(DEFAULT_WATCH_DIR))).expanduser().resolve()
     ensure_directory(watch_dir)
     allowed_extensions = {
         extension if str(extension).startswith(".") else f".{extension}"
@@ -112,7 +178,7 @@ def run_manual_download_job(job: dict) -> list[Path]:
     }
     before_snapshot = snapshot_directory(watch_dir, allowed_extensions)
     login_url = str(job.get("login_url", "")).strip()
-    if login_url and login_url != "about:blank":
+    if open_url and login_url and login_url != "about:blank":
         webbrowser.open(login_url, new=2, autoraise=True)
     timeout_seconds = int(job.get("manual_timeout_seconds", 900))
     poll_interval = float(job.get("manual_poll_interval_seconds", 1.0))
@@ -133,7 +199,7 @@ def run_manual_download_job(job: dict) -> list[Path]:
         time.sleep(poll_interval)
 
     raise RuntimeError(
-        "No se ha detectado ningun XLS/XLSX nuevo en Descargas. Descarga el extracto desde tu navegador normal y vuelve a intentarlo."
+        f"No se ha detectado ningun XLS/XLSX nuevo en {watch_dir}. Descarga el extracto desde tu navegador normal y vuelve a intentarlo."
     )
 
 
@@ -156,7 +222,7 @@ class RobotBridgeState:
         }
 
     def upsert_job(self, job: dict) -> dict:
-        validate_job_payload(job)
+        job = validate_job_payload(job)
         with self.lock:
             config = load_bridge_config(self.config_path)
             jobs = config.setdefault("jobs", [])
@@ -180,7 +246,7 @@ class RobotBridgeState:
             config["jobs"] = remaining_jobs
             save_bridge_config(self.config_path, config)
 
-    def run_job(self, job_id: str, *, headed: bool = True) -> dict:
+    def run_job(self, job_id: str, *, headed: bool = True, open_url: bool = True) -> dict:
         config = load_bridge_config(self.config_path)
         job = next((item for item in config.get("jobs", []) if item.get("id") == job_id), None)
         if not job:
@@ -188,7 +254,7 @@ class RobotBridgeState:
 
         run_id = uuid4().hex
         if job.get("mode") == "manual_download":
-            downloaded_files = run_manual_download_job(job)
+            downloaded_files = run_manual_download_job(job, open_url=open_url)
         else:
             downloaded_files = run_playwright_job(
                 job,
@@ -298,6 +364,7 @@ class RobotBridgeHandler(BaseHTTPRequestHandler):
                 result = self.state.run_job(
                     str(payload.get("job_id", "")),
                     headed=bool(payload.get("headed", True)),
+                    open_url=bool(payload.get("open_url", True)),
                 )
                 return self._send_json(result)
         except KeyError as exc:
@@ -377,6 +444,8 @@ def main() -> None:
     ensure_directory(config_path.parent)
     if not config_path.exists():
         save_bridge_config(config_path, {"server": {}, "jobs": []})
+    else:
+        save_bridge_config(config_path, load_bridge_config(config_path))
     allowed_origins = tuple(origin.strip() for origin in args.allowed_origins.split(",") if origin.strip())
     server = ThreadingHTTPServer((args.host, args.port), RobotBridgeHandler)
     server.state = RobotBridgeState(config_path=config_path)  # type: ignore[attr-defined]
