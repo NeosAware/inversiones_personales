@@ -199,7 +199,7 @@
     </section>
   </div>
 
-  <div class="split" style="margin-top:24px;">
+  <div class="split" style="margin-top:24px; grid-template-columns:repeat(2, minmax(0, 1fr)); align-items:start;">
     <section class="card">
       <p class="section-title">Paso 1</p>
       <h2 style="margin-top:0;">Configurar el robot local</h2>
@@ -221,18 +221,28 @@
       <p class="section-title">Paso 2</p>
       <h2 style="margin-top:0;">Comandos utiles en Windows</h2>
       <p class="muted" style="margin-top:0;">Empieza con una ejecucion visible y en seco para revisar selectores, descargas y clasificacion de cuenta o tarjeta.</p>
-      <div class="metric-sub" style="margin-top:16px;">Instalacion inicial</div>
-      <pre><code>cd C:\Users\Gerencia\Documents\inversiones_personales
+      <div class="stack" style="margin-top:16px;">
+        <div>
+          <div class="metric-sub">Instalacion inicial</div>
+          <pre><code>cd C:\Users\Gerencia\Documents\inversiones_personales
 python -m pip install -r requirements-robot.txt
 python -m playwright install chromium
 Copy-Item .\scripts\bank_robot.example.json .\scripts\bank_robot.config.json</code></pre>
-      <div class="metric-sub" style="margin-top:16px;">Guardar usuario y clave</div>
-      <pre><code>python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name username
+        </div>
+        <div>
+          <div class="metric-sub">Guardar usuario y clave</div>
+          <pre><code>python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name username
 python .\scripts\set_bank_robot_secret.py --job sabadell-cuenta-ximo --name password</code></pre>
-      <div class="metric-sub" style="margin-top:16px;">Prueba manual sin subir</div>
-      <pre><code>.\scripts\run_bank_robot.ps1 -ConfigPath .\scripts\bank_robot.config.json -Job sabadell-cuenta-ximo -Headed -DryRun</code></pre>
-      <div class="metric-sub" style="margin-top:16px;">Programar ejecucion diaria</div>
-      <pre><code>.\scripts\register_bank_robot_task.ps1 -TaskName "Robot bancos" -Time "08:00" -ConfigPath .\scripts\bank_robot.config.json</code></pre>
+        </div>
+        <div>
+          <div class="metric-sub">Prueba manual sin subir</div>
+          <pre><code>.\scripts\run_bank_robot.ps1 -ConfigPath .\scripts\bank_robot.config.json -Job sabadell-cuenta-ximo -Headed -DryRun</code></pre>
+        </div>
+        <div>
+          <div class="metric-sub">Programar ejecucion diaria</div>
+          <pre><code>.\scripts\register_bank_robot_task.ps1 -TaskName "Robot bancos" -Time "08:00" -ConfigPath .\scripts\bank_robot.config.json</code></pre>
+        </div>
+      </div>
     </section>
   </div>
 

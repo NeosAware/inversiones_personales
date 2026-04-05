@@ -97,6 +97,32 @@
     .stack{ display:flex; flex-direction:column; gap:14px; }
     .split{ display:grid; gap:18px; grid-template-columns:1.2fr .8fr; }
     .meta{ display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; }
+    pre{
+      margin:8px 0 0;
+      padding:14px 16px;
+      max-width:100%;
+      overflow:auto;
+      white-space:pre-wrap;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      border:1px solid var(--line);
+      border-radius:16px;
+      background:#f4f8fb;
+      color:#214157;
+      font:13px/1.5 "Consolas", "Courier New", monospace;
+    }
+    code{
+      font-family:"Consolas", "Courier New", monospace;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+    }
+    :not(pre) > code{
+      padding:2px 6px;
+      border-radius:8px;
+      background:#eef5fa;
+      color:#214157;
+      font-size:.95em;
+    }
     form label{
       display:block; font-size:13px; color:var(--muted); margin-bottom:6px;
     }
