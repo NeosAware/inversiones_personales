@@ -1059,10 +1059,11 @@
         const statementKind = kindField.value;
         const statementLabel = getSelectedText(kindField);
         const accountLabel = labelField.value.trim() || (statementKind === "account" ? "Cuenta principal" : "Tarjeta principal");
+        const accountLabelSlug = slugifyRobotText(accountLabel) || (statementKind === "account" ? "cuenta-principal" : "tarjeta-principal");
         const bankSlug = slugifyRobotText(bankName) || "mi-banco";
         const ownerSlug = slugifyRobotText(ownershipLabel) || ownershipCategory;
         const statementSlug = statementKind === "account" ? "cuenta" : "tarjeta";
-        const jobId = [bankSlug, statementSlug, ownerSlug].filter(Boolean).join("-");
+        const jobId = [bankSlug, statementSlug, ownerSlug, accountLabelSlug].filter(Boolean).join("-");
         const loginUrl = loginUrlField.value.trim() || "about:blank";
         return {
           job: {
