@@ -832,6 +832,7 @@ def classify_movement(concept: str, amount: Decimal) -> ClassifiedMovement:
 
 
 def build_banking_dashboard() -> dict:
+    account_overview = build_bank_account_overview()
     statements = list(
         BankStatementImport.objects.prefetch_related("movements").order_by("-period_end", "-imported_at")
     )
@@ -954,6 +955,8 @@ def build_banking_dashboard() -> dict:
         )
 
     return {
+        "accounts_summary": account_overview["summary"],
+        "tracked_accounts": account_overview["accounts"],
         "statement_summary": overall_summary,
         "monthly_summaries": monthly_summaries,
         "income_months": expense_months,
@@ -961,4 +964,129 @@ def build_banking_dashboard() -> dict:
         "expense_months": expense_months,
         "expense_matrix": expense_matrix,
         "recent_imports": statements[:12],
+    }
+
+
+def build_bank_account_overview() -> dict:
+    manual_accounts = list(BankBalance.objects.order_by("institution", "account_name", "id"))
+    imported_statements = list(
+        BankStatementImport.objects.filter(import_status=BankStatementImport.ImportStatus.IMPORTED)
+        .exclude(closing_balance__isnull=True)
+        .order_by("period_end", "imported_at", "id")
+    )
+
+    latest_statements_by_account: dict[str, BankStatementImport] = {}
+    statement_counts: dict[str, int] = defaultdict(int)
+
+    for statement in imported_statements:
+        account_key = normalize_iban(statement.iban) or normalize_lookup_text(statement.account_name) or str(statement.pk)
+        latest_statements_by_account[account_key] = statement
+        statement_counts[account_key] += 1
+
+    remaining_manual_accounts = manual_accounts.copy()
+    tracked_accounts = []
+
+    for account_key, statement in latest_statements_by_account.items():
+        normalized_statement_name = normalize_lookup_text(statement.account_name)
+        manual_match = next(
+            (
+                account
+                for account in remaining_manual_accounts
+                if normalize_lookup_text(account.account_name) == normalized_statement_name
+            ),
+            None,
+        )
+        if manual_match:
+            remaining_manual_accounts.remove(manual_match)
+
+        ownership_category = (
+            manual_match.ownership_category
+            if manual_match and manual_match.ownership_category
+            else statement.ownership_category
+        )
+        latest_net_cash_flow = (
+            statement.total_income
+            + statement.total_dividends
+            - statement.total_expenses
+            - statement.total_pension_contributions
+        )
+
+        tracked_accounts.append(
+            {
+                "account_name": statement.account_name,
+                "institution": manual_match.institution if manual_match else statement.institution,
+                "ownership_category": ownership_category,
+                "ownership_label": AssetOwnershipCategory(ownership_category).label,
+                "source_label": "Manual + extracto" if manual_match else "Extracto importado",
+                "current_balance": statement.closing_balance or ZERO,
+                "deposited_amount": manual_match.deposited_amount if manual_match else None,
+                "annual_interest_income": manual_match.annual_interest_income if manual_match else ZERO,
+                "latest_month": statement.month_label if statement.period_end else None,
+                "latest_statement_id": statement.id,
+                "statement_count": statement_counts[account_key],
+                "latest_net_cash_flow": latest_net_cash_flow,
+                "notes": manual_match.notes if manual_match else "",
+                "account_id": manual_match.id if manual_match else None,
+                "has_imported_data": True,
+                "has_manual_data": manual_match is not None,
+                "edit_action": "update_statement_ownership",
+                "edit_target_id": statement.id,
+            }
+        )
+
+    for account in remaining_manual_accounts:
+        tracked_accounts.append(
+            {
+                "account_name": account.account_name,
+                "institution": account.institution,
+                "ownership_category": account.ownership_category,
+                "ownership_label": account.get_ownership_category_display(),
+                "source_label": "Manual",
+                "current_balance": account.current_balance,
+                "deposited_amount": account.deposited_amount,
+                "annual_interest_income": account.annual_interest_income,
+                "latest_month": None,
+                "latest_statement_id": None,
+                "statement_count": 0,
+                "latest_net_cash_flow": None,
+                "notes": account.notes,
+                "account_id": account.id,
+                "has_imported_data": False,
+                "has_manual_data": True,
+                "edit_action": "update_account_ownership",
+                "edit_target_id": account.id,
+            }
+        )
+
+    tracked_accounts.sort(
+        key=lambda item: (
+            item["current_balance"],
+            item["latest_month"] or "",
+            item["account_name"],
+        ),
+        reverse=True,
+    )
+
+    summary = {
+        "accounts_count": len(tracked_accounts),
+        "current_balance": sum((account["current_balance"] for account in tracked_accounts), ZERO),
+        "deposited_amount": sum(
+            ((account["deposited_amount"] or ZERO) for account in tracked_accounts if account["has_manual_data"]),
+            ZERO,
+        ),
+        "annual_interest_income": sum(
+            ((account["annual_interest_income"] or ZERO) for account in tracked_accounts if account["has_manual_data"]),
+            ZERO,
+        ),
+        "imported_accounts_count": sum(1 for account in tracked_accounts if account["has_imported_data"]),
+        "manual_accounts_count": sum(1 for account in tracked_accounts if account["has_manual_data"]),
+        "latest_month": max(
+            (account["latest_month"] for account in tracked_accounts if account["latest_month"]),
+            default=None,
+        ),
+    }
+
+    return {
+        "accounts": tracked_accounts,
+        "summary": summary,
     }

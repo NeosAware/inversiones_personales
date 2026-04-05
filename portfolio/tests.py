@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
-from banking.models import BankMovement, BankStatementImport
+from banking.models import BankBalance, BankMovement, BankStatementImport
 from equities.models import EquityPosition
 from neos_additives.models import AdditivesHolding
 from .models import HouseholdAlertSettings, PortfolioSnapshot
@@ -90,6 +90,8 @@ class PortfolioServicesTests(TestCase):
         self.assertEqual(liquidity["accounts_count"], 2)
         self.assertEqual(liquidity["current_value"], Decimal("6600.00"))
         self.assertEqual(liquidity["latest_month"], "2026-03")
+        self.assertEqual(len(liquidity["accounts"]), 2)
+        self.assertEqual(liquidity["accounts"][0]["current_balance"], Decimal("4600.00"))
         self.assertEqual(liquidity["history"][0]["closing_balance"], Decimal("4000.00"))
         self.assertEqual(liquidity["history"][1]["closing_balance"], Decimal("6600.00"))
         self.assertEqual(liquidity["history"][1]["net_cash_flow"], Decimal("2350.00"))
@@ -131,6 +133,28 @@ class PortfolioServicesTests(TestCase):
         self.assertEqual(overview["ibex_equities_current_value"], Decimal("120.00"))
         self.assertEqual(overview["other_buckets_current_value"], Decimal("0.00"))
         self.assertEqual(overview["liquid_cash_share_pct"], Decimal("64.65517241379310344827586207"))
+
+    def test_dashboard_does_not_double_count_manual_balance_if_account_also_has_imported_statement(self):
+        BankBalance.objects.create(
+            institution="Banco Sabadell",
+            account_name="Cuenta 1234",
+            deposited_amount=Decimal("1400.00"),
+            current_balance=Decimal("1500.00"),
+            annual_interest_income=Decimal("0.00"),
+        )
+        BankStatementImport.objects.create(
+            source_filename="mar.xls",
+            source_file="banking/statements/mar.xls",
+            file_checksum="portfolio-dedup-mar",
+            account_label="Cuenta 1234",
+            period_end="2026-03-31",
+            closing_balance=Decimal("1500.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+
+        dashboard = build_portfolio_dashboard()
+
+        self.assertEqual(dashboard["summary"]["current_value"], Decimal("1500.00"))
 
     def test_build_spending_alerts_flags_expense_spike(self):
         HouseholdAlertSettings.objects.update_or_create(

@@ -18,16 +18,11 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        accounts = list(BankBalance.objects.all())
         investment_positions = list(BankInvestmentPosition.objects.all())
+        dashboard = build_banking_dashboard()
         context["page_title"] = "Banca"
-        context["accounts"] = accounts
         context["investment_positions"] = investment_positions
-        context["summary"] = {
-            "invested_amount": sum((account.deposited_amount for account in accounts), Decimal("0")),
-            "current_value": sum((account.current_balance for account in accounts), Decimal("0")),
-            "annual_income": sum((account.annual_interest_income for account in accounts), Decimal("0")),
-        }
+        context["summary"] = dashboard["accounts_summary"]
         context["investment_summary"] = {
             "positions_count": len(investment_positions),
             "invested_amount": sum((position.invested_amount for position in investment_positions), Decimal("0")),
@@ -37,7 +32,7 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         context.setdefault("form", StatementUploadForm())
         context.setdefault("account_form", BankBalanceForm())
         context["ownership_choices"] = AssetOwnershipCategory.choices
-        context.update(build_banking_dashboard())
+        context.update(dashboard)
         return context
 
     def post(self, request, *args, **kwargs):
@@ -110,6 +105,12 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
             messages.success(request, f"La cuenta {account.account_name} se ha creado correctamente.")
         else:
             messages.success(request, f"La cuenta {account.account_name} se ha actualizado correctamente.")
+
+        synced_statements = BankStatementImport.objects.filter(account_label__iexact=account.account_name).update(
+            ownership_category=account.ownership_category
+        )
+        if synced_statements:
+            messages.info(request, f"Tambien se ha sincronizado el titular en {synced_statements} extracto(s) relacionados.")
         return redirect("banking:list")
 
     def _parse_ownership_category(self, request) -> str:
@@ -129,7 +130,12 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
 
         account.ownership_category = ownership_category
         account.save(update_fields=["ownership_category", "updated_at"])
+        synced_statements = BankStatementImport.objects.filter(account_label__iexact=account.account_name).update(
+            ownership_category=ownership_category
+        )
         messages.success(request, f"Titular actualizado para la cuenta {account.account_name}.")
+        if synced_statements:
+            messages.info(request, f"Tambien se ha actualizado el titular en {synced_statements} extracto(s) relacionados.")
         return redirect("banking:list")
 
     def _update_statement_ownership(self, request):
@@ -151,7 +157,12 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
             statement.save(update_fields=["ownership_category"])
             updated = 1
 
+        synced_accounts = BankBalance.objects.filter(account_name__iexact=statement.account_name).update(
+            ownership_category=ownership_category
+        )
         messages.success(request, f"Titular actualizado para {updated} extracto(s) de {statement.account_name}.")
+        if synced_accounts:
+            messages.info(request, f"Tambien se ha actualizado el titular en {synced_accounts} cuenta(s) manuales.")
         return redirect("banking:list")
 
     def _delete_statement(self, request):

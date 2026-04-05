@@ -7,6 +7,7 @@ from decimal import Decimal
 from django.utils import timezone
 
 from banking.models import BankBalance, BankInvestmentPosition, BankMovement, BankStatementImport
+from banking.services import build_bank_account_overview
 from equities.models import EquityPosition
 from neos_additives.models import AdditivesHolding
 from neos_ceramica.models import CeramicaHolding
@@ -65,6 +66,8 @@ def build_svg_polyline(values, width: int = 720, height: int = 220, padding: int
 
 
 def build_bank_liquidity_context():
+    account_overview = build_bank_account_overview()
+    imported_accounts = [account for account in account_overview["accounts"] if account["has_imported_data"]]
     imported_statements = list(
         BankStatementImport.objects.filter(
             import_status=BankStatementImport.ImportStatus.IMPORTED,
@@ -76,6 +79,7 @@ def build_bank_liquidity_context():
     if not imported_statements:
         return {
             "positions": [],
+            "accounts": [],
             "accounts_count": 0,
             "current_value": ZERO,
             "latest_month": None,
@@ -116,21 +120,17 @@ def build_bank_liquidity_context():
         bucket["dividends"] += statement.total_dividends
 
     positions = []
-    for statement in sorted(
-        latest_by_account.values(),
-        key=lambda item: (item.closing_balance or ZERO, item.account_name),
-        reverse=True,
-    ):
-        balance = statement.closing_balance or ZERO
+    for account in imported_accounts:
+        balance = account["current_balance"] or ZERO
         positions.append(
             build_metrics(
-                label=f"Liquidez {statement.account_name} ({statement.get_ownership_category_display()})",
+                label=f"Liquidez {account['account_name']} ({account['ownership_label']})",
                 asset_type="Efectivo bancario",
                 invested_amount=balance,
                 current_value=balance,
                 annual_income=ZERO,
                 app_url_name="banking:list",
-                notes=f"Ultimo saldo final importado de {statement.month_label}.",
+                notes=f"Ultimo saldo final importado de {account['latest_month'] or 'sin periodo'}.",
             )
         )
 
@@ -143,7 +143,8 @@ def build_bank_liquidity_context():
 
     return {
         "positions": positions,
-        "accounts_count": len(latest_by_account),
+        "accounts": imported_accounts,
+        "accounts_count": len(imported_accounts),
         "current_value": sum((position["current_value"] for position in positions), ZERO),
         "latest_month": history[-1]["label"] if history else None,
         "history": history,
@@ -185,6 +186,9 @@ def build_overview_metrics(state):
 
 def build_current_portfolio_state():
     bank_liquidity = build_bank_liquidity_context()
+    linked_manual_account_ids = {
+        account["account_id"] for account in bank_liquidity["accounts"] if account.get("account_id")
+    }
     sections = [
         summarise_section(
             "Liquidez bancaria",
@@ -194,7 +198,10 @@ def build_current_portfolio_state():
         summarise_section(
             "Banca y custodia",
             [
-                *[obj.as_portfolio_position() for obj in BankBalance.objects.all()],
+                *[
+                    obj.as_portfolio_position()
+                    for obj in BankBalance.objects.exclude(id__in=linked_manual_account_ids)
+                ],
                 *[obj.as_portfolio_position() for obj in BankInvestmentPosition.objects.all()],
             ],
             "banking:list",

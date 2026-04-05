@@ -15,6 +15,7 @@ from portfolio.ownership import AssetOwnershipCategory
 
 from .models import BankBalance, BankInvestmentPosition, BankMovement, BankStatementImport
 from .services import (
+    build_bank_account_overview,
     build_banking_dashboard,
     classify_movement,
     import_statement,
@@ -177,6 +178,9 @@ class BankingServicesTests(TestCase):
         self.assertEqual(dashboard["income_matrix"][2]["total"], Decimal("82.30"))
         self.assertEqual(dashboard["expense_months"], ["2026-02", "2026-03"])
         self.assertEqual(dashboard["expense_matrix"][0]["concept"], "Supermercado")
+        self.assertEqual(dashboard["accounts_summary"]["accounts_count"], 2)
+        self.assertEqual(dashboard["accounts_summary"]["current_balance"], Decimal("19234.55"))
+        self.assertEqual(dashboard["tracked_accounts"][0]["current_balance"], Decimal("10234.55"))
 
     def test_build_dashboard_splits_single_multi_month_import_by_movement_month(self):
         statement = BankStatementImport.objects.create(
@@ -265,6 +269,39 @@ class BankingServicesTests(TestCase):
         self.assertEqual(dashboard["income_matrix"][0]["values"], [Decimal("2500.00"), Decimal("0.00"), Decimal("0.00")])
         self.assertEqual(dashboard["income_matrix"][1]["values"], [Decimal("0.00"), Decimal("650.00"), Decimal("0.00")])
         self.assertEqual(dashboard["income_matrix"][2]["values"], [Decimal("0.00"), Decimal("0.00"), Decimal("82.30")])
+
+    def test_build_bank_account_overview_merges_imported_and_manual_data(self):
+        BankBalance.objects.create(
+            ownership_category=AssetOwnershipCategory.MONICA,
+            institution="Banco Sabadell",
+            account_name="Cuenta 1234",
+            deposited_amount=Decimal("5000.00"),
+            current_balance=Decimal("5100.00"),
+            annual_interest_income=Decimal("25.00"),
+            notes="Cuenta principal",
+        )
+        BankStatementImport.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            source_filename="mar.xls",
+            source_file="banking/statements/mar.xls",
+            file_checksum="overview-account-mar",
+            account_label="Cuenta 1234",
+            period_end="2026-03-31",
+            closing_balance=Decimal("6200.00"),
+            total_income=Decimal("3000.00"),
+            total_expenses=Decimal("900.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+
+        overview = build_bank_account_overview()
+
+        self.assertEqual(overview["summary"]["accounts_count"], 1)
+        self.assertEqual(overview["summary"]["current_balance"], Decimal("6200.00"))
+        self.assertEqual(overview["summary"]["deposited_amount"], Decimal("5000.00"))
+        self.assertEqual(overview["summary"]["annual_interest_income"], Decimal("25.00"))
+        self.assertEqual(overview["accounts"][0]["source_label"], "Manual + extracto")
+        self.assertEqual(overview["accounts"][0]["ownership_category"], AssetOwnershipCategory.MONICA)
+        self.assertEqual(overview["accounts"][0]["statement_count"], 1)
 
     def test_bank_investment_position_uses_current_value_when_cost_basis_missing(self):
         position = BankInvestmentPosition.objects.create(
@@ -725,6 +762,40 @@ class BankingViewTests(TestCase):
         second.refresh_from_db()
         self.assertEqual(first.ownership_category, AssetOwnershipCategory.MONICA)
         self.assertEqual(second.ownership_category, AssetOwnershipCategory.MONICA)
+
+    def test_updating_statement_owner_syncs_matching_manual_account(self):
+        account = BankBalance.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            institution="Banco Sabadell",
+            account_name="Cuenta 1234",
+            deposited_amount=Decimal("5000.00"),
+            current_balance=Decimal("5250.00"),
+            annual_interest_income=Decimal("15.00"),
+        )
+        statement = BankStatementImport.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            source_filename="mar.xls",
+            source_file=SimpleUploadedFile("mar.xls", b"mar", content_type="application/vnd.ms-excel"),
+            file_checksum="statement-sync-mar",
+            iban="ES12 3456 7890 1234",
+            account_label="Cuenta 1234",
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+
+        response = self.client.post(
+            reverse("banking:list"),
+            {
+                "action": "update_statement_ownership",
+                "statement_id": statement.id,
+                "ownership_category": AssetOwnershipCategory.XIMO,
+            },
+        )
+
+        self.assertRedirects(response, reverse("banking:list"))
+        account.refresh_from_db()
+        statement.refresh_from_db()
+        self.assertEqual(account.ownership_category, AssetOwnershipCategory.XIMO)
+        self.assertEqual(statement.ownership_category, AssetOwnershipCategory.XIMO)
 
 
 class EncryptedMediaTests(TestCase):

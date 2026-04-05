@@ -4,28 +4,117 @@
 
 {% block content %}
   <div class="split">
-    <section class="card">
+    <section class="card table-card">
       <p class="section-title">{{ page_title }}</p>
-      <h2 style="margin-top:0;">Posiciones de efectivo</h2>
-      <p class="muted" style="margin-top:0;">Saldos estaticos de cuentas y depositos, separados de la importacion mensual de movimientos.</p>
-      <div class="grid cols-3" style="margin-top:20px;">
+      <h2 style="margin-top:0;">Tus cuentas bancarias</h2>
+      <p class="muted" style="margin-top:0;">La vista principal combina el ultimo saldo importado de cada cuenta con los datos manuales que hayas rellenado para que las cuentas se vean claras desde arriba.</p>
+      <div class="grid cols-4" style="margin-top:20px;">
         <section class="card">
-          <div class="metric-label">Capital depositado</div>
-          <div class="metric-value">{{ summary.invested_amount|floatformat:2 }} EUR</div>
+          <div class="metric-label">Saldo visible</div>
+          <div class="metric-value">{{ summary.current_balance|floatformat:2 }} EUR</div>
         </section>
         <section class="card">
-          <div class="metric-label">Saldo actual</div>
-          <div class="metric-value">{{ summary.current_value|floatformat:2 }} EUR</div>
+          <div class="metric-label">Cuentas visibles</div>
+          <div class="metric-value">{{ summary.accounts_count }}</div>
         </section>
         <section class="card">
-          <div class="metric-label">Interes anual</div>
-          <div class="metric-value">{{ summary.annual_income|floatformat:2 }} EUR</div>
+          <div class="metric-label">Cuentas con extracto</div>
+          <div class="metric-value">{{ summary.imported_accounts_count }}</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Ultimo mes bancario</div>
+          <div class="metric-value">{{ summary.latest_month|default:"-" }}</div>
         </section>
       </div>
+      <table style="margin-top:20px;">
+        <thead>
+          <tr>
+            <th>Cuenta</th>
+            <th>Entidad</th>
+            <th>Titular</th>
+            <th>Fuente</th>
+            <th>Ultimo mes</th>
+            <th>Saldo actual</th>
+            <th>Flujo neto</th>
+            <th>Extractos</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for account in tracked_accounts %}
+            <tr>
+              <td>{{ account.account_name }}</td>
+              <td>{{ account.institution|default:"-" }}</td>
+              <td>
+                <form method="post" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="{{ account.edit_action }}">
+                  {% if account.edit_action == "update_statement_ownership" %}
+                    <input type="hidden" name="statement_id" value="{{ account.edit_target_id }}">
+                  {% else %}
+                    <input type="hidden" name="account_id" value="{{ account.edit_target_id }}">
+                  {% endif %}
+                  <select name="ownership_category">
+                    {% for value, label in ownership_choices %}
+                      <option value="{{ value }}"{% if account.ownership_category == value %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                  <button class="button secondary small" type="submit">Guardar</button>
+                </form>
+              </td>
+              <td>{{ account.source_label }}</td>
+              <td>{{ account.latest_month|default:"-" }}</td>
+              <td><strong>{{ account.current_balance|floatformat:2 }} EUR</strong></td>
+              <td>
+                {% if account.latest_net_cash_flow is not None %}
+                  <span class="{% if account.latest_net_cash_flow >= 0 %}good{% else %}warn{% endif %}">
+                    {{ account.latest_net_cash_flow|floatformat:2 }} EUR
+                  </span>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td>{{ account.statement_count }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="8" class="muted">Todavia no hay cuentas visibles. Importa extractos o crea una cuenta manual para empezar.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <p class="section-title">Importacion</p>
+      <h2 style="margin-top:0;">Cargar extractos de cuenta</h2>
+      <p class="muted" style="margin-top:0;">La aplicacion guarda una vista simplificada del flujo de caja: ingresos, gastos por concepto, aportaciones a planes y dividendos.</p>
+      <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="import">
+        <div>
+          <label for="{{ form.files.id_for_label }}">{{ form.files.label }}</label>
+          {{ form.files }}
+          {% if form.files.help_text %}<div class="metric-sub">{{ form.files.help_text }}</div>{% endif %}
+          {% for error in form.files.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
+        <div style="display:flex; flex-wrap:wrap; gap:12px;">
+          <button class="button" type="submit">Importar extractos</button>
+        </div>
+      </form>
+      <div class="metric-sub" style="margin-top:14px;">El titular de cada extracto se intenta reconocer automaticamente por el nombre del titular o por importaciones previas de la misma cuenta.</div>
+      <div class="meta">
+        <span class="pill">{{ statement_summary.statements_count }} importaciones</span>
+        <span class="pill">{{ statement_summary.months_count }} meses</span>
+        <span class="pill">{{ statement_summary.accounts_count }} cuentas</span>
+      </div>
+      <div class="metric-sub" style="margin-top:14px;">Puedes borrar una importacion o vaciarlas todas y volver a cargar los mismos ficheros para recalcular la vista mensual desde cero.</div>
+      <form method="post" style="margin-top:14px;" onsubmit="return confirm('Esto eliminara todos los extractos importados y sus movimientos. Quieres continuar?');">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="delete_all_statements">
+        <button class="button danger small" type="submit">Borrar todas las importaciones</button>
+      </form>
       <hr style="border:none; border-top:1px solid #dfe8ef; margin:22px 0;">
-      <p class="section-title">Alta rapida</p>
+      <p class="section-title">Cuenta manual</p>
       <h2 style="margin-top:0;">Registrar o actualizar cuenta</h2>
-      <p class="muted" style="margin-top:0;">Desde aqui puedes cargar cuentas bancarias y elegir el titular de cada una.</p>
+      <p class="muted" style="margin-top:0;">Usa este formulario para cuentas sin extracto o para anadir datos manuales complementarios como intereses y notas.</p>
       <form method="post" class="stack" style="margin-top:18px;">
         {% csrf_token %}
         <input type="hidden" name="action" value="save_account">
@@ -70,37 +159,6 @@
           {% for error in account_form.notes.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
         </div>
         <button class="button" type="submit">Guardar cuenta</button>
-      </form>
-    </section>
-
-    <section class="card">
-      <p class="section-title">Importacion</p>
-      <h2 style="margin-top:0;">Cargar extractos de cuenta</h2>
-      <p class="muted" style="margin-top:0;">La aplicacion guarda una vista simplificada del flujo de caja: ingresos, gastos por concepto, aportaciones a planes y dividendos.</p>
-      <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="import">
-        <div>
-          <label for="{{ form.files.id_for_label }}">{{ form.files.label }}</label>
-          {{ form.files }}
-          {% if form.files.help_text %}<div class="metric-sub">{{ form.files.help_text }}</div>{% endif %}
-          {% for error in form.files.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-        </div>
-        <div style="display:flex; flex-wrap:wrap; gap:12px;">
-          <button class="button" type="submit">Importar extractos</button>
-        </div>
-      </form>
-      <div class="metric-sub" style="margin-top:14px;">El titular de cada extracto se intenta reconocer automaticamente por el nombre del titular o por importaciones previas de la misma cuenta.</div>
-      <div class="meta">
-        <span class="pill">{{ statement_summary.statements_count }} importaciones</span>
-        <span class="pill">{{ statement_summary.months_count }} meses</span>
-        <span class="pill">{{ statement_summary.accounts_count }} cuentas</span>
-      </div>
-      <div class="metric-sub" style="margin-top:14px;">Puedes borrar una importacion o vaciarlas todas y volver a cargar los mismos ficheros para recalcular la vista mensual desde cero.</div>
-      <form method="post" style="margin-top:14px;" onsubmit="return confirm('Esto eliminara todos los extractos importados y sus movimientos. Quieres continuar?');">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="delete_all_statements">
-        <button class="button danger small" type="submit">Borrar todas las importaciones</button>
       </form>
     </section>
   </div>
@@ -334,37 +392,4 @@
     </table>
   </section>
 
-  <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Saldos bancarios estaticos</p>
-    <table>
-      <thead><tr><th>Entidad</th><th>Cuenta</th><th>Titular</th><th>Depositado</th><th>Saldo actual</th><th>Interes anual</th><th>Notas</th></tr></thead>
-      <tbody>
-        {% for account in accounts %}
-          <tr>
-            <td>{{ account.institution }}</td>
-            <td>{{ account.account_name }}</td>
-            <td>
-              <form method="post" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="update_account_ownership">
-                <input type="hidden" name="account_id" value="{{ account.id }}">
-                <select name="ownership_category">
-                  {% for value, label in ownership_choices %}
-                    <option value="{{ value }}"{% if account.ownership_category == value %} selected{% endif %}>{{ label }}</option>
-                  {% endfor %}
-                </select>
-                <button class="button secondary small" type="submit">Guardar</button>
-              </form>
-            </td>
-            <td>{{ account.deposited_amount|floatformat:2 }}</td>
-            <td>{{ account.current_balance|floatformat:2 }}</td>
-            <td>{{ account.annual_interest_income|floatformat:2 }}</td>
-            <td>{{ account.notes|default:"-" }}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="7" class="muted">Todavia no hay saldos bancarios cargados.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
 {% endblock %}

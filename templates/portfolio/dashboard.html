@@ -101,34 +101,65 @@
       {% endif %}
     </section>
     <section class="card table-card">
+      <h2 style="margin-top:0;">Cuentas bancarias actuales</h2>
       <table>
         <thead>
           <tr>
-            <th>Mes</th>
-            <th>Cuentas</th>
-            <th>Ingresos</th>
-            <th>Gastos</th>
-            <th>Flujo neto</th>
-            <th>Liquidez final</th>
+            <th>Cuenta</th>
+            <th>Titular</th>
+            <th>Fuente</th>
+            <th>Ultimo mes</th>
+            <th>Saldo actual</th>
+            <th>Extractos</th>
           </tr>
         </thead>
         <tbody>
-          {% for month in bank_liquidity.history reversed %}
+          {% for account in bank_liquidity.accounts %}
             <tr>
-              <td>{{ month.label }}</td>
-              <td>{{ month.accounts_count }}</td>
-              <td class="good">{{ month.income|floatformat:2 }}</td>
-              <td>{{ month.expenses|floatformat:2 }}</td>
-              <td class="{% if month.net_cash_flow >= 0 %}good{% else %}warn{% endif %}">{{ month.net_cash_flow|floatformat:2 }}</td>
-              <td><strong>{{ month.closing_balance|floatformat:2 }}</strong></td>
+              <td>{{ account.account_name }}</td>
+              <td>{{ account.ownership_label }}</td>
+              <td>{{ account.source_label }}</td>
+              <td>{{ account.latest_month|default:"-" }}</td>
+              <td><strong>{{ account.current_balance|floatformat:2 }}</strong></td>
+              <td>{{ account.statement_count }}</td>
             </tr>
           {% empty %}
-            <tr><td colspan="6" class="muted">Todavia no hay historico de liquidez importado.</td></tr>
+            <tr><td colspan="6" class="muted">Todavia no hay cuentas bancarias importadas en el resumen general.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </section>
   </div>
+
+  <section class="card table-card" style="margin-top:18px;">
+    <p class="section-title">Serie mensual de liquidez</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Mes</th>
+          <th>Cuentas</th>
+          <th>Ingresos</th>
+          <th>Gastos</th>
+          <th>Flujo neto</th>
+          <th>Liquidez final</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for month in bank_liquidity.history reversed %}
+          <tr>
+            <td>{{ month.label }}</td>
+            <td>{{ month.accounts_count }}</td>
+            <td class="good">{{ month.income|floatformat:2 }}</td>
+            <td>{{ month.expenses|floatformat:2 }}</td>
+            <td class="{% if month.net_cash_flow >= 0 %}good{% else %}warn{% endif %}">{{ month.net_cash_flow|floatformat:2 }}</td>
+            <td><strong>{{ month.closing_balance|floatformat:2 }}</strong></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="muted">Todavia no hay historico de liquidez importado.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
 
   <p class="section-title" style="margin-top:28px;">Valor historico de la cartera</p>
   <div class="split">
