@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}Usuarios | Centro de inversiones personales{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <p class="section-title">{{ page_title }}</p>
+    <h2 style="margin-top:0;">Gestion de accesos</h2>
+    <p class="muted" style="margin-top:0;">Desde aqui puedes crear usuarios nuevos, activar o desactivar accesos y mantener al menos un administrador operativo sin depender de Django Admin.</p>
+
+    <div class="grid cols-4" style="margin-top:20px;">
+      <section class="soft-panel">
+        <h3 class="soft-title">Usuarios totales</h3>
+        <div class="metric-value">{{ users_summary.total }}</div>
+      </section>
+      <section class="soft-panel">
+        <h3 class="soft-title">Usuarios activos</h3>
+        <div class="metric-value">{{ users_summary.active }}</div>
+      </section>
+      <section class="soft-panel">
+        <h3 class="soft-title">Administradores</h3>
+        <div class="metric-value">{{ users_summary.admins }}</div>
+      </section>
+      <section class="soft-panel">
+        <h3 class="soft-title">Estado</h3>
+        <div class="metric-value {% if recovery_mode %}warn{% else %}good{% endif %}">
+          {% if recovery_mode %}Recuperacion{% else %}Protegido{% endif %}
+        </div>
+        <div class="metric-sub">
+          {% if recovery_mode %}
+            No queda ningun admin activo.
+          {% else %}
+            Hay al menos un administrador activo.
+          {% endif %}
+        </div>
+      </section>
+    </div>
+  </section>
+
+  {% if recovery_mode %}
+    <section class="card" style="margin-top:24px;">
+      <p class="section-title">Modo recuperacion</p>
+      <h2 style="margin-top:0;">Recuperar administracion</h2>
+      <p class="muted" style="margin-top:0;">La app ha detectado que no queda ningun administrador activo. Por seguridad, cualquier usuario autenticado puede entrar aqui para restaurar el control.</p>
+      {% if can_promote_self_to_admin %}
+        <form method="post" style="margin-top:18px;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="promote_self_to_admin">
+          <button class="button" type="submit">Convertir mi usuario en administrador</button>
+        </form>
+      {% else %}
+        <div class="metric-sub">Tu usuario ya tiene permisos de administracion o ya se ha recuperado el acceso.</div>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  <div class="split" style="margin-top:24px; align-items:start;">
+    <section class="card">
+      <p class="section-title">Alta de usuario</p>
+      <h2 style="margin-top:0;">Crear nuevo acceso</h2>
+      <form method="post" class="stack" style="margin-top:18px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create_user">
+        {% if create_form.non_field_errors %}
+          <div class="warn">{{ create_form.non_field_errors|striptags }}</div>
+        {% endif %}
+        <div class="grid cols-2">
+          <div>
+            <label for="{{ create_form.username.id_for_label }}">{{ create_form.username.label }}</label>
+            {{ create_form.username }}
+            {% for error in create_form.username.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ create_form.access_level.id_for_label }}">{{ create_form.access_level.label }}</label>
+            {{ create_form.access_level }}
+            <div class="metric-sub">Administrador = acceso a usuarios y a la administracion de Django.</div>
+            {% for error in create_form.access_level.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ create_form.password1.id_for_label }}">{{ create_form.password1.label }}</label>
+            {{ create_form.password1 }}
+            {% for error in create_form.password1.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+          <div>
+            <label for="{{ create_form.password2.id_for_label }}">{{ create_form.password2.label }}</label>
+            {{ create_form.password2 }}
+            {% for error in create_form.password2.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+          </div>
+        </div>
+        <button class="button" type="submit">Crear usuario</button>
+      </form>
+      <div class="soft-panel" style="margin-top:18px;">
+        <h3 class="soft-title">Protecciones</h3>
+        <div class="metric-sub">Desde esta pantalla no se eliminan usuarios para evitar bloqueos. Tampoco se puede desactivar o degradar al ultimo administrador activo.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <p class="section-title">Uso recomendado</p>
+      <h2 style="margin-top:0;">Como mantener el acceso seguro</h2>
+      <div class="soft-panel">
+        <h3 class="soft-title">Administrador principal</h3>
+        <div class="metric-sub">Mantén al menos un usuario administrador activo para no depender del modo recuperacion.</div>
+      </div>
+      <div class="soft-panel" style="margin-top:14px;">
+        <h3 class="soft-title">Usuarios normales</h3>
+        <div class="metric-sub">Para consulta diaria o carga de datos, crea usuarios normales. Solo los administradores podran gestionar mas accesos.</div>
+      </div>
+      <div class="soft-panel" style="margin-top:14px;">
+        <h3 class="soft-title">Emergencia en servidor</h3>
+        <div class="metric-sub">Si alguna vez nadie puede iniciar sesion, sigue existiendo el comando `ensure_household_user --staff --superuser` como via de rescate desde consola.</div>
+      </div>
+    </section>
+  </div>
+
+  <section class="card table-card" style="margin-top:24px;">
+    <p class="section-title">Usuarios actuales</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Usuario</th>
+          <th>Rol</th>
+          <th>Estado</th>
+          <th>Ultimo acceso</th>
+          <th>Alta</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for managed_user in managed_users %}
+          <tr>
+            <td>
+              <strong>{{ managed_user.username }}</strong>
+              {% if managed_user.is_current_user %}
+                <div class="metric-sub">Sesion actual</div>
+              {% endif %}
+            </td>
+            <td>
+              <form method="post" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_user_role">
+                <input type="hidden" name="user_id" value="{{ managed_user.id }}">
+                <select name="access_level">
+                  {% for value, label in access_level_choices %}
+                    <option value="{{ value }}"{% if managed_user.access_level == value %} selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <button class="button secondary small" type="submit" {% if managed_user.is_last_active_admin %}disabled{% endif %}>Guardar</button>
+              </form>
+              {% if managed_user.is_last_active_admin %}
+                <div class="metric-sub warn">Es el ultimo administrador activo.</div>
+              {% endif %}
+            </td>
+            <td>
+              <span class="{% if managed_user.is_active %}good{% else %}warn{% endif %}">
+                {% if managed_user.is_active %}Activo{% else %}Desactivado{% endif %}
+              </span>
+            </td>
+            <td>{{ managed_user.last_login|date:"Y-m-d H:i"|default:"-" }}</td>
+            <td>{{ managed_user.date_joined|date:"Y-m-d H:i" }}</td>
+            <td>
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="toggle_user_active">
+                <input type="hidden" name="user_id" value="{{ managed_user.id }}">
+                <button class="button secondary small" type="submit" {% if managed_user.is_last_active_admin and managed_user.is_active %}disabled{% endif %}>
+                  {% if managed_user.is_active %}Desactivar{% else %}Activar{% endif %}
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="muted">Todavia no hay usuarios dados de alta.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

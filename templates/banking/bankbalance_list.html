@@ -132,6 +132,135 @@
       border-radius:18px;
       background:#f8fbfe;
     }
+    .bank-jumpbar{
+      position:sticky;
+      top:12px;
+      z-index:20;
+      margin-top:18px;
+    }
+    .bank-jumpbar-inner{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      padding:12px 14px;
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:rgba(255,255,255,.94);
+      backdrop-filter:blur(10px);
+      box-shadow:0 8px 20px rgba(18,54,77,.08);
+    }
+    .bank-jump{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding:8px 12px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      color:var(--text);
+      text-decoration:none;
+      font-size:13px;
+      font-weight:700;
+      background:#fff;
+    }
+    .bank-jump:hover{
+      border-color:#0f5f88;
+      color:#0f5f88;
+    }
+    .bank-fold{
+      margin-top:24px;
+      overflow:hidden;
+      padding:0;
+    }
+    .bank-fold > summary{
+      list-style:none;
+      cursor:pointer;
+    }
+    .bank-fold > summary::-webkit-details-marker{
+      display:none;
+    }
+    .bank-fold-summary{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:18px;
+      padding:22px 24px;
+    }
+    .bank-fold-copy{
+      min-width:0;
+    }
+    .bank-fold-kicker{
+      margin:0 0 6px;
+      font-size:12px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:#6a7f90;
+      font-weight:700;
+    }
+    .bank-fold-title{
+      margin:0;
+      font-size:24px;
+    }
+    .bank-fold-note{
+      margin:8px 0 0;
+      color:var(--muted);
+    }
+    .bank-fold-body{
+      padding:0 24px 24px;
+    }
+    .bank-fold-toggle{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      white-space:nowrap;
+      font-size:13px;
+      font-weight:700;
+      color:#476075;
+    }
+    .bank-fold-toggle::before{
+      content:"+";
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width:22px;
+      height:22px;
+      border-radius:999px;
+      background:#e8f1f7;
+      color:#0f5f88;
+      font-size:16px;
+      font-weight:700;
+    }
+    .bank-fold[open] .bank-fold-toggle::before{
+      content:"-";
+    }
+    .bank-subfold{
+      margin-top:18px;
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:#fff;
+    }
+    .bank-subfold > summary{
+      list-style:none;
+      cursor:pointer;
+      padding:14px 16px;
+      font-weight:700;
+      color:#24485f;
+    }
+    .bank-subfold > summary::-webkit-details-marker{
+      display:none;
+    }
+    .bank-subfold > summary::after{
+      content:"Ver detalle";
+      float:right;
+      font-size:12px;
+      color:#6a7f90;
+      font-weight:600;
+    }
+    .bank-subfold[open] > summary::after{
+      content:"Ocultar";
+    }
+    .bank-subfold-body{
+      padding:0 16px 16px;
+    }
     @media (max-width: 980px){
       .bank-hero,
       .bank-year-detail,
@@ -142,6 +271,10 @@
       .bank-hero-grid{
         grid-template-columns:1fr 1fr;
       }
+      .bank-fold-summary{
+        display:grid;
+        grid-template-columns:1fr;
+      }
     }
     @media (max-width: 640px){
       .bank-year-metrics,
@@ -150,6 +283,9 @@
       }
       .flow-row{
         grid-template-columns:52px minmax(0, 1fr) 100px;
+      }
+      .bank-jumpbar-inner{
+        display:grid;
       }
     }
   </style>
@@ -190,9 +326,41 @@
     </div>
   </section>
 
-  <div class="bank-year-stack">
+  <nav class="bank-jumpbar" aria-label="Navegacion rapida de banca">
+    <div class="bank-jumpbar-inner">
+      <a class="bank-jump" href="#bank-annual">Resumen anual</a>
+      <a class="bank-jump" href="#bank-accounts">Cuentas</a>
+      <a class="bank-jump" href="#bank-expenses">Gasto familiar</a>
+      <a class="bank-jump" href="#bank-continuity">Continuidad</a>
+      <a class="bank-jump" href="#bank-files">Importaciones</a>
+      <a class="bank-jump" href="#bank-operations">Operativa</a>
+    </div>
+  </nav>
+
+  <div class="bank-year-stack" id="bank-annual">
     {% for year in annual_overview.years %}
-      <section class="card bank-year-card">
+      <details class="card bank-year-card bank-fold"{% if forloop.first %} open{% endif %}>
+        <summary class="bank-fold-summary">
+          <div class="bank-fold-copy">
+            <p class="bank-fold-kicker">Ejercicio {{ year.year }}</p>
+            <h2 class="bank-fold-title">Ingresos, gasto y ahorro del ano</h2>
+            <p class="bank-fold-note">{{ year.months_count }} meses, ahorro medio {{ year.average_monthly_savings|floatformat:2 }} EUR y flujo neto {{ year.net_value_flow_total|floatformat:2 }} EUR.</p>
+          </div>
+          <div style="display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap; justify-content:flex-end;">
+            <div class="meta" style="justify-content:flex-end;">
+              <span class="pill">{{ year.months_count }} meses con actividad</span>
+              {% if year.gross_inflows_total %}
+                <span class="pill">{{ year.savings_rate_pct|floatformat:1 }} % de ahorro operativo</span>
+              {% endif %}
+              {% if year.has_year_end_balance %}
+                <span class="pill">Saldo ultimo cierre {{ year.year_end_balance|floatformat:2 }} EUR</span>
+              {% endif %}
+            </div>
+            <span class="bank-fold-toggle">{% if forloop.first %}Ano actual{% else %}Ver ejercicio{% endif %}</span>
+          </div>
+        </summary>
+
+        <div class="bank-fold-body">
         <div class="bank-year-head">
           <div>
             <p class="section-title">Ejercicio {{ year.year }}</p>
@@ -265,31 +433,37 @@
           </section>
         </div>
 
-        <table>
-          <thead>
-            <tr>
-              <th>Mes</th>
-              <th>Ingresos</th>
-              <th>Gasto hogar</th>
-              <th>Planes</th>
-              <th>Ahorro</th>
-              <th>Flujo neto</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for month in year.months %}
-              <tr>
-                <td>{{ month.label }}</td>
-                <td>{{ month.gross_inflows|floatformat:2 }} EUR</td>
-                <td>{{ month.household_expenses|floatformat:2 }} EUR</td>
-                <td>{{ month.pension_contributions|floatformat:2 }} EUR</td>
-                <td class="{% if month.operating_savings >= 0 %}good{% else %}warn{% endif %}"><strong>{{ month.operating_savings|floatformat:2 }} EUR</strong></td>
-                <td class="{% if month.net_value_flow >= 0 %}good{% else %}warn{% endif %}"><strong>{{ month.net_value_flow|floatformat:2 }} EUR</strong></td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </section>
+        <details class="bank-subfold">
+          <summary>Detalle mensual del ejercicio</summary>
+          <div class="bank-subfold-body">
+            <table>
+              <thead>
+                <tr>
+                  <th>Mes</th>
+                  <th>Ingresos</th>
+                  <th>Gasto hogar</th>
+                  <th>Planes</th>
+                  <th>Ahorro</th>
+                  <th>Flujo neto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for month in year.months %}
+                  <tr>
+                    <td>{{ month.label }}</td>
+                    <td>{{ month.gross_inflows|floatformat:2 }} EUR</td>
+                    <td>{{ month.household_expenses|floatformat:2 }} EUR</td>
+                    <td>{{ month.pension_contributions|floatformat:2 }} EUR</td>
+                    <td class="{% if month.operating_savings >= 0 %}good{% else %}warn{% endif %}"><strong>{{ month.operating_savings|floatformat:2 }} EUR</strong></td>
+                    <td class="{% if month.net_value_flow >= 0 %}good{% else %}warn{% endif %}"><strong>{{ month.net_value_flow|floatformat:2 }} EUR</strong></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
+        </div>
+      </details>
     {% empty %}
       <section class="card">
         <p class="section-title">Analisis anual</p>
@@ -369,7 +543,7 @@
     </section>
   </div>
 
-  <div class="split" style="margin-top:24px;">
+  <div class="split" style="margin-top:24px;" id="bank-accounts">
     <section class="card table-card">
       <p class="section-title">Cuentas bancarias</p>
       <h2 style="margin-top:0;">Detalle operativo por cuenta</h2>
@@ -935,214 +1109,247 @@
 
   {% endcomment %}
 
-  <p class="section-title" style="margin-top:28px;">Productos bancarios y custodia</p>
-  <div class="grid cols-4">
-    <section class="card">
-      <div class="metric-label">Productos de inversion</div>
-      <div class="metric-value">{{ investment_summary.positions_count }}</div>
-      <div class="metric-sub">Planes de ahorro, productos de ahorro-vida y otras posiciones custodiadas por el banco.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Capital invertido estimado</div>
-      <div class="metric-value">{{ investment_summary.invested_amount|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Usa el valor actual cuando todavia no se conoce el coste de compra.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Valor actual</div>
-      <div class="metric-value">{{ investment_summary.current_value|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Valoracion total de los productos de inversion mantenidos en el banco.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Renta anual</div>
-      <div class="metric-value">{{ investment_summary.annual_income|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Estimacion opcional de rentas para estos productos.</div>
-    </section>
-  </div>
+  <details class="card bank-fold">
+    <summary class="bank-fold-summary">
+      <div class="bank-fold-copy">
+        <p class="bank-fold-kicker">Productos bancarios y custodia</p>
+        <h2 class="bank-fold-title">Ahorro, seguros y posiciones custodiadas</h2>
+        <p class="bank-fold-note">{{ investment_summary.positions_count }} producto(s) y {{ investment_summary.current_value|floatformat:2 }} EUR de valor actual.</p>
+      </div>
+      <span class="bank-fold-toggle">Ver productos</span>
+    </summary>
+    <div class="bank-fold-body">
+      <div class="grid cols-4">
+        <section class="card">
+          <div class="metric-label">Productos de inversion</div>
+          <div class="metric-value">{{ investment_summary.positions_count }}</div>
+          <div class="metric-sub">Planes de ahorro, productos de ahorro-vida y otras posiciones custodiadas por el banco.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Capital invertido estimado</div>
+          <div class="metric-value">{{ investment_summary.invested_amount|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Usa el valor actual cuando todavia no se conoce el coste de compra.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Valor actual</div>
+          <div class="metric-value">{{ investment_summary.current_value|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Valoracion total de los productos de inversion mantenidos en el banco.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Renta anual</div>
+          <div class="metric-value">{{ investment_summary.annual_income|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Estimacion opcional de rentas para estos productos.</div>
+        </section>
+      </div>
 
-  <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Posiciones bancarias de inversion</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Entidad</th>
-          <th>Producto</th>
-          <th>Titular</th>
-          <th>Tipo</th>
-          <th>Unidades</th>
-          <th>Invertido estimado</th>
-          <th>Valor actual</th>
-          <th>Fecha de precio</th>
-          <th>Peso en cartera</th>
-          <th>Notas</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for position in investment_positions %}
-          <tr>
-            <td>{{ position.institution }}</td>
-            <td>{{ position.product_name }}</td>
-            <td>{{ position.get_ownership_category_display }}</td>
-            <td>{{ position.get_product_type_display }}</td>
-            <td>{{ position.units|default_if_none:"-" }}</td>
-            <td>{{ position.invested_amount|floatformat:2 }}</td>
-            <td>{{ position.current_value|floatformat:2 }}</td>
-            <td>{{ position.price_date|date:"Y-m-d"|default:"-" }}</td>
-            <td>{% if position.portfolio_weight_pct is not None %}{{ position.portfolio_weight_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
-            <td>{{ position.notes|default:"-" }}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="10" class="muted">Todavia no hay productos bancarios de inversion.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-
-  <p class="section-title" style="margin-top:28px;">Gemelo digital de extractos</p>
-  <div class="grid cols-4">
-    <section class="card">
-      <div class="metric-label">Series vigiladas</div>
-      <div class="metric-value">{{ continuity_summary.groups_count }}</div>
-      <div class="metric-sub">Cuentas y tarjetas con historial importado.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Series continuas</div>
-      <div class="metric-value">{{ continuity_summary.healthy_groups_count }}</div>
-      <div class="metric-sub">Sin huecos ni solapes detectados.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Series con huecos</div>
-      <div class="metric-value">{{ continuity_summary.groups_with_gap_count }}</div>
-      <div class="metric-sub">Faltan dias o periodos entre extractos.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Series con solapes</div>
-      <div class="metric-value">{{ continuity_summary.groups_with_overlap_count }}</div>
-      <div class="metric-sub">Hay periodos importados dos veces o parcialmente repetidos.</div>
-    </section>
-  </div>
-
-  <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Continuidad por cuenta y tarjeta</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Tipo</th>
-          <th>Cuenta o tarjeta</th>
-          <th>Titular</th>
-          <th>Cobertura</th>
-          <th>Extractos</th>
-          <th>Estado</th>
-          <th>Nota</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for group in continuity_groups %}
-          <tr>
-            <td>{{ group.statement_kind_label }}</td>
-            <td>{{ group.account_name }}</td>
-            <td>{{ group.ownership_label }}</td>
-            <td>{{ group.coverage_label }}</td>
-            <td>{{ group.statement_count }}</td>
-            <td>
-              <span class="{% if group.has_issues %}warn{% else %}good{% endif %}">
-                {{ group.status_label }}
-              </span>
-            </td>
-            <td>{{ group.note }}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="7" class="muted">Todavia no hay suficientes extractos importados para revisar continuidad.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-
-  <p class="section-title" style="margin-top:28px;">Flujo de caja importado</p>
-  <div class="grid cols-4">
-    <section class="card">
-      <div class="metric-label">Ingresos</div>
-      <div class="metric-value">{{ statement_summary.total_income|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Nominas, transferencias y abonos.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Gastos</div>
-      <div class="metric-value">{{ statement_summary.total_expenses|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Desglosados por concepto mas abajo.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Aportaciones a planes</div>
-      <div class="metric-value">{{ statement_summary.total_pension_contributions|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Movimientos detectados de ahorro o planes de pensiones.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Dividendos</div>
-      <div class="metric-value">{{ statement_summary.total_dividends|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Dividendos capturados en los extractos.</div>
-    </section>
-  </div>
-  <div class="metric-sub" style="margin-top:12px;">Este bloque usa solo extractos de cuenta. Las tarjetas se analizan aparte para no duplicar gasto con la liquidacion bancaria.</div>
-
-  <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Resumen mensual</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Mes</th>
-          <th>Cuentas</th>
-          <th>Ingresos</th>
-          <th>Gastos</th>
-          <th>Aportaciones a planes</th>
-          <th>Dividendos</th>
-          <th>Flujo neto</th>
-          <th>Saldo final</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for month in monthly_summaries %}
-          <tr>
-            <td>{{ month.label }}</td>
-            <td>{{ month.accounts_count }}</td>
-            <td class="good">{{ month.income|floatformat:2 }}</td>
-            <td>{{ month.expenses|floatformat:2 }}</td>
-            <td>{{ month.pension_contributions|floatformat:2 }}</td>
-            <td class="good">{{ month.dividends|floatformat:2 }}</td>
-            <td class="{% if month.net_cash_flow >= 0 %}good{% else %}warn{% endif %}">{{ month.net_cash_flow|floatformat:2 }}</td>
-            <td>{{ month.closing_balance|floatformat:2 }}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="8" class="muted">Todavia no hay extractos importados.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-
-  <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Ingresos por concepto</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Concepto</th>
-          {% for month in income_months %}
-            <th>{{ month }}</th>
-          {% endfor %}
-          <th>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in income_matrix %}
-          <tr>
-            <td>{{ row.concept }}</td>
-            {% for value in row.values %}
-              <td class="good">{{ value|floatformat:2 }}</td>
+      <section class="card table-card" style="margin-top:24px;">
+        <p class="section-title">Posiciones bancarias de inversion</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Entidad</th>
+              <th>Producto</th>
+              <th>Titular</th>
+              <th>Tipo</th>
+              <th>Unidades</th>
+              <th>Invertido estimado</th>
+              <th>Valor actual</th>
+              <th>Fecha de precio</th>
+              <th>Peso en cartera</th>
+              <th>Notas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for position in investment_positions %}
+              <tr>
+                <td>{{ position.institution }}</td>
+                <td>{{ position.product_name }}</td>
+                <td>{{ position.get_ownership_category_display }}</td>
+                <td>{{ position.get_product_type_display }}</td>
+                <td>{{ position.units|default_if_none:"-" }}</td>
+                <td>{{ position.invested_amount|floatformat:2 }}</td>
+                <td>{{ position.current_value|floatformat:2 }}</td>
+                <td>{{ position.price_date|date:"Y-m-d"|default:"-" }}</td>
+                <td>{% if position.portfolio_weight_pct is not None %}{{ position.portfolio_weight_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+                <td>{{ position.notes|default:"-" }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="10" class="muted">Todavia no hay productos bancarios de inversion.</td></tr>
             {% endfor %}
-            <td><strong>{{ row.total|floatformat:2 }}</strong></td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="{{ income_months|length|add:2 }}" class="muted">Los conceptos de ingreso apareceran aqui tras importar extractos.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
+          </tbody>
+        </table>
+      </section>
+    </div>
+  </details>
+
+  <details class="card bank-fold" id="bank-continuity">
+    <summary class="bank-fold-summary">
+      <div class="bank-fold-copy">
+        <p class="bank-fold-kicker">Gemelo digital de extractos</p>
+        <h2 class="bank-fold-title">Continuidad de cuentas y tarjetas</h2>
+        <p class="bank-fold-note">{{ continuity_summary.healthy_groups_count }} series sanas de {{ continuity_summary.groups_count }} vigiladas.</p>
+      </div>
+      <span class="bank-fold-toggle">Ver continuidad</span>
+    </summary>
+    <div class="bank-fold-body">
+      <div class="grid cols-4">
+        <section class="card">
+          <div class="metric-label">Series vigiladas</div>
+          <div class="metric-value">{{ continuity_summary.groups_count }}</div>
+          <div class="metric-sub">Cuentas y tarjetas con historial importado.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Series continuas</div>
+          <div class="metric-value">{{ continuity_summary.healthy_groups_count }}</div>
+          <div class="metric-sub">Sin huecos ni solapes detectados.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Series con huecos</div>
+          <div class="metric-value">{{ continuity_summary.groups_with_gap_count }}</div>
+          <div class="metric-sub">Faltan dias o periodos entre extractos.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Series con solapes</div>
+          <div class="metric-value">{{ continuity_summary.groups_with_overlap_count }}</div>
+          <div class="metric-sub">Hay periodos importados dos veces o parcialmente repetidos.</div>
+        </section>
+      </div>
+
+      <section class="card table-card" style="margin-top:24px;">
+        <p class="section-title">Continuidad por cuenta y tarjeta</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Tipo</th>
+              <th>Cuenta o tarjeta</th>
+              <th>Titular</th>
+              <th>Cobertura</th>
+              <th>Extractos</th>
+              <th>Estado</th>
+              <th>Nota</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for group in continuity_groups %}
+              <tr>
+                <td>{{ group.statement_kind_label }}</td>
+                <td>{{ group.account_name }}</td>
+                <td>{{ group.ownership_label }}</td>
+                <td>{{ group.coverage_label }}</td>
+                <td>{{ group.statement_count }}</td>
+                <td>
+                  <span class="{% if group.has_issues %}warn{% else %}good{% endif %}">
+                    {{ group.status_label }}
+                  </span>
+                </td>
+                <td>{{ group.note }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="7" class="muted">Todavia no hay suficientes extractos importados para revisar continuidad.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  </details>
+
+  <details class="card bank-fold">
+    <summary class="bank-fold-summary">
+      <div class="bank-fold-copy">
+        <p class="bank-fold-kicker">Flujo de caja importado</p>
+        <h2 class="bank-fold-title">Ingresos y flujo bancario de cuentas</h2>
+        <p class="bank-fold-note">{{ statement_summary.total_income|floatformat:2 }} EUR de ingresos y {{ statement_summary.total_expenses|floatformat:2 }} EUR de gasto leido solo desde cuentas.</p>
+      </div>
+      <span class="bank-fold-toggle">Ver flujo</span>
+    </summary>
+    <div class="bank-fold-body">
+      <div class="grid cols-4">
+        <section class="card">
+          <div class="metric-label">Ingresos</div>
+          <div class="metric-value">{{ statement_summary.total_income|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Nominas, transferencias y abonos.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Gastos</div>
+          <div class="metric-value">{{ statement_summary.total_expenses|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Desglosados por concepto mas abajo.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Aportaciones a planes</div>
+          <div class="metric-value">{{ statement_summary.total_pension_contributions|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Movimientos detectados de ahorro o planes de pensiones.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Dividendos</div>
+          <div class="metric-value">{{ statement_summary.total_dividends|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Dividendos capturados en los extractos.</div>
+        </section>
+      </div>
+      <div class="metric-sub" style="margin-top:12px;">Este bloque usa solo extractos de cuenta. Las tarjetas se analizan aparte para no duplicar gasto con la liquidacion bancaria.</div>
+
+      <section class="card table-card" style="margin-top:24px;">
+        <p class="section-title">Resumen mensual</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Mes</th>
+              <th>Cuentas</th>
+              <th>Ingresos</th>
+              <th>Gastos</th>
+              <th>Aportaciones a planes</th>
+              <th>Dividendos</th>
+              <th>Flujo neto</th>
+              <th>Saldo final</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for month in monthly_summaries %}
+              <tr>
+                <td>{{ month.label }}</td>
+                <td>{{ month.accounts_count }}</td>
+                <td class="good">{{ month.income|floatformat:2 }}</td>
+                <td>{{ month.expenses|floatformat:2 }}</td>
+                <td>{{ month.pension_contributions|floatformat:2 }}</td>
+                <td class="good">{{ month.dividends|floatformat:2 }}</td>
+                <td class="{% if month.net_cash_flow >= 0 %}good{% else %}warn{% endif %}">{{ month.net_cash_flow|floatformat:2 }}</td>
+                <td>{{ month.closing_balance|floatformat:2 }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="8" class="muted">Todavia no hay extractos importados.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="card table-card" style="margin-top:24px;">
+        <p class="section-title">Ingresos por concepto</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Concepto</th>
+              {% for month in income_months %}
+                <th>{{ month }}</th>
+              {% endfor %}
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in income_matrix %}
+              <tr>
+                <td>{{ row.concept }}</td>
+                {% for value in row.values %}
+                  <td class="good">{{ value|floatformat:2 }}</td>
+                {% endfor %}
+                <td><strong>{{ row.total|floatformat:2 }}</strong></td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="{{ income_months|length|add:2 }}" class="muted">Los conceptos de ingreso apareceran aqui tras importar extractos.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  </details>
 
   <section class="card table-card" style="margin-top:24px;">
     <p class="section-title">Gasto familiar consolidado</p>
@@ -1201,153 +1408,188 @@
     </table>
   </section>
 
-  <p class="section-title" style="margin-top:28px;">Tarjetas importadas</p>
-  <div class="grid cols-4">
-    <section class="card">
-      <div class="metric-label">Tarjetas seguidas</div>
-      <div class="metric-value">{{ card_summary.cards_count }}</div>
-      <div class="metric-sub">Tarjetas con al menos un extracto importado.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Gasto total en tarjetas</div>
-      <div class="metric-value">{{ card_summary.total_spent|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Suma de cargos detectados en los extractos de tarjeta.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Devoluciones</div>
-      <div class="metric-value">{{ card_summary.total_refunds|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Abonos y devoluciones detectados en las tarjetas.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Ultimo mes de tarjetas</div>
-      <div class="metric-value">{{ card_summary.latest_month|default:"-" }}</div>
-      <div class="metric-sub">Ultimo periodo con gasto de tarjeta importado.</div>
-    </section>
-  </div>
+  <details class="card bank-fold">
+    <summary class="bank-fold-summary">
+      <div class="bank-fold-copy">
+        <p class="bank-fold-kicker">Tarjetas importadas</p>
+        <h2 class="bank-fold-title">Inventario de tarjetas y ultimos extractos</h2>
+        <p class="bank-fold-note">{{ card_summary.cards_count }} tarjeta(s), {{ card_summary.total_spent|floatformat:2 }} EUR cargados y {{ card_summary.total_refunds|floatformat:2 }} EUR devueltos.</p>
+      </div>
+      <span class="bank-fold-toggle">Ver tarjetas</span>
+    </summary>
+    <div class="bank-fold-body">
+      <div class="grid cols-4">
+        <section class="card">
+          <div class="metric-label">Tarjetas seguidas</div>
+          <div class="metric-value">{{ card_summary.cards_count }}</div>
+          <div class="metric-sub">Tarjetas con al menos un extracto importado.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Gasto total en tarjetas</div>
+          <div class="metric-value">{{ card_summary.total_spent|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Suma de cargos detectados en los extractos de tarjeta.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Devoluciones</div>
+          <div class="metric-value">{{ card_summary.total_refunds|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Abonos y devoluciones detectados en las tarjetas.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Ultimo mes de tarjetas</div>
+          <div class="metric-value">{{ card_summary.latest_month|default:"-" }}</div>
+          <div class="metric-sub">Ultimo periodo con gasto de tarjeta importado.</div>
+        </section>
+      </div>
 
-  <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Tarjetas actuales</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Tarjeta</th>
-          <th>Titular</th>
-          <th>Ultimo mes</th>
-          <th>Gasto ultimo extracto</th>
-          <th>Devoluciones</th>
-          <th>Extractos</th>
-          <th>Serie</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for card in tracked_cards %}
-          <tr>
-            <td>{{ card.card_name }}</td>
-            <td>
-              <form method="post" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="update_statement_ownership">
-                <input type="hidden" name="statement_id" value="{{ card.statement_id }}">
-                <select name="ownership_category">
-                  {% for value, label in ownership_choices %}
-                    <option value="{{ value }}"{% if card.ownership_category == value %} selected{% endif %}>{{ label }}</option>
-                  {% endfor %}
-                </select>
-                <button class="button secondary small" type="submit">Guardar</button>
-              </form>
-            </td>
-            <td>{{ card.latest_month|default:"-" }}</td>
-            <td><strong>{{ card.latest_spent|floatformat:2 }} EUR</strong></td>
-            <td>{{ card.latest_refunds|floatformat:2 }} EUR</td>
-            <td>{{ card.statement_count }}</td>
-            <td>
-              <span class="{% if card.continuity_has_issues %}warn{% else %}good{% endif %}">
-                {{ card.continuity_status_label }}
-              </span>
-              {% if card.continuity_note %}
-                <div class="metric-sub">{{ card.continuity_note }}</div>
-              {% endif %}
-            </td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="7" class="muted">Todavia no hay tarjetas importadas. Sube el XLS/XLSX de la tarjeta marcando el tipo Tarjeta.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
+      <section class="card table-card" style="margin-top:24px;">
+        <p class="section-title">Tarjetas actuales</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Tarjeta</th>
+              <th>Titular</th>
+              <th>Ultimo mes</th>
+              <th>Gasto ultimo extracto</th>
+              <th>Devoluciones</th>
+              <th>Extractos</th>
+              <th>Serie</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for card in tracked_cards %}
+              <tr>
+                <td>{{ card.card_name }}</td>
+                <td>
+                  <form method="post" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_statement_ownership">
+                    <input type="hidden" name="statement_id" value="{{ card.statement_id }}">
+                    <select name="ownership_category">
+                      {% for value, label in ownership_choices %}
+                        <option value="{{ value }}"{% if card.ownership_category == value %} selected{% endif %}>{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                    <button class="button secondary small" type="submit">Guardar</button>
+                  </form>
+                </td>
+                <td>{{ card.latest_month|default:"-" }}</td>
+                <td><strong>{{ card.latest_spent|floatformat:2 }} EUR</strong></td>
+                <td>{{ card.latest_refunds|floatformat:2 }} EUR</td>
+                <td>{{ card.statement_count }}</td>
+                <td>
+                  <span class="{% if card.continuity_has_issues %}warn{% else %}good{% endif %}">
+                    {{ card.continuity_status_label }}
+                  </span>
+                  {% if card.continuity_note %}
+                    <div class="metric-sub">{{ card.continuity_note }}</div>
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="7" class="muted">Todavia no hay tarjetas importadas. Sube el XLS/XLSX de la tarjeta marcando el tipo Tarjeta.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  </details>
 
-  <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Ficheros importados</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Tipo</th>
-          <th>Periodo</th>
-          <th>Cuenta</th>
-          <th>Titular</th>
-          <th>Fichero</th>
-          <th>Estado</th>
-          <th>Serie</th>
-          <th>Saldo inicial</th>
-          <th>Saldo final</th>
-          <th>Acciones</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for statement in recent_imports %}
-          <tr>
-            <td>{{ statement.get_statement_kind_display }}</td>
-            <td>{{ statement.period_label }}</td>
-            <td>{{ statement.account_name }}</td>
-            <td>
-              <form method="post" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="update_statement_ownership">
-                <input type="hidden" name="statement_id" value="{{ statement.id }}">
-                <select name="ownership_category">
-                  {% for value, label in ownership_choices %}
-                    <option value="{{ value }}"{% if statement.ownership_category == value %} selected{% endif %}>{{ label }}</option>
-                  {% endfor %}
-                </select>
-                <button class="button secondary small" type="submit">Guardar</button>
-              </form>
-            </td>
-            <td>{{ statement.source_filename }}</td>
-            <td>{{ statement.get_import_status_display }}</td>
-            <td>
-              <span class="{% if statement.continuity_has_issues %}warn{% else %}good{% endif %}">
-                {{ statement.continuity_status_label }}
-              </span>
-              {% if statement.continuity_note %}
-                <div class="metric-sub">{{ statement.continuity_note }}</div>
-              {% endif %}
-            </td>
-            <td>{{ statement.opening_balance|default_if_none:"-" }}</td>
-            <td>{{ statement.closing_balance|default_if_none:"-" }}</td>
-            <td>
-              <form method="post" onsubmit="return confirm('Eliminar {{ statement.source_filename|escapejs }} y todos sus movimientos importados?');">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="delete_statement">
-                <input type="hidden" name="statement_id" value="{{ statement.id }}">
-                <button class="button secondary small" type="submit">Borrar</button>
-              </form>
-            </td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="10" class="muted">Todavia no hay importaciones guardadas.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
+  <details class="card bank-fold" id="bank-files">
+    <summary class="bank-fold-summary">
+      <div class="bank-fold-copy">
+        <p class="bank-fold-kicker">Ficheros importados</p>
+        <h2 class="bank-fold-title">Historial de extractos subidos</h2>
+        <p class="bank-fold-note">{{ recent_imports|length }} fichero(s) recientes visibles para revisar, corregir titularidad o borrar uno a uno.</p>
+      </div>
+      <span class="bank-fold-toggle">Ver ficheros</span>
+    </summary>
+    <div class="bank-fold-body">
+      <section class="card table-card" style="margin-top:0;">
+        <p class="section-title">Ficheros importados</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Tipo</th>
+              <th>Periodo</th>
+              <th>Cuenta</th>
+              <th>Titular</th>
+              <th>Fichero</th>
+              <th>Estado</th>
+              <th>Serie</th>
+              <th>Saldo inicial</th>
+              <th>Saldo final</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for statement in recent_imports %}
+              <tr>
+                <td>{{ statement.get_statement_kind_display }}</td>
+                <td>{{ statement.period_label }}</td>
+                <td>{{ statement.account_name }}</td>
+                <td>
+                  <form method="post" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_statement_ownership">
+                    <input type="hidden" name="statement_id" value="{{ statement.id }}">
+                    <select name="ownership_category">
+                      {% for value, label in ownership_choices %}
+                        <option value="{{ value }}"{% if statement.ownership_category == value %} selected{% endif %}>{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                    <button class="button secondary small" type="submit">Guardar</button>
+                  </form>
+                </td>
+                <td>{{ statement.source_filename }}</td>
+                <td>{{ statement.get_import_status_display }}</td>
+                <td>
+                  <span class="{% if statement.continuity_has_issues %}warn{% else %}good{% endif %}">
+                    {{ statement.continuity_status_label }}
+                  </span>
+                  {% if statement.continuity_note %}
+                    <div class="metric-sub">{{ statement.continuity_note }}</div>
+                  {% endif %}
+                </td>
+                <td>{{ statement.opening_balance|default_if_none:"-" }}</td>
+                <td>{{ statement.closing_balance|default_if_none:"-" }}</td>
+                <td>
+                  <form method="post" onsubmit="return confirm('Eliminar {{ statement.source_filename|escapejs }} y todos sus movimientos importados?');">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="delete_statement">
+                    <input type="hidden" name="statement_id" value="{{ statement.id }}">
+                    <button class="button secondary small" type="submit">Borrar</button>
+                  </form>
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="10" class="muted">Todavia no hay importaciones guardadas.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  </details>
 
-  <section class="card" style="margin-top:28px;">
-    <p class="section-title">Operativa de importacion</p>
-    <h2 style="margin-top:0;">Captura y mantenimiento al final</h2>
-    <p class="muted" style="margin:0;">Esta zona queda intencionadamente al final. Primero se interpreta la situacion bancaria; despues, si faltan datos o hay que incorporar un extracto nuevo, se usa la operativa manual o el asistente local.</p>
-  </section>
+  <details class="card bank-fold" id="bank-operations">
+    <summary class="bank-fold-summary">
+      <div class="bank-fold-copy">
+        <p class="bank-fold-kicker">Operativa de importacion</p>
+        <h2 class="bank-fold-title">Captura y mantenimiento</h2>
+        <p class="bank-fold-note">La operativa queda al final para no competir con el analisis. Abrela solo cuando vayas a importar o mantener datos.</p>
+      </div>
+      <span class="bank-fold-toggle">Abrir operativa</span>
+    </summary>
+    <div class="bank-fold-body">
+      <section class="card" style="margin-top:0;">
+        <p class="section-title">Operativa de importacion</p>
+        <h2 style="margin-top:0;">Captura y mantenimiento al final</h2>
+        <p class="muted" style="margin:0;">Esta zona queda intencionadamente al final. Primero se interpreta la situacion bancaria; despues, si faltan datos o hay que incorporar un extracto nuevo, se usa la operativa manual o el asistente local.</p>
+      </section>
 
-  {% include "banking/_operations_panel.html" %}
-  {% include "banking/_robot_operations.html" %}
+      {% include "banking/_operations_panel.html" %}
+      {% include "banking/_robot_operations.html" %}
+    </div>
+  </details>
 
   <script>
     (function () {

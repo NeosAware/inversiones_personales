@@ -237,6 +237,9 @@
       <div class="top-actions">
         {% if request.user.is_authenticated %}
           <div class="top-user">Sesion iniciada como {{ request.user.username }}</div>
+          {% if can_manage_users %}
+            <a class="admin-link" href="{% url 'portfolio:user_management' %}">Usuarios</a>
+          {% endif %}
           {% if request.user.is_staff %}
             <a class="admin-link" href="/admin/">Abrir administracion</a>
           {% endif %}
@@ -259,6 +262,9 @@
         <a href="{% url 'neos_ceramica:list' %}">Neos Ceramica</a>
         <a href="{% url 'neos_materials:list' %}">Neos Materials</a>
         <a href="{% url 'real_estate:list' %}">Inmuebles</a>
+        {% if can_manage_users %}
+          <a href="{% url 'portfolio:user_management' %}">Usuarios</a>
+        {% endif %}
       </nav>
     {% endif %}
 

@@ -285,3 +285,103 @@ class AccessControlTests(TestCase):
         response = self.client.get(reverse("portfolio:dashboard"))
 
         self.assertEqual(response.status_code, 200)
+
+
+class UserManagementTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username="admin",
+            password="AdminPass123!",
+        )
+        self.admin.is_staff = True
+        self.admin.is_superuser = True
+        self.admin.save()
+
+        self.user = User.objects.create_user(
+            username="household",
+            password="StrongPass123!",
+        )
+
+    def test_staff_user_can_open_user_management(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse("portfolio:user_management"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Gestion de accesos")
+        self.assertContains(response, "Crear nuevo acceso")
+
+    def test_non_staff_user_is_redirected_when_admin_exists(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("portfolio:user_management"))
+
+        self.assertRedirects(response, reverse("portfolio:dashboard"))
+
+    def test_non_staff_user_can_open_user_management_in_recovery_mode(self):
+        self.admin.is_staff = False
+        self.admin.is_superuser = False
+        self.admin.save(update_fields=["is_staff", "is_superuser"])
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("portfolio:user_management"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Modo recuperacion")
+        self.assertContains(response, "Convertir mi usuario en administrador")
+
+    def test_staff_user_can_create_user_from_management_page(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.post(
+            reverse("portfolio:user_management"),
+            {
+                "action": "create_user",
+                "username": "monica",
+                "password1": "SeguraMonica2026!",
+                "password2": "SeguraMonica2026!",
+                "access_level": "user",
+            },
+        )
+
+        self.assertRedirects(response, reverse("portfolio:user_management"))
+        created_user = get_user_model().objects.get(username="monica")
+        self.assertTrue(created_user.is_active)
+        self.assertFalse(created_user.is_staff)
+        self.assertFalse(created_user.is_superuser)
+
+    def test_recovery_mode_can_promote_current_user_to_admin(self):
+        self.admin.is_staff = False
+        self.admin.is_superuser = False
+        self.admin.save(update_fields=["is_staff", "is_superuser"])
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse("portfolio:user_management"),
+            {
+                "action": "promote_self_to_admin",
+            },
+        )
+
+        self.assertRedirects(response, reverse("portfolio:user_management"))
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.is_staff)
+        self.assertTrue(self.user.is_superuser)
+
+    def test_last_active_admin_cannot_be_downgraded(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.post(
+            reverse("portfolio:user_management"),
+            {
+                "action": "update_user_role",
+                "user_id": self.admin.id,
+                "access_level": "user",
+            },
+        )
+
+        self.assertRedirects(response, reverse("portfolio:user_management"))
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_staff)
+        self.assertTrue(self.admin.is_superuser)
