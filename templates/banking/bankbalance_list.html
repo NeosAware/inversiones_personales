@@ -28,6 +28,13 @@
       background:rgba(255,255,255,.1);
       backdrop-filter:blur(10px);
     }
+    .bank-hero-stat-highlight{
+      background:rgba(255,255,255,.16);
+      border-color:rgba(255,255,255,.24);
+    }
+    .bank-hero-stat-highlight .metric-value{
+      font-size:30px;
+    }
     .bank-hero-stat .metric-label{ color:rgba(255,255,255,.72); }
     .bank-hero-stat .metric-sub{ color:rgba(255,255,255,.78); }
     .bank-year-stack{
@@ -294,7 +301,7 @@
     <div>
       <p class="section-title">{{ page_title }}</p>
       <h2 style="margin:0 0 12px; font-size:34px;">Radar bancario anual</h2>
-      <p class="muted" style="margin:0;">La parte superior pone el foco en una lectura ejecutiva: ingresos frente a gasto real del hogar, ahorro medio mensual y flujo neto acumulado por ejercicio. Despues se separan bancos, cuentas y operativa.</p>
+      <p class="muted" style="margin:0;">La parte superior prioriza lo que mas informacion aporta para decidir: cuanto entra, cuanto sale, cuanto se ahorra y como evoluciona el flujo neto del ano. Despues se separan bancos, cuentas y operativa.</p>
       <div class="meta" style="margin-top:18px;">
         <span class="pill">{{ annual_overview.years_count }} ejercicios analizados</span>
         <span class="pill">{{ institution_overview.summary.institutions_count }} bancos visibles</span>
@@ -303,20 +310,32 @@
       </div>
     </div>
     <div class="bank-hero-grid">
+      {% if annual_overview.current_year %}
+        <section class="bank-hero-stat bank-hero-stat-highlight">
+          <div class="metric-label">Ingresos {{ annual_overview.current_year.year }}</div>
+          <div class="metric-value">{{ annual_overview.current_year.gross_inflows_total|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Ingresos bancarios y dividendos del ejercicio actual.</div>
+        </section>
+        <section class="bank-hero-stat bank-hero-stat-highlight">
+          <div class="metric-label">Gasto del hogar {{ annual_overview.current_year.year }}</div>
+          <div class="metric-value">{{ annual_overview.current_year.household_expenses_total|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Gasto consolidado sin duplicar liquidaciones de tarjeta.</div>
+        </section>
+        <section class="bank-hero-stat">
+          <div class="metric-label">Ahorro medio mensual</div>
+          <div class="metric-value {% if annual_overview.current_year.average_monthly_savings >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.average_monthly_savings|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Media mensual del ejercicio {{ annual_overview.current_year.year }}.</div>
+        </section>
+        <section class="bank-hero-stat">
+          <div class="metric-label">Flujo neto acumulado</div>
+          <div class="metric-value {% if annual_overview.current_year.net_value_flow_total >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.net_value_flow_total|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Ahorro operativo menos aportaciones a planes.</div>
+        </section>
+      {% endif %}
       <section class="bank-hero-stat">
         <div class="metric-label">Saldo bancario visible</div>
         <div class="metric-value">{{ summary.current_balance|floatformat:2 }} EUR</div>
         <div class="metric-sub">Saldo agregado de las cuentas bancarias visibles hoy.</div>
-      </section>
-      <section class="bank-hero-stat">
-        <div class="metric-label">Cobertura de bancos</div>
-        <div class="metric-value">{{ institution_overview.summary.institutions_with_imported_accounts }}/{{ institution_overview.summary.institutions_count }}</div>
-        <div class="metric-sub">Instituciones con extractos de cuenta frente al total visible.</div>
-      </section>
-      <section class="bank-hero-stat">
-        <div class="metric-label">Series a revisar</div>
-        <div class="metric-value">{{ continuity_summary.groups_with_gap_count|add:continuity_summary.groups_with_overlap_count }}</div>
-        <div class="metric-sub">Huecos o solapes que pueden sesgar el analisis.</div>
       </section>
       <section class="bank-hero-stat">
         <div class="metric-label">Ultimo mes bancario</div>
