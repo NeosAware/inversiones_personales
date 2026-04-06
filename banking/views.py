@@ -25,6 +25,7 @@ from .models import BankBalance, BankInvestmentPosition, BankStatementImport
 from .services import (
     build_banking_dashboard,
     build_robot_import_dashboard,
+    build_smart_cockpit_extras,
     get_statement_import_feedback,
     import_uploaded_statement_file,
 )
@@ -68,6 +69,17 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         context.setdefault("robot_setup_form", RobotSetupAssistantForm(initial=self._default_robot_setup_initial()))
         context["robot_bank_suggestions"] = ROBOT_BANK_SUGGESTIONS
         context.update(dashboard)
+        cockpit_extras = build_smart_cockpit_extras(
+            annual_overview=dashboard["annual_overview"],
+            reconciled_summary=dashboard["reconciled_summary"],
+            reconciled_monthly_summaries=dashboard["reconciled_monthly_summaries"],
+            continuity_summary=dashboard["continuity_summary"],
+            accounts_summary=dashboard["accounts_summary"],
+        )
+        context["trends"] = cockpit_extras["trends"]
+        context["smart_alerts"] = cockpit_extras["alerts"]
+        context["daily_burn_rate"] = cockpit_extras["daily_burn_rate"]
+        context["projected_monthly_expense"] = cockpit_extras["projected_monthly_expense"]
         return context
 
     def post(self, request, *args, **kwargs):

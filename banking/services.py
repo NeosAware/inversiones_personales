@@ -2311,6 +2311,161 @@ def build_reconciled_spending_overview(statements: list[BankStatementImport] | N
     }
 
 
+def build_smart_cockpit_extras(
+    annual_overview: dict,
+    reconciled_summary: dict,
+    reconciled_monthly_summaries: list[dict],
+    continuity_summary: dict,
+    accounts_summary: dict,
+) -> dict:
+    alerts = []
+    trends = {}
+    current_year = annual_overview.get("current_year")
+    if current_year and len(current_year["months"]) >= 2:
+        months = current_year["months"]
+        latest = months[-1]
+        previous = months[-2]
+
+        if previous["gross_inflows"] > ZERO:
+            income_change_pct = (
+                (latest["gross_inflows"] - previous["gross_inflows"])
+                / previous["gross_inflows"]
+            ) * Decimal("100")
+        else:
+            income_change_pct = None
+
+        if previous["household_expenses"] > ZERO:
+            expense_change_pct = (
+                (latest["household_expenses"] - previous["household_expenses"])
+                / previous["household_expenses"]
+            ) * Decimal("100")
+        else:
+            expense_change_pct = None
+
+        if previous["operating_savings"] != ZERO and previous["operating_savings"] > ZERO:
+            savings_change_pct = (
+                (latest["operating_savings"] - previous["operating_savings"])
+                / abs(previous["operating_savings"])
+            ) * Decimal("100")
+        else:
+            savings_change_pct = None
+
+        trends = {
+            "latest_month_label": latest["short_label"],
+            "previous_month_label": previous["short_label"],
+            "income_change_pct": income_change_pct,
+            "income_direction": "up" if income_change_pct and income_change_pct > ZERO else ("down" if income_change_pct and income_change_pct < ZERO else "flat"),
+            "expense_change_pct": expense_change_pct,
+            "expense_direction": "up" if expense_change_pct and expense_change_pct > ZERO else ("down" if expense_change_pct and expense_change_pct < ZERO else "flat"),
+            "savings_change_pct": savings_change_pct,
+            "savings_direction": "up" if savings_change_pct and savings_change_pct > ZERO else ("down" if savings_change_pct and savings_change_pct < ZERO else "flat"),
+            "latest_income": latest["gross_inflows"],
+            "latest_expenses": latest["household_expenses"],
+            "latest_savings": latest["operating_savings"],
+            "previous_income": previous["gross_inflows"],
+            "previous_expenses": previous["household_expenses"],
+            "previous_savings": previous["operating_savings"],
+        }
+
+        if expense_change_pct and expense_change_pct > Decimal("15"):
+            alerts.append({
+                "tone": "warn",
+                "icon": "!",
+                "title": f"Gasto al alza en {latest['short_label']}",
+                "text": f"El gasto del hogar ha subido un {expense_change_pct:.0f} % respecto a {previous['short_label']}. Revisa las familias dominantes.",
+            })
+
+        if latest["operating_savings"] < ZERO:
+            alerts.append({
+                "tone": "warn",
+                "icon": "-",
+                "title": f"Ahorro negativo en {latest['short_label']}",
+                "text": f"Se ha gastado mas de lo ingresado este mes: {latest['operating_savings']:.2f} EUR.",
+            })
+
+        if income_change_pct and income_change_pct < Decimal("-20"):
+            alerts.append({
+                "tone": "warn",
+                "icon": "!",
+                "title": f"Caida de ingresos en {latest['short_label']}",
+                "text": f"Los ingresos han bajado un {abs(income_change_pct):.0f} % respecto al mes anterior.",
+            })
+
+    if current_year and len(current_year["months"]) >= 1:
+        latest = current_year["months"][-1]
+        if latest["net_value_flow"] > ZERO:
+            alerts.append({
+                "tone": "good",
+                "icon": "+",
+                "title": f"Flujo neto positivo en {latest['short_label']}",
+                "text": f"Despues de planes y pension, quedan {latest['net_value_flow']:.2f} EUR netos.",
+            })
+
+    gaps = continuity_summary.get("groups_with_gap_count", 0)
+    overlaps = continuity_summary.get("groups_with_overlap_count", 0)
+    if gaps:
+        alerts.append({
+            "tone": "warn",
+            "icon": "!",
+            "title": f"{gaps} serie(s) con huecos",
+            "text": "Faltan meses en algunas cuentas. Los totales pueden estar incompletos.",
+        })
+    if overlaps:
+        alerts.append({
+            "tone": "warn",
+            "icon": "!",
+            "title": f"{overlaps} serie(s) con solapes",
+            "text": "Hay periodos duplicados que pueden inflar el gasto o los ingresos.",
+        })
+
+    avg_expense = reconciled_summary.get("average_monthly_household_expenses", ZERO)
+    if current_year and current_year["months"]:
+        latest = current_year["months"][-1]
+        if avg_expense > ZERO and latest["household_expenses"] > avg_expense * Decimal("1.25"):
+            alerts.append({
+                "tone": "warn",
+                "icon": "!",
+                "title": "Gasto por encima de la media",
+                "text": f"{latest['short_label']} lleva {latest['household_expenses']:.2f} EUR, un {((latest['household_expenses'] - avg_expense) / avg_expense * 100):.0f} % mas que la media ({avg_expense:.2f} EUR).",
+            })
+
+    if not alerts and current_year:
+        alerts.append({
+            "tone": "good",
+            "icon": "+",
+            "title": "Todo en orden",
+            "text": "No se detectan alertas operativas. Los flujos de ingresos y gasto estan dentro de lo normal.",
+        })
+
+    daily_burn_rate = ZERO
+    projected_monthly = ZERO
+    if reconciled_monthly_summaries and current_year and current_year["months"]:
+        from datetime import date as _date
+        latest_month = current_year["months"][-1]
+        latest_label = latest_month["label"]
+        try:
+            parts = latest_label.split("-")
+            year_num = int(parts[0])
+            month_num = int(parts[1])
+            today = _date.today()
+            if year_num == today.year and month_num == today.month:
+                days_elapsed = today.day
+                if days_elapsed > 0:
+                    daily_burn_rate = latest_month["household_expenses"] / days_elapsed
+                    import calendar
+                    days_in_month = calendar.monthrange(year_num, month_num)[1]
+                    projected_monthly = daily_burn_rate * days_in_month
+        except (ValueError, IndexError):
+            pass
+
+    return {
+        "trends": trends,
+        "alerts": alerts,
+        "daily_burn_rate": daily_burn_rate,
+        "projected_monthly_expense": projected_monthly,
+    }
+
+
 def build_robot_import_dashboard() -> dict:
     robot_statements = list(
         BankStatementImport.objects.filter(import_source=BankStatementImport.ImportSource.ROBOT).order_by(

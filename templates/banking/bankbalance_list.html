@@ -105,6 +105,165 @@
     .bank-hero-stat-secondary .metric-value{
       color:#fff;
     }
+    .trend-badge{
+      display:inline-flex;
+      align-items:center;
+      gap:4px;
+      margin-top:6px;
+      padding:3px 10px;
+      border-radius:999px;
+      font-size:11px;
+      font-weight:800;
+      letter-spacing:.02em;
+    }
+    .trend-badge-up-good{
+      background:rgba(23,114,69,.12);
+      color:#177245;
+    }
+    .trend-badge-down-good{
+      background:rgba(23,114,69,.12);
+      color:#177245;
+    }
+    .trend-badge-up-warn{
+      background:rgba(178,100,0,.12);
+      color:#b26400;
+    }
+    .trend-badge-down-warn{
+      background:rgba(178,100,0,.12);
+      color:#b26400;
+    }
+    .trend-badge-flat{
+      background:rgba(99,121,137,.12);
+      color:#637989;
+    }
+    .smart-alerts{
+      grid-column:1 / -1;
+      display:grid;
+      gap:10px;
+      grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
+    }
+    .smart-alert{
+      display:grid;
+      gap:6px;
+      grid-template-columns:36px minmax(0, 1fr);
+      padding:14px 16px;
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(10,31,47,.24);
+      backdrop-filter:blur(10px);
+    }
+    .smart-alert-icon{
+      width:36px;
+      height:36px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      border-radius:999px;
+      font-size:16px;
+      font-weight:900;
+    }
+    .smart-alert-icon-warn{
+      background:rgba(240,177,74,.22);
+      color:#f0b14a;
+    }
+    .smart-alert-icon-good{
+      background:rgba(83,200,140,.22);
+      color:#53c88c;
+    }
+    .smart-alert-title{
+      font-size:13px;
+      font-weight:800;
+      color:#fff;
+    }
+    .smart-alert-text{
+      font-size:12px;
+      color:rgba(255,255,255,.74);
+      line-height:1.45;
+    }
+    .bank-dropzone{
+      grid-column:1 / -1;
+      display:grid;
+      gap:16px;
+      grid-template-columns:minmax(0, 1fr) auto;
+      align-items:center;
+      padding:18px 22px;
+      border-radius:20px;
+      border:2px dashed rgba(255,255,255,.24);
+      background:rgba(10,31,47,.18);
+      backdrop-filter:blur(10px);
+      transition:border-color .2s, background .2s;
+      cursor:pointer;
+    }
+    .bank-dropzone:hover,
+    .bank-dropzone.dragover{
+      border-color:rgba(255,206,120,.6);
+      background:rgba(10,31,47,.36);
+    }
+    .bank-dropzone-copy{
+      display:grid;
+      gap:4px;
+    }
+    .bank-dropzone-title{
+      font-size:14px;
+      font-weight:800;
+      color:#fff;
+    }
+    .bank-dropzone-sub{
+      font-size:12px;
+      color:rgba(255,255,255,.68);
+    }
+    .bank-dropzone-actions{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .bank-dropzone-btn{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding:8px 18px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.28);
+      background:rgba(255,255,255,.12);
+      color:#fff;
+      font-size:13px;
+      font-weight:700;
+      cursor:pointer;
+      transition:background .15s, border-color .15s;
+    }
+    .bank-dropzone-btn:hover{
+      background:rgba(255,255,255,.22);
+      border-color:rgba(255,255,255,.4);
+    }
+    .bank-dropzone-status{
+      font-size:12px;
+      font-weight:700;
+      color:rgba(255,255,255,.8);
+    }
+    .bank-burn-strip{
+      grid-column:1 / -1;
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(3, minmax(0, 1fr));
+    }
+    .bank-burn-card{
+      padding:14px 16px;
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(10,31,47,.24);
+      backdrop-filter:blur(10px);
+    }
+    .bank-burn-card .metric-label{
+      color:rgba(255,255,255,.68);
+    }
+    .bank-burn-card .metric-value{
+      color:#fff;
+      font-size:22px;
+    }
+    .bank-burn-card .metric-sub{
+      color:rgba(255,255,255,.62);
+    }
     .bank-hero-signal-strip{
       grid-column:1 / -1;
       display:grid;
@@ -608,8 +767,12 @@
       .bank-year-metrics,
       .bank-hero-grid,
       .bank-hero-signal-strip,
-      .bank-visual-grid{
+      .bank-visual-grid,
+      .bank-burn-strip{
         grid-template-columns:1fr 1fr;
+      }
+      .bank-dropzone{
+        grid-template-columns:1fr;
       }
       .bank-fold-summary{
         display:grid;
@@ -620,7 +783,9 @@
       .bank-year-metrics,
       .bank-hero-grid,
       .bank-hero-signal-strip,
-      .bank-visual-grid{
+      .bank-visual-grid,
+      .bank-burn-strip,
+      .smart-alerts{
         grid-template-columns:1fr;
       }
       .flow-row{
@@ -645,7 +810,7 @@
       <div>
         <p class="section-title">{{ page_title }}</p>
         <h2 class="bank-hero-title">Cockpit bancario profesional</h2>
-        <p class="bank-hero-lead">La vista arranca por lo que mas decide: ingresos, gasto real del hogar, ahorro medio y flujo neto. Debajo quedan el pulso mensual, el mapa del gasto y la navegacion rapida al detalle operativo.</p>
+        <p class="bank-hero-lead">Ingresos, gasto real del hogar, ahorro y flujo neto de un vistazo. Arrastra un extracto para importar al instante.</p>
       </div>
       <div class="bank-hero-badges">
         <span class="bank-hero-badge">{{ annual_overview.years_count }} ejercicios analizados</span>
@@ -661,16 +826,34 @@
           <div class="metric-label">Ingresos {{ annual_overview.current_year.year }}</div>
           <div class="metric-value">{{ annual_overview.current_year.gross_inflows_total|floatformat:2 }} EUR</div>
           <div class="metric-sub">Entradas bancarias y dividendos del ejercicio actual.</div>
+          {% if trends.income_change_pct is not None %}
+            <span class="trend-badge {% if trends.income_direction == 'up' %}trend-badge-up-good{% elif trends.income_direction == 'down' %}trend-badge-down-warn{% else %}trend-badge-flat{% endif %}">
+              {% if trends.income_direction == 'up' %}&#9650;{% elif trends.income_direction == 'down' %}&#9660;{% else %}&#9654;{% endif %}
+              {{ trends.income_change_pct|floatformat:0 }} % vs {{ trends.previous_month_label }}
+            </span>
+          {% endif %}
         </section>
         <section class="bank-hero-stat bank-hero-stat-primary bank-hero-stat-expense">
           <div class="metric-label">Gasto del hogar {{ annual_overview.current_year.year }}</div>
           <div class="metric-value">{{ annual_overview.current_year.household_expenses_total|floatformat:2 }} EUR</div>
           <div class="metric-sub">Consolidado sin duplicar la liquidacion de las tarjetas.</div>
+          {% if trends.expense_change_pct is not None %}
+            <span class="trend-badge {% if trends.expense_direction == 'up' %}trend-badge-up-warn{% elif trends.expense_direction == 'down' %}trend-badge-down-good{% else %}trend-badge-flat{% endif %}">
+              {% if trends.expense_direction == 'up' %}&#9650;{% elif trends.expense_direction == 'down' %}&#9660;{% else %}&#9654;{% endif %}
+              {{ trends.expense_change_pct|floatformat:0 }} % vs {{ trends.previous_month_label }}
+            </span>
+          {% endif %}
         </section>
         <section class="bank-hero-stat bank-hero-stat-primary bank-hero-stat-savings">
           <div class="metric-label">Ahorro medio mensual</div>
           <div class="metric-value {% if annual_overview.current_year.average_monthly_savings >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.average_monthly_savings|floatformat:2 }} EUR</div>
           <div class="metric-sub">Media mensual del ejercicio {{ annual_overview.current_year.year }}.</div>
+          {% if trends.savings_change_pct is not None %}
+            <span class="trend-badge {% if trends.savings_direction == 'up' %}trend-badge-up-good{% elif trends.savings_direction == 'down' %}trend-badge-down-warn{% else %}trend-badge-flat{% endif %}">
+              {% if trends.savings_direction == 'up' %}&#9650;{% elif trends.savings_direction == 'down' %}&#9660;{% else %}&#9654;{% endif %}
+              {{ trends.savings_change_pct|floatformat:0 }} % vs {{ trends.previous_month_label }}
+            </span>
+          {% endif %}
         </section>
         <section class="bank-hero-stat bank-hero-stat-primary bank-hero-stat-flow">
           <div class="metric-label">Flujo neto acumulado</div>
@@ -717,6 +900,61 @@
         <div class="metric-value">{{ summary.latest_month|default:"-" }}</div>
         <div class="metric-sub">Ultimo cierre detectado en la liquidez importada.</div>
       </section>
+    </div>
+
+    {% if smart_alerts %}
+      <div class="smart-alerts">
+        {% for alert in smart_alerts %}
+          <div class="smart-alert">
+            <span class="smart-alert-icon smart-alert-icon-{{ alert.tone }}">{{ alert.icon }}</span>
+            <div>
+              <div class="smart-alert-title">{{ alert.title }}</div>
+              <div class="smart-alert-text">{{ alert.text }}</div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if daily_burn_rate > 0 %}
+      <div class="bank-burn-strip">
+        <section class="bank-burn-card">
+          <div class="metric-label">Gasto diario medio</div>
+          <div class="metric-value">{{ daily_burn_rate|floatformat:0 }} EUR/dia</div>
+          <div class="metric-sub">Ritmo del mes en curso basado en dias transcurridos.</div>
+        </section>
+        <section class="bank-burn-card">
+          <div class="metric-label">Gasto proyectado del mes</div>
+          <div class="metric-value {% if projected_monthly_expense > reconciled_summary.average_monthly_household_expenses %}warn{% else %}good{% endif %}">{{ projected_monthly_expense|floatformat:0 }} EUR</div>
+          <div class="metric-sub">Estimacion si el ritmo actual se mantiene hasta fin de mes.</div>
+        </section>
+        <section class="bank-burn-card">
+          <div class="metric-label">Media mensual historica</div>
+          <div class="metric-value">{{ reconciled_summary.average_monthly_household_expenses|floatformat:0 }} EUR</div>
+          <div class="metric-sub">Referencia del gasto medio de todos los meses importados.</div>
+        </section>
+      </div>
+    {% endif %}
+
+    <div class="bank-dropzone" id="hero-dropzone">
+      <div class="bank-dropzone-copy">
+        <div class="bank-dropzone-title">Importar extractos al instante</div>
+        <div class="bank-dropzone-sub">Arrastra aqui tus ficheros XLS/XLSX o pulsa el boton para seleccionarlos. Tipo de cuenta y titular se detectan automaticamente.</div>
+      </div>
+      <div class="bank-dropzone-actions">
+        <form method="post" enctype="multipart/form-data" id="hero-dropzone-form" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="import">
+          <select name="statement_kind" style="padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.1);color:#fff;font-size:12px;font-weight:700;">
+            {% for value, label in statement_kind_choices %}
+              <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+          <input type="file" name="files" accept=".xls,.xlsx" multiple id="hero-dropzone-input" style="display:none;">
+          <label for="hero-dropzone-input" class="bank-dropzone-btn">Seleccionar ficheros</label>
+        </form>
+        <span class="bank-dropzone-status" id="hero-dropzone-status"></span>
+      </div>
     </div>
 
     {% if annual_overview.current_year %}
@@ -1393,6 +1631,67 @@
         }, 1400);
       });
     });
+
+    (function () {
+      var dropzone = document.getElementById("hero-dropzone");
+      var form = document.getElementById("hero-dropzone-form");
+      var fileInput = document.getElementById("hero-dropzone-input");
+      var status = document.getElementById("hero-dropzone-status");
+      if (!dropzone || !form || !fileInput) return;
+
+      function showStatus(message, tone) {
+        status.textContent = message;
+        status.style.color = tone === "ok" ? "#53c88c" : tone === "warn" ? "#f0b14a" : "rgba(255,255,255,.8)";
+      }
+
+      function submitFiles(files) {
+        if (!files || !files.length) return;
+        var names = [];
+        for (var i = 0; i < files.length; i++) names.push(files[i].name);
+        showStatus("Importando " + files.length + " fichero(s)...", "info");
+
+        var dt = new DataTransfer();
+        for (var j = 0; j < files.length; j++) dt.items.add(files[j]);
+        fileInput.files = dt.files;
+        form.submit();
+      }
+
+      fileInput.addEventListener("change", function () {
+        submitFiles(fileInput.files);
+      });
+
+      ["dragenter", "dragover"].forEach(function (evt) {
+        dropzone.addEventListener(evt, function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.add("dragover");
+        });
+      });
+
+      ["dragleave", "drop"].forEach(function (evt) {
+        dropzone.addEventListener(evt, function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.remove("dragover");
+        });
+      });
+
+      dropzone.addEventListener("drop", function (e) {
+        var files = e.dataTransfer.files;
+        var valid = [];
+        for (var i = 0; i < files.length; i++) {
+          var name = files[i].name.toLowerCase();
+          if (name.endsWith(".xls") || name.endsWith(".xlsx")) {
+            valid.push(files[i]);
+          }
+        }
+        if (valid.length) {
+          submitFiles(valid);
+        } else {
+          showStatus("Solo se aceptan ficheros .xls o .xlsx", "warn");
+        }
+      });
+    }());
   </script>
 
   {% comment %}
