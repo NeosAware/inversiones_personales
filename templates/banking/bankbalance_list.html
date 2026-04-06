@@ -6,37 +6,314 @@
   <style>
     .bank-hero{
       display:grid;
-      gap:20px;
-      grid-template-columns:minmax(0, 1.25fr) minmax(320px, .75fr);
-      padding:28px;
+      gap:22px;
+      grid-template-columns:minmax(0, 1.05fr) minmax(360px, .95fr);
+      padding:30px;
       background:
-        radial-gradient(circle at top right, rgba(255,255,255,.18), transparent 28%),
-        linear-gradient(135deg, #12364d 0%, #0f5f88 56%, #2f9dd1 100%);
+        radial-gradient(circle at top left, rgba(255,255,255,.12), transparent 26%),
+        radial-gradient(circle at top right, rgba(255,206,120,.18), transparent 20%),
+        linear-gradient(135deg, #0b2237 0%, #0f5f88 52%, #1a879d 100%);
       color:#fff;
     }
-    .bank-hero .section-title{ color:rgba(255,255,255,.7); }
+    .bank-hero .section-title{ color:rgba(255,255,255,.72); }
     .bank-hero .muted{ color:rgba(255,255,255,.82); }
+    .bank-hero-copy{
+      display:grid;
+      gap:16px;
+      align-content:start;
+    }
+    .bank-hero-title{
+      margin:0;
+      font-size:38px;
+      line-height:1.05;
+      letter-spacing:-.02em;
+    }
+    .bank-hero-lead{
+      margin:0;
+      max-width:780px;
+      font-size:15px;
+      color:rgba(255,255,255,.84);
+    }
+    .bank-hero-badges{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+    }
+    .bank-hero-badge{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 12px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.18);
+      background:rgba(10,31,47,.24);
+      color:#fff;
+      font-size:12px;
+      font-weight:700;
+    }
     .bank-hero-grid{
       display:grid;
       gap:14px;
       grid-template-columns:repeat(2, minmax(0, 1fr));
+      align-content:start;
     }
     .bank-hero-stat{
-      padding:16px 18px;
-      border-radius:18px;
-      border:1px solid rgba(255,255,255,.16);
-      background:rgba(255,255,255,.1);
-      backdrop-filter:blur(10px);
+      padding:18px;
+      border-radius:20px;
+      border:1px solid rgba(255,255,255,.18);
+      background:#fff;
+      color:#102b43;
+      box-shadow:0 20px 35px rgba(11,34,55,.14);
     }
-    .bank-hero-stat-highlight{
-      background:rgba(255,255,255,.16);
-      border-color:rgba(255,255,255,.24);
-    }
-    .bank-hero-stat-highlight .metric-value{
+    .bank-hero-stat .metric-label{ color:#597083; }
+    .bank-hero-stat .metric-sub{ color:#637989; }
+    .bank-hero-stat .metric-value{
+      color:#102b43;
       font-size:30px;
     }
-    .bank-hero-stat .metric-label{ color:rgba(255,255,255,.72); }
-    .bank-hero-stat .metric-sub{ color:rgba(255,255,255,.78); }
+    .bank-hero-stat-primary{
+      border-top:4px solid transparent;
+    }
+    .bank-hero-stat-income{
+      border-top-color:#177245;
+      background:linear-gradient(180deg, #ffffff 0%, #f4fbf7 100%);
+    }
+    .bank-hero-stat-expense{
+      border-top-color:#b26400;
+      background:linear-gradient(180deg, #ffffff 0%, #fff8ef 100%);
+    }
+    .bank-hero-stat-savings{
+      border-top-color:#0f5f88;
+      background:linear-gradient(180deg, #ffffff 0%, #f2f8fc 100%);
+    }
+    .bank-hero-stat-flow{
+      border-top-color:#405a8c;
+      background:linear-gradient(180deg, #ffffff 0%, #f5f7fc 100%);
+    }
+    .bank-hero-stat-secondary{
+      background:rgba(10,31,47,.24);
+      border-color:rgba(255,255,255,.14);
+      box-shadow:none;
+      backdrop-filter:blur(10px);
+    }
+    .bank-hero-stat-secondary .metric-label{
+      color:rgba(255,255,255,.68);
+    }
+    .bank-hero-stat-secondary .metric-sub{
+      color:rgba(255,255,255,.76);
+    }
+    .bank-hero-stat-secondary .metric-value{
+      color:#fff;
+    }
+    .bank-hero-signal-strip{
+      grid-column:1 / -1;
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(6, minmax(0, 1fr));
+    }
+    .bank-hero-signal{
+      padding:14px 16px;
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(10,31,47,.24);
+      backdrop-filter:blur(10px);
+    }
+    .bank-hero-signal .metric-label{
+      color:rgba(255,255,255,.68);
+    }
+    .bank-hero-signal .metric-sub{
+      color:rgba(255,255,255,.74);
+    }
+    .bank-hero-signal .metric-value{
+      color:#fff;
+      font-size:22px;
+    }
+    .bank-visual-grid{
+      grid-column:1 / -1;
+      display:grid;
+      gap:18px;
+      grid-template-columns:repeat(3, minmax(0, 1fr));
+    }
+    .bank-visual-panel{
+      padding:20px;
+      border-radius:22px;
+      border:1px solid rgba(255,255,255,.2);
+      background:linear-gradient(180deg, rgba(255,255,255,.98) 0%, rgba(246,250,253,.98) 100%);
+      color:#12364d;
+      box-shadow:0 18px 34px rgba(11,34,55,.12);
+    }
+    .bank-visual-head{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:12px;
+      margin-bottom:16px;
+    }
+    .bank-visual-kicker{
+      margin:0 0 6px;
+      font-size:12px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:#0f5f88;
+      font-weight:800;
+    }
+    .bank-visual-title{
+      margin:0;
+      font-size:22px;
+      line-height:1.15;
+      color:#12364d;
+    }
+    .bank-compare-list{
+      display:grid;
+      gap:12px;
+    }
+    .bank-compare-row{
+      display:grid;
+      gap:12px;
+      grid-template-columns:96px minmax(0, 1fr) 128px;
+      align-items:center;
+    }
+    .bank-compare-label{
+      font-size:13px;
+      font-weight:800;
+      color:#17384e;
+    }
+    .bank-compare-track{
+      height:12px;
+      border-radius:999px;
+      background:#e6eef5;
+      overflow:hidden;
+    }
+    .bank-compare-fill{
+      display:block;
+      height:100%;
+      border-radius:999px;
+    }
+    .bank-compare-fill-income{
+      background:linear-gradient(90deg, #177245 0%, #53c88c 100%);
+    }
+    .bank-compare-fill-expense{
+      background:linear-gradient(90deg, #b26400 0%, #f0b14a 100%);
+    }
+    .bank-compare-fill-savings{
+      background:linear-gradient(90deg, #0f5f88 0%, #4aa7db 100%);
+    }
+    .bank-compare-value{
+      text-align:right;
+      font-size:13px;
+      font-weight:800;
+      color:#17384e;
+      font-variant-numeric:tabular-nums;
+    }
+    .bank-hero-note{
+      margin-top:16px;
+      padding:14px 16px;
+      border-radius:16px;
+      background:#eef5fa;
+      color:#214157;
+      font-size:13px;
+      line-height:1.5;
+    }
+    .bank-month-strip{
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(auto-fit, minmax(72px, 1fr));
+    }
+    .bank-month-card{
+      padding:14px 12px;
+      border-radius:18px;
+      border:1px solid #e4edf3;
+      background:#f8fbfd;
+      text-align:center;
+    }
+    .bank-month-label{
+      font-size:12px;
+      font-weight:800;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:#5f7788;
+    }
+    .bank-month-chart{
+      height:92px;
+      margin:12px 0 10px;
+      display:flex;
+      align-items:flex-end;
+      justify-content:center;
+    }
+    .bank-month-rail{
+      width:28px;
+      height:100%;
+      border-radius:999px;
+      background:#e5edf4;
+      overflow:hidden;
+      display:flex;
+      align-items:flex-end;
+    }
+    .bank-month-bar{
+      width:100%;
+      min-height:8px;
+      border-radius:999px;
+    }
+    .bank-month-bar.good{
+      background:linear-gradient(180deg, #55c88d 0%, #177245 100%);
+    }
+    .bank-month-bar.warn{
+      background:linear-gradient(180deg, #f0b14a 0%, #a85f00 100%);
+    }
+    .bank-month-value{
+      font-size:12px;
+      font-weight:800;
+      font-variant-numeric:tabular-nums;
+      color:#17384e;
+    }
+    .bank-month-sub{
+      margin-top:4px;
+      font-size:11px;
+      color:#6a7f90;
+    }
+    .bank-family-list{
+      display:grid;
+      gap:12px;
+    }
+    .bank-family-row{
+      display:grid;
+      gap:10px;
+      grid-template-columns:minmax(0, 1fr) 58px 108px;
+      align-items:center;
+    }
+    .bank-family-copy strong{
+      display:block;
+      color:#17384e;
+    }
+    .bank-family-copy span{
+      font-size:12px;
+      color:#637989;
+    }
+    .bank-family-track{
+      height:10px;
+      border-radius:999px;
+      background:#e6eef5;
+      overflow:hidden;
+    }
+    .bank-family-fill{
+      display:block;
+      height:100%;
+      border-radius:999px;
+      background:linear-gradient(90deg, #0f5f88 0%, #4fa9dc 100%);
+    }
+    .bank-family-share{
+      text-align:right;
+      font-size:12px;
+      font-weight:700;
+      color:#5f7788;
+    }
+    .bank-family-total{
+      text-align:right;
+      font-size:13px;
+      font-weight:800;
+      color:#17384e;
+      font-variant-numeric:tabular-nums;
+    }
     .bank-year-stack{
       display:grid;
       gap:18px;
@@ -146,32 +423,43 @@
       margin-top:18px;
     }
     .bank-jumpbar-inner{
-      display:flex;
-      gap:10px;
-      flex-wrap:wrap;
-      padding:12px 14px;
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(auto-fit, minmax(145px, 1fr));
+      padding:14px;
       border:1px solid var(--line);
-      border-radius:18px;
-      background:rgba(255,255,255,.94);
-      backdrop-filter:blur(10px);
-      box-shadow:0 8px 20px rgba(18,54,77,.08);
+      border-radius:22px;
+      background:rgba(255,255,255,.96);
+      backdrop-filter:blur(12px);
+      box-shadow:0 12px 28px rgba(18,54,77,.1);
     }
     .bank-jump{
-      display:inline-flex;
-      align-items:center;
-      justify-content:center;
-      padding:8px 12px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      color:var(--text);
+      display:grid;
+      gap:4px;
+      padding:12px 14px;
+      border-radius:18px;
+      border:1px solid #dfe9f1;
+      color:#17384e;
       text-decoration:none;
       font-size:13px;
       font-weight:700;
-      background:#fff;
+      background:linear-gradient(180deg, #ffffff 0%, #f5f9fc 100%);
+      transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+    }
+    .bank-jump strong{
+      font-size:14px;
+      color:#17384e;
+    }
+    .bank-jump span{
+      font-size:12px;
+      color:#627b8d;
+      font-weight:600;
     }
     .bank-jump:hover{
+      transform:translateY(-1px);
       border-color:#0f5f88;
       color:#0f5f88;
+      box-shadow:0 10px 22px rgba(15,95,136,.12);
     }
     .bank-fold{
       margin-top:24px;
@@ -268,14 +556,59 @@
     .bank-subfold-body{
       padding:0 16px 16px;
     }
+    .bank-expense-visuals{
+      display:grid;
+      gap:18px;
+      grid-template-columns:minmax(0, 1.1fr) minmax(0, .9fr);
+      margin:20px 0 18px;
+    }
+    .bank-expense-month-list{
+      display:grid;
+      gap:12px;
+    }
+    .bank-expense-month-row{
+      display:grid;
+      gap:12px;
+      grid-template-columns:74px minmax(0, 1fr) 100px;
+      align-items:center;
+    }
+    .bank-expense-month-label{
+      font-size:12px;
+      font-weight:800;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:#5f7788;
+    }
+    .bank-expense-month-track{
+      height:10px;
+      border-radius:999px;
+      background:#e6eef5;
+      overflow:hidden;
+    }
+    .bank-expense-month-fill{
+      display:block;
+      height:100%;
+      border-radius:999px;
+      background:linear-gradient(90deg, #b26400 0%, #f0b14a 100%);
+    }
+    .bank-expense-month-value{
+      text-align:right;
+      font-size:13px;
+      font-weight:800;
+      color:#17384e;
+      font-variant-numeric:tabular-nums;
+    }
     @media (max-width: 980px){
       .bank-hero,
       .bank-year-detail,
-      .bank-structure{
+      .bank-structure,
+      .bank-expense-visuals{
         grid-template-columns:1fr;
       }
       .bank-year-metrics,
-      .bank-hero-grid{
+      .bank-hero-grid,
+      .bank-hero-signal-strip,
+      .bank-visual-grid{
         grid-template-columns:1fr 1fr;
       }
       .bank-fold-summary{
@@ -285,74 +618,233 @@
     }
     @media (max-width: 640px){
       .bank-year-metrics,
-      .bank-hero-grid{
+      .bank-hero-grid,
+      .bank-hero-signal-strip,
+      .bank-visual-grid{
         grid-template-columns:1fr;
       }
       .flow-row{
         grid-template-columns:52px minmax(0, 1fr) 100px;
       }
-      .bank-jumpbar-inner{
-        display:grid;
+      .bank-compare-row,
+      .bank-family-row,
+      .bank-expense-month-row{
+        grid-template-columns:1fr;
+      }
+      .bank-family-share,
+      .bank-family-total,
+      .bank-expense-month-value,
+      .bank-compare-value{
+        text-align:left;
       }
     }
   </style>
 
-  <section class="card bank-hero">
-    <div>
-      <p class="section-title">{{ page_title }}</p>
-      <h2 style="margin:0 0 12px; font-size:34px;">Radar bancario anual</h2>
-      <p class="muted" style="margin:0;">La parte superior prioriza lo que mas informacion aporta para decidir: cuanto entra, cuanto sale, cuanto se ahorra y como evoluciona el flujo neto del ano. Despues se separan bancos, cuentas y operativa.</p>
-      <div class="meta" style="margin-top:18px;">
-        <span class="pill">{{ annual_overview.years_count }} ejercicios analizados</span>
-        <span class="pill">{{ institution_overview.summary.institutions_count }} bancos visibles</span>
-        <span class="pill">{{ summary.accounts_count }} cuentas visibles</span>
-        <span class="pill">{{ card_summary.cards_count }} tarjetas separadas</span>
+  <section class="card bank-hero" id="bank-cockpit">
+    <div class="bank-hero-copy">
+      <div>
+        <p class="section-title">{{ page_title }}</p>
+        <h2 class="bank-hero-title">Cockpit bancario profesional</h2>
+        <p class="bank-hero-lead">La vista arranca por lo que mas decide: ingresos, gasto real del hogar, ahorro medio y flujo neto. Debajo quedan el pulso mensual, el mapa del gasto y la navegacion rapida al detalle operativo.</p>
+      </div>
+      <div class="bank-hero-badges">
+        <span class="bank-hero-badge">{{ annual_overview.years_count }} ejercicios analizados</span>
+        <span class="bank-hero-badge">{{ institution_overview.summary.institutions_count }} bancos visibles</span>
+        <span class="bank-hero-badge">{{ summary.accounts_count }} cuentas visibles</span>
+        <span class="bank-hero-badge">{{ card_summary.cards_count }} tarjetas separadas</span>
       </div>
     </div>
+
     <div class="bank-hero-grid">
       {% if annual_overview.current_year %}
-        <section class="bank-hero-stat bank-hero-stat-highlight">
+        <section class="bank-hero-stat bank-hero-stat-primary bank-hero-stat-income">
           <div class="metric-label">Ingresos {{ annual_overview.current_year.year }}</div>
           <div class="metric-value">{{ annual_overview.current_year.gross_inflows_total|floatformat:2 }} EUR</div>
-          <div class="metric-sub">Ingresos bancarios y dividendos del ejercicio actual.</div>
+          <div class="metric-sub">Entradas bancarias y dividendos del ejercicio actual.</div>
         </section>
-        <section class="bank-hero-stat bank-hero-stat-highlight">
+        <section class="bank-hero-stat bank-hero-stat-primary bank-hero-stat-expense">
           <div class="metric-label">Gasto del hogar {{ annual_overview.current_year.year }}</div>
           <div class="metric-value">{{ annual_overview.current_year.household_expenses_total|floatformat:2 }} EUR</div>
-          <div class="metric-sub">Gasto consolidado sin duplicar liquidaciones de tarjeta.</div>
+          <div class="metric-sub">Consolidado sin duplicar la liquidacion de las tarjetas.</div>
         </section>
-        <section class="bank-hero-stat">
+        <section class="bank-hero-stat bank-hero-stat-primary bank-hero-stat-savings">
           <div class="metric-label">Ahorro medio mensual</div>
           <div class="metric-value {% if annual_overview.current_year.average_monthly_savings >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.average_monthly_savings|floatformat:2 }} EUR</div>
           <div class="metric-sub">Media mensual del ejercicio {{ annual_overview.current_year.year }}.</div>
         </section>
-        <section class="bank-hero-stat">
+        <section class="bank-hero-stat bank-hero-stat-primary bank-hero-stat-flow">
           <div class="metric-label">Flujo neto acumulado</div>
           <div class="metric-value {% if annual_overview.current_year.net_value_flow_total >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.net_value_flow_total|floatformat:2 }} EUR</div>
           <div class="metric-sub">Ahorro operativo menos aportaciones a planes.</div>
         </section>
+      {% else %}
+        <section class="bank-hero-stat bank-hero-stat-secondary" style="grid-column:1 / -1;">
+          <div class="metric-label">Sin ano operativo construido</div>
+          <div class="metric-value">Importa extractos</div>
+          <div class="metric-sub">En cuanto entren cuentas o tarjetas, aqui aparecera el cockpit de ingresos, gasto y flujo neto.</div>
+        </section>
       {% endif %}
-      <section class="bank-hero-stat">
-        <div class="metric-label">Saldo bancario visible</div>
+    </div>
+
+    <div class="bank-hero-signal-strip">
+      <section class="bank-hero-signal">
+        <div class="metric-label">Saldo visible</div>
         <div class="metric-value">{{ summary.current_balance|floatformat:2 }} EUR</div>
-        <div class="metric-sub">Saldo agregado de las cuentas bancarias visibles hoy.</div>
+        <div class="metric-sub">Liquidez bancaria agregada hoy.</div>
       </section>
-      <section class="bank-hero-stat">
+      <section class="bank-hero-signal">
+        <div class="metric-label">Cobertura bancaria</div>
+        <div class="metric-value">{{ institution_overview.summary.institutions_with_imported_accounts }}/{{ institution_overview.summary.institutions_count }}</div>
+        <div class="metric-sub">Bancos con cuentas importadas.</div>
+      </section>
+      <section class="bank-hero-signal">
+        <div class="metric-label">Cuentas visibles</div>
+        <div class="metric-value">{{ summary.accounts_count }}</div>
+        <div class="metric-sub">Cuentas bancarias actualmente visibles.</div>
+      </section>
+      <section class="bank-hero-signal">
+        <div class="metric-label">Tarjetas separadas</div>
+        <div class="metric-value">{{ card_summary.cards_count }}</div>
+        <div class="metric-sub">Tarjetas ya aisladas del cargo en cuenta.</div>
+      </section>
+      <section class="bank-hero-signal">
+        <div class="metric-label">Series a revisar</div>
+        <div class="metric-value">{{ continuity_summary.groups_with_gap_count|add:continuity_summary.groups_with_overlap_count }}</div>
+        <div class="metric-sub">Huecos o solapes que pueden sesgar el analisis.</div>
+      </section>
+      <section class="bank-hero-signal">
         <div class="metric-label">Ultimo mes bancario</div>
         <div class="metric-value">{{ summary.latest_month|default:"-" }}</div>
-        <div class="metric-sub">Ultimo cierre detectado en las cuentas importadas.</div>
+        <div class="metric-sub">Ultimo cierre detectado en la liquidez importada.</div>
       </section>
     </div>
+
+    {% if annual_overview.current_year %}
+      <div class="bank-visual-grid">
+        <section class="bank-visual-panel">
+          <div class="bank-visual-head">
+            <div>
+              <p class="bank-visual-kicker">Balance operativo {{ annual_overview.current_year.year }}</p>
+              <h3 class="bank-visual-title">Ingresos frente a gasto real</h3>
+            </div>
+            {% if annual_overview.current_year.savings_rate_pct %}
+              <span class="pill">{{ annual_overview.current_year.savings_rate_pct|floatformat:1 }} % de ahorro operativo</span>
+            {% endif %}
+          </div>
+          <div class="bank-compare-list">
+            <div class="bank-compare-row">
+              <div class="bank-compare-label">Ingresos</div>
+              <div class="bank-compare-track">
+                <span class="bank-compare-fill bank-compare-fill-income" style="width:100%;"></span>
+              </div>
+              <div class="bank-compare-value">{{ annual_overview.current_year.gross_inflows_total|floatformat:2 }} EUR</div>
+            </div>
+            <div class="bank-compare-row">
+              <div class="bank-compare-label">Gasto</div>
+              <div class="bank-compare-track">
+                <span class="bank-compare-fill bank-compare-fill-expense" style="width:{% if annual_overview.current_year.gross_inflows_total > 0 %}min({% widthratio annual_overview.current_year.household_expenses_total annual_overview.current_year.gross_inflows_total 100 %}%, 100%){% else %}0{% endif %};"></span>
+              </div>
+              <div class="bank-compare-value">{{ annual_overview.current_year.household_expenses_total|floatformat:2 }} EUR</div>
+            </div>
+            <div class="bank-compare-row">
+              <div class="bank-compare-label">Ahorro</div>
+              <div class="bank-compare-track">
+                <span class="bank-compare-fill bank-compare-fill-savings" style="width:{% if annual_overview.current_year.gross_inflows_total > 0 and annual_overview.current_year.operating_savings_total > 0 %}{% widthratio annual_overview.current_year.operating_savings_total annual_overview.current_year.gross_inflows_total 100 %}{% else %}0{% endif %}%;"></span>
+              </div>
+              <div class="bank-compare-value {% if annual_overview.current_year.operating_savings_total >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.operating_savings_total|floatformat:2 }} EUR</div>
+            </div>
+          </div>
+          <div class="bank-hero-note">La lectura rapida es esta: si el gasto se dispara, aqui se ve antes que en las cuentas; si el ahorro cae pero el flujo neto sigue sano, normalmente el dinero se esta yendo a planes o productos de ahorro.</div>
+        </section>
+
+        <section class="bank-visual-panel">
+          <div class="bank-visual-head">
+            <div>
+              <p class="bank-visual-kicker">Pulso mensual</p>
+              <h3 class="bank-visual-title">Flujo neto del ano</h3>
+            </div>
+            <span class="pill">{{ annual_overview.current_year.months_count }} meses</span>
+          </div>
+          <div class="bank-month-strip">
+            {% for month in annual_overview.current_year.months %}
+              <div class="bank-month-card">
+                <div class="bank-month-label">{{ month.short_label }}</div>
+                <div class="bank-month-chart">
+                  <div class="bank-month-rail">
+                    <span class="bank-month-bar {{ month.net_value_flow_tone }}" style="height:{{ month.monthly_width_pct }}%;"></span>
+                  </div>
+                </div>
+                <div class="bank-month-value {% if month.net_value_flow >= 0 %}good{% else %}warn{% endif %}">{{ month.net_value_flow|floatformat:0 }} EUR</div>
+                <div class="bank-month-sub">Acum. {{ month.cumulative_net_value_flow|floatformat:0 }} EUR</div>
+              </div>
+            {% endfor %}
+          </div>
+        </section>
+
+        <section class="bank-visual-panel">
+          <div class="bank-visual-head">
+            <div>
+              <p class="bank-visual-kicker">Mapa del gasto</p>
+              <h3 class="bank-visual-title">Familias dominantes</h3>
+            </div>
+            <span class="pill">{{ reconciled_summary.families_count }} familias</span>
+          </div>
+          <div class="bank-family-list">
+            {% for row in reconciled_expense_matrix|slice:":5" %}
+              <div class="bank-family-row">
+                <div class="bank-family-copy">
+                  <strong>{{ row.concept }}</strong>
+                  <span>{{ row.share_pct|floatformat:1 }} % del gasto total</span>
+                </div>
+                <div class="bank-family-track">
+                  <span class="bank-family-fill" style="width:{% if reconciled_summary.household_expenses_total > 0 %}{% widthratio row.total reconciled_summary.household_expenses_total 100 %}{% else %}0{% endif %}%;"></span>
+                </div>
+                <div class="bank-family-total">{{ row.total|floatformat:2 }} EUR</div>
+              </div>
+            {% empty %}
+              <div class="metric-sub">Todavia no hay gasto consolidado suficiente para construir el mapa por familias.</div>
+            {% endfor %}
+          </div>
+          <div class="bank-hero-note">Con una sola mirada sabes donde se concentra el gasto. La tabla general queda mas abajo para el analisis fino por meses y familias.</div>
+        </section>
+      </div>
+    {% endif %}
   </section>
 
   <nav class="bank-jumpbar" aria-label="Navegacion rapida de banca">
     <div class="bank-jumpbar-inner">
-      <a class="bank-jump" href="#bank-annual">Resumen anual</a>
-      <a class="bank-jump" href="#bank-accounts">Cuentas</a>
-      <a class="bank-jump" href="#bank-expenses">Gasto familiar</a>
-      <a class="bank-jump" href="#bank-continuity">Continuidad</a>
-      <a class="bank-jump" href="#bank-files">Importaciones</a>
-      <a class="bank-jump" href="#bank-operations">Operativa</a>
+      <a class="bank-jump" href="#bank-cockpit">
+        <strong>Cockpit</strong>
+        <span>Lectura ejecutiva inicial</span>
+      </a>
+      <a class="bank-jump" href="#bank-annual">
+        <strong>Resumen anual</strong>
+        <span>Detalle por ejercicio</span>
+      </a>
+      <a class="bank-jump" href="#bank-banks">
+        <strong>Bancos</strong>
+        <span>Mapa por entidad</span>
+      </a>
+      <a class="bank-jump" href="#bank-accounts">
+        <strong>Cuentas</strong>
+        <span>Detalle operativo</span>
+      </a>
+      <a class="bank-jump" href="#bank-expenses">
+        <strong>Gasto familiar</strong>
+        <span>Una sola tabla general</span>
+      </a>
+      <a class="bank-jump" href="#bank-continuity">
+        <strong>Continuidad</strong>
+        <span>Calidad del dato</span>
+      </a>
+      <a class="bank-jump" href="#bank-files">
+        <strong>Importaciones</strong>
+        <span>Ficheros ya cargados</span>
+      </a>
+      <a class="bank-jump" href="#bank-operations">
+        <strong>Operativa</strong>
+        <span>Mantenimiento al final</span>
+      </a>
     </div>
   </nav>
 
@@ -492,7 +984,7 @@
     {% endfor %}
   </div>
 
-  <div class="split bank-structure">
+  <div class="split bank-structure" id="bank-banks">
     <section class="card table-card">
       <p class="section-title">Bancos</p>
       <h2 style="margin-top:0;">Instituciones separadas de las cuentas</h2>
@@ -1370,7 +1862,7 @@
     </div>
   </details>
 
-  <section class="card table-card" style="margin-top:24px;">
+  <section class="card table-card" style="margin-top:24px;" id="bank-expenses">
     <p class="section-title">Gasto familiar consolidado</p>
     <h2 style="margin-top:0;">Una sola lectura del gasto del hogar</h2>
     <p class="muted" style="margin-top:0;">Esta tabla une cuenta y tarjeta en un unico analisis. Si existe detalle de tarjeta, la liquidacion en cuenta no se vuelve a sumar. Las filas se agrupan por familias utiles: alimentacion, estudios y residencia, ocio, hogar, transporte y similares.</p>
@@ -1397,6 +1889,56 @@
       </section>
     </div>
     <div class="metric-sub" style="margin-bottom:18px;">{{ reconciled_summary.note }}</div>
+    <div class="bank-expense-visuals">
+      <section class="soft-panel">
+        <div class="soft-copy">
+          <div>
+            <h3 class="soft-title">Ritmo mensual del gasto</h3>
+            <div class="metric-sub">Los meses mas recientes entran primero para detectar desviaciones de inmediato.</div>
+          </div>
+          <span class="pill">{{ reconciled_summary.months_count }} meses</span>
+        </div>
+        <div class="bank-expense-month-list">
+          {% for row in reconciled_monthly_summaries|slice:":6" %}
+            <div class="bank-expense-month-row">
+              <div class="bank-expense-month-label">{{ row.label }}</div>
+              <div class="bank-expense-month-track">
+                <span class="bank-expense-month-fill" style="width:{% if reconciled_summary.household_expenses_total > 0 %}{% widthratio row.household_expenses reconciled_summary.household_expenses_total 100 %}{% else %}0{% endif %}%;"></span>
+              </div>
+              <div class="bank-expense-month-value">{{ row.household_expenses|floatformat:2 }} EUR</div>
+            </div>
+          {% empty %}
+            <div class="metric-sub">Cuando haya meses consolidados, aqui veras de un vistazo si el gasto acelera o se enfria.</div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="soft-panel">
+        <div class="soft-copy">
+          <div>
+            <h3 class="soft-title">Top familias del periodo</h3>
+            <div class="metric-sub">Las familias mas pesadas se visualizan antes de bajar a la tabla completa.</div>
+          </div>
+          <span class="pill">{{ reconciled_summary.families_count }} familias</span>
+        </div>
+        <div class="bank-family-list">
+          {% for row in reconciled_expense_matrix|slice:":6" %}
+            <div class="bank-family-row">
+              <div class="bank-family-copy">
+                <strong>{{ row.concept }}</strong>
+                <span>{{ row.share_pct|floatformat:1 }} % del total</span>
+              </div>
+              <div class="bank-family-track">
+                <span class="bank-family-fill" style="width:{% if reconciled_summary.household_expenses_total > 0 %}{% widthratio row.total reconciled_summary.household_expenses_total 100 %}{% else %}0{% endif %}%;"></span>
+              </div>
+              <div class="bank-family-total">{{ row.total|floatformat:2 }} EUR</div>
+            </div>
+          {% empty %}
+            <div class="metric-sub">Todavia no hay familias de gasto suficientes para dibujar el reparto.</div>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
     <table>
       <thead>
         <tr>
