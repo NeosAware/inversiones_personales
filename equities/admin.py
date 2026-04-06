@@ -15,6 +15,7 @@ class EquityPositionAdmin(admin.ModelAdmin):
         "shares",
         "average_cost_per_share",
         "current_price_per_share",
+        "annual_maintenance_cost",
         "latest_price_date",
         "last_synced_at",
     )
@@ -24,6 +25,6 @@ class EquityPositionAdmin(admin.ModelAdmin):
 
 @admin.register(EquityPriceHistory)
 class EquityPriceHistoryAdmin(admin.ModelAdmin):
-    list_display = ("position", "price_date", "close_price", "benchmark_close")
+    list_display = ("position", "price_date", "open_price", "high_price", "low_price", "close_price", "benchmark_close")
     search_fields = ("position__ticker", "position__company_name")
     list_filter = ("position__benchmark_symbol",)

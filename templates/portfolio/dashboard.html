@@ -6,7 +6,7 @@
   <div class="split">
     <section class="card">
       <p class="section-title">Resumen</p>
-      <p class="muted" style="margin-top:0;">Vista rapida entre empresas del grupo, acciones cotizadas y el bloque completo de banca.</p>
+      <p class="muted" style="margin-top:0;">Vista rapida entre empresas del grupo, acciones cotizadas, banca y patrimonio inmobiliario.</p>
       <div class="grid cols-4">
         <section class="card">
           <div class="metric-label">Patrimonio total</div>
@@ -58,6 +58,51 @@
       </div>
     </section>
   </div>
+
+  <p class="section-title" style="margin-top:28px;">Patrimonio por titular</p>
+  <div class="grid cols-3">
+    {% for owner in owner_asset_overview.groups %}
+      <section class="card">
+        <div class="metric-label">{{ owner.ownership_label }}</div>
+        <div class="metric-value">{{ owner.current_value|floatformat:2 }} EUR</div>
+        <div class="metric-sub">Renta anual {{ owner.annual_income|floatformat:2 }} EUR</div>
+        <div class="meta">
+          <span class="pill">Banca {{ owner.banking_current_value|floatformat:0 }} EUR</span>
+          <span class="pill">Acciones {{ owner.equities_current_value|floatformat:0 }} EUR</span>
+          <span class="pill">Inmuebles {{ owner.real_estate_current_value|floatformat:0 }} EUR</span>
+        </div>
+      </section>
+    {% endfor %}
+  </div>
+
+  <section class="card table-card" style="margin-top:18px;">
+    <table>
+      <thead>
+        <tr>
+          <th>Titular</th>
+          <th>Patrimonio trazado</th>
+          <th>Banca</th>
+          <th>Liquidez</th>
+          <th>Acciones</th>
+          <th>Inmuebles</th>
+          <th>Renta anual</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for owner in owner_asset_overview.groups %}
+          <tr>
+            <td><strong>{{ owner.ownership_label }}</strong></td>
+            <td>{{ owner.current_value|floatformat:2 }} EUR</td>
+            <td>{{ owner.banking_current_value|floatformat:2 }} EUR</td>
+            <td>{{ owner.bank_liquidity_value|floatformat:2 }} EUR</td>
+            <td>{{ owner.equities_current_value|floatformat:2 }} EUR</td>
+            <td>{{ owner.real_estate_current_value|floatformat:2 }} EUR</td>
+            <td>{{ owner.annual_income|floatformat:2 }} EUR</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
 
   <p class="section-title" style="margin-top:28px;">Liquidez bancaria</p>
   <div class="grid cols-4">

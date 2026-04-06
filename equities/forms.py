@@ -40,6 +40,13 @@ class EquityPositionForm(forms.Form):
         initial=0,
         label="Dividendos anuales",
     )
+    annual_maintenance_cost = FlexibleDecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+        initial=0,
+        label="Coste anual de mantenimiento",
+    )
     notes = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 3}), label="Notas")
 
     def clean_broker(self):
@@ -68,6 +75,8 @@ class EquityPositionForm(forms.Form):
             cleaned_data["current_price_per_share"] = cleaned_data.get("average_cost_per_share")
         if cleaned_data.get("annual_dividend_income") is None:
             cleaned_data["annual_dividend_income"] = 0
+        if cleaned_data.get("annual_maintenance_cost") is None:
+            cleaned_data["annual_maintenance_cost"] = 0
         return cleaned_data
 
 

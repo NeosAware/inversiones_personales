@@ -209,3 +209,4 @@ SECURE_REFERRER_POLICY = os.environ.get("APP_SECURE_REFERRER_POLICY", "same-orig
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 BANK_ROBOT_IMPORT_TOKEN = os.environ.get("BANK_ROBOT_IMPORT_TOKEN", "").strip()
+EQUITIES_AUTO_SYNC_ON_VIEW = parse_bool(os.environ.get("APP_EQUITIES_AUTO_SYNC_ON_VIEW"), True)

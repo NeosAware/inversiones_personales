@@ -9,24 +9,69 @@
     <section class="card"><div class="metric-label">Valor patrimonial actual</div><div class="metric-value">{{ summary.current_value|floatformat:2 }} EUR</div></section>
     <section class="card"><div class="metric-label">Renta neta anual</div><div class="metric-value">{{ summary.annual_income|floatformat:2 }} EUR</div></section>
   </div>
+
+  <section class="card" style="margin-top:24px;">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;">
+      <div>
+        <h2 style="margin:0;">Patrimonio inmobiliario por titular</h2>
+        <p class="muted" style="margin:8px 0 0;">Separa el valor y la renta de los inmuebles de Ximo, Monica y la parte conjunta para que el resumen general no mezcle patrimonios personales.</p>
+      </div>
+    </div>
+    <div class="grid cols-3" style="margin-top:16px;">
+      {% for owner in ownership_overview.groups %}
+        <section class="card" style="padding:18px;">
+          <div class="metric-label">{{ owner.ownership_label }}</div>
+          <div class="metric-value">{{ owner.current_value|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Renta neta {{ owner.annual_income|floatformat:2 }} EUR · {{ owner.properties_count }} inmueble(s)</div>
+        </section>
+      {% endfor %}
+    </div>
+  </section>
+
   <section class="card table-card" style="margin-top:24px;">
     <table>
-      <thead><tr><th>Inmueble</th><th>Ciudad</th><th>Capital invertido</th><th>Valor de mercado</th><th>Hipoteca</th><th>Patrimonio actual</th><th>Renta neta anual</th></tr></thead>
+      <thead><tr><th>Inmueble</th><th>Titular</th><th>Ciudad</th><th>Capital invertido</th><th>Valor de mercado</th><th>Hipoteca</th><th>Patrimonio actual</th><th>Alquiler anual</th><th>Renta neta anual</th></tr></thead>
       <tbody>
         {% for property_item in properties %}
           <tr>
             <td>{{ property_item.property_name }}</td>
+            <td>{{ property_item.get_ownership_category_display }}</td>
             <td>{{ property_item.city }}</td>
             <td>{{ property_item.invested_equity|floatformat:2 }}</td>
             <td>{{ property_item.market_value|floatformat:2 }}</td>
             <td>{{ property_item.mortgage_balance|floatformat:2 }}</td>
             <td>{{ property_item.current_value|floatformat:2 }}</td>
+            <td>{{ property_item.annual_rent_income|floatformat:2 }}</td>
             <td>{{ property_item.annual_income|floatformat:2 }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="7" class="muted">Todavia no hay activos inmobiliarios.</td></tr>
+          <tr><td colspan="9" class="muted">Todavia no hay activos inmobiliarios.</td></tr>
         {% endfor %}
       </tbody>
     </table>
+  </section>
+
+  <section class="card" style="margin-top:24px;">
+    <p class="section-title">Alta o actualizacion</p>
+    <h2 style="margin-top:0;">Registrar piso y renta</h2>
+    <p class="muted" style="margin-top:0;">Usa esta zona para cargar inmuebles personales como Monseñor Fernando Ferris o Pintor Oliet 13 2o, con su titularidad, valor de mercado y alquiler.</p>
+    <form method="post" class="stack" style="margin-top:18px;">
+      {% csrf_token %}
+      <div class="grid cols-2">
+        <div><label for="{{ form.ownership_category.id_for_label }}">{{ form.ownership_category.label }}</label>{{ form.ownership_category }}</div>
+        <div><label for="{{ form.property_name.id_for_label }}">{{ form.property_name.label }}</label>{{ form.property_name }}</div>
+        <div><label for="{{ form.city.id_for_label }}">{{ form.city.label }}</label>{{ form.city }}</div>
+        <div><label for="{{ form.invested_equity.id_for_label }}">{{ form.invested_equity.label }}</label>{{ form.invested_equity }}</div>
+        <div><label for="{{ form.market_value.id_for_label }}">{{ form.market_value.label }}</label>{{ form.market_value }}</div>
+        <div><label for="{{ form.mortgage_balance.id_for_label }}">{{ form.mortgage_balance.label }}</label>{{ form.mortgage_balance }}</div>
+        <div><label for="{{ form.annual_rent_income.id_for_label }}">{{ form.annual_rent_income.label }}</label>{{ form.annual_rent_income }}</div>
+        <div><label for="{{ form.annual_expenses.id_for_label }}">{{ form.annual_expenses.label }}</label>{{ form.annual_expenses }}</div>
+      </div>
+      <div>
+        <label for="{{ form.notes.id_for_label }}">{{ form.notes.label }}</label>
+        {{ form.notes }}
+      </div>
+      <button class="button" type="submit">Guardar inmueble</button>
+    </form>
   </section>
 {% endblock %}

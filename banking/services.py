@@ -23,7 +23,7 @@ from django.utils import timezone
 
 from portfolio.ownership import AssetOwnershipCategory
 
-from .models import BankBalance, BankMovement, BankStatementImport
+from .models import BankBalance, BankInvestmentPosition, BankMovement, BankStatementImport
 
 
 ZERO = Decimal("0.00")
@@ -1487,6 +1487,12 @@ def classify_expense_family(concept: str, concept_bucket: str) -> str:
 def build_banking_dashboard() -> dict:
     account_overview = build_bank_account_overview()
     card_overview = build_card_spending_overview()
+    investment_positions = list(BankInvestmentPosition.objects.all())
+    ownership_overview = build_banking_ownership_overview(
+        account_overview["accounts"],
+        card_overview["cards"],
+        investment_positions,
+    )
     statements = list(
         BankStatementImport.objects.prefetch_related("movements").order_by("-period_end", "-imported_at")
     )
@@ -1650,6 +1656,7 @@ def build_banking_dashboard() -> dict:
         "tracked_accounts": account_overview["accounts"],
         "card_summary": card_overview["summary"],
         "tracked_cards": card_overview["cards"],
+        "ownership_overview": ownership_overview,
         "annual_overview": build_annual_banking_overview(monthly_summaries, reconciled_spending["monthly_summaries"]),
         "institution_overview": build_banking_institution_overview(
             account_overview["accounts"],
@@ -1924,6 +1931,63 @@ def build_card_spending_overview() -> dict:
         "monthly_summaries": monthly_summaries,
         "expense_months": expense_months,
         "expense_matrix": expense_matrix,
+    }
+
+
+def build_banking_ownership_overview(
+    tracked_accounts: list[dict],
+    tracked_cards: list[dict],
+    investment_positions: list[BankInvestmentPosition] | None = None,
+) -> dict:
+    investment_positions = list(investment_positions or BankInvestmentPosition.objects.all())
+    groups = []
+
+    for ownership_category, ownership_label in AssetOwnershipCategory.choices:
+        owner_accounts = [account for account in tracked_accounts if account["ownership_category"] == ownership_category]
+        owner_cards = [card for card in tracked_cards if card["ownership_category"] == ownership_category]
+        owner_products = [position for position in investment_positions if position.ownership_category == ownership_category]
+        institutions = {
+            item
+            for item in (
+                [account["institution"] for account in owner_accounts]
+                + [card["institution"] for card in owner_cards]
+                + [position.institution for position in owner_products]
+            )
+            if item
+        }
+        annual_income = sum(
+            ((account.get("annual_interest_income") or ZERO) for account in owner_accounts),
+            ZERO,
+        ) + sum((position.annual_income for position in owner_products), ZERO)
+        current_balance = sum((account["current_balance"] for account in owner_accounts), ZERO)
+        investment_value = sum((position.current_value for position in owner_products), ZERO)
+        groups.append(
+            {
+                "ownership_category": ownership_category,
+                "ownership_label": ownership_label,
+                "accounts_count": len(owner_accounts),
+                "cards_count": len(owner_cards),
+                "products_count": len(owner_products),
+                "institutions_count": len(institutions),
+                "current_balance": current_balance,
+                "investment_value": investment_value,
+                "total_bank_value": current_balance + investment_value,
+                "annual_income": annual_income,
+                "latest_card_spending": sum((card["latest_spent"] for card in owner_cards), ZERO),
+                "accounts": owner_accounts[:3],
+                "products": owner_products[:3],
+                "has_data": bool(owner_accounts or owner_cards or owner_products),
+            }
+        )
+
+    return {
+        "groups": groups,
+        "summary": {
+            "owners_with_data": sum(1 for group in groups if group["has_data"]),
+            "total_bank_value": sum((group["total_bank_value"] for group in groups), ZERO),
+            "current_balance": sum((group["current_balance"] for group in groups), ZERO),
+            "investment_value": sum((group["investment_value"] for group in groups), ZERO),
+        },
     }
 
 

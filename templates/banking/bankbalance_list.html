@@ -896,6 +896,71 @@
     {% endif %}
   </section>
 
+  <section class="card" style="margin-top:14px;" id="bank-owners">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;">
+      <div>
+        <p class="section-title" style="margin-bottom:8px;">Titularidad bancaria</p>
+        <h2 style="margin:0;font-size:18px;">Separacion entre Conjunta, Ximo y Monica</h2>
+        <p class="muted" style="margin:8px 0 0;">Aqui se separa la liquidez, los productos bancarios y las tarjetas por titular para no mezclar el patrimonio heredado con la operativa conjunta.</p>
+      </div>
+      <div class="meta">
+        <span class="pill">{{ ownership_overview.summary.owners_with_data }} titulares con datos</span>
+        <span class="pill">Valor bancario {{ ownership_overview.summary.total_bank_value|floatformat:0 }} EUR</span>
+      </div>
+    </div>
+    <div class="grid cols-3" style="margin-top:16px;">
+      {% for owner in ownership_overview.groups %}
+        <section class="card" style="padding:18px;">
+          <div class="metric-label">{{ owner.ownership_label }}</div>
+          <div class="metric-value">{{ owner.total_bank_value|floatformat:0 }} EUR</div>
+          <div class="metric-sub">
+            Liquidez {{ owner.current_balance|floatformat:0 }} EUR · Productos {{ owner.investment_value|floatformat:0 }} EUR
+          </div>
+          <div class="meta">
+            <span class="pill">{{ owner.accounts_count }} cuentas</span>
+            <span class="pill">{{ owner.products_count }} productos</span>
+            <span class="pill">{{ owner.cards_count }} tarjetas</span>
+            <span class="pill">{{ owner.institutions_count }} bancos</span>
+          </div>
+        </section>
+      {% endfor %}
+    </div>
+    <div class="table-card" style="margin-top:16px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Titular</th>
+            <th>Liquidez</th>
+            <th>Productos</th>
+            <th>Renta anual</th>
+            <th>Tarjetas ultimo extracto</th>
+            <th>Cuentas</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for owner in ownership_overview.groups %}
+            <tr>
+              <td><strong>{{ owner.ownership_label }}</strong></td>
+              <td>{{ owner.current_balance|floatformat:2 }} EUR</td>
+              <td>{{ owner.investment_value|floatformat:2 }} EUR</td>
+              <td>{{ owner.annual_income|floatformat:2 }} EUR</td>
+              <td>{{ owner.latest_card_spending|floatformat:2 }} EUR</td>
+              <td>
+                {% if owner.accounts %}
+                  {% for account in owner.accounts %}
+                    <span class="pill">{{ account.account_name }}</span>
+                  {% endfor %}
+                {% else %}
+                  <span class="muted">Sin cuentas visibles</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   {% if annual_overview.current_year %}
   <section class="card table-card" style="margin-top:14px;" id="bank-pulse">
     <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;">

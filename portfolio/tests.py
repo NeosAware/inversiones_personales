@@ -8,7 +8,9 @@ from django.urls import reverse
 from banking.models import BankBalance, BankMovement, BankStatementImport
 from equities.models import EquityPosition
 from neos_additives.models import AdditivesHolding
+from real_estate.models import PropertyInvestment
 from .models import HouseholdAlertSettings, PortfolioSnapshot
+from .ownership import AssetOwnershipCategory
 from .services import (
     build_bank_liquidity_context,
     build_overview_metrics,
@@ -241,6 +243,49 @@ class PortfolioServicesTests(TestCase):
         self.assertGreaterEqual(len(dashboard["snapshots"]), 2)
         self.assertIn("bank_liquidity", dashboard)
         self.assertIn("overview", dashboard)
+
+    def test_dashboard_builds_owner_asset_breakdown_for_banking_equities_and_real_estate(self):
+        BankBalance.objects.create(
+            ownership_category=AssetOwnershipCategory.XIMO,
+            institution="Banco Sabadell",
+            account_name="Cuenta herencia Ximo",
+            deposited_amount=Decimal("10000.00"),
+            current_balance=Decimal("11000.00"),
+            annual_interest_income=Decimal("120.00"),
+        )
+        EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.MONICA,
+            broker="Banco Sabadell",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola S.A.",
+            shares=Decimal("10"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+            annual_dividend_income=Decimal("35.00"),
+        )
+        PropertyInvestment.objects.create(
+            ownership_category=AssetOwnershipCategory.MONICA,
+            property_name="Pintor Oliet 13 2o",
+            city="Castellon",
+            invested_equity=Decimal("80000.00"),
+            market_value=Decimal("110000.00"),
+            mortgage_balance=Decimal("10000.00"),
+            annual_rent_income=Decimal("8400.00"),
+            annual_expenses=Decimal("1400.00"),
+        )
+
+        dashboard = build_portfolio_dashboard()
+        owner_groups = {
+            group["ownership_category"]: group for group in dashboard["owner_asset_overview"]["groups"]
+        }
+
+        self.assertEqual(owner_groups[AssetOwnershipCategory.XIMO]["banking_current_value"], Decimal("11000.00"))
+        self.assertEqual(owner_groups[AssetOwnershipCategory.MONICA]["equities_current_value"], Decimal("120.0000"))
+        self.assertEqual(owner_groups[AssetOwnershipCategory.MONICA]["real_estate_current_value"], Decimal("100000.00"))
+        self.assertEqual(owner_groups[AssetOwnershipCategory.MONICA]["annual_income"], Decimal("7035.00"))
 
 
 class AccessControlTests(TestCase):

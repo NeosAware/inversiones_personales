@@ -1,13 +1,16 @@
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib import messages
 from django.shortcuts import redirect
+from django.utils.dateparse import parse_date
 from django.views.generic import TemplateView
 
 from .forms import EquityDocumentImportForm, EquityPositionForm
 from .models import EquityPosition
 from .services import (
+    build_equity_analysis_dashboard,
     EquityDocumentImportError,
     build_equity_history_cards,
     extract_equity_position_prefill,
@@ -18,18 +21,52 @@ from .services import (
 class EquityPositionListView(LoginRequiredMixin, TemplateView):
     template_name = "equities/equityposition_list.html"
 
+    def _selected_period_bounds(self):
+        start_date = parse_date(self.request.GET.get("period_start", "").strip()) if self.request.GET.get("period_start") else None
+        end_date = parse_date(self.request.GET.get("period_end", "").strip()) if self.request.GET.get("period_end") else None
+        if start_date and end_date and end_date < start_date:
+            start_date, end_date = end_date, start_date
+        return start_date, end_date
+
+    def _auto_sync_market_data(self):
+        positions = list(EquityPosition.objects.all())
+        if not positions or not getattr(settings, "EQUITIES_AUTO_SYNC_ON_VIEW", True):
+            return {
+                "attempted": False,
+                "updated_count": 0,
+                "failed": [],
+            }
+
+        results = sync_all_equities_market_data(positions)
+        return {
+            "attempted": True,
+            "updated_count": sum(1 for _, error in results if error is None),
+            "failed": [f"{position.ticker}: {error}" for position, error in results if error],
+        }
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        auto_sync = self._auto_sync_market_data()
         positions = list(EquityPosition.objects.prefetch_related("price_history"))
+        selected_start_date, selected_end_date = self._selected_period_bounds()
+        dashboard = build_equity_analysis_dashboard(
+            positions,
+            selected_start_date=selected_start_date,
+            selected_end_date=selected_end_date,
+        )
         context["page_title"] = "Acciones cotizadas"
         context["positions"] = positions
         context["summary"] = {
             "invested_amount": sum((position.invested_amount for position in positions), Decimal("0")),
             "current_value": sum((position.current_value for position in positions), Decimal("0")),
-            "annual_income": sum((position.annual_dividend_income for position in positions), Decimal("0")),
+            "annual_income": sum((position.net_annual_income for position in positions), Decimal("0")),
             "synced_positions": sum((1 for position in positions if position.last_synced_at), 0),
         }
-        context["history_cards"] = build_equity_history_cards(positions)
+        context["history_cards"] = dashboard["history_cards"]
+        context["analysis_overview"] = dashboard["overview"]
+        context["auto_sync"] = auto_sync
+        context["selected_period_start"] = selected_start_date
+        context["selected_period_end"] = selected_end_date
         context["position_form"] = kwargs.get("position_form", EquityPositionForm())
         context["document_form"] = kwargs.get("document_form", EquityDocumentImportForm())
         context["prefill_source_filename"] = kwargs.get("prefill_source_filename")
@@ -114,6 +151,7 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
             "average_cost_per_share": form.cleaned_data["average_cost_per_share"],
             "current_price_per_share": form.cleaned_data["current_price_per_share"],
             "annual_dividend_income": form.cleaned_data["annual_dividend_income"],
+            "annual_maintenance_cost": form.cleaned_data["annual_maintenance_cost"],
             "notes": form.cleaned_data["notes"],
         }
         matches = EquityPosition.objects.filter(

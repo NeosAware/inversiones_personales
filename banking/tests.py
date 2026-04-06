@@ -24,6 +24,7 @@ from .models import (
 from .services import (
     build_bank_account_overview,
     build_banking_dashboard,
+    build_banking_ownership_overview,
     build_card_spending_overview,
     classify_movement,
     import_statement,
@@ -371,6 +372,47 @@ class BankingServicesTests(TestCase):
         self.assertEqual(overview["accounts"][0]["source_label"], "Manual + extracto")
         self.assertEqual(overview["accounts"][0]["ownership_category"], AssetOwnershipCategory.MONICA)
         self.assertEqual(overview["accounts"][0]["statement_count"], 1)
+
+    def test_build_banking_ownership_overview_separates_joint_ximo_and_monica(self):
+        tracked_accounts = [
+            {
+                "account_name": "Cuenta conjunta",
+                "institution": "Banco Sabadell",
+                "ownership_category": AssetOwnershipCategory.JOINT,
+                "current_balance": Decimal("5000.00"),
+                "annual_interest_income": Decimal("20.00"),
+            },
+            {
+                "account_name": "Cuenta herencia Ximo",
+                "institution": "CaixaBank",
+                "ownership_category": AssetOwnershipCategory.XIMO,
+                "current_balance": Decimal("9000.00"),
+                "annual_interest_income": Decimal("45.00"),
+            },
+        ]
+        tracked_cards = [
+            {
+                "card_name": "Visa Monica",
+                "institution": "Banco Sabadell",
+                "ownership_category": AssetOwnershipCategory.MONICA,
+                "latest_spent": Decimal("430.00"),
+            }
+        ]
+        BankInvestmentPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.XIMO,
+            institution="CaixaBank",
+            product_name="Deposito herencia",
+            current_value=Decimal("12000.00"),
+            annual_income=Decimal("180.00"),
+        )
+
+        overview = build_banking_ownership_overview(tracked_accounts, tracked_cards)
+        groups = {group["ownership_category"]: group for group in overview["groups"]}
+
+        self.assertEqual(groups[AssetOwnershipCategory.JOINT]["total_bank_value"], Decimal("5000.00"))
+        self.assertEqual(groups[AssetOwnershipCategory.XIMO]["total_bank_value"], Decimal("21000.00"))
+        self.assertEqual(groups[AssetOwnershipCategory.XIMO]["annual_income"], Decimal("225.00"))
+        self.assertEqual(groups[AssetOwnershipCategory.MONICA]["cards_count"], 1)
 
     def test_build_card_spending_overview_separates_card_expenses_from_account_flow(self):
         account_statement = BankStatementImport.objects.create(

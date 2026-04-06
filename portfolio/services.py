@@ -7,15 +7,17 @@ from decimal import Decimal
 from django.utils import timezone
 
 from banking.models import BankBalance, BankInvestmentPosition, BankMovement, BankStatementImport
-from banking.services import build_bank_account_overview
+from banking.services import build_bank_account_overview, build_banking_ownership_overview
 from equities.models import EquityPosition
 from neos_additives.models import AdditivesHolding
 from neos_ceramica.models import CeramicaHolding
 from neos_materials.models import MaterialsHolding
 from real_estate.models import PropertyInvestment
+from real_estate.services import build_property_ownership_overview
 
 from .metrics import ZERO, build_metrics
 from .models import HouseholdAlertSettings, PortfolioSnapshot
+from .ownership import AssetOwnershipCategory
 
 
 def summarise_section(title, items, app_url_name):
@@ -188,8 +190,78 @@ def build_overview_metrics(state):
     }
 
 
+def build_owner_asset_overview(
+    banking_ownership_overview: dict,
+    property_ownership_overview: dict,
+    equities,
+) -> dict:
+    groups = []
+    equities = list(equities)
+    banking_groups = {
+        group["ownership_category"]: group for group in banking_ownership_overview["groups"]
+    }
+    property_groups = {
+        group["ownership_category"]: group for group in property_ownership_overview["groups"]
+    }
+
+    for ownership_category, ownership_label in AssetOwnershipCategory.choices:
+        bank_group = banking_groups.get(ownership_category, {})
+        property_group = property_groups.get(ownership_category, {})
+        owner_equities = [position for position in equities if position.ownership_category == ownership_category]
+        equities_current_value = sum((position.current_value for position in owner_equities), ZERO)
+        equities_annual_income = sum((position.net_annual_income for position in owner_equities), ZERO)
+        current_value = bank_group.get("total_bank_value", ZERO) + property_group.get("current_value", ZERO) + equities_current_value
+        annual_income = bank_group.get("annual_income", ZERO) + property_group.get("annual_income", ZERO) + equities_annual_income
+        groups.append(
+            {
+                "ownership_category": ownership_category,
+                "ownership_label": ownership_label,
+                "current_value": current_value,
+                "annual_income": annual_income,
+                "banking_current_value": bank_group.get("total_bank_value", ZERO),
+                "bank_liquidity_value": bank_group.get("current_balance", ZERO),
+                "bank_products_value": bank_group.get("investment_value", ZERO),
+                "equities_current_value": equities_current_value,
+                "real_estate_current_value": property_group.get("current_value", ZERO),
+                "real_estate_income": property_group.get("annual_income", ZERO),
+                "bank_accounts_count": bank_group.get("accounts_count", 0),
+                "properties_count": property_group.get("properties_count", 0),
+                "equities_count": len(owner_equities),
+                "has_data": bool(
+                    current_value
+                    or annual_income
+                    or bank_group.get("cards_count", 0)
+                    or property_group.get("properties_count", 0)
+                ),
+            }
+        )
+
+    return {
+        "groups": groups,
+        "summary": {
+            "tracked_current_value": sum((group["current_value"] for group in groups), ZERO),
+            "tracked_annual_income": sum((group["annual_income"] for group in groups), ZERO),
+            "owners_with_data": sum(1 for group in groups if group["has_data"]),
+        },
+    }
+
+
 def build_current_portfolio_state():
     bank_liquidity = build_bank_liquidity_context()
+    bank_account_overview = build_bank_account_overview()
+    banking_ownership_overview = build_banking_ownership_overview(
+        bank_account_overview["accounts"],
+        [],
+        BankInvestmentPosition.objects.all(),
+    )
+    properties = list(PropertyInvestment.objects.all())
+    property_ownership_overview = build_property_ownership_overview(properties)
+    equities = list(EquityPosition.objects.all())
+    owner_asset_overview = build_owner_asset_overview(
+        banking_ownership_overview,
+        property_ownership_overview,
+        equities,
+    )
     linked_manual_account_ids = {
         account["account_id"] for account in bank_liquidity["accounts"] if account.get("account_id")
     }
@@ -209,7 +281,7 @@ def build_current_portfolio_state():
         ),
         summarise_section(
             "Acciones cotizadas",
-            [obj.as_portfolio_position() for obj in EquityPosition.objects.all()],
+            [obj.as_portfolio_position() for obj in equities],
             "equities:list",
         ),
         summarise_section(
@@ -229,7 +301,7 @@ def build_current_portfolio_state():
         ),
         summarise_section(
             "Inmuebles",
-            [obj.as_portfolio_position() for obj in PropertyInvestment.objects.all()],
+            [obj.as_portfolio_position() for obj in properties],
             "real_estate:list",
         ),
     ]
@@ -261,6 +333,9 @@ def build_current_portfolio_state():
         "top_positions": all_items[:10],
         "summary": summary,
         "bank_liquidity": bank_liquidity,
+        "banking_ownership_overview": banking_ownership_overview,
+        "property_ownership_overview": property_ownership_overview,
+        "owner_asset_overview": owner_asset_overview,
     }
 
 

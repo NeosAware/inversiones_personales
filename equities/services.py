@@ -4,7 +4,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlencode
@@ -58,7 +58,7 @@ class EquityDocumentPrefill:
     source_kind: str
 
 
-def fetch_market_series(symbol: str, range_key: str = "1y", interval: str = "1d") -> MarketSeries:
+def fetch_market_series(symbol: str, range_key: str = "5y", interval: str = "1d") -> MarketSeries:
     params = urlencode({"range": range_key, "interval": interval, "includePrePost": "false"})
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?{params}"
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -72,15 +72,26 @@ def fetch_market_series(symbol: str, range_key: str = "1y", interval: str = "1d"
     result = payload["chart"]["result"][0]
     meta = result["meta"]
     timestamps = result.get("timestamp", [])
-    closes = result["indicators"]["quote"][0].get("close", [])
+    quote_data = result["indicators"]["quote"][0]
+    opens = quote_data.get("open", [])
+    highs = quote_data.get("high", [])
+    lows = quote_data.get("low", [])
+    closes = quote_data.get("close", [])
     points = []
 
-    for timestamp, close in zip(timestamps, closes):
+    for index, timestamp in enumerate(timestamps):
+        close = closes[index] if index < len(closes) else None
         if close is None:
             continue
+        open_value = opens[index] if index < len(opens) else None
+        high_value = highs[index] if index < len(highs) else None
+        low_value = lows[index] if index < len(lows) else None
         points.append(
             {
                 "date": datetime.fromtimestamp(timestamp, tz=timezone.utc).date(),
+                "open": Decimal(str(round(open_value, 4))) if open_value is not None else None,
+                "high": Decimal(str(round(high_value, 4))) if high_value is not None else None,
+                "low": Decimal(str(round(low_value, 4))) if low_value is not None else None,
                 "close": Decimal(str(round(close, 4))),
             }
         )
@@ -592,6 +603,9 @@ def sync_equity_market_data(position: EquityPosition) -> EquityPosition:
                 position=position,
                 price_date=point["date"],
                 defaults={
+                    "open_price": point.get("open"),
+                    "high_price": point.get("high"),
+                    "low_price": point.get("low"),
                     "close_price": point["close"],
                     "benchmark_close": benchmark_map.get(point["date"]),
                 },
@@ -649,7 +663,175 @@ def build_svg_polyline(values, width: int = 640, height: int = 220, padding: int
     return " ".join(points)
 
 
-def build_equity_history_cards(positions) -> list[dict]:
+def average_decimal(values: list[Decimal]) -> Decimal | None:
+    filtered = [value for value in values if value is not None]
+    if not filtered:
+        return None
+    return sum(filtered, ZERO) / Decimal(len(filtered))
+
+
+def percentage_change(current: Decimal | None, reference: Decimal | None) -> Decimal | None:
+    if current is None or reference in {None, ZERO}:
+        return None
+    return ((current / reference) - Decimal("1")) * Decimal("100")
+
+
+def filter_history_window(history, start_date: date | None = None, end_date: date | None = None):
+    return [
+        point
+        for point in history
+        if (start_date is None or point.price_date >= start_date) and (end_date is None or point.price_date <= end_date)
+    ]
+
+
+def build_period_snapshot(history, label: str, start_date: date | None = None, end_date: date | None = None) -> dict:
+    window = filter_history_window(history, start_date=start_date, end_date=end_date)
+    if len(window) < 2:
+        return {
+            "label": label,
+            "available": False,
+            "stock_return_pct": None,
+            "benchmark_return_pct": None,
+            "alpha_pct": None,
+            "start_date": window[0].price_date if window else start_date,
+            "end_date": window[-1].price_date if window else end_date,
+        }
+
+    first_point = window[0]
+    last_point = window[-1]
+    stock_return_pct = percentage_change(last_point.close_price, first_point.close_price)
+    benchmark_return_pct = percentage_change(last_point.benchmark_close, first_point.benchmark_close)
+    alpha_pct = (
+        stock_return_pct - benchmark_return_pct
+        if stock_return_pct is not None and benchmark_return_pct is not None
+        else None
+    )
+
+    return {
+        "label": label,
+        "available": True,
+        "stock_return_pct": stock_return_pct,
+        "benchmark_return_pct": benchmark_return_pct,
+        "alpha_pct": alpha_pct,
+        "start_date": first_point.price_date,
+        "end_date": last_point.price_date,
+    }
+
+
+def build_candlestick_svg(history, width: int = 640, height: int = 220, padding: int = 18) -> str:
+    candles = history[-32:]
+    if len(candles) < 2:
+        return ""
+
+    highs = [point.high_price or point.close_price for point in candles]
+    lows = [point.low_price or point.close_price for point in candles]
+    min_price = min(lows)
+    max_price = max(highs)
+    if max_price == min_price:
+        max_price += Decimal("1")
+
+    span_x = width - 2 * padding
+    span_y = height - 2 * padding
+    step = span_x / max(len(candles) - 1, 1)
+    body_width = max(step * 0.55, 6)
+
+    def to_y(value: Decimal) -> float:
+        normalized = float((value - min_price) / (max_price - min_price))
+        return float(height - padding - (normalized * span_y))
+
+    fragments = [
+        f'<line x1="{padding}" y1="{height - padding}" x2="{width - padding}" y2="{height - padding}" stroke="#d9e4ec" stroke-width="1" />',
+        f'<line x1="{padding}" y1="{padding}" x2="{padding}" y2="{height - padding}" stroke="#d9e4ec" stroke-width="1" />',
+    ]
+
+    for index, point in enumerate(candles):
+        open_price = point.open_price or point.close_price
+        close_price = point.close_price
+        high_price = point.high_price or max(open_price, close_price)
+        low_price = point.low_price or min(open_price, close_price)
+        center_x = padding + (step * index)
+        wick_top = to_y(high_price)
+        wick_bottom = to_y(low_price)
+        body_top_price = max(open_price, close_price)
+        body_bottom_price = min(open_price, close_price)
+        body_top = to_y(body_top_price)
+        body_bottom = to_y(body_bottom_price)
+        body_height = max(body_bottom - body_top, 2.0)
+        tone = "#177245" if close_price >= open_price else "#a85f00"
+        body_y = min(body_top, body_bottom)
+        fragments.append(
+            f'<line x1="{center_x:.1f}" y1="{wick_top:.1f}" x2="{center_x:.1f}" y2="{wick_bottom:.1f}" stroke="{tone}" stroke-width="1.5" />'
+        )
+        fragments.append(
+            f'<rect x="{center_x - (body_width / 2):.1f}" y="{body_y:.1f}" width="{body_width:.1f}" height="{body_height:.1f}" rx="2" fill="{tone}" opacity="0.88" />'
+        )
+
+    return "".join(fragments)
+
+
+def build_candlestick_metrics(history) -> dict:
+    recent = history[-50:]
+    if not recent:
+        return {
+            "trend_label": "Sin historico",
+            "last_candle_label": "Sin vela",
+            "average_range_pct": None,
+            "support_level": None,
+            "resistance_level": None,
+            "candlestick_svg": "",
+        }
+
+    closes = [point.close_price for point in recent]
+    sma20 = average_decimal(closes[-20:]) or recent[-1].close_price
+    sma50 = average_decimal(closes[-50:]) or sma20
+    latest_close = recent[-1].close_price
+
+    if latest_close > sma20 and sma20 >= sma50:
+        trend_label = "Tendencia alcista"
+    elif latest_close < sma20 and sma20 <= sma50:
+        trend_label = "Tendencia bajista"
+    else:
+        trend_label = "Tendencia lateral"
+
+    last_point = recent[-1]
+    last_open = last_point.open_price or last_point.close_price
+    last_high = last_point.high_price or max(last_open, last_point.close_price)
+    last_low = last_point.low_price or min(last_open, last_point.close_price)
+    body_size = abs(last_point.close_price - last_open)
+    candle_range = last_high - last_low
+    if candle_range and body_size <= candle_range * Decimal("0.15"):
+        last_candle_label = "Doji"
+    elif last_point.close_price >= last_open:
+        last_candle_label = "Vela alcista"
+    else:
+        last_candle_label = "Vela bajista"
+
+    range_percentages = []
+    for point in recent[-20:]:
+        base_open = point.open_price or point.close_price
+        high_price = point.high_price or point.close_price
+        low_price = point.low_price or point.close_price
+        if base_open:
+            range_percentages.append(((high_price - low_price) / base_open) * Decimal("100"))
+
+    support_level = min((point.low_price or point.close_price for point in recent[-20:]), default=None)
+    resistance_level = max((point.high_price or point.close_price for point in recent[-20:]), default=None)
+
+    return {
+        "trend_label": trend_label,
+        "last_candle_label": last_candle_label,
+        "average_range_pct": average_decimal(range_percentages),
+        "support_level": support_level,
+        "resistance_level": resistance_level,
+        "candlestick_svg": build_candlestick_svg(recent),
+    }
+
+
+def build_equity_history_cards(
+    positions,
+    selected_start_date: date | None = None,
+    selected_end_date: date | None = None,
+) -> list[dict]:
     cards = []
     for position in positions:
         history = list(position.price_history.order_by("price_date"))
@@ -675,6 +857,37 @@ def build_equity_history_cards(positions) -> list[dict]:
         else:
             benchmark_series = [None for _ in history]
 
+        latest_point = history[-1]
+        if selected_start_date or selected_end_date:
+            selected_period = build_period_snapshot(
+                history,
+                "Periodo elegido",
+                start_date=selected_start_date,
+                end_date=selected_end_date,
+            )
+        else:
+            selected_period = {"available": False}
+        if not selected_period["available"] and latest_point.price_date:
+            selected_period = build_period_snapshot(
+                history,
+                "90 dias",
+                start_date=latest_point.price_date - timedelta(days=90),
+                end_date=latest_point.price_date,
+            )
+
+        period_snapshots = [
+            build_period_snapshot(history, "1M", start_date=latest_point.price_date - timedelta(days=30), end_date=latest_point.price_date),
+            build_period_snapshot(history, "3M", start_date=latest_point.price_date - timedelta(days=90), end_date=latest_point.price_date),
+            build_period_snapshot(history, "YTD", start_date=date(latest_point.price_date.year, 1, 1), end_date=latest_point.price_date),
+            build_period_snapshot(history, "1Y", start_date=latest_point.price_date - timedelta(days=365), end_date=latest_point.price_date),
+        ]
+        candlestick_metrics = build_candlestick_metrics(history)
+        maintenance_drag_pct = (
+            (position.annual_maintenance_cost / position.invested_amount) * Decimal("100")
+            if position.invested_amount
+            else ZERO
+        )
+
         cards.append(
             {
                 "position": position,
@@ -690,6 +903,97 @@ def build_equity_history_cards(positions) -> list[dict]:
                 ),
                 "stock_line": build_svg_polyline(stock_series),
                 "benchmark_line": build_svg_polyline(benchmark_series),
+                "period_snapshots": period_snapshots,
+                "selected_period": selected_period,
+                "net_unrealized_gain": position.unrealized_gain_after_costs,
+                "net_unrealized_return_pct": position.unrealized_return_pct,
+                "net_annual_income": position.net_annual_income,
+                "maintenance_drag_pct": maintenance_drag_pct,
+                "price_vs_cost_pct": percentage_change(position.current_price_per_share, position.average_cost_per_share),
+                **candlestick_metrics,
             }
         )
     return cards
+
+
+def build_equity_analysis_dashboard(
+    positions,
+    selected_start_date: date | None = None,
+    selected_end_date: date | None = None,
+) -> dict:
+    history_cards = build_equity_history_cards(
+        positions,
+        selected_start_date=selected_start_date,
+        selected_end_date=selected_end_date,
+    )
+    current_value_total = sum((position.current_value for position in positions), ZERO)
+    invested_amount_total = sum((position.invested_amount for position in positions), ZERO)
+    annual_dividends_total = sum((position.annual_dividend_income for position in positions), ZERO)
+    annual_maintenance_total = sum((position.annual_maintenance_cost for position in positions), ZERO)
+    net_annual_income_total = sum((position.net_annual_income for position in positions), ZERO)
+    unrealized_gain_total = sum((position.unrealized_gain_after_costs for position in positions), ZERO)
+
+    weighted_periods = []
+    for label in ("1M", "3M", "YTD", "1Y"):
+        weighted_stock = ZERO
+        weighted_benchmark = ZERO
+        weight_total = ZERO
+        for card in history_cards:
+            snapshot = next((item for item in card.get("period_snapshots", []) if item["label"] == label), None)
+            if not snapshot or not snapshot["available"] or snapshot["stock_return_pct"] is None:
+                continue
+            weight = card["position"].current_value
+            weighted_stock += snapshot["stock_return_pct"] * weight
+            if snapshot["benchmark_return_pct"] is not None:
+                weighted_benchmark += snapshot["benchmark_return_pct"] * weight
+            weight_total += weight
+        weighted_periods.append(
+            {
+                "label": label,
+                "stock_return_pct": (weighted_stock / weight_total) if weight_total else None,
+                "benchmark_return_pct": (weighted_benchmark / weight_total) if weight_total else None,
+            }
+        )
+
+    latest_sync_at = max((position.last_synced_at for position in positions if position.last_synced_at), default=None)
+    latest_price_date = max((position.latest_price_date for position in positions if position.latest_price_date), default=None)
+    selected_cards = [card for card in history_cards if card.get("selected_period", {}).get("available")]
+    weighted_selected_return = None
+    if selected_cards:
+        numerator = sum(
+            (card["selected_period"]["stock_return_pct"] or ZERO) * card["position"].current_value
+            for card in selected_cards
+        )
+        denominator = sum((card["position"].current_value for card in selected_cards), ZERO)
+        if denominator:
+            weighted_selected_return = numerator / denominator
+
+    if selected_start_date and selected_end_date:
+        selected_period_label = f"{selected_start_date:%Y-%m-%d} a {selected_end_date:%Y-%m-%d}"
+    elif selected_start_date:
+        selected_period_label = f"Desde {selected_start_date:%Y-%m-%d}"
+    elif selected_end_date:
+        selected_period_label = f"Hasta {selected_end_date:%Y-%m-%d}"
+    else:
+        selected_period_label = "Ultimos 90 dias"
+
+    overview = {
+        "positions_count": len(positions),
+        "invested_amount": invested_amount_total,
+        "current_value": current_value_total,
+        "annual_dividends_total": annual_dividends_total,
+        "annual_maintenance_total": annual_maintenance_total,
+        "net_annual_income_total": net_annual_income_total,
+        "unrealized_gain_total": unrealized_gain_total,
+        "unrealized_return_pct": percentage_change(current_value_total - annual_maintenance_total, invested_amount_total),
+        "latest_sync_at": latest_sync_at,
+        "latest_price_date": latest_price_date,
+        "weighted_selected_return": weighted_selected_return,
+        "weighted_periods": weighted_periods,
+        "selected_period_label": selected_period_label,
+    }
+
+    return {
+        "overview": overview,
+        "history_cards": history_cards,
+    }
