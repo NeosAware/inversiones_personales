@@ -1,0 +1,90 @@
+<div class="split" style="margin-top:24px; align-items:start;">
+  <section class="card">
+    <p class="section-title">Importacion manual</p>
+    <h2 style="margin-top:0;">Cargar cuentas o tarjetas</h2>
+    <p class="muted" style="margin-top:0;">Usa esta zona solo cuando quieras incorporar un nuevo extracto. La lectura y el analisis quedan arriba; aqui solo se hace mantenimiento del dato.</p>
+    <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="import">
+      <div>
+        <label for="{{ form.statement_kind.id_for_label }}">{{ form.statement_kind.label }}</label>
+        {{ form.statement_kind }}
+        {% if form.statement_kind.help_text %}<div class="metric-sub">{{ form.statement_kind.help_text }}</div>{% endif %}
+        {% for error in form.statement_kind.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+      </div>
+      <div>
+        <label for="{{ form.files.id_for_label }}">{{ form.files.label }}</label>
+        {{ form.files }}
+        {% if form.files.help_text %}<div class="metric-sub">{{ form.files.help_text }}</div>{% endif %}
+        {% for error in form.files.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap:12px;">
+        <button class="button" type="submit">Importar extractos</button>
+      </div>
+    </form>
+    <div class="metric-sub" style="margin-top:14px;">El titular se intenta reconocer automaticamente por el nombre del titular o por importaciones previas del mismo documento bancario.</div>
+    <div class="meta">
+      <span class="pill">{{ statement_summary.statements_count }} extractos de cuenta</span>
+      <span class="pill">{{ card_summary.statements_count }} extractos de tarjeta</span>
+      <span class="pill">{{ statement_summary.months_count }} meses de cuentas</span>
+      <span class="pill">{{ continuity_summary.healthy_groups_count }} series continuas</span>
+      <span class="pill">{{ continuity_summary.groups_with_gap_count }} con huecos</span>
+      <span class="pill">{{ continuity_summary.groups_with_overlap_count }} con solapes</span>
+    </div>
+    <div class="soft-panel" style="margin-top:16px;">
+      <h3 class="soft-title">Borrado seguro</h3>
+      <div class="metric-sub">Las importaciones ya no se pueden borrar todas de golpe. Para evitar errores, cada fichero se elimina uno a uno desde la tabla final de <strong>Ficheros importados</strong>.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <p class="section-title">Cuenta manual</p>
+    <h2 style="margin-top:0;">Registrar o actualizar cuenta</h2>
+    <p class="muted" style="margin-top:0;">Usa este formulario para cuentas sin extracto o para anadir datos manuales complementarios como intereses y notas.</p>
+    <form method="post" class="stack" style="margin-top:18px;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="save_account">
+      {% if account_form.non_field_errors %}
+        <div class="warn">{{ account_form.non_field_errors|striptags }}</div>
+      {% endif %}
+      <div class="grid cols-2">
+        <div>
+          <label for="{{ account_form.ownership_category.id_for_label }}">{{ account_form.ownership_category.label }}</label>
+          {{ account_form.ownership_category }}
+          {% for error in account_form.ownership_category.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ account_form.institution.id_for_label }}">{{ account_form.institution.label }}</label>
+          {{ account_form.institution }}
+          {% for error in account_form.institution.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ account_form.account_name.id_for_label }}">{{ account_form.account_name.label }}</label>
+          {{ account_form.account_name }}
+          {% for error in account_form.account_name.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ account_form.deposited_amount.id_for_label }}">{{ account_form.deposited_amount.label }}</label>
+          {{ account_form.deposited_amount }}
+          {% for error in account_form.deposited_amount.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ account_form.current_balance.id_for_label }}">{{ account_form.current_balance.label }}</label>
+          {{ account_form.current_balance }}
+          {% for error in account_form.current_balance.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ account_form.annual_interest_income.id_for_label }}">{{ account_form.annual_interest_income.label }}</label>
+          {{ account_form.annual_interest_income }}
+          {% for error in account_form.annual_interest_income.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+        </div>
+      </div>
+      <div>
+        <label for="{{ account_form.notes.id_for_label }}">{{ account_form.notes.label }}</label>
+        {{ account_form.notes }}
+        {% for error in account_form.notes.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
+      </div>
+      <button class="button" type="submit">Guardar cuenta</button>
+    </form>
+  </section>
+</div>

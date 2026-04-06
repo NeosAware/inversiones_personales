@@ -221,19 +221,10 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         return redirect("banking:list")
 
     def _delete_all_statements(self, request):
-        statements = list(BankStatementImport.objects.all())
-        deleted_count = len(statements)
-        for statement in statements:
-            statement.delete()
-
-        if deleted_count:
-            messages.success(
-                request,
-                f"Se han eliminado {deleted_count} extracto(s). El resumen bancario ha quedado limpio para una nueva importacion.",
-            )
-        else:
-            messages.info(request, "No habia extractos importados para eliminar.")
-
+        messages.error(
+            request,
+            "El borrado masivo de importaciones se ha desactivado para evitar errores. Elimina los extractos uno a uno desde la tabla final.",
+        )
         return redirect("banking:list")
 
 def _extract_robot_token(request) -> str:

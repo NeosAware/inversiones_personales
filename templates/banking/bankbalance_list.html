@@ -458,95 +458,50 @@
     </section>
 
     <section class="card">
-      <p class="section-title">Operativa</p>
-      <h2 style="margin-top:0;">Importar, rehacer o completar datos</h2>
-      <p class="muted" style="margin-top:0;">La analitica vive arriba. Aqui queda la zona de trabajo para cargar extractos, rehacer el historico o mantener cuentas manuales sin mezclarlo con el resumen ejecutivo.</p>
-      <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="import">
-        <div>
-          <label for="{{ form.statement_kind.id_for_label }}">{{ form.statement_kind.label }}</label>
-          {{ form.statement_kind }}
-          {% if form.statement_kind.help_text %}<div class="metric-sub">{{ form.statement_kind.help_text }}</div>{% endif %}
-          {% for error in form.statement_kind.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-        </div>
-        <div>
-          <label for="{{ form.files.id_for_label }}">{{ form.files.label }}</label>
-          {{ form.files }}
-          {% if form.files.help_text %}<div class="metric-sub">{{ form.files.help_text }}</div>{% endif %}
-          {% for error in form.files.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-        </div>
-        <div style="display:flex; flex-wrap:wrap; gap:12px;">
-          <button class="button" type="submit">Importar extractos</button>
-        </div>
-      </form>
-      <div class="metric-sub" style="margin-top:14px;">El titular se intenta reconocer automaticamente por el nombre del titular o por importaciones previas del mismo documento bancario.</div>
-      <div class="meta">
-        <span class="pill">{{ statement_summary.statements_count }} extractos de cuenta</span>
-        <span class="pill">{{ card_summary.statements_count }} extractos de tarjeta</span>
-        <span class="pill">{{ statement_summary.months_count }} meses de cuentas</span>
-        <span class="pill">{{ continuity_summary.healthy_groups_count }} series continuas</span>
-        <span class="pill">{{ continuity_summary.groups_with_gap_count }} con huecos</span>
-        <span class="pill">{{ continuity_summary.groups_with_overlap_count }} con solapes</span>
+      <p class="section-title">Calidad del dato</p>
+      <h2 style="margin-top:0;">Lectura y cobertura</h2>
+      <p class="muted" style="margin-top:0;">Este panel ya no es operativo. Sirve para saber si la informacion que ves arriba es fiable y donde conviene revisar antes de tomar decisiones.</p>
+      <div class="soft-grid" style="margin-top:18px;">
+        <section class="soft-panel">
+          <h3 class="soft-title">Cobertura bancaria</h3>
+          <div class="metric-value">{{ institution_overview.summary.institutions_with_imported_accounts }}/{{ institution_overview.summary.institutions_count }}</div>
+          <div class="metric-sub">Bancos con cuentas importadas sobre el total visible.</div>
+        </section>
+        <section class="soft-panel">
+          <h3 class="soft-title">Series sanas</h3>
+          <div class="metric-value good">{{ continuity_summary.healthy_groups_count }}</div>
+          <div class="metric-sub">Series continuas listas para analisis fiable.</div>
+        </section>
+        <section class="soft-panel">
+          <h3 class="soft-title">Huecos detectados</h3>
+          <div class="metric-value warn">{{ continuity_summary.groups_with_gap_count }}</div>
+          <div class="metric-sub">Series donde faltan periodos y puede faltar gasto o ingreso.</div>
+        </section>
+        <section class="soft-panel">
+          <h3 class="soft-title">Solapes detectados</h3>
+          <div class="metric-value warn">{{ continuity_summary.groups_with_overlap_count }}</div>
+          <div class="metric-sub">Series con posible duplicidad de periodos importados.</div>
+        </section>
       </div>
-      <div class="metric-sub" style="margin-top:14px;">Puedes borrar una importacion o vaciarlas todas y volver a cargar los mismos ficheros para recalcular la vista mensual desde cero.</div>
-      <form method="post" style="margin-top:14px;" onsubmit="return confirm('Esto eliminara todos los extractos importados y sus movimientos. Quieres continuar?');">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="delete_all_statements">
-        <button class="button danger small" type="submit">Borrar todas las importaciones</button>
-      </form>
-      <hr style="border:none; border-top:1px solid #dfe8ef; margin:22px 0;">
-      <p class="section-title">Cuenta manual</p>
-      <h2 style="margin-top:0;">Registrar o actualizar cuenta</h2>
-      <p class="muted" style="margin-top:0;">Usa este formulario para cuentas sin extracto o para anadir datos manuales complementarios como intereses y notas.</p>
-      <form method="post" class="stack" style="margin-top:18px;">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="save_account">
-        {% if account_form.non_field_errors %}
-          <div class="warn">{{ account_form.non_field_errors|striptags }}</div>
+      <div class="soft-panel" style="margin-top:16px;">
+        <h3 class="soft-title">Gasto consolidado</h3>
+        <div class="metric-sub">{{ reconciled_summary.note }}</div>
+        {% if annual_overview.current_year %}
+          <div class="meta" style="margin-top:12px;">
+            <span class="pill">Ano {{ annual_overview.current_year.year }}</span>
+            <span class="pill">Ahorro medio {{ annual_overview.current_year.average_monthly_savings|floatformat:2 }} EUR</span>
+            <span class="pill">Flujo neto {{ annual_overview.current_year.net_value_flow_total|floatformat:2 }} EUR</span>
+          </div>
         {% endif %}
-        <div class="grid cols-2">
-          <div>
-            <label for="{{ account_form.ownership_category.id_for_label }}">{{ account_form.ownership_category.label }}</label>
-            {{ account_form.ownership_category }}
-            {% for error in account_form.ownership_category.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-          </div>
-          <div>
-            <label for="{{ account_form.institution.id_for_label }}">{{ account_form.institution.label }}</label>
-            {{ account_form.institution }}
-            {% for error in account_form.institution.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-          </div>
-          <div>
-            <label for="{{ account_form.account_name.id_for_label }}">{{ account_form.account_name.label }}</label>
-            {{ account_form.account_name }}
-            {% for error in account_form.account_name.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-          </div>
-          <div>
-            <label for="{{ account_form.deposited_amount.id_for_label }}">{{ account_form.deposited_amount.label }}</label>
-            {{ account_form.deposited_amount }}
-            {% for error in account_form.deposited_amount.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-          </div>
-          <div>
-            <label for="{{ account_form.current_balance.id_for_label }}">{{ account_form.current_balance.label }}</label>
-            {{ account_form.current_balance }}
-            {% for error in account_form.current_balance.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-          </div>
-          <div>
-            <label for="{{ account_form.annual_interest_income.id_for_label }}">{{ account_form.annual_interest_income.label }}</label>
-            {{ account_form.annual_interest_income }}
-            {% for error in account_form.annual_interest_income.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-          </div>
-        </div>
-        <div>
-          <label for="{{ account_form.notes.id_for_label }}">{{ account_form.notes.label }}</label>
-          {{ account_form.notes }}
-          {% for error in account_form.notes.errors %}<div class="warn" style="margin-top:8px;">{{ error }}</div>{% endfor %}
-        </div>
-        <button class="button" type="submit">Guardar cuenta</button>
-      </form>
+      </div>
+      <div class="soft-panel" style="margin-top:16px;">
+        <h3 class="soft-title">Operativa al final</h3>
+        <div class="metric-sub">La importacion manual y el asistente local se han movido al final de la pagina. Primero se analiza; despues, si falta informacion, se baja a la zona operativa.</div>
+      </div>
     </section>
   </div>
 
+  {% comment %}
   <p class="section-title" style="margin-top:28px;">Asistente local</p>
   <div class="grid cols-4">
     <section class="card">
@@ -728,6 +683,8 @@
       </tbody>
     </table>
   </section>
+
+  {% endcomment %}
 
   <script>
     document.addEventListener("click", function (event) {
@@ -1492,6 +1449,15 @@
       </tbody>
     </table>
   </section>
+
+  <section class="card" style="margin-top:28px;">
+    <p class="section-title">Operativa de importacion</p>
+    <h2 style="margin-top:0;">Captura y mantenimiento al final</h2>
+    <p class="muted" style="margin:0;">Esta zona queda intencionadamente al final. Primero se interpreta la situacion bancaria; despues, si faltan datos o hay que incorporar un extracto nuevo, se usa la operativa manual o el asistente local.</p>
+  </section>
+
+  {% include "banking/_operations_panel.html" %}
+  {% include "banking/_robot_operations.html" %}
 
   <script>
     (function () {

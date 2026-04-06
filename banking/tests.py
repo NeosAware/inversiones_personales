@@ -1042,7 +1042,7 @@ class BankingImportDeletionTests(TestCase):
                 self.assertEqual(BankMovement.objects.count(), 0)
                 self.assertFalse(os.path.exists(file_path))
 
-    def test_delete_all_statements_clears_imports_and_unlocks_reimport(self):
+    def test_delete_all_statements_is_blocked_to_avoid_bulk_errors(self):
         with tempfile.TemporaryDirectory() as temp_media:
             with override_settings(MEDIA_ROOT=temp_media):
                 first = self._create_statement_with_file()
@@ -1077,23 +1077,13 @@ class BankingImportDeletionTests(TestCase):
                 )
 
                 self.assertEqual(response.status_code, 302)
-                self.assertEqual(BankStatementImport.objects.count(), 0)
-                self.assertEqual(BankMovement.objects.count(), 0)
-                self.assertFalse(os.path.exists(first_path))
-                self.assertFalse(os.path.exists(second_path))
-                self.assertFalse(
+                self.assertEqual(BankStatementImport.objects.count(), 2)
+                self.assertEqual(BankMovement.objects.count(), 2)
+                self.assertTrue(os.path.exists(first_path))
+                self.assertTrue(os.path.exists(second_path))
+                self.assertTrue(
                     BankStatementImport.objects.filter(file_checksum__in=["checksum-sample", "checksum-sample-2"]).exists()
                 )
-                replacement = BankStatementImport.objects.create(
-                    source_filename="sample.xls",
-                    source_file=SimpleUploadedFile(
-                        "sample.xls",
-                        b"fresh-xls-content",
-                        content_type="application/vnd.ms-excel",
-                    ),
-                    file_checksum="checksum-sample",
-                )
-                self.assertTrue(BankStatementImport.objects.filter(pk=replacement.pk).exists())
 
 
 class BankingViewTests(TestCase):
@@ -1193,6 +1183,8 @@ class BankingViewTests(TestCase):
         self.assertContains(response, "Enlazar una cuenta o tarjeta")
         self.assertContains(response, "Guardar banco en este ordenador")
         self.assertContains(response, "Actualizar todas las conexiones")
+        self.assertContains(response, "Operativa de importacion")
+        self.assertNotContains(response, "Borrar todas las importaciones")
         self.assertNotContains(response, "Open Banking")
         self.assertNotContains(response, "GoCardless")
 
