@@ -56,7 +56,7 @@ def extract_financial_metrics_from_pages(pages: list[str]) -> dict:
             if profit_after_tax is None and (
                 normalized.startswith("D) RESULTADO DEL EJERCICIO")
                 or normalized.startswith("VII. RESULTADO DEL EJERCICIO")
-                or normalized == "RESULTADO DEL EJERCICIO"
+                or normalized.startswith("RESULTADO DEL EJERCICIO")
             ):
                 inline_profit = extract_last_decimal(line)
                 if inline_profit is not None:
@@ -97,6 +97,17 @@ def read_pdf_pages(file_source) -> list[str]:
             file_source.close()
 
 
+def extract_financial_metrics_from_source(file_source) -> dict:
+    try:
+        return extract_financial_metrics_from_pages(read_pdf_pages(file_source))
+    except Exception:
+        return {
+            "net_equity": None,
+            "share_capital": None,
+            "profit_after_tax": None,
+        }
+
+
 def extract_financial_metrics_from_record(record) -> dict:
     metrics = {
         "net_equity": None,
@@ -110,7 +121,7 @@ def extract_financial_metrics_from_record(record) -> dict:
     for source in balance_sources:
         if not source:
             continue
-        parsed = extract_financial_metrics_from_pages(read_pdf_pages(source))
+        parsed = extract_financial_metrics_from_source(source)
         if metrics["net_equity"] is None and parsed["net_equity"] is not None:
             metrics["net_equity"] = parsed["net_equity"]
         if metrics["share_capital"] is None and parsed["share_capital"] is not None:
@@ -119,7 +130,7 @@ def extract_financial_metrics_from_record(record) -> dict:
     for source in profit_sources:
         if not source:
             continue
-        parsed = extract_financial_metrics_from_pages(read_pdf_pages(source))
+        parsed = extract_financial_metrics_from_source(source)
         if parsed["profit_after_tax"] is not None:
             metrics["profit_after_tax"] = parsed["profit_after_tax"]
             break

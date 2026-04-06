@@ -459,19 +459,30 @@ def load_rows_from_workbook(source) -> list[list[str]]:
     raise ValidationError("Tipo de fichero no compatible. Sube extractos XLS o XLSX.")
 
 
+def _load_xlsx_rows_with_openpyxl(source, *, read_only: bool) -> tuple[list[list[str]], int, int]:
+    from openpyxl import load_workbook
+
+    workbook_source = BytesIO(source) if isinstance(source, (bytes, bytearray)) else source
+    workbook = load_workbook(workbook_source, data_only=True, read_only=read_only)
+    try:
+        worksheet = workbook.worksheets[0]
+        rows = []
+        for row in worksheet.iter_rows(values_only=True):
+            rows.append([normalize_workbook_cell_value(cell) for cell in row])
+        return rows, worksheet.max_row or 0, worksheet.max_column or 0
+    finally:
+        workbook.close()
+
+
 def load_rows_from_xlsx(source) -> list[list[str]]:
     try:
-        from openpyxl import load_workbook
+        import openpyxl  # noqa: F401
     except ImportError as exc:
         raise ValidationError("Se necesita openpyxl para importar ficheros XLSX.") from exc
 
-    workbook_source = BytesIO(source) if isinstance(source, (bytes, bytearray)) else source
-    workbook = load_workbook(workbook_source, data_only=True, read_only=True)
-    worksheet = workbook.worksheets[0]
-    rows = []
-    for row in worksheet.iter_rows(values_only=True):
-        rows.append([normalize_workbook_cell_value(cell) for cell in row])
-    workbook.close()
+    rows, max_row, max_column = _load_xlsx_rows_with_openpyxl(source, read_only=True)
+    if max_row <= 1 and max_column <= 1:
+        rows, _, _ = _load_xlsx_rows_with_openpyxl(source, read_only=False)
     return rows
 
 
@@ -752,6 +763,16 @@ def infer_period_range_from_text(text: str, row_label: str = "") -> tuple[date, 
     return min(detected_dates), max(detected_dates)
 
 
+def get_metadata_label_value(row: list[str], next_row: list[str], column_index: int) -> str:
+    below_value = get_row_cell(next_row, column_index)
+    if below_value:
+        return below_value
+    right_value = get_row_cell(row, column_index + 1)
+    if right_value:
+        return right_value
+    return ""
+
+
 def extract_statement_metadata(rows: list[list[str]], source_name: str = "") -> dict:
     metadata = {
         "currency": "EUR",
@@ -769,13 +790,34 @@ def extract_statement_metadata(rows: list[list[str]], source_name: str = "") -> 
         re.IGNORECASE,
     )
 
-    for row in rows:
+    for index, row in enumerate(rows):
+        next_row = rows[index + 1] if index + 1 < len(rows) else []
         text = " ".join(str(cell).strip() for cell in row if str(cell).strip())
         if not text:
             continue
         row_label = normalize_header_label(get_row_cell(row, 0))
         second_cell = get_row_cell(row, 1)
         third_cell = get_row_cell(row, 2)
+
+        for column_index, raw_cell in enumerate(row):
+            label = normalize_header_label(str(raw_cell))
+            if not label:
+                continue
+            candidate_value = get_metadata_label_value(row, next_row, column_index)
+            if label == "TITULAR" and candidate_value and not metadata["holder_name"]:
+                metadata["holder_name"] = candidate_value
+            elif label in {"CUENTA", "IBAN"} and candidate_value:
+                if looks_like_iban(candidate_value):
+                    metadata["iban"] = candidate_value
+                    if not metadata["account_label"]:
+                        metadata["account_label"] = f"Cuenta {normalize_iban(candidate_value)[-4:]}"
+                elif not metadata["account_label"]:
+                    metadata["account_label"] = candidate_value
+            elif label in {"SALDO CONSOLIDADO", "SALDO REAL", "SALDO DISPONIBLE"} and candidate_value:
+                try:
+                    metadata["closing_balance"] = parse_spanish_decimal(candidate_value)
+                except Exception:
+                    pass
 
         match = date_pattern.search(text)
         if match:

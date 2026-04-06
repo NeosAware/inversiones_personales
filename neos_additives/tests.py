@@ -1,10 +1,14 @@
+import tempfile
 from decimal import Decimal
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from django.test.utils import override_settings
 
 from portfolio.company_valuation import (
     extract_financial_metrics_from_pages,
     recalculate_company_valuations,
+    save_annual_valuation,
     sync_latest_valuation_to_holding,
 )
 
@@ -28,6 +32,54 @@ class AdditivesAnnualValuationTests(TestCase):
         self.assertEqual(metrics["net_equity"], Decimal("724366.41"))
         self.assertEqual(metrics["share_capital"], Decimal("69678.00"))
         self.assertEqual(metrics["profit_after_tax"], Decimal("137322.75"))
+
+    def test_extract_financial_metrics_accepts_inline_resultado_del_ejercicio_lines(self):
+        metrics = extract_financial_metrics_from_pages(
+            [
+                "\n".join(
+                    [
+                        "PATRIMONIO NETO 1.234,56",
+                        "1. CAPITAL ESCRITURADO 3.000,00",
+                        "RESULTADO DEL EJERCICIO 250,00",
+                    ]
+                )
+            ]
+        )
+
+        self.assertEqual(metrics["net_equity"], Decimal("1234.56"))
+        self.assertEqual(metrics["share_capital"], Decimal("3000.00"))
+        self.assertEqual(metrics["profit_after_tax"], Decimal("250.00"))
+
+    def test_save_annual_valuation_keeps_record_when_pdf_cannot_be_parsed(self):
+        with tempfile.TemporaryDirectory() as temp_media_root:
+            with override_settings(MEDIA_ROOT=temp_media_root):
+                record = save_annual_valuation(
+                    {
+                        "year": 2026,
+                        "ownership_pct": Decimal("80.00"),
+                        "balance_approved": False,
+                        "audited_favorable": False,
+                        "balance_pdf": SimpleUploadedFile(
+                            "balance.pdf",
+                            b"not-a-real-pdf",
+                            content_type="application/pdf",
+                        ),
+                        "profit_loss_pdf": None,
+                        "corporate_tax_pdf": None,
+                        "net_equity": None,
+                        "share_capital": None,
+                        "profit_after_tax": None,
+                    },
+                    AdditivesAnnualValuation,
+                    AdditivesHolding,
+                    "Neos Additives fiscal valuation stake",
+                )
+
+        self.assertEqual(AdditivesAnnualValuation.objects.count(), 1)
+        self.assertTrue(record.balance_pdf.name.endswith("balance.pdf"))
+        self.assertIsNone(record.net_equity)
+        self.assertIsNone(record.share_capital)
+        self.assertIsNone(record.profit_after_tax)
 
     def test_recalculate_company_valuation_uses_aeat_greater_of_three_rule(self):
         AdditivesAnnualValuation.objects.create(

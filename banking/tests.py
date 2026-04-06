@@ -1,5 +1,6 @@
 import os
 import tempfile
+import zipfile
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
@@ -35,6 +36,76 @@ from .services import (
 
 
 class BankingServicesTests(TestCase):
+    def _build_broken_dimension_xlsx(self) -> bytes:
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "movimientos"
+        worksheet["C2"] = "Titular"
+        worksheet["D2"] = "Saldo disponible"
+        worksheet["E2"] = "Saldo real"
+        worksheet["C3"] = "JOAQUIN PIQUER MARTI"
+        worksheet["D3"] = "100.104,89 EUR"
+        worksheet["E3"] = "100.104,89 EUR"
+        worksheet["C5"] = "Cuenta"
+        worksheet["D5"] = "Retenciones"
+        worksheet["E5"] = "Saldo consolidado"
+        worksheet["C6"] = "ES19 0049 4898 94 2916239927"
+        worksheet["D6"] = "0,00 EUR"
+        worksheet["E6"] = "100.104,89 EUR"
+        worksheet["A7"] = "Movimientos Fecha desde 07/01/2026 Fecha Hasta 06/04/2026"
+        worksheet["K7"] = "06/04/2026 | 21:35:02"
+        headers = [
+            "Fecha Operación",
+            "Fecha Valor",
+            "Concepto",
+            "Importe",
+            "Divisa",
+            "Saldo",
+            "Divisa",
+            "Código",
+            "Número de documento",
+            "Referencia 1",
+            "Referencia 2",
+            "Información adicional",
+        ]
+        for column_index, value in enumerate(headers, start=1):
+            worksheet.cell(row=8, column=column_index, value=value)
+        worksheet.append(
+            [
+                "19/03/2026",
+                "19/03/2026",
+                "Transferencia De Neos Additives S.l., Concepto Pago De Deuda.",
+                50000.0,
+                "EUR",
+                100104.89,
+                "EUR",
+                "071",
+                "",
+                "",
+                "",
+                "",
+            ]
+        )
+
+        payload = BytesIO()
+        workbook.save(payload)
+
+        broken_payload = BytesIO()
+        with zipfile.ZipFile(BytesIO(payload.getvalue()), "r") as source_zip:
+            with zipfile.ZipFile(broken_payload, "w", zipfile.ZIP_DEFLATED) as target_zip:
+                for zip_info in source_zip.infolist():
+                    file_bytes = source_zip.read(zip_info.filename)
+                    if zip_info.filename == "xl/worksheets/sheet1.xml":
+                        file_bytes = file_bytes.replace(
+                            b'<dimension ref="A1:L9"/>',
+                            b'<dimension ref="A1"/>',
+                        )
+                    target_zip.writestr(zip_info, file_bytes)
+
+        return broken_payload.getvalue()
+
     def _build_statement_html(self, holder_name: str = "", iban: str = "ES12 3456 7890 1234") -> str:
         holder_row = f"<tr><td>Titular: {holder_name}</td></tr>" if holder_name else ""
         return f"""
@@ -128,6 +199,24 @@ class BankingServicesTests(TestCase):
         self.assertEqual(parse_spanish_decimal("3.126,77"), Decimal("3126.77"))
         self.assertEqual(parse_spanish_decimal("-171,05"), Decimal("-171.05"))
         self.assertEqual(parse_spanish_decimal("3126.77"), Decimal("3126.77"))
+
+    def test_parse_statement_file_accepts_xlsx_with_broken_dimension_metadata(self):
+        document = SimpleUploadedFile(
+            "MovimientosCuenta.xlsx",
+            self._build_broken_dimension_xlsx(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        parsed = parse_statement_file(document)
+
+        self.assertEqual(parsed["metadata"]["holder_name"], "JOAQUIN PIQUER MARTI")
+        self.assertEqual(parsed["metadata"]["iban"], "ES19 0049 4898 94 2916239927")
+        self.assertEqual(parsed["metadata"]["account_label"], "Cuenta 9927")
+        self.assertEqual(parsed["metadata"]["period_start"], date(2026, 1, 7))
+        self.assertEqual(parsed["metadata"]["period_end"], date(2026, 4, 6))
+        self.assertEqual(parsed["metadata"]["closing_balance"], Decimal("100104.89"))
+        self.assertEqual(len(parsed["movements"]), 1)
+        self.assertEqual(parsed["movements"][0].amount, Decimal("50000"))
 
     def test_classify_plan_contribution(self):
         classified = classify_movement(
