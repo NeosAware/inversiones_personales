@@ -137,13 +137,13 @@ class BankStatementImport(models.Model):
     @property
     def period_label(self):
         if self.period_start and self.period_end:
-            start_label = self.period_start.strftime("%Y-%m")
-            end_label = self.period_end.strftime("%Y-%m")
+            start_label = self.period_start.strftime("%Y-%m-%d")
+            end_label = self.period_end.strftime("%Y-%m-%d")
             return start_label if start_label == end_label else f"{start_label} a {end_label}"
         if self.period_end:
-            return self.period_end.strftime("%Y-%m")
+            return f"Hasta {self.period_end:%Y-%m-%d}"
         if self.period_start:
-            return self.period_start.strftime("%Y-%m")
+            return f"Desde {self.period_start:%Y-%m-%d}"
         return "Sin periodo"
 
 

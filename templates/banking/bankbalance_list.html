@@ -1145,111 +1145,57 @@
   </section>
 
   <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Gastos por concepto</p>
+    <p class="section-title">Gasto familiar consolidado</p>
+    <h2 style="margin-top:0;">Una sola lectura del gasto del hogar</h2>
+    <p class="muted" style="margin-top:0;">Esta tabla une cuenta y tarjeta en un unico analisis. Si existe detalle de tarjeta, la liquidacion en cuenta no se vuelve a sumar. Las filas se agrupan por familias utiles: alimentacion, estudios y residencia, ocio, hogar, transporte y similares.</p>
+    <div class="grid cols-4" style="margin:20px 0 14px;">
+      <section class="soft-panel">
+        <h3 class="soft-title">Gasto total del periodo</h3>
+        <div class="metric-value">{{ reconciled_summary.household_expenses_total|floatformat:2 }} EUR</div>
+        <div class="metric-sub">Consumo real del hogar sin duplicar pagos de tarjeta.</div>
+      </section>
+      <section class="soft-panel">
+        <h3 class="soft-title">Media mensual</h3>
+        <div class="metric-value">{{ reconciled_summary.average_monthly_household_expenses|floatformat:2 }} EUR</div>
+        <div class="metric-sub">Promedio mensual del gasto consolidado.</div>
+      </section>
+      <section class="soft-panel">
+        <h3 class="soft-title">Ultimo mes analizado</h3>
+        <div class="metric-value">{{ reconciled_summary.latest_month_label|default:"-" }}</div>
+        <div class="metric-sub">{{ reconciled_summary.latest_month_total|floatformat:2 }} EUR en el ultimo mes con datos.</div>
+      </section>
+      <section class="soft-panel">
+        <h3 class="soft-title">Familia principal</h3>
+        <div class="metric-value">{{ reconciled_summary.top_family_label|default:"-" }}</div>
+        <div class="metric-sub">{{ reconciled_summary.top_family_total|floatformat:2 }} EUR acumulados en la familia dominante.</div>
+      </section>
+    </div>
+    <div class="metric-sub" style="margin-bottom:18px;">{{ reconciled_summary.note }}</div>
     <table>
       <thead>
         <tr>
-          <th>Concepto</th>
-          {% for month in expense_months %}
-            <th>{{ month }}</th>
-          {% endfor %}
-          <th>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in expense_matrix %}
-          <tr>
-            <td>{{ row.concept }}</td>
-            {% for value in row.values %}
-              <td>{{ value|floatformat:2 }}</td>
-            {% endfor %}
-            <td><strong>{{ row.total|floatformat:2 }}</strong></td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="{{ expense_months|length|add:2 }}" class="muted">Los conceptos de gasto apareceran aqui tras importar extractos.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-
-  <p class="section-title" style="margin-top:28px;">Gasto del hogar sin duplicar tarjetas</p>
-  <div class="grid cols-4">
-    <section class="card">
-      <div class="metric-label">Gasto consolidado</div>
-      <div class="metric-value">{{ reconciled_summary.household_expenses_total|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Consumo real del hogar sin contar dos veces la liquidacion de tarjeta.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Gasto directo en cuenta</div>
-      <div class="metric-value">{{ reconciled_summary.cash_account_expenses_total|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Pagos bancarios no ligados a liquidaciones de tarjeta.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Liquidaciones de tarjeta</div>
-      <div class="metric-value">{{ reconciled_summary.card_settlements_total|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Salida de caja en cuenta para pagar tarjetas.</div>
-    </section>
-    <section class="card">
-      <div class="metric-label">Detalle real de tarjeta</div>
-      <div class="metric-value">{{ reconciled_summary.card_spending_total|floatformat:2 }} EUR</div>
-      <div class="metric-sub">Compras leidas de los extractos de tarjeta. Devoluciones: {{ reconciled_summary.card_refunds_total|floatformat:2 }} EUR.</div>
-    </section>
-  </div>
-  <div class="metric-sub" style="margin-top:12px;">{{ reconciled_summary.note }}</div>
-
-  <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Resumen mensual consolidado</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Mes</th>
-          <th>Gasto directo en cuenta</th>
-          <th>Liquidaciones de tarjeta</th>
-          <th>Gasto de tarjeta</th>
-          <th>Devoluciones de tarjeta</th>
-          <th>Gasto real del hogar</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for month in reconciled_monthly_summaries %}
-          <tr>
-            <td>{{ month.label }}</td>
-            <td>{{ month.cash_account_expenses|floatformat:2 }}</td>
-            <td>{{ month.card_settlements|floatformat:2 }}</td>
-            <td>{{ month.card_spending|floatformat:2 }}</td>
-            <td class="good">{{ month.card_refunds|floatformat:2 }}</td>
-            <td><strong>{{ month.household_expenses|floatformat:2 }}</strong></td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="6" class="muted">Todavia no hay gasto consolidado suficiente para construir el gemelo digital del hogar.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-
-  <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Gasto consolidado por concepto</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Concepto</th>
+          <th>Familia</th>
           {% for month in reconciled_expense_months %}
             <th>{{ month }}</th>
           {% endfor %}
+          <th>Media/mes</th>
+          <th>%</th>
           <th>Total</th>
         </tr>
       </thead>
       <tbody>
         {% for row in reconciled_expense_matrix %}
           <tr>
-            <td>{{ row.concept }}</td>
+            <td><strong>{{ row.concept }}</strong></td>
             {% for value in row.values %}
-              <td>{{ value|floatformat:2 }}</td>
+              <td class="{% if value > 0 %}warn{% elif value < 0 %}good{% endif %}">{{ value|floatformat:2 }}</td>
             {% endfor %}
+            <td>{{ row.average_monthly|floatformat:2 }}</td>
+            <td>{{ row.share_pct|floatformat:1 }} %</td>
             <td><strong>{{ row.total|floatformat:2 }}</strong></td>
           </tr>
         {% empty %}
-          <tr><td colspan="{{ reconciled_expense_months|length|add:2 }}" class="muted">Cuando importes cuentas y tarjetas, aqui aparecera el gasto consolidado sin duplicar liquidaciones.</td></tr>
+          <tr><td colspan="{{ reconciled_expense_months|length|add:4 }}" class="muted">Cuando importes cuentas y tarjetas, aqui aparecera la tabla general de gasto familiar sin duplicar liquidaciones.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -1325,62 +1271,6 @@
           </tr>
         {% empty %}
           <tr><td colspan="7" class="muted">Todavia no hay tarjetas importadas. Sube el XLS/XLSX de la tarjeta marcando el tipo Tarjeta.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-
-  <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Gasto mensual en tarjetas</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Mes</th>
-          <th>Tarjetas</th>
-          <th>Gasto</th>
-          <th>Devoluciones</th>
-          <th>Gasto neto</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for month in card_monthly_summaries %}
-          <tr>
-            <td>{{ month.label }}</td>
-            <td>{{ month.cards_count }}</td>
-            <td>{{ month.expenses|floatformat:2 }}</td>
-            <td class="good">{{ month.refunds|floatformat:2 }}</td>
-            <td class="{% if month.net_spent > 0 %}warn{% else %}good{% endif %}">{{ month.net_spent|floatformat:2 }}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="5" class="muted">Todavia no hay meses de gasto en tarjetas importados.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-
-  <section class="card table-card" style="margin-top:24px;">
-    <p class="section-title">Gasto de tarjetas por concepto</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Concepto</th>
-          {% for month in card_expense_months %}
-            <th>{{ month }}</th>
-          {% endfor %}
-          <th>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in card_expense_matrix %}
-          <tr>
-            <td>{{ row.concept }}</td>
-            {% for value in row.values %}
-              <td>{{ value|floatformat:2 }}</td>
-            {% endfor %}
-            <td><strong>{{ row.total|floatformat:2 }}</strong></td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="{{ card_expense_months|length|add:2 }}" class="muted">Los conceptos de gasto de tarjeta apareceran aqui cuando subas extractos marcados como Tarjeta.</td></tr>
         {% endfor %}
       </tbody>
     </table>

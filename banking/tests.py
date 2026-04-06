@@ -1,6 +1,8 @@
 import os
 import tempfile
+from datetime import date
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -702,7 +704,46 @@ class BankingServicesTests(TestCase):
         self.assertEqual(dashboard["reconciled_summary"]["card_refunds_total"], Decimal("50.00"))
         self.assertEqual(dashboard["reconciled_summary"]["household_expenses_total"], Decimal("720.00"))
         self.assertEqual(dashboard["reconciled_monthly_summaries"][0]["household_expenses"], Decimal("720.00"))
-        self.assertEqual(dashboard["reconciled_expense_matrix"][0]["concept"], "Compras online")
+        self.assertEqual(dashboard["reconciled_summary"]["top_family_label"], "Compras y hogar")
+        self.assertEqual(dashboard["reconciled_expense_matrix"][0]["concept"], "Compras y hogar")
+        self.assertEqual(dashboard["reconciled_expense_matrix"][0]["total"], Decimal("600.00"))
+        self.assertEqual(dashboard["reconciled_expense_matrix"][1]["concept"], "Alimentacion")
+
+    def test_build_dashboard_groups_reconciled_expenses_into_families(self):
+        statement = BankStatementImport.objects.create(
+            source_filename="familias-may.xls",
+            source_file="banking/statements/familias-may.xls",
+            file_checksum="familias-may",
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
+            account_label="Cuenta hogar",
+            period_start="2026-05-01",
+            period_end="2026-05-31",
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+
+        for booking_date, concept, amount, concept_bucket in (
+            ("2026-05-04", "MERCADONA ONDA", Decimal("-120.00"), "Supermercado"),
+            ("2026-05-08", "RESIDENCIA MEDITERRANEO MARC", Decimal("-850.00"), "Otros gastos"),
+            ("2026-05-12", "NETFLIX", Decimal("-19.99"), "Suscripciones"),
+        ):
+            BankMovement.objects.create(
+                statement_import=statement,
+                booking_date=booking_date,
+                concept=concept,
+                normalized_concept=concept,
+                amount=amount,
+                movement_group=BankMovement.MovementGroup.EXPENSE,
+                concept_bucket=concept_bucket,
+            )
+
+        dashboard = build_banking_dashboard()
+        family_rows = {row["concept"]: row for row in dashboard["reconciled_expense_matrix"]}
+
+        self.assertEqual(dashboard["reconciled_summary"]["household_expenses_total"], Decimal("989.99"))
+        self.assertEqual(dashboard["reconciled_summary"]["top_family_label"], "Estudios y residencia")
+        self.assertEqual(family_rows["Estudios y residencia"]["total"], Decimal("850.00"))
+        self.assertEqual(family_rows["Alimentacion"]["total"], Decimal("120.00"))
+        self.assertEqual(family_rows["Ocio y digital"]["total"], Decimal("19.99"))
 
     def test_bank_investment_position_uses_current_value_when_cost_basis_missing(self):
         position = BankInvestmentPosition.objects.create(
@@ -880,6 +921,138 @@ class BankingServicesTests(TestCase):
         self.assertEqual(parsed["movements"][0].reference_1, "LUXEMBOURG")
         self.assertEqual(parsed["movements"][0].reference_2, "AUT")
         self.assertEqual(parsed["movements"][-1].amount, Decimal("-55.07"))
+
+    def test_parse_statement_file_accepts_card_xlsx_with_excel_dates_and_explicit_period(self):
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(["Tarjeta:", "5402________3026", "BS CARD MASTERCARD"])
+        worksheet.append(["Titular tarjeta", "PIQUER MARTI ,JOAQUIN"])
+        worksheet.append(["Periodo analizado", date(2026, 4, 1), date(2026, 4, 30)])
+        worksheet.append(["F. Operativa", "Concepto", "F. Valor", "Importe"])
+        worksheet.append([date(2026, 4, 5), "AMAZON", date(2026, 4, 5), -19.99])
+        worksheet.append([date(2026, 4, 2), "MERCADONA", date(2026, 4, 2), -55.07])
+
+        payload = BytesIO()
+        workbook.save(payload)
+        workbook.close()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            statement_path = Path(temp_dir) / "visa.xlsx"
+            statement_path.write_bytes(payload.getvalue())
+
+            parsed = parse_statement_file(
+                str(statement_path),
+                statement_kind=BankStatementImport.StatementKind.CARD,
+            )
+
+        self.assertEqual(parsed["metadata"]["account_label"], "BS CARD MASTERCARD 3026")
+        self.assertEqual(parsed["metadata"]["holder_name"], "PIQUER MARTI ,JOAQUIN")
+        self.assertEqual(parsed["metadata"]["period_start"].isoformat(), "2026-04-01")
+        self.assertEqual(parsed["metadata"]["period_end"].isoformat(), "2026-04-30")
+        self.assertEqual(len(parsed["movements"]), 2)
+        self.assertEqual(parsed["movements"][0].amount, Decimal("-19.99"))
+        self.assertEqual(parsed["movements"][1].amount, Decimal("-55.07"))
+
+    def test_parse_statement_file_prefers_explicit_card_period_over_movement_range(self):
+        html = """
+<html>
+  <body>
+    <table>
+      <tr><td>Targeta:</td><td>5402________3026</td><td>BS CARD MASTERCARD</td></tr>
+      <tr><td>Titular targeta</td><td>PIQUER MARTI ,JOAQUIN</td></tr>
+      <tr><td>Periodo analizado</td><td>01/03/2026</td><td>31/03/2026</td></tr>
+      <tr><td>MOVIMIENTOS DE DEBITO</td></tr>
+      <tr>
+        <td>DATA</td>
+        <td>CONCEPTE</td>
+        <td>LOCALITAT</td>
+        <td>IMPORT</td>
+      </tr>
+      <tr>
+        <td>31/03</td>
+        <td>AMAZON</td>
+        <td>LUXEMBOURG</td>
+        <td>7,53</td>
+      </tr>
+      <tr>
+        <td>30/03</td>
+        <td>MERCADONA</td>
+        <td>ONDA</td>
+        <td>55,07</td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            statement_path = Path(temp_dir) / "periodo-tarjeta.xls"
+            statement_path.write_text(html, encoding="utf-8")
+
+            parsed = parse_statement_file(
+                str(statement_path),
+                statement_kind=BankStatementImport.StatementKind.CARD,
+            )
+
+        self.assertEqual(parsed["metadata"]["period_start"].isoformat(), "2026-03-01")
+        self.assertEqual(parsed["metadata"]["period_end"].isoformat(), "2026-03-31")
+        self.assertEqual(len(parsed["movements"]), 2)
+        self.assertEqual(parsed["movements"][0].amount, Decimal("-7.53"))
+        self.assertEqual(parsed["movements"][1].amount, Decimal("-55.07"))
+
+    def test_parse_statement_file_accepts_card_layout_with_amount_shifted_right(self):
+        html = """
+<html>
+  <body>
+    <table>
+      <tr><td>Saldos y movimientos</td></tr>
+      <tr><td>Tarjeta:</td><td>5402________3026</td><td>BS CARD MASTERCARD</td></tr>
+      <tr><td>Titular tarjeta</td><td>PIQUER MARTI ,JOAQUIN</td></tr>
+      <tr><td>MOVIMIENTOS DE DEBITO</td></tr>
+      <tr>
+        <td>FECHA</td>
+        <td>CONCEPTO</td>
+        <td>LOCALIDAD</td>
+        <td>IMPORTE</td>
+        <td></td>
+        <td></td>
+      </tr>
+      <tr>
+        <td>28/01</td>
+        <td>AMAZON* 2F5Q77O95</td>
+        <td>LUXEMBOURG</td>
+        <td></td>
+        <td>54,44</td>
+        <td>EUR</td>
+      </tr>
+      <tr>
+        <td>12/01</td>
+        <td>AMAZON* ZC8UT0VX4</td>
+        <td>LUXEMBOURG</td>
+        <td></td>
+        <td>-22,99</td>
+        <td>EUR</td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            statement_path = Path(temp_dir) / "06042026_5402________3026.xls"
+            statement_path.write_text(html, encoding="utf-8")
+
+            parsed = parse_statement_file(
+                str(statement_path),
+                statement_kind=BankStatementImport.StatementKind.CARD,
+            )
+
+        self.assertEqual(parsed["metadata"]["account_label"], "BS CARD MASTERCARD 3026")
+        self.assertEqual(parsed["metadata"]["period_start"].isoformat(), "2026-01-12")
+        self.assertEqual(parsed["metadata"]["period_end"].isoformat(), "2026-01-28")
+        self.assertEqual(len(parsed["movements"]), 2)
+        self.assertEqual(parsed["movements"][0].amount, Decimal("-54.44"))
+        self.assertEqual(parsed["movements"][1].amount, Decimal("-22.99"))
 
     def test_load_rows_from_xls_reads_legacy_workbook_with_xlrd(self):
         import xlrd
@@ -1184,6 +1357,9 @@ class BankingViewTests(TestCase):
         self.assertContains(response, "Guardar banco en este ordenador")
         self.assertContains(response, "Actualizar todas las conexiones")
         self.assertContains(response, "Operativa de importacion")
+        self.assertContains(response, "Gasto familiar consolidado")
+        self.assertNotContains(response, "Gasto mensual en tarjetas")
+        self.assertNotContains(response, "Gasto de tarjetas por concepto")
         self.assertNotContains(response, "Borrar todas las importaciones")
         self.assertNotContains(response, "Open Banking")
         self.assertNotContains(response, "GoCardless")

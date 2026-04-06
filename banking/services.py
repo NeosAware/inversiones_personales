@@ -107,6 +107,65 @@ CARD_SETTLEMENT_KEYWORDS = (
     "PAGO MASTERCARD",
     "CARGO TARJETA CREDITO",
 )
+EXPENSE_FAMILY_BY_BUCKET = {
+    "Supermercado": "Alimentacion",
+    "Restauracion": "Ocio y restauracion",
+    "Suscripciones": "Ocio y digital",
+    "Suministros": "Hogar y suministros",
+    "Telecomunicaciones": "Hogar y suministros",
+    "Transporte": "Transporte",
+    "Viajes": "Viajes",
+    "Compras online": "Compras y hogar",
+    "Cuotas y asociaciones": "Cuotas y servicios",
+    "Recibos domiciliados": "Hogar y suministros",
+    "Bizum": "Bizum y transferencias",
+    CARD_SETTLEMENT_BUCKET: "Tarjetas sin detalle",
+    "Otros gastos": "Otros gastos",
+}
+EXPENSE_FAMILY_KEYWORD_RULES = (
+    (
+        (
+            "RESIDENCIA MEDITERRANEO",
+            "RESIDENCIA MEDITERRANEA",
+            "MEDITERRANEO",
+            "MEDITERRANEA",
+            "UNIVERSIDAD",
+            "UNIVERSITAT",
+            "CAMPUS",
+            "MATRICULA",
+            "ACADEMIA",
+            "COLEGIO",
+            "ESCUELA",
+            "MASTER",
+            "ESTUDIOS",
+            "LIBRERIA",
+        ),
+        "Estudios y residencia",
+    ),
+    (
+        (
+            "FARMACIA",
+            "MEDICO",
+            "CLINICA",
+            "DENTAL",
+            "HOSPITAL",
+            "OPTICA",
+            "SALUD",
+        ),
+        "Salud y cuidado",
+    ),
+)
+FULL_DATE_TOKEN_PATTERN = re.compile(
+    r"(?<!\d)(\d{2}/\d{2}/\d{4}(?:\s+\d{2}:\d{2}(?::\d{2})?)?|\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?)(?!\d)"
+)
+PERIOD_ROW_KEYWORDS = (
+    "PERIODO",
+    "LIQUIDACION",
+    "FECHA INICIO",
+    "FECHA FIN",
+    "DESDE",
+    "HASTA",
+)
 
 
 class StatementImportError(Exception):
@@ -411,7 +470,7 @@ def load_rows_from_xlsx(source) -> list[list[str]]:
     worksheet = workbook.worksheets[0]
     rows = []
     for row in worksheet.iter_rows(values_only=True):
-        rows.append(["" if cell is None else str(cell).strip() for cell in row])
+        rows.append([normalize_workbook_cell_value(cell) for cell in row])
     workbook.close()
     return rows
 
@@ -497,6 +556,20 @@ def format_excel_number(value) -> str:
     if number == number.to_integral():
         return str(int(number))
     return format(number.normalize(), "f")
+
+
+def normalize_workbook_cell_value(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%d/%m/%Y")
+    if isinstance(value, date):
+        return value.strftime("%d/%m/%Y")
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float, Decimal)):
+        return format_excel_number(value)
+    return str(value).strip()
 
 
 class _HTMLTableRowParser(HTMLParser):
@@ -646,6 +719,39 @@ def infer_reference_date_from_source_name(source_name: str) -> date | None:
     return None
 
 
+def extract_full_dates_from_text(text: str) -> list[date]:
+    parsed_dates = []
+    seen_dates = set()
+    for match in FULL_DATE_TOKEN_PATTERN.finditer(str(text)):
+        try:
+            parsed_date = parse_spanish_date(match.group(1))
+        except ValueError:
+            continue
+        if parsed_date in seen_dates:
+            continue
+        seen_dates.add(parsed_date)
+        parsed_dates.append(parsed_date)
+    return parsed_dates
+
+
+def infer_period_range_from_text(text: str, row_label: str = "") -> tuple[date, date] | None:
+    normalized_text = normalize_header_text(text)
+    has_period_hint = any(keyword in normalized_text for keyword in PERIOD_ROW_KEYWORDS) or row_label in {
+        "PERIODO",
+        "PERIODO ANALIZADO",
+        "PERIODO DE LIQUIDACION",
+        "LIQUIDACION",
+    }
+    if not has_period_hint:
+        return None
+
+    detected_dates = extract_full_dates_from_text(text)
+    if len(detected_dates) < 2:
+        return None
+
+    return min(detected_dates), max(detected_dates)
+
+
 def extract_statement_metadata(rows: list[list[str]], source_name: str = "") -> dict:
     metadata = {
         "currency": "EUR",
@@ -676,6 +782,11 @@ def extract_statement_metadata(rows: list[list[str]], source_name: str = "") -> 
             metadata["period_start"] = parse_spanish_date(match.group(1))
             metadata["period_end"] = parse_spanish_date(match.group(2))
             metadata["reference_date"] = metadata["period_end"]
+        else:
+            inferred_period = infer_period_range_from_text(text, row_label)
+            if inferred_period:
+                metadata["period_start"], metadata["period_end"] = inferred_period
+                metadata["reference_date"] = metadata["period_end"]
 
         normalized_text = normalize_header_text(text)
         if row_label in {"TARGETA", "TARJETA"}:
@@ -879,8 +990,10 @@ def looks_like_card_statement(rows: list[list[str]]) -> bool:
 
 def parse_card_statement_date(value: str, reference_date: date | None) -> date:
     text = str(value).strip()
-    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", text):
+    try:
         return parse_spanish_date(text)
+    except ValueError:
+        pass
     if re.fullmatch(r"\d{2}/\d{2}", text):
         anchor = reference_date or timezone.localdate()
         day, month = (int(part) for part in text.split("/"))
@@ -891,14 +1004,44 @@ def parse_card_statement_date(value: str, reference_date: date | None) -> date:
     raise ValueError(f"Fecha no compatible: {value}")
 
 
+def parse_optional_card_statement_date(value: str, reference_date: date | None) -> date | None:
+    return parse_card_statement_date(value, reference_date) if str(value).strip() else None
+
+
 def parse_card_row_amount(row: list[str], column_map: dict[str, int], section_sign: int | None) -> Decimal:
-    raw_amount = get_row_cell(row, column_map.get("amount"))
+    raw_amount = get_card_amount_text(row, column_map)
     amount = parse_spanish_decimal(raw_amount)
     if amount < ZERO or raw_amount.strip().startswith("-"):
         return amount
     if section_sign == 1:
         return abs(amount)
     return -abs(amount)
+
+
+def get_card_amount_text(row: list[str], column_map: dict[str, int]) -> str:
+    amount_index = column_map.get("amount")
+    if amount_index is None:
+        return ""
+
+    direct_value = get_row_cell(row, amount_index)
+    if direct_value:
+        try:
+            parse_spanish_decimal(direct_value)
+            return direct_value
+        except Exception:
+            pass
+
+    for index in range(amount_index + 1, len(row)):
+        candidate = get_row_cell(row, index)
+        if not candidate:
+            continue
+        try:
+            parse_spanish_decimal(candidate)
+            return candidate
+        except Exception:
+            continue
+
+    return direct_value
 
 
 def row_looks_like_card_statement_data(
@@ -916,7 +1059,7 @@ def row_looks_like_card_statement_data(
     except Exception:
         return False
 
-    amount_value = get_row_cell(row, column_map.get("amount"))
+    amount_value = get_card_amount_text(row, column_map)
     if not amount_value:
         return False
 
@@ -959,7 +1102,10 @@ def parse_card_statement_rows(rows: list[list[str]], metadata: dict, source_name
         movements.append(
             ParsedMovement(
                 booking_date=booking_date,
-                value_date=parse_optional_date(get_row_cell(row, current_column_map.get("value_date"))),
+                value_date=parse_optional_card_statement_date(
+                    get_row_cell(row, current_column_map.get("value_date")),
+                    reference_date,
+                ),
                 concept=get_row_cell(row, current_column_map.get("concept")),
                 amount=parse_card_row_amount(row, current_column_map, current_section_sign),
                 balance=None,
@@ -1006,11 +1152,22 @@ def parse_spanish_date(value: str):
         return value
 
     text = str(value).strip()
-    for date_format in ("%d/%m/%Y", "%Y-%m-%d"):
+    for date_format in (
+        "%d/%m/%Y",
+        "%Y-%m-%d",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+    ):
         try:
             return datetime.strptime(text, date_format).date()
         except ValueError:
             continue
+    try:
+        return datetime.fromisoformat(text).date()
+    except ValueError:
+        pass
     raise ValueError(f"Fecha no compatible: {value}")
 
 
@@ -1314,6 +1471,17 @@ def classify_movement(concept: str, amount: Decimal) -> ClassifiedMovement:
         group=BankMovement.MovementGroup.EXPENSE,
         bucket="Otros gastos",
     )
+
+
+def classify_expense_family(concept: str, concept_bucket: str) -> str:
+    normalized = normalize_concept(concept)
+    for keywords, family in EXPENSE_FAMILY_KEYWORD_RULES:
+        if any(keyword in normalized for keyword in keywords):
+            return family
+    inferred_bucket = concept_bucket
+    if concept_bucket in {"Devoluciones y abonos", "Otros ingresos", "Otros gastos"}:
+        inferred_bucket = classify_movement(concept, Decimal("-1.00")).bucket
+    return EXPENSE_FAMILY_BY_BUCKET.get(inferred_bucket, "Otros gastos")
 
 
 def build_banking_dashboard() -> dict:
@@ -2029,7 +2197,7 @@ def build_reconciled_spending_overview(statements: list[BankStatementImport] | N
             "household_expenses": ZERO,
         }
     )
-    expense_map = defaultdict(lambda: defaultdict(lambda: ZERO))
+    family_map = defaultdict(lambda: defaultdict(lambda: ZERO))
     monthly_labels = set()
 
     for statement in account_statements:
@@ -2047,10 +2215,10 @@ def build_reconciled_spending_overview(statements: list[BankStatementImport] | N
                 row["card_settlements"] += amount_abs
                 if not has_card_details:
                     row["cash_account_expenses"] += amount_abs
-                    expense_map[CARD_SETTLEMENT_BUCKET][movement_month] += amount_abs
+                    family_map[classify_expense_family(movement.concept, CARD_SETTLEMENT_BUCKET)][movement_month] += amount_abs
             else:
                 row["cash_account_expenses"] += amount_abs
-                expense_map[movement.concept_bucket][movement_month] += amount_abs
+                family_map[classify_expense_family(movement.concept, movement.concept_bucket)][movement_month] += amount_abs
 
     for statement in card_statements:
         for movement in statement.movements.all():
@@ -2062,9 +2230,10 @@ def build_reconciled_spending_overview(statements: list[BankStatementImport] | N
 
             if movement.movement_group == BankMovement.MovementGroup.EXPENSE:
                 row["card_spending"] += amount_abs
-                expense_map[movement.concept_bucket][movement_month] += amount_abs
+                family_map[classify_expense_family(movement.concept, movement.concept_bucket)][movement_month] += amount_abs
             elif movement.movement_group == BankMovement.MovementGroup.INCOME:
                 row["card_refunds"] += amount_abs
+                family_map[classify_expense_family(movement.concept, movement.concept_bucket)][movement_month] -= amount_abs
 
     monthly_summaries = []
     for month_label in sorted(month_map.keys(), reverse=True):
@@ -2079,17 +2248,20 @@ def build_reconciled_spending_overview(statements: list[BankStatementImport] | N
 
     expense_months = sorted(monthly_labels)
     expense_matrix = []
-    for concept_bucket, values in sorted(
-        expense_map.items(),
+    for family_label, values in sorted(
+        family_map.items(),
         key=lambda item: sum(item[1].values()),
         reverse=True,
     ):
         row_values = [values.get(month_label, ZERO) for month_label in expense_months]
+        row_total = sum(row_values, ZERO)
+        if row_total == ZERO:
+            continue
         expense_matrix.append(
             {
-                "concept": concept_bucket,
+                "concept": family_label,
                 "values": row_values,
-                "total": sum(row_values, ZERO),
+                "total": row_total,
             }
         )
 
@@ -2098,20 +2270,37 @@ def build_reconciled_spending_overview(statements: list[BankStatementImport] | N
     card_spending_total = sum((row["card_spending"] for row in monthly_summaries), ZERO)
     card_refunds_total = sum((row["card_refunds"] for row in monthly_summaries), ZERO)
     household_expenses_total = sum((row["household_expenses"] for row in monthly_summaries), ZERO)
+    months_count = len(monthly_summaries)
+
+    for row in expense_matrix:
+        latest_value = row["values"][-1] if row["values"] else ZERO
+        row["latest_value"] = latest_value
+        row["average_monthly"] = row["total"] / months_count if months_count else ZERO
+        row["share_pct"] = ((row["total"] / household_expenses_total) * Decimal("100")) if household_expenses_total else ZERO
+
+    top_family = expense_matrix[0] if expense_matrix else None
 
     summary = {
         "has_card_details": has_card_details,
-        "months_count": len(monthly_summaries),
+        "months_count": months_count,
         "cash_account_expenses_total": cash_account_expenses_total,
         "card_settlements_total": card_settlements_total,
         "card_spending_total": card_spending_total,
         "card_refunds_total": card_refunds_total,
         "household_expenses_total": household_expenses_total,
+        "average_monthly_household_expenses": (
+            household_expenses_total / months_count if months_count else ZERO
+        ),
+        "latest_month_label": monthly_summaries[0]["label"] if monthly_summaries else None,
+        "latest_month_total": monthly_summaries[0]["household_expenses"] if monthly_summaries else ZERO,
+        "families_count": len(expense_matrix),
+        "top_family_label": top_family["concept"] if top_family else None,
+        "top_family_total": top_family["total"] if top_family else ZERO,
     }
     summary["note"] = (
-        "Las liquidaciones de tarjeta se separan del gasto de cuenta y se sustituyen por el detalle real de cada tarjeta."
+        "La tabla general agrupa todo el gasto del hogar por familias y sustituye las liquidaciones de tarjeta por el detalle real de cada tarjeta."
         if has_card_details
-        else "Todavia no hay extractos de tarjeta: las liquidaciones siguen contando como gasto del hogar."
+        else "Todavia no hay extractos de tarjeta: el gasto sigue incluyendo las liquidaciones como una familia provisional hasta que exista el detalle real."
     )
 
     return {
