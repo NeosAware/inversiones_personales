@@ -501,6 +501,140 @@ class BankingServicesTests(TestCase):
         self.assertTrue(dashboard["tracked_accounts"][0]["continuity_has_issues"])
         self.assertTrue(dashboard["tracked_accounts"][0]["continuity_note"])
 
+    def test_build_dashboard_adds_annual_analysis_and_bank_grouping(self):
+        jan_statement = BankStatementImport.objects.create(
+            source_filename="ene.xls",
+            source_file="banking/statements/ene.xls",
+            file_checksum="annual-ene",
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
+            institution="Banco Sabadell",
+            account_label="Cuenta nomina",
+            period_start="2026-01-01",
+            period_end="2026-01-31",
+            total_income=Decimal("3000.00"),
+            total_expenses=Decimal("800.00"),
+            total_pension_contributions=Decimal("100.00"),
+            total_dividends=Decimal("50.00"),
+            closing_balance=Decimal("4200.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+        feb_statement = BankStatementImport.objects.create(
+            source_filename="feb.xls",
+            source_file="banking/statements/feb.xls",
+            file_checksum="annual-feb",
+            statement_kind=BankStatementImport.StatementKind.ACCOUNT,
+            institution="Banco Sabadell",
+            account_label="Cuenta nomina",
+            period_start="2026-02-01",
+            period_end="2026-02-28",
+            total_income=Decimal("3200.00"),
+            total_expenses=Decimal("650.00"),
+            total_pension_contributions=Decimal("0.00"),
+            total_dividends=Decimal("0.00"),
+            closing_balance=Decimal("5000.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+        card_statement = BankStatementImport.objects.create(
+            source_filename="visa-feb.xls",
+            source_file="banking/statements/visa-feb.xls",
+            file_checksum="annual-card-feb",
+            statement_kind=BankStatementImport.StatementKind.CARD,
+            institution="Banco Sabadell",
+            account_label="Visa hogar",
+            period_start="2026-02-01",
+            period_end="2026-02-28",
+            total_income=Decimal("50.00"),
+            total_expenses=Decimal("400.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+
+        for statement_import, booking_date, concept, amount, movement_group, concept_bucket in (
+            (jan_statement, "2026-01-05", "NOMINA", Decimal("3000.00"), BankMovement.MovementGroup.INCOME, "Nomina"),
+            (
+                jan_statement,
+                "2026-01-09",
+                "COBRO DIVIDENDO IBERDROLA",
+                Decimal("50.00"),
+                BankMovement.MovementGroup.DIVIDEND,
+                "Dividendos de acciones",
+            ),
+            (
+                jan_statement,
+                "2026-01-15",
+                "MERCADONA",
+                Decimal("-800.00"),
+                BankMovement.MovementGroup.EXPENSE,
+                "Supermercado",
+            ),
+            (
+                jan_statement,
+                "2026-01-25",
+                "APORTACION PERIODICA POL.",
+                Decimal("-100.00"),
+                BankMovement.MovementGroup.PENSION,
+                "Aportaciones a planes",
+            ),
+            (feb_statement, "2026-02-05", "NOMINA", Decimal("3200.00"), BankMovement.MovementGroup.INCOME, "Nomina"),
+            (
+                feb_statement,
+                "2026-02-10",
+                "LIQUIDACION TARJETA VISA",
+                Decimal("-450.00"),
+                BankMovement.MovementGroup.EXPENSE,
+                "Liquidacion de tarjeta",
+            ),
+            (
+                feb_statement,
+                "2026-02-14",
+                "ALQUILER",
+                Decimal("-200.00"),
+                BankMovement.MovementGroup.EXPENSE,
+                "Otros gastos",
+            ),
+            (
+                card_statement,
+                "2026-02-12",
+                "AMAZON",
+                Decimal("-400.00"),
+                BankMovement.MovementGroup.EXPENSE,
+                "Compras online",
+            ),
+            (
+                card_statement,
+                "2026-02-17",
+                "DEVOLUCION AMAZON",
+                Decimal("50.00"),
+                BankMovement.MovementGroup.INCOME,
+                "Devoluciones y abonos",
+            ),
+        ):
+            BankMovement.objects.create(
+                statement_import=statement_import,
+                booking_date=booking_date,
+                concept=concept,
+                normalized_concept=concept,
+                amount=amount,
+                movement_group=movement_group,
+                concept_bucket=concept_bucket,
+            )
+
+        dashboard = build_banking_dashboard()
+        current_year = dashboard["annual_overview"]["current_year"]
+        institution = dashboard["institution_overview"]["institutions"][0]
+
+        self.assertEqual(current_year["year"], 2026)
+        self.assertEqual(current_year["gross_inflows_total"], Decimal("6250.00"))
+        self.assertEqual(current_year["household_expenses_total"], Decimal("1350.00"))
+        self.assertEqual(current_year["average_monthly_savings"], Decimal("2450.00"))
+        self.assertEqual(current_year["net_value_flow_total"], Decimal("4800.00"))
+        self.assertEqual(current_year["months"][0]["label"], "2026-01")
+        self.assertEqual(current_year["months"][1]["cumulative_net_value_flow"], Decimal("4800.00"))
+        self.assertEqual(institution["institution"], "Banco Sabadell")
+        self.assertEqual(institution["accounts_count"], 1)
+        self.assertEqual(institution["cards_count"], 1)
+        self.assertEqual(institution["visible_balance"], Decimal("5000.00"))
+        self.assertEqual(institution["status_label"], "Cobertura amplia")
+
     def test_build_dashboard_reconciles_card_settlements_without_double_counting_spend(self):
         account_statement = BankStatementImport.objects.create(
             source_filename="cuenta-abr.xls",

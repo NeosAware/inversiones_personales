@@ -27,6 +27,20 @@ from .models import BankBalance, BankMovement, BankStatementImport
 
 
 ZERO = Decimal("0.00")
+MONTH_SHORT_LABELS = {
+    1: "Ene",
+    2: "Feb",
+    3: "Mar",
+    4: "Abr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Ago",
+    9: "Sep",
+    10: "Oct",
+    11: "Nov",
+    12: "Dic",
+}
 HEADER_ROW = ["F. Operativa", "Concepto", "F. Valor", "Importe", "Saldo"]
 DEFAULT_STATEMENT_COLUMN_MAP = {
     "booking_date": 0,
@@ -1468,6 +1482,11 @@ def build_banking_dashboard() -> dict:
         "tracked_accounts": account_overview["accounts"],
         "card_summary": card_overview["summary"],
         "tracked_cards": card_overview["cards"],
+        "annual_overview": build_annual_banking_overview(monthly_summaries, reconciled_spending["monthly_summaries"]),
+        "institution_overview": build_banking_institution_overview(
+            account_overview["accounts"],
+            card_overview["cards"],
+        ),
         "continuity_summary": continuity_overview["summary"],
         "continuity_summary_by_kind": continuity_overview["summary_by_kind"],
         "continuity_groups": continuity_overview["groups"],
@@ -1682,6 +1701,7 @@ def build_card_spending_overview() -> dict:
         tracked_cards.append(
             {
                 "card_name": statement.account_name,
+                "institution": statement.institution,
                 "ownership_category": statement.ownership_category,
                 "ownership_label": statement.get_ownership_category_display(),
                 "latest_month": statement.month_label if statement.period_end else None,
@@ -1736,6 +1756,241 @@ def build_card_spending_overview() -> dict:
         "monthly_summaries": monthly_summaries,
         "expense_months": expense_months,
         "expense_matrix": expense_matrix,
+    }
+
+
+def parse_month_label(month_label: str | None) -> date | None:
+    if not month_label:
+        return None
+    try:
+        year_text, month_text = str(month_label).split("-", 1)
+        return date(int(year_text), int(month_text), 1)
+    except (TypeError, ValueError):
+        return None
+
+
+def format_month_short_label(month_label: str | None) -> str:
+    parsed = parse_month_label(month_label)
+    if not parsed:
+        return month_label or "-"
+    return MONTH_SHORT_LABELS.get(parsed.month, str(parsed.month))
+
+
+def to_percentage(value: Decimal, total: Decimal) -> int:
+    if total == ZERO:
+        return 0
+    return int((abs(value) / abs(total)) * 100)
+
+
+def build_annual_banking_overview(
+    monthly_summaries: list[dict],
+    reconciled_monthly_summaries: list[dict],
+) -> dict:
+    monthly_by_label = {row["label"]: row for row in monthly_summaries}
+    reconciled_by_label = {row["label"]: row for row in reconciled_monthly_summaries}
+    year_map = defaultdict(
+        lambda: {
+            "year": None,
+            "months": [],
+            "months_count": 0,
+            "income_total": ZERO,
+            "dividends_total": ZERO,
+            "gross_inflows_total": ZERO,
+            "household_expenses_total": ZERO,
+            "pension_contributions_total": ZERO,
+            "operating_savings_total": ZERO,
+            "net_value_flow_total": ZERO,
+            "year_end_balance": None,
+            "has_year_end_balance": False,
+            "best_month_label": None,
+            "best_month_value": None,
+            "worst_month_label": None,
+            "worst_month_value": None,
+            "savings_rate_pct": None,
+            "average_monthly_savings": ZERO,
+        }
+    )
+
+    all_month_labels = sorted(set(monthly_by_label) | set(reconciled_by_label))
+
+    for month_label in all_month_labels:
+        parsed_month = parse_month_label(month_label)
+        if not parsed_month:
+            continue
+
+        account_row = monthly_by_label.get(month_label, {})
+        reconciled_row = reconciled_by_label.get(month_label, {})
+        income = account_row.get("income", ZERO)
+        dividends = account_row.get("dividends", ZERO)
+        gross_inflows = income + dividends
+        household_expenses = reconciled_row.get("household_expenses", account_row.get("expenses", ZERO))
+        pension_contributions = account_row.get("pension_contributions", ZERO)
+        operating_savings = gross_inflows - household_expenses
+        net_value_flow = operating_savings - pension_contributions
+
+        year_bucket = year_map[parsed_month.year]
+        year_bucket["year"] = parsed_month.year
+        year_bucket["months"].append(
+            {
+                "label": month_label,
+                "short_label": format_month_short_label(month_label),
+                "income": income,
+                "dividends": dividends,
+                "gross_inflows": gross_inflows,
+                "household_expenses": household_expenses,
+                "pension_contributions": pension_contributions,
+                "operating_savings": operating_savings,
+                "net_value_flow": net_value_flow,
+                "closing_balance": account_row.get("closing_balance"),
+                "net_value_flow_tone": "good" if net_value_flow >= ZERO else "warn",
+            }
+        )
+        year_bucket["income_total"] += income
+        year_bucket["dividends_total"] += dividends
+        year_bucket["gross_inflows_total"] += gross_inflows
+        year_bucket["household_expenses_total"] += household_expenses
+        year_bucket["pension_contributions_total"] += pension_contributions
+        year_bucket["operating_savings_total"] += operating_savings
+        year_bucket["net_value_flow_total"] += net_value_flow
+
+    years = []
+    for year in sorted(year_map.keys(), reverse=True):
+        bucket = year_map[year]
+        bucket["months"].sort(key=lambda item: item["label"])
+        bucket["months_count"] = len(bucket["months"])
+        bucket["average_monthly_savings"] = (
+            bucket["operating_savings_total"] / bucket["months_count"]
+            if bucket["months_count"]
+            else ZERO
+        )
+        if bucket["gross_inflows_total"] > ZERO:
+            bucket["savings_rate_pct"] = (
+                (bucket["operating_savings_total"] / bucket["gross_inflows_total"]) * Decimal("100")
+            )
+
+        cumulative_net_value = ZERO
+        max_abs_cumulative = ZERO
+        max_abs_month = ZERO
+        for month in bucket["months"]:
+            cumulative_net_value += month["net_value_flow"]
+            month["cumulative_net_value_flow"] = cumulative_net_value
+            max_abs_cumulative = max(max_abs_cumulative, abs(cumulative_net_value))
+            max_abs_month = max(max_abs_month, abs(month["net_value_flow"]))
+            if month["closing_balance"] is not None:
+                bucket["year_end_balance"] = month["closing_balance"]
+                bucket["has_year_end_balance"] = True
+
+        for month in bucket["months"]:
+            month["cumulative_width_pct"] = to_percentage(
+                month["cumulative_net_value_flow"],
+                max_abs_cumulative,
+            )
+            month["monthly_width_pct"] = to_percentage(
+                month["net_value_flow"],
+                max_abs_month,
+            )
+
+        if bucket["months"]:
+            best_month = max(bucket["months"], key=lambda item: item["net_value_flow"])
+            worst_month = min(bucket["months"], key=lambda item: item["net_value_flow"])
+            bucket["best_month_label"] = best_month["label"]
+            bucket["best_month_value"] = best_month["net_value_flow"]
+            bucket["worst_month_label"] = worst_month["label"]
+            bucket["worst_month_value"] = worst_month["net_value_flow"]
+
+        years.append(bucket)
+
+    return {
+        "years": years,
+        "years_count": len(years),
+        "current_year": years[0] if years else None,
+    }
+
+
+def build_banking_institution_overview(
+    tracked_accounts: list[dict],
+    tracked_cards: list[dict],
+) -> dict:
+    institution_map = defaultdict(
+        lambda: {
+            "institution": "",
+            "accounts_count": 0,
+            "cards_count": 0,
+            "visible_balance": ZERO,
+            "imported_accounts_count": 0,
+            "manual_accounts_count": 0,
+            "statement_count": 0,
+            "card_statement_count": 0,
+            "issues_count": 0,
+            "latest_month": None,
+            "status_label": "Manual",
+            "note": "",
+        }
+    )
+
+    for account in tracked_accounts:
+        institution_name = account.get("institution") or "Sin entidad"
+        bucket = institution_map[institution_name]
+        bucket["institution"] = institution_name
+        bucket["accounts_count"] += 1
+        bucket["visible_balance"] += account.get("current_balance") or ZERO
+        bucket["statement_count"] += account.get("statement_count") or 0
+        bucket["imported_accounts_count"] += 1 if account.get("has_imported_data") else 0
+        bucket["manual_accounts_count"] += 1 if account.get("has_manual_data") else 0
+        if account.get("continuity_has_issues"):
+            bucket["issues_count"] += 1
+        latest_month = account.get("latest_month")
+        if latest_month and (bucket["latest_month"] is None or latest_month > bucket["latest_month"]):
+            bucket["latest_month"] = latest_month
+
+    for card in tracked_cards:
+        institution_name = card.get("institution") or "Sin entidad"
+        bucket = institution_map[institution_name]
+        bucket["institution"] = institution_name
+        bucket["cards_count"] += 1
+        bucket["card_statement_count"] += card.get("statement_count") or 0
+        if card.get("continuity_has_issues"):
+            bucket["issues_count"] += 1
+        latest_month = card.get("latest_month")
+        if latest_month and (bucket["latest_month"] is None or latest_month > bucket["latest_month"]):
+            bucket["latest_month"] = latest_month
+
+    institutions = []
+    for institution_name, bucket in institution_map.items():
+        if bucket["issues_count"]:
+            bucket["status_label"] = "Revisar series"
+            bucket["note"] = f"{bucket['issues_count']} serie(s) con huecos o solapes."
+        elif bucket["imported_accounts_count"] and bucket["cards_count"]:
+            bucket["status_label"] = "Cobertura amplia"
+            bucket["note"] = "Liquidez y tarjetas separadas por banco."
+        elif bucket["imported_accounts_count"]:
+            bucket["status_label"] = "Liquidez trazada"
+            bucket["note"] = "Las cuentas de este banco tienen extractos importados."
+        elif bucket["accounts_count"] or bucket["cards_count"]:
+            bucket["status_label"] = "Manual"
+            bucket["note"] = "Solo hay datos manuales o cobertura parcial."
+        institutions.append(bucket)
+
+    institutions.sort(
+        key=lambda item: (
+            item["visible_balance"],
+            item["accounts_count"],
+            item["cards_count"],
+            item["institution"],
+        ),
+        reverse=True,
+    )
+
+    summary = {
+        "institutions_count": len(institutions),
+        "institutions_with_imported_accounts": sum(1 for item in institutions if item["imported_accounts_count"]),
+        "institutions_with_cards": sum(1 for item in institutions if item["cards_count"]),
+        "institutions_with_issues": sum(1 for item in institutions if item["issues_count"]),
+    }
+
+    return {
+        "institutions": institutions,
+        "summary": summary,
     }
 
 
