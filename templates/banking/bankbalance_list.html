@@ -806,26 +806,39 @@
   </style>
 
   <section class="card bank-hero" id="bank-cockpit">
-    <div class="bank-hero-copy">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;">
       <div>
-        <p class="section-title">{{ page_title }}</p>
-        <h2 class="bank-hero-title">Cockpit bancario profesional</h2>
-        <p class="bank-hero-lead">Ingresos, gasto real del hogar, ahorro y flujo neto de un vistazo. Arrastra un extracto para importar al instante.</p>
+        <h2 class="bank-hero-title" style="font-size:28px;">Cockpit bancario</h2>
+        <div class="bank-hero-badges" style="margin-top:8px;">
+          <span class="bank-hero-badge">{{ institution_overview.summary.institutions_count }} bancos</span>
+          <span class="bank-hero-badge">{{ summary.accounts_count }} cuentas</span>
+          <span class="bank-hero-badge">{{ card_summary.cards_count }} tarjetas</span>
+          <span class="bank-hero-badge">Saldo {{ summary.current_balance|floatformat:0 }} EUR</span>
+        </div>
       </div>
-      <div class="bank-hero-badges">
-        <span class="bank-hero-badge">{{ annual_overview.years_count }} ejercicios analizados</span>
-        <span class="bank-hero-badge">{{ institution_overview.summary.institutions_count }} bancos visibles</span>
-        <span class="bank-hero-badge">{{ summary.accounts_count }} cuentas visibles</span>
-        <span class="bank-hero-badge">{{ card_summary.cards_count }} tarjetas separadas</span>
+      <div class="bank-dropzone" id="hero-dropzone" style="grid-column:auto;max-width:420px;padding:12px 16px;border-width:1px;">
+        <div class="bank-dropzone-actions">
+          <form method="post" enctype="multipart/form-data" id="hero-dropzone-form" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="import">
+            <select name="statement_kind" style="padding:4px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.1);color:#fff;font-size:11px;font-weight:700;">
+              {% for value, label in statement_kind_choices %}
+                <option value="{{ value }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+            <input type="file" name="files" accept=".xls,.xlsx" multiple id="hero-dropzone-input" style="display:none;">
+            <label for="hero-dropzone-input" class="bank-dropzone-btn" style="padding:5px 14px;font-size:12px;">Importar XLS</label>
+          </form>
+          <span class="bank-dropzone-status" id="hero-dropzone-status" style="font-size:11px;"></span>
+        </div>
       </div>
     </div>
 
-    <div class="bank-hero-grid">
+    <div class="bank-hero-grid" style="margin-top:16px;">
       {% if annual_overview.current_year %}
         <section class="bank-hero-stat bank-hero-stat-primary bank-hero-stat-income">
           <div class="metric-label">Ingresos {{ annual_overview.current_year.year }}</div>
-          <div class="metric-value">{{ annual_overview.current_year.gross_inflows_total|floatformat:2 }} EUR</div>
-          <div class="metric-sub">Entradas bancarias y dividendos del ejercicio actual.</div>
+          <div class="metric-value">{{ annual_overview.current_year.gross_inflows_total|floatformat:0 }} EUR</div>
           {% if trends.income_change_pct is not None %}
             <span class="trend-badge {% if trends.income_direction == 'up' %}trend-badge-up-good{% elif trends.income_direction == 'down' %}trend-badge-down-warn{% else %}trend-badge-flat{% endif %}">
               {% if trends.income_direction == 'up' %}&#9650;{% elif trends.income_direction == 'down' %}&#9660;{% else %}&#9654;{% endif %}
@@ -834,9 +847,8 @@
           {% endif %}
         </section>
         <section class="bank-hero-stat bank-hero-stat-primary bank-hero-stat-expense">
-          <div class="metric-label">Gasto del hogar {{ annual_overview.current_year.year }}</div>
-          <div class="metric-value">{{ annual_overview.current_year.household_expenses_total|floatformat:2 }} EUR</div>
-          <div class="metric-sub">Consolidado sin duplicar la liquidacion de las tarjetas.</div>
+          <div class="metric-label">Gasto hogar {{ annual_overview.current_year.year }}</div>
+          <div class="metric-value">{{ annual_overview.current_year.household_expenses_total|floatformat:0 }} EUR</div>
           {% if trends.expense_change_pct is not None %}
             <span class="trend-badge {% if trends.expense_direction == 'up' %}trend-badge-up-warn{% elif trends.expense_direction == 'down' %}trend-badge-down-good{% else %}trend-badge-flat{% endif %}">
               {% if trends.expense_direction == 'up' %}&#9650;{% elif trends.expense_direction == 'down' %}&#9660;{% else %}&#9654;{% endif %}
@@ -845,9 +857,8 @@
           {% endif %}
         </section>
         <section class="bank-hero-stat bank-hero-stat-primary bank-hero-stat-savings">
-          <div class="metric-label">Ahorro medio mensual</div>
-          <div class="metric-value {% if annual_overview.current_year.average_monthly_savings >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.average_monthly_savings|floatformat:2 }} EUR</div>
-          <div class="metric-sub">Media mensual del ejercicio {{ annual_overview.current_year.year }}.</div>
+          <div class="metric-label">Ahorro medio/mes</div>
+          <div class="metric-value {% if annual_overview.current_year.average_monthly_savings >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.average_monthly_savings|floatformat:0 }} EUR</div>
           {% if trends.savings_change_pct is not None %}
             <span class="trend-badge {% if trends.savings_direction == 'up' %}trend-badge-up-good{% elif trends.savings_direction == 'down' %}trend-badge-down-warn{% else %}trend-badge-flat{% endif %}">
               {% if trends.savings_direction == 'up' %}&#9650;{% elif trends.savings_direction == 'down' %}&#9660;{% else %}&#9654;{% endif %}
@@ -857,53 +868,21 @@
         </section>
         <section class="bank-hero-stat bank-hero-stat-primary bank-hero-stat-flow">
           <div class="metric-label">Flujo neto acumulado</div>
-          <div class="metric-value {% if annual_overview.current_year.net_value_flow_total >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.net_value_flow_total|floatformat:2 }} EUR</div>
-          <div class="metric-sub">Ahorro operativo menos aportaciones a planes.</div>
+          <div class="metric-value {% if annual_overview.current_year.net_value_flow_total >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.net_value_flow_total|floatformat:0 }} EUR</div>
+          {% if annual_overview.current_year.savings_rate_pct %}
+            <span class="trend-badge trend-badge-flat">{{ annual_overview.current_year.savings_rate_pct|floatformat:0 }} % tasa de ahorro</span>
+          {% endif %}
         </section>
       {% else %}
         <section class="bank-hero-stat bank-hero-stat-secondary" style="grid-column:1 / -1;">
-          <div class="metric-label">Sin ano operativo construido</div>
-          <div class="metric-value">Importa extractos</div>
-          <div class="metric-sub">En cuanto entren cuentas o tarjetas, aqui aparecera el cockpit de ingresos, gasto y flujo neto.</div>
+          <div class="metric-label">Sin año operativo construido</div>
+          <div class="metric-value">Importa extractos para empezar</div>
         </section>
       {% endif %}
     </div>
 
-    <div class="bank-hero-signal-strip">
-      <section class="bank-hero-signal">
-        <div class="metric-label">Saldo visible</div>
-        <div class="metric-value">{{ summary.current_balance|floatformat:2 }} EUR</div>
-        <div class="metric-sub">Liquidez bancaria agregada hoy.</div>
-      </section>
-      <section class="bank-hero-signal">
-        <div class="metric-label">Cobertura bancaria</div>
-        <div class="metric-value">{{ institution_overview.summary.institutions_with_imported_accounts }}/{{ institution_overview.summary.institutions_count }}</div>
-        <div class="metric-sub">Bancos con cuentas importadas.</div>
-      </section>
-      <section class="bank-hero-signal">
-        <div class="metric-label">Cuentas visibles</div>
-        <div class="metric-value">{{ summary.accounts_count }}</div>
-        <div class="metric-sub">Cuentas bancarias actualmente visibles.</div>
-      </section>
-      <section class="bank-hero-signal">
-        <div class="metric-label">Tarjetas separadas</div>
-        <div class="metric-value">{{ card_summary.cards_count }}</div>
-        <div class="metric-sub">Tarjetas ya aisladas del cargo en cuenta.</div>
-      </section>
-      <section class="bank-hero-signal">
-        <div class="metric-label">Series a revisar</div>
-        <div class="metric-value">{{ continuity_summary.groups_with_gap_count|add:continuity_summary.groups_with_overlap_count }}</div>
-        <div class="metric-sub">Huecos o solapes que pueden sesgar el analisis.</div>
-      </section>
-      <section class="bank-hero-signal">
-        <div class="metric-label">Ultimo mes bancario</div>
-        <div class="metric-value">{{ summary.latest_month|default:"-" }}</div>
-        <div class="metric-sub">Ultimo cierre detectado en la liquidez importada.</div>
-      </section>
-    </div>
-
     {% if smart_alerts %}
-      <div class="smart-alerts">
+      <div class="smart-alerts" style="margin-top:14px;">
         {% for alert in smart_alerts %}
           <div class="smart-alert">
             <span class="smart-alert-icon smart-alert-icon-{{ alert.tone }}">{{ alert.icon }}</span>
@@ -915,178 +894,29 @@
         {% endfor %}
       </div>
     {% endif %}
-
-    {% if daily_burn_rate > 0 %}
-      <div class="bank-burn-strip">
-        <section class="bank-burn-card">
-          <div class="metric-label">Gasto diario medio</div>
-          <div class="metric-value">{{ daily_burn_rate|floatformat:0 }} EUR/dia</div>
-          <div class="metric-sub">Ritmo del mes en curso basado en dias transcurridos.</div>
-        </section>
-        <section class="bank-burn-card">
-          <div class="metric-label">Gasto proyectado del mes</div>
-          <div class="metric-value {% if projected_monthly_expense > reconciled_summary.average_monthly_household_expenses %}warn{% else %}good{% endif %}">{{ projected_monthly_expense|floatformat:0 }} EUR</div>
-          <div class="metric-sub">Estimacion si el ritmo actual se mantiene hasta fin de mes.</div>
-        </section>
-        <section class="bank-burn-card">
-          <div class="metric-label">Media mensual historica</div>
-          <div class="metric-value">{{ reconciled_summary.average_monthly_household_expenses|floatformat:0 }} EUR</div>
-          <div class="metric-sub">Referencia del gasto medio de todos los meses importados.</div>
-        </section>
-      </div>
-    {% endif %}
-
-    <div class="bank-dropzone" id="hero-dropzone">
-      <div class="bank-dropzone-copy">
-        <div class="bank-dropzone-title">Importar extractos al instante</div>
-        <div class="bank-dropzone-sub">Arrastra aqui tus ficheros XLS/XLSX o pulsa el boton para seleccionarlos. Tipo de cuenta y titular se detectan automaticamente.</div>
-      </div>
-      <div class="bank-dropzone-actions">
-        <form method="post" enctype="multipart/form-data" id="hero-dropzone-form" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="import">
-          <select name="statement_kind" style="padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.1);color:#fff;font-size:12px;font-weight:700;">
-            {% for value, label in statement_kind_choices %}
-              <option value="{{ value }}">{{ label }}</option>
-            {% endfor %}
-          </select>
-          <input type="file" name="files" accept=".xls,.xlsx" multiple id="hero-dropzone-input" style="display:none;">
-          <label for="hero-dropzone-input" class="bank-dropzone-btn">Seleccionar ficheros</label>
-        </form>
-        <span class="bank-dropzone-status" id="hero-dropzone-status"></span>
-      </div>
-    </div>
-
-    {% if annual_overview.current_year %}
-      <div class="bank-visual-grid">
-        <section class="bank-visual-panel">
-          <div class="bank-visual-head">
-            <div>
-              <p class="bank-visual-kicker">Balance operativo {{ annual_overview.current_year.year }}</p>
-              <h3 class="bank-visual-title">Ingresos frente a gasto real</h3>
-            </div>
-            {% if annual_overview.current_year.savings_rate_pct %}
-              <span class="pill">{{ annual_overview.current_year.savings_rate_pct|floatformat:1 }} % de ahorro operativo</span>
-            {% endif %}
-          </div>
-          <div class="bank-compare-list">
-            <div class="bank-compare-row">
-              <div class="bank-compare-label">Ingresos</div>
-              <div class="bank-compare-track">
-                <span class="bank-compare-fill bank-compare-fill-income" style="width:100%;"></span>
-              </div>
-              <div class="bank-compare-value">{{ annual_overview.current_year.gross_inflows_total|floatformat:2 }} EUR</div>
-            </div>
-            <div class="bank-compare-row">
-              <div class="bank-compare-label">Gasto</div>
-              <div class="bank-compare-track">
-                <span class="bank-compare-fill bank-compare-fill-expense" style="width:{% if annual_overview.current_year.gross_inflows_total > 0 %}min({% widthratio annual_overview.current_year.household_expenses_total annual_overview.current_year.gross_inflows_total 100 %}%, 100%){% else %}0{% endif %};"></span>
-              </div>
-              <div class="bank-compare-value">{{ annual_overview.current_year.household_expenses_total|floatformat:2 }} EUR</div>
-            </div>
-            <div class="bank-compare-row">
-              <div class="bank-compare-label">Ahorro</div>
-              <div class="bank-compare-track">
-                <span class="bank-compare-fill bank-compare-fill-savings" style="width:{% if annual_overview.current_year.gross_inflows_total > 0 and annual_overview.current_year.operating_savings_total > 0 %}{% widthratio annual_overview.current_year.operating_savings_total annual_overview.current_year.gross_inflows_total 100 %}{% else %}0{% endif %}%;"></span>
-              </div>
-              <div class="bank-compare-value {% if annual_overview.current_year.operating_savings_total >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.operating_savings_total|floatformat:2 }} EUR</div>
-            </div>
-          </div>
-          <div class="bank-hero-note">La lectura rapida es esta: si el gasto se dispara, aqui se ve antes que en las cuentas; si el ahorro cae pero el flujo neto sigue sano, normalmente el dinero se esta yendo a planes o productos de ahorro.</div>
-        </section>
-
-        <section class="bank-visual-panel">
-          <div class="bank-visual-head">
-            <div>
-              <p class="bank-visual-kicker">Pulso mensual</p>
-              <h3 class="bank-visual-title">Flujo neto del ano</h3>
-            </div>
-            <span class="pill">{{ annual_overview.current_year.months_count }} meses</span>
-          </div>
-          <div class="bank-month-strip">
-            {% for month in annual_overview.current_year.months %}
-              <div class="bank-month-card">
-                <div class="bank-month-label">{{ month.short_label }}</div>
-                <div class="bank-month-chart">
-                  <div class="bank-month-rail">
-                    <span class="bank-month-bar {{ month.net_value_flow_tone }}" style="height:{{ month.monthly_width_pct }}%;"></span>
-                  </div>
-                </div>
-                <div class="bank-month-value {% if month.net_value_flow >= 0 %}good{% else %}warn{% endif %}">{{ month.net_value_flow|floatformat:0 }} EUR</div>
-                <div class="bank-month-sub">Acum. {{ month.cumulative_net_value_flow|floatformat:0 }} EUR</div>
-              </div>
-            {% endfor %}
-          </div>
-        </section>
-
-        <section class="bank-visual-panel">
-          <div class="bank-visual-head">
-            <div>
-              <p class="bank-visual-kicker">Mapa del gasto</p>
-              <h3 class="bank-visual-title">Familias dominantes</h3>
-            </div>
-            <span class="pill">{{ reconciled_summary.families_count }} familias</span>
-          </div>
-          <div class="bank-family-list">
-            {% for row in reconciled_expense_matrix|slice:":5" %}
-              <div class="bank-family-row">
-                <div class="bank-family-copy">
-                  <strong>{{ row.concept }}</strong>
-                  <span>{{ row.share_pct|floatformat:1 }} % del gasto total</span>
-                </div>
-                <div class="bank-family-track">
-                  <span class="bank-family-fill" style="width:{% if reconciled_summary.household_expenses_total > 0 %}{% widthratio row.total reconciled_summary.household_expenses_total 100 %}{% else %}0{% endif %}%;"></span>
-                </div>
-                <div class="bank-family-total">{{ row.total|floatformat:2 }} EUR</div>
-              </div>
-            {% empty %}
-              <div class="metric-sub">Todavia no hay gasto consolidado suficiente para construir el mapa por familias.</div>
-            {% endfor %}
-          </div>
-          <div class="bank-hero-note">Con una sola mirada sabes donde se concentra el gasto. La tabla general queda mas abajo para el analisis fino por meses y familias.</div>
-        </section>
-      </div>
-    {% endif %}
   </section>
 
-  <nav class="bank-jumpbar" aria-label="Navegacion rapida de banca">
-    <div class="bank-jumpbar-inner">
-      <a class="bank-jump" href="#bank-cockpit">
-        <strong>Cockpit</strong>
-        <span>Resumen ejecutivo</span>
-      </a>
-      <a class="bank-jump" href="#bank-pulse">
-        <strong>Pulso mensual</strong>
-        <span>Ingresos, gasto, ahorro</span>
-      </a>
-      <a class="bank-jump" href="#bank-expenses">
-        <strong>Gasto familiar</strong>
-        <span>Familias y conceptos</span>
-      </a>
-      <a class="bank-jump" href="#bank-detail">
-        <strong>Detalle</strong>
-        <span>Bancos, cuentas, tarjetas</span>
-      </a>
-      <a class="bank-jump" href="#bank-operations">
-        <strong>Operativa</strong>
-        <span>Importar y mantener</span>
-      </a>
-    </div>
-  </nav>
-
   {% if annual_overview.current_year %}
-  <section class="card table-card" style="margin-top:24px;" id="bank-pulse">
-    <p class="section-title">Pulso financiero {{ annual_overview.current_year.year }}</p>
-    <h2 style="margin-top:0;">Ingresos, gasto y ahorro por mes</h2>
-    <p class="muted" style="margin-top:0;">Cada fila es un mes. El ahorro es ingresos menos gasto; el flujo neto resta ademas aportaciones a planes.</p>
-    <table style="margin-top:18px;">
+  <section class="card table-card" style="margin-top:14px;" id="bank-pulse">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;">
+      <h2 style="margin:0;font-size:18px;">Pulso mensual {{ annual_overview.current_year.year }}</h2>
+      <div class="meta">
+        {% if daily_burn_rate > 0 %}
+          <span class="pill">Gasto dia: {{ daily_burn_rate|floatformat:0 }} EUR</span>
+          <span class="pill {% if projected_monthly_expense > reconciled_summary.average_monthly_household_expenses %}warn{% endif %}">Proyeccion mes: {{ projected_monthly_expense|floatformat:0 }} EUR</span>
+        {% endif %}
+        <span class="pill">Mejor: {{ annual_overview.current_year.best_month_label|default:"-" }} ({{ annual_overview.current_year.best_month_value|floatformat:0 }})</span>
+        <span class="pill">Peor: {{ annual_overview.current_year.worst_month_label|default:"-" }} ({{ annual_overview.current_year.worst_month_value|floatformat:0 }})</span>
+      </div>
+    </div>
+    <table style="margin-top:12px;">
       <thead>
         <tr>
           <th>Mes</th>
           <th>Ingresos</th>
-          <th>Gasto hogar</th>
-          <th>Planes</th>
+          <th>Gasto</th>
           <th>Ahorro</th>
+          <th style="width:160px;">Ahorro visual</th>
           <th>Flujo neto</th>
           <th>Acumulado</th>
         </tr>
@@ -1095,39 +925,34 @@
         {% for month in annual_overview.current_year.months %}
           <tr>
             <td><strong>{{ month.short_label }}</strong></td>
-            <td class="good">{{ month.gross_inflows|floatformat:2 }}</td>
-            <td>{{ month.household_expenses|floatformat:2 }}</td>
-            <td>{{ month.pension_contributions|floatformat:2 }}</td>
-            <td class="{% if month.operating_savings >= 0 %}good{% else %}warn{% endif %}"><strong>{{ month.operating_savings|floatformat:2 }}</strong></td>
-            <td class="{% if month.net_value_flow >= 0 %}good{% else %}warn{% endif %}"><strong>{{ month.net_value_flow|floatformat:2 }}</strong></td>
-            <td class="{% if month.cumulative_net_value_flow >= 0 %}good{% else %}warn{% endif %}">{{ month.cumulative_net_value_flow|floatformat:2 }}</td>
+            <td class="good">{{ month.gross_inflows|floatformat:0 }}</td>
+            <td>{{ month.household_expenses|floatformat:0 }}</td>
+            <td class="{% if month.operating_savings >= 0 %}good{% else %}warn{% endif %}"><strong>{{ month.operating_savings|floatformat:0 }}</strong></td>
+            <td>
+              <div style="height:10px;border-radius:999px;background:#e6eef5;overflow:hidden;">
+                <span style="display:block;height:100%;border-radius:999px;width:{{ month.monthly_width_pct }}%;background:{% if month.net_value_flow >= 0 %}linear-gradient(90deg, #177245, #53c88c){% else %}linear-gradient(90deg, #b26400, #f0b14a){% endif %};"></span>
+              </div>
+            </td>
+            <td class="{% if month.net_value_flow >= 0 %}good{% else %}warn{% endif %}"><strong>{{ month.net_value_flow|floatformat:0 }}</strong></td>
+            <td class="{% if month.cumulative_net_value_flow >= 0 %}good{% else %}warn{% endif %}">{{ month.cumulative_net_value_flow|floatformat:0 }}</td>
           </tr>
         {% endfor %}
         <tr style="border-top:2px solid var(--line); font-weight:800;">
-          <td>Total {{ annual_overview.current_year.year }}</td>
-          <td class="good">{{ annual_overview.current_year.gross_inflows_total|floatformat:2 }}</td>
-          <td>{{ annual_overview.current_year.household_expenses_total|floatformat:2 }}</td>
-          <td>{{ annual_overview.current_year.pension_contributions_total|floatformat:2 }}</td>
-          <td class="{% if annual_overview.current_year.operating_savings_total >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.operating_savings_total|floatformat:2 }}</td>
-          <td class="{% if annual_overview.current_year.net_value_flow_total >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.net_value_flow_total|floatformat:2 }}</td>
+          <td>Total</td>
+          <td class="good">{{ annual_overview.current_year.gross_inflows_total|floatformat:0 }}</td>
+          <td>{{ annual_overview.current_year.household_expenses_total|floatformat:0 }}</td>
+          <td class="{% if annual_overview.current_year.operating_savings_total >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.operating_savings_total|floatformat:0 }}</td>
+          <td></td>
+          <td class="{% if annual_overview.current_year.net_value_flow_total >= 0 %}good{% else %}warn{% endif %}">{{ annual_overview.current_year.net_value_flow_total|floatformat:0 }}</td>
           <td></td>
         </tr>
       </tbody>
     </table>
-    <div class="meta" style="margin-top:14px;">
-      <span class="pill">{{ annual_overview.current_year.months_count }} meses</span>
-      {% if annual_overview.current_year.savings_rate_pct %}
-        <span class="pill">{{ annual_overview.current_year.savings_rate_pct|floatformat:1 }} % ahorro operativo</span>
-      {% endif %}
-      <span class="pill">Mejor mes: {{ annual_overview.current_year.best_month_label|default:"-" }} ({{ annual_overview.current_year.best_month_value|floatformat:0 }} EUR)</span>
-      <span class="pill">Peor mes: {{ annual_overview.current_year.worst_month_label|default:"-" }} ({{ annual_overview.current_year.worst_month_value|floatformat:0 }} EUR)</span>
-    </div>
   </section>
   {% else %}
-    <section class="card" style="margin-top:24px;" id="bank-pulse">
-      <p class="section-title">Pulso financiero</p>
-      <h2 style="margin-top:0;">Todavia no hay datos mensuales</h2>
-      <p class="muted" style="margin:0;">Importa extractos de cuentas o tarjetas para ver aqui el desglose mensual de ingresos, gasto y ahorro.</p>
+    <section class="card" style="margin-top:14px;" id="bank-pulse">
+      <h2 style="margin:0;font-size:18px;">Pulso mensual</h2>
+      <p class="muted" style="margin:8px 0 0;">Importa extractos para ver el desglose mensual.</p>
     </section>
   {% endif %}
 
@@ -1626,11 +1451,16 @@
 
   {% endcomment %}
 
-  <section class="card table-card" style="margin-top:24px;" id="bank-expenses">
-    <p class="section-title">Gasto familiar consolidado</p>
-    <h2 style="margin-top:0;">Familias de gasto del hogar</h2>
-    <p class="muted" style="margin-top:0;">Cuenta y tarjeta en un unico analisis sin duplicar liquidaciones. Media {{ reconciled_summary.average_monthly_household_expenses|floatformat:0 }} EUR/mes, familia dominante: {{ reconciled_summary.top_family_label|default:"-" }}.</p>
-    <div class="bank-expense-visuals" style="margin:18px 0;">
+  <section class="card table-card" style="margin-top:14px;" id="bank-expenses">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;">
+      <h2 style="margin:0;font-size:18px;">Gasto familiar consolidado</h2>
+      <div class="meta">
+        <span class="pill">Media {{ reconciled_summary.average_monthly_household_expenses|floatformat:0 }} EUR/mes</span>
+        <span class="pill">Top: {{ reconciled_summary.top_family_label|default:"-" }}</span>
+        <span class="pill">{{ reconciled_summary.families_count }} familias</span>
+      </div>
+    </div>
+    <div class="bank-expense-visuals" style="margin:14px 0;">
       <section class="soft-panel">
         <div class="soft-copy">
           <div>
