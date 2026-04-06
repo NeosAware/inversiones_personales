@@ -20,10 +20,10 @@
           </div>
         </section>
         <section class="card">
-          <div class="metric-label">Empresas del grupo Neos</div>
+          <div class="metric-label">Grupo Neos consolidado</div>
           <div class="metric-value">{{ overview.neos_group_current_value|floatformat:2 }} EUR</div>
           <div class="metric-sub">
-            {{ overview.neos_group_share_pct|floatformat:2 }} % del patrimonio del hogar.
+            {{ overview.neos_group_share_pct|floatformat:2 }} % del patrimonio del hogar. Neos Ceramica actua como holding y evita sumar dos veces Additives y Materials.
           </div>
         </section>
         <section class="card">
@@ -67,6 +67,7 @@
         <div class="metric-value">{{ owner.current_value|floatformat:2 }} EUR</div>
         <div class="metric-sub">Renta anual {{ owner.annual_income|floatformat:2 }} EUR</div>
         <div class="meta">
+          <span class="pill">Grupo Neos {{ owner.business_current_value|floatformat:0 }} EUR</span>
           <span class="pill">Banca {{ owner.banking_current_value|floatformat:0 }} EUR</span>
           <span class="pill">Acciones {{ owner.equities_current_value|floatformat:0 }} EUR</span>
           <span class="pill">Inmuebles {{ owner.real_estate_current_value|floatformat:0 }} EUR</span>
@@ -81,6 +82,7 @@
         <tr>
           <th>Titular</th>
           <th>Patrimonio trazado</th>
+          <th>Grupo Neos</th>
           <th>Banca</th>
           <th>Liquidez</th>
           <th>Acciones</th>
@@ -93,6 +95,7 @@
           <tr>
             <td><strong>{{ owner.ownership_label }}</strong></td>
             <td>{{ owner.current_value|floatformat:2 }} EUR</td>
+            <td>{{ owner.business_current_value|floatformat:2 }} EUR</td>
             <td>{{ owner.banking_current_value|floatformat:2 }} EUR</td>
             <td>{{ owner.bank_liquidity_value|floatformat:2 }} EUR</td>
             <td>{{ owner.equities_current_value|floatformat:2 }} EUR</td>
@@ -103,6 +106,58 @@
       </tbody>
     </table>
   </section>
+
+  <p class="section-title" style="margin-top:28px;">Mapa del conglomerado Neos</p>
+  <div class="split">
+    <section class="card">
+      <h2 style="margin-top:0;">Holding familiar</h2>
+      <div class="grid cols-3">
+        <section class="card">
+          <div class="metric-label">Valor consolidado</div>
+          <div class="metric-value">{{ neos_group_context.consolidated_current_value|floatformat:2 }} EUR</div>
+          <div class="metric-sub">Es el valor que se suma al patrimonio total del hogar.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Ximo</div>
+          <div class="metric-value">{{ neos_group_context.owner_breakdown.0.current_value|floatformat:2 }} EUR</div>
+          <div class="metric-sub">90 % economico del holding.</div>
+        </section>
+        <section class="card">
+          <div class="metric-label">Monica</div>
+          <div class="metric-value">{{ neos_group_context.owner_breakdown.1.current_value|floatformat:2 }} EUR</div>
+          <div class="metric-sub">10 % economico del holding.</div>
+        </section>
+      </div>
+      <div class="message info" style="margin-top:18px;">
+        Neos Ceramica se trata como cabecera del grupo. Neos Additives y Neos Materials se siguen de forma analitica para ver la salud de cada filial, pero no se suman otra vez al patrimonio total cuando ya existe valor consolidado en el holding.
+      </div>
+    </section>
+    <section class="card table-card">
+      <h2 style="margin-top:0;">Filiales seguidas</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Empresa</th>
+            <th>% del grupo</th>
+            <th>Valor seguido</th>
+            <th>Estado en resumen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for subsidiary in neos_group_context.subsidiaries %}
+            <tr>
+              <td>{{ subsidiary.display_name }}</td>
+              <td>{{ subsidiary.group_pct|floatformat:2 }} %</td>
+              <td>{{ subsidiary.tracked_current_value|floatformat:2 }} EUR</td>
+              <td>{% if subsidiary.consolidated_in_parent %}Consolidada en Neos Ceramica{% else %}Sumada directamente{% endif %}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="muted">Todavia no hay filiales seguidas en el grupo.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
 
   <p class="section-title" style="margin-top:28px;">Liquidez bancaria</p>
   <div class="grid cols-4">
@@ -286,10 +341,15 @@
         <div class="app-summary">
           <div>
             <h3>{{ section.title }}</h3>
-            <div class="pill">{{ section.items_count }} posiciones</div>
+            <div class="pill">
+              {% if section.analysis_only %}Analitico{% else %}{{ section.items_count }} posiciones{% endif %}
+            </div>
           </div>
           <a class="link" href="{% url section.app_url_name %}">Abrir modulo</a>
         </div>
+        {% if section.analysis_only_note %}
+          <div class="metric-sub" style="margin-top:12px;">{{ section.analysis_only_note }}</div>
+        {% endif %}
         <table style="margin-top:16px;">
           <tbody>
             <tr>

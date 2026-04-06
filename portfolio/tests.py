@@ -8,6 +8,8 @@ from django.urls import reverse
 from banking.models import BankBalance, BankMovement, BankStatementImport
 from equities.models import EquityPosition
 from neos_additives.models import AdditivesHolding
+from neos_ceramica.models import CeramicaHolding
+from neos_materials.models import MaterialsHolding
 from real_estate.models import PropertyInvestment
 from .models import HouseholdAlertSettings, PortfolioSnapshot
 from .ownership import AssetOwnershipCategory
@@ -136,6 +138,40 @@ class PortfolioServicesTests(TestCase):
         self.assertEqual(overview["ibex_equities_current_value"], Decimal("120.00"))
         self.assertEqual(overview["other_buckets_current_value"], Decimal("0.00"))
         self.assertEqual(overview["liquid_cash_share_pct"], Decimal("64.65517241379310344827586207"))
+
+    def test_dashboard_consolidates_neos_group_under_ceramica_holding(self):
+        CeramicaHolding.objects.create(
+            investment_name="Neos Ceramica fiscal valuation stake",
+            invested_amount=Decimal("900.00"),
+            current_valuation=Decimal("1000.00"),
+            annual_dividend_income=Decimal("100.00"),
+        )
+        AdditivesHolding.objects.create(
+            investment_name="Neos Additives fiscal valuation stake",
+            invested_amount=Decimal("700.00"),
+            current_valuation=Decimal("800.00"),
+            annual_dividend_income=Decimal("0.00"),
+        )
+        MaterialsHolding.objects.create(
+            investment_name="Neos Materials fiscal valuation stake",
+            invested_amount=Decimal("300.00"),
+            current_valuation=Decimal("333.00"),
+            annual_dividend_income=Decimal("0.00"),
+        )
+
+        dashboard = build_portfolio_dashboard()
+        sections = {section["title"]: section for section in dashboard["sections"]}
+        owner_groups = {
+            group["ownership_category"]: group for group in dashboard["owner_asset_overview"]["groups"]
+        }
+
+        self.assertEqual(dashboard["summary"]["current_value"], Decimal("1000.00"))
+        self.assertEqual(dashboard["overview"]["neos_group_current_value"], Decimal("1000.00"))
+        self.assertFalse(sections["Neos Ceramica"]["analysis_only"])
+        self.assertTrue(sections["Neos Additives"]["analysis_only"])
+        self.assertTrue(sections["Neos Materials"]["analysis_only"])
+        self.assertEqual(owner_groups[AssetOwnershipCategory.XIMO]["business_current_value"], Decimal("900.00"))
+        self.assertEqual(owner_groups[AssetOwnershipCategory.MONICA]["business_current_value"], Decimal("100.00"))
 
     def test_dashboard_does_not_double_count_manual_balance_if_account_also_has_imported_statement(self):
         BankBalance.objects.create(

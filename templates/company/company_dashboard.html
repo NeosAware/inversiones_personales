@@ -37,6 +37,11 @@
       {% if annual_summary.note %}
         <div class="message info" style="margin-top:18px;">{{ annual_summary.note }}</div>
       {% endif %}
+      {% if group_role_title %}
+        <div class="message info" style="margin-top:18px;">
+          <strong>{{ group_role_title }}.</strong> {{ group_role_blurb }}
+        </div>
+      {% endif %}
     </section>
 
     <section class="card">

@@ -15,12 +15,13 @@ from neos_materials.models import MaterialsHolding
 from real_estate.models import PropertyInvestment
 from real_estate.services import build_property_ownership_overview
 
+from .company_group import NEOS_COMPANY_CONFIG, build_neos_owner_breakdown
 from .metrics import ZERO, build_metrics
 from .models import HouseholdAlertSettings, PortfolioSnapshot
 from .ownership import AssetOwnershipCategory
 
 
-def summarise_section(title, items, app_url_name):
+def summarise_section(title, items, app_url_name, *, include_in_totals: bool = True, analysis_only_note: str = ""):
     invested_amount = sum((item["invested_amount"] for item in items), ZERO)
     current_value = sum((item["current_value"] for item in items), ZERO)
     annual_income = sum((item["annual_income"] for item in items), ZERO)
@@ -39,6 +40,9 @@ def summarise_section(title, items, app_url_name):
         "total_return_eur": total_return_eur,
         "total_return_pct": total_return_pct,
         "app_url_name": app_url_name,
+        "include_in_totals": include_in_totals,
+        "analysis_only": not include_in_totals,
+        "analysis_only_note": analysis_only_note,
     }
 
 
@@ -161,14 +165,7 @@ def build_overview_metrics(state):
     total_current_value = state["summary"]["current_value"]
     liquid_cash = state["bank_liquidity"]["current_value"]
     banking_current_value = section_map.get("Banca", {}).get("current_value", ZERO)
-    neos_group_current_value = sum(
-        (
-            section_map.get("Neos Additives", {}).get("current_value", ZERO),
-            section_map.get("Neos Ceramica", {}).get("current_value", ZERO),
-            section_map.get("Neos Materials", {}).get("current_value", ZERO),
-        ),
-        ZERO,
-    )
+    neos_group_current_value = state["neos_group_context"]["consolidated_current_value"]
     ibex_equities_current_value = section_map.get("Acciones cotizadas", {}).get("current_value", ZERO)
     highlighted_buckets_current_value = neos_group_current_value + ibex_equities_current_value + banking_current_value
     other_buckets_current_value = total_current_value - highlighted_buckets_current_value
@@ -194,6 +191,7 @@ def build_owner_asset_overview(
     banking_ownership_overview: dict,
     property_ownership_overview: dict,
     equities,
+    neos_group_context: dict,
 ) -> dict:
     groups = []
     equities = list(equities)
@@ -203,15 +201,31 @@ def build_owner_asset_overview(
     property_groups = {
         group["ownership_category"]: group for group in property_ownership_overview["groups"]
     }
+    neos_groups = {
+        group["ownership_category"]: group for group in neos_group_context["owner_breakdown"]
+    }
 
     for ownership_category, ownership_label in AssetOwnershipCategory.choices:
         bank_group = banking_groups.get(ownership_category, {})
         property_group = property_groups.get(ownership_category, {})
+        neos_group = neos_groups.get(ownership_category, {})
         owner_equities = [position for position in equities if position.ownership_category == ownership_category]
         equities_current_value = sum((position.current_value for position in owner_equities), ZERO)
         equities_annual_income = sum((position.net_annual_income for position in owner_equities), ZERO)
-        current_value = bank_group.get("total_bank_value", ZERO) + property_group.get("current_value", ZERO) + equities_current_value
-        annual_income = bank_group.get("annual_income", ZERO) + property_group.get("annual_income", ZERO) + equities_annual_income
+        neos_current_value = neos_group.get("current_value", ZERO)
+        neos_annual_income = neos_group.get("annual_income", ZERO)
+        current_value = (
+            bank_group.get("total_bank_value", ZERO)
+            + property_group.get("current_value", ZERO)
+            + equities_current_value
+            + neos_current_value
+        )
+        annual_income = (
+            bank_group.get("annual_income", ZERO)
+            + property_group.get("annual_income", ZERO)
+            + equities_annual_income
+            + neos_annual_income
+        )
         groups.append(
             {
                 "ownership_category": ownership_category,
@@ -221,6 +235,8 @@ def build_owner_asset_overview(
                 "banking_current_value": bank_group.get("total_bank_value", ZERO),
                 "bank_liquidity_value": bank_group.get("current_balance", ZERO),
                 "bank_products_value": bank_group.get("investment_value", ZERO),
+                "business_current_value": neos_current_value,
+                "business_annual_income": neos_annual_income,
                 "equities_current_value": equities_current_value,
                 "real_estate_current_value": property_group.get("current_value", ZERO),
                 "real_estate_income": property_group.get("annual_income", ZERO),
@@ -232,6 +248,7 @@ def build_owner_asset_overview(
                     or annual_income
                     or bank_group.get("cards_count", 0)
                     or property_group.get("properties_count", 0)
+                    or neos_current_value
                 ),
             }
         )
@@ -246,6 +263,50 @@ def build_owner_asset_overview(
     }
 
 
+def build_neos_group_context(ceramica_items, additives_items, materials_items):
+    ceramica_value = sum((item["current_value"] for item in ceramica_items), ZERO)
+    ceramica_income = sum((item["annual_income"] for item in ceramica_items), ZERO)
+    additives_value = sum((item["current_value"] for item in additives_items), ZERO)
+    additives_income = sum((item["annual_income"] for item in additives_items), ZERO)
+    materials_value = sum((item["current_value"] for item in materials_items), ZERO)
+    materials_income = sum((item["annual_income"] for item in materials_items), ZERO)
+
+    uses_parent_holding = ceramica_value > ZERO
+    consolidated_current_value = ceramica_value if uses_parent_holding else additives_value + materials_value
+    consolidated_annual_income = ceramica_income if uses_parent_holding else additives_income + materials_income
+
+    subsidiaries = []
+    for section_title, items in (
+        ("Neos Additives", additives_items),
+        ("Neos Materials", materials_items),
+    ):
+        current_value = sum((item["current_value"] for item in items), ZERO)
+        if not items and not current_value:
+            continue
+        config = NEOS_COMPANY_CONFIG[section_title]
+        subsidiaries.append(
+            {
+                "title": section_title,
+                "display_name": config["display_name"],
+                "group_pct": config["group_pct"],
+                "tracked_current_value": current_value,
+                "effective_owner_breakdown": build_neos_owner_breakdown(current_value, ZERO),
+                "consolidated_in_parent": uses_parent_holding and config["uses_parent_consolidation"],
+            }
+        )
+
+    return {
+        "holding_title": "Neos Ceramica",
+        "holding_value": ceramica_value,
+        "holding_income": ceramica_income,
+        "consolidated_current_value": consolidated_current_value,
+        "consolidated_annual_income": consolidated_annual_income,
+        "uses_parent_holding": uses_parent_holding,
+        "owner_breakdown": build_neos_owner_breakdown(consolidated_current_value, consolidated_annual_income),
+        "subsidiaries": subsidiaries,
+    }
+
+
 def build_current_portfolio_state():
     bank_liquidity = build_bank_liquidity_context()
     bank_account_overview = build_bank_account_overview()
@@ -257,10 +318,15 @@ def build_current_portfolio_state():
     properties = list(PropertyInvestment.objects.all())
     property_ownership_overview = build_property_ownership_overview(properties)
     equities = list(EquityPosition.objects.all())
+    additives_items = [obj.as_portfolio_position() for obj in AdditivesHolding.objects.all()]
+    ceramica_items = [obj.as_portfolio_position() for obj in CeramicaHolding.objects.all()]
+    materials_items = [obj.as_portfolio_position() for obj in MaterialsHolding.objects.all()]
+    neos_group_context = build_neos_group_context(ceramica_items, additives_items, materials_items)
     owner_asset_overview = build_owner_asset_overview(
         banking_ownership_overview,
         property_ownership_overview,
         equities,
+        neos_group_context,
     )
     linked_manual_account_ids = {
         account["account_id"] for account in bank_liquidity["accounts"] if account.get("account_id")
@@ -286,18 +352,30 @@ def build_current_portfolio_state():
         ),
         summarise_section(
             "Neos Additives",
-            [obj.as_portfolio_position() for obj in AdditivesHolding.objects.all()],
+            additives_items,
             "neos_additives:list",
+            include_in_totals=not neos_group_context["uses_parent_holding"],
+            analysis_only_note=(
+                "Se muestra para analisis del conglomerado, pero su valor ya queda consolidado en Neos Ceramica."
+                if neos_group_context["uses_parent_holding"]
+                else ""
+            ),
         ),
         summarise_section(
             "Neos Ceramica",
-            [obj.as_portfolio_position() for obj in CeramicaHolding.objects.all()],
+            ceramica_items,
             "neos_ceramica:list",
         ),
         summarise_section(
             "Neos Materials",
-            [obj.as_portfolio_position() for obj in MaterialsHolding.objects.all()],
+            materials_items,
             "neos_materials:list",
+            include_in_totals=not neos_group_context["uses_parent_holding"],
+            analysis_only_note=(
+                "Se muestra para analisis del conglomerado, pero su valor ya queda consolidado en Neos Ceramica."
+                if neos_group_context["uses_parent_holding"]
+                else ""
+            ),
         ),
         summarise_section(
             "Inmuebles",
@@ -306,15 +384,16 @@ def build_current_portfolio_state():
         ),
     ]
 
+    included_sections = [section for section in sections if section["include_in_totals"]]
     all_items = sorted(
-        [item for section in sections for item in section["items"]],
+        [item for section in included_sections for item in section["items"]],
         key=lambda item: item["total_return_pct"],
         reverse=True,
     )
 
-    invested_amount = sum((section["invested_amount"] for section in sections), ZERO)
-    current_value = sum((section["current_value"] for section in sections), ZERO)
-    annual_income = sum((section["annual_income"] for section in sections), ZERO)
+    invested_amount = sum((section["invested_amount"] for section in included_sections), ZERO)
+    current_value = sum((section["current_value"] for section in included_sections), ZERO)
+    annual_income = sum((section["annual_income"] for section in included_sections), ZERO)
     unrealized_gain = current_value - invested_amount
     total_return_eur = unrealized_gain + annual_income
     total_return_pct = (total_return_eur / invested_amount * Decimal("100")) if invested_amount else ZERO
@@ -336,6 +415,7 @@ def build_current_portfolio_state():
         "banking_ownership_overview": banking_ownership_overview,
         "property_ownership_overview": property_ownership_overview,
         "owner_asset_overview": owner_asset_overview,
+        "neos_group_context": neos_group_context,
     }
 
 
@@ -353,6 +433,7 @@ def capture_portfolio_snapshot(snapshot_date: date | None = None):
             "invested_amount": float(section["invested_amount"]),
             "current_value": float(section["current_value"]),
             "annual_income": float(section["annual_income"]),
+            "include_in_totals": section["include_in_totals"],
         }
         for section in state["sections"]
     }
