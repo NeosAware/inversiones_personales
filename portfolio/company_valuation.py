@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from decimal import Decimal, ROUND_HALF_UP
+from io import BytesIO
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -37,28 +38,40 @@ def extract_last_decimal(value: str) -> Decimal | None:
     return quantize_money(parse_spanish_decimal(matches[-1]))
 
 
+def extract_decimal_from_context(lines: list[str], start_index: int, *, lookahead: int = 3) -> Decimal | None:
+    for offset in range(lookahead + 1):
+        candidate = extract_last_decimal(lines[start_index + offset])
+        if candidate is not None:
+            return candidate
+    return None
+
+
 def extract_financial_metrics_from_pages(pages: list[str]) -> dict:
     net_equity = None
     share_capital = None
     profit_after_tax = None
 
     for page in pages:
-        for line in page.splitlines():
+        lines = page.splitlines()
+        for index, line in enumerate(lines):
             normalized = normalize_text(line)
-            if net_equity is None and "PATRIMONIO NETO" in normalized:
-                net_equity = extract_last_decimal(line)
+            if net_equity is None and (
+                normalized.startswith("A) PATRIMONIO NETO")
+                or normalized.startswith("PATRIMONIO NETO")
+            ):
+                net_equity = extract_decimal_from_context(lines, index)
             if share_capital is None and (
                 normalized.startswith("I. CAPITAL")
                 or normalized.startswith("1. CAPITAL ESCRITURADO")
                 or "CAPITAL ESCRITURADO" in normalized
             ):
-                share_capital = extract_last_decimal(line)
+                share_capital = extract_decimal_from_context(lines, index)
             if profit_after_tax is None and (
                 normalized.startswith("D) RESULTADO DEL EJERCICIO")
                 or normalized.startswith("VII. RESULTADO DEL EJERCICIO")
                 or normalized.startswith("RESULTADO DEL EJERCICIO")
             ):
-                inline_profit = extract_last_decimal(line)
+                inline_profit = extract_decimal_from_context(lines, index)
                 if inline_profit is not None:
                     profit_after_tax = inline_profit
 
@@ -87,14 +100,30 @@ def read_pdf_pages(file_source) -> list[str]:
     except ImportError as exc:
         raise ValidationError("Se necesita pypdf para procesar los PDF de valoracion anual.") from exc
 
-    if hasattr(file_source, "open"):
-        file_source.open("rb")
-    try:
-        reader = PdfReader(file_source)
-        return [(page.extract_text() or "") for page in reader.pages]
-    finally:
-        if hasattr(file_source, "close"):
-            file_source.close()
+    payload = b""
+    storage_handle = None
+    if hasattr(file_source, "storage") and getattr(file_source, "name", ""):
+        storage_handle = file_source.storage.open(file_source.name, "rb")
+        try:
+            payload = storage_handle.read()
+        finally:
+            storage_handle.close()
+    else:
+        if hasattr(file_source, "open"):
+            file_source.open("rb")
+        if hasattr(file_source, "seek"):
+            try:
+                file_source.seek(0)
+            except Exception:
+                pass
+        try:
+            payload = file_source.read()
+        finally:
+            if hasattr(file_source, "close"):
+                file_source.close()
+
+    reader = PdfReader(BytesIO(payload))
+    return [(page.extract_text() or "") for page in reader.pages]
 
 
 def extract_financial_metrics_from_source(file_source) -> dict:

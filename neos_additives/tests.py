@@ -1,5 +1,7 @@
 import tempfile
+import types
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
@@ -7,6 +9,7 @@ from django.test.utils import override_settings
 
 from portfolio.company_valuation import (
     extract_financial_metrics_from_pages,
+    read_pdf_pages,
     recalculate_company_valuations,
     save_annual_valuation,
     sync_latest_valuation_to_holding,
@@ -49,6 +52,64 @@ class AdditivesAnnualValuationTests(TestCase):
         self.assertEqual(metrics["net_equity"], Decimal("1234.56"))
         self.assertEqual(metrics["share_capital"], Decimal("3000.00"))
         self.assertEqual(metrics["profit_after_tax"], Decimal("250.00"))
+
+    def test_extract_financial_metrics_accepts_values_in_following_lines(self):
+        metrics = extract_financial_metrics_from_pages(
+            [
+                "\n".join(
+                    [
+                        "PATRIMONIO NETO Y PASIVO",
+                        "A) PATRIMONIO NETO",
+                        "70.362,18",
+                        "I. Capital",
+                        "7",
+                        "3.000,00",
+                        "VII. Resultado del ejercicio",
+                        "7",
+                        "67.362,18",
+                    ]
+                )
+            ]
+        )
+
+        self.assertEqual(metrics["net_equity"], Decimal("70362.18"))
+        self.assertEqual(metrics["share_capital"], Decimal("3000.00"))
+        self.assertEqual(metrics["profit_after_tax"], Decimal("67362.18"))
+
+    def test_read_pdf_pages_rewinds_source_on_repeated_reads(self):
+        class FakePdfSource:
+            def __init__(self):
+                self.position = 0
+
+            def open(self, mode):
+                return None
+
+            def seek(self, offset):
+                self.position = offset
+
+            def read(self):
+                if self.position != 0:
+                    return b""
+                self.position = 999
+                return b"RESULTADO DEL EJERCICIO 25,00"
+
+            def close(self):
+                return None
+
+        class FakePdfReader:
+            def __init__(self, source):
+                text = source.getvalue().decode()
+                self.pages = [types.SimpleNamespace(extract_text=lambda: text)]
+
+        fake_source = FakePdfSource()
+        fake_module = types.SimpleNamespace(PdfReader=FakePdfReader)
+
+        with patch.dict("sys.modules", {"pypdf": fake_module}):
+            first_pages = read_pdf_pages(fake_source)
+            second_pages = read_pdf_pages(fake_source)
+
+        self.assertEqual(first_pages, ["RESULTADO DEL EJERCICIO 25,00"])
+        self.assertEqual(second_pages, ["RESULTADO DEL EJERCICIO 25,00"])
 
     def test_save_annual_valuation_keeps_record_when_pdf_cannot_be_parsed(self):
         with tempfile.TemporaryDirectory() as temp_media_root:
