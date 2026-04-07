@@ -6,8 +6,10 @@ from .models import EquityPosition, EquityPriceHistory
 @admin.register(EquityPosition)
 class EquityPositionAdmin(admin.ModelAdmin):
     list_display = (
+        "position_kind",
         "ticker",
         "quote_symbol",
+        "reference_profile",
         "benchmark_symbol",
         "company_name",
         "broker",
@@ -20,7 +22,7 @@ class EquityPositionAdmin(admin.ModelAdmin):
         "last_synced_at",
     )
     search_fields = ("ticker", "quote_symbol", "company_name", "broker")
-    list_filter = ("ownership_category", "broker")
+    list_filter = ("position_kind", "reference_profile", "ownership_category", "broker")
 
 
 @admin.register(EquityPriceHistory)

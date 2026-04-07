@@ -1,10 +1,25 @@
 from django.db import models
+from decimal import Decimal
 
 from portfolio.metrics import build_metrics
 from portfolio.ownership import AssetOwnershipCategory
 
 
 class EquityPosition(models.Model):
+    class PositionKind(models.TextChoices):
+        OWNED = "owned", "Comprada"
+        WATCHLIST = "watchlist", "En seguimiento"
+
+    class ReferenceProfile(models.TextChoices):
+        MARKET_INDEX = "market_index", "Indice o activo cotizado"
+        EURIBOR_12M = "euribor_12m", "Euribor 12 meses"
+        SPAIN_HOUSE_PRICE = "spain_house_price", "Precio vivienda Espana"
+
+    position_kind = models.CharField(
+        max_length=16,
+        choices=PositionKind.choices,
+        default=PositionKind.OWNED,
+    )
     ownership_category = models.CharField(
         max_length=12,
         choices=AssetOwnershipCategory.choices,
@@ -13,6 +28,11 @@ class EquityPosition(models.Model):
     broker = models.CharField(max_length=120)
     ticker = models.CharField(max_length=20)
     quote_symbol = models.CharField(max_length=40, blank=True)
+    reference_profile = models.CharField(
+        max_length=24,
+        choices=ReferenceProfile.choices,
+        default=ReferenceProfile.MARKET_INDEX,
+    )
     benchmark_symbol = models.CharField(max_length=40, blank=True, default="^IBEX")
     benchmark_name = models.CharField(max_length=120, blank=True, default="IBEX 35")
     company_name = models.CharField(max_length=160)
@@ -27,7 +47,7 @@ class EquityPosition(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["ticker"]
+        ordering = ["position_kind", "ticker"]
 
     def __str__(self):
         return f"{self.ticker} - {self.company_name}"
@@ -45,6 +65,14 @@ class EquityPosition(models.Model):
         return self.annual_dividend_income - self.annual_maintenance_cost
 
     @property
+    def is_owned(self):
+        return self.position_kind == self.PositionKind.OWNED
+
+    @property
+    def analysis_reference_label(self):
+        return self.benchmark_name or self.get_reference_profile_display()
+
+    @property
     def unrealized_gain(self):
         return self.current_value - self.invested_amount
 
@@ -59,12 +87,15 @@ class EquityPosition(models.Model):
         return (self.unrealized_gain_after_costs / self.invested_amount) * 100
 
     def as_portfolio_position(self):
+        invested_amount = self.invested_amount if self.is_owned else Decimal("0")
+        current_value = self.current_value if self.is_owned else Decimal("0")
+        annual_income = self.net_annual_income if self.is_owned else Decimal("0")
         return build_metrics(
             label=f"{self} ({self.get_ownership_category_display()})",
             asset_type="Acciones",
-            invested_amount=self.invested_amount,
-            current_value=self.current_value,
-            annual_income=self.net_annual_income,
+            invested_amount=invested_amount,
+            current_value=current_value,
+            annual_income=annual_income,
             app_url_name="equities:list",
             notes=self.notes,
         )

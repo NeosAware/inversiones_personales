@@ -57,12 +57,18 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         context["page_title"] = "Acciones cotizadas"
         context["positions"] = positions
         context["summary"] = {
-            "invested_amount": sum((position.invested_amount for position in positions), Decimal("0")),
-            "current_value": sum((position.current_value for position in positions), Decimal("0")),
-            "annual_income": sum((position.net_annual_income for position in positions), Decimal("0")),
+            "owned_invested_amount": dashboard["overview"]["invested_amount"],
+            "owned_current_value": dashboard["overview"]["current_value"],
+            "owned_annual_income": dashboard["overview"]["net_annual_income_total"],
+            "owned_positions_count": dashboard["overview"]["owned_positions_count"],
+            "watchlist_positions_count": dashboard["overview"]["watchlist_positions_count"],
             "synced_positions": sum((1 for position in positions if position.last_synced_at), 0),
         }
         context["history_cards"] = dashboard["history_cards"]
+        context["owned_positions"] = dashboard["owned_positions"]
+        context["watchlist_positions"] = dashboard["watchlist_positions"]
+        context["owned_history_cards"] = dashboard["owned_history_cards"]
+        context["watchlist_history_cards"] = dashboard["watchlist_history_cards"]
         context["analysis_overview"] = dashboard["overview"]
         context["auto_sync"] = auto_sync
         context["selected_period_start"] = selected_start_date
@@ -133,6 +139,28 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         )
         return self.render_to_response(context)
 
+    def _resolve_reference_fields(self, cleaned_data):
+        reference_profile = cleaned_data["reference_profile"]
+        benchmark_symbol = cleaned_data["benchmark_symbol"]
+        benchmark_name = cleaned_data["benchmark_name"]
+        if reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
+            return {
+                "reference_profile": reference_profile,
+                "benchmark_symbol": "ECB:M.S0.N.C_EUR1Y.E",
+                "benchmark_name": "Euribor 12M",
+            }
+        if reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
+            return {
+                "reference_profile": reference_profile,
+                "benchmark_symbol": "EUROSTAT:prc_hpi_q:ES:TOTAL:I15_Q",
+                "benchmark_name": "Precio vivienda Espana",
+            }
+        return {
+            "reference_profile": reference_profile,
+            "benchmark_symbol": benchmark_symbol,
+            "benchmark_name": benchmark_name,
+        }
+
     def _save_position(self, request):
         form = EquityPositionForm(request.POST)
         if not form.is_valid():
@@ -142,11 +170,13 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         ticker = form.cleaned_data["ticker"]
         broker = form.cleaned_data["broker"]
         ownership_category = form.cleaned_data["ownership_category"]
+        position_kind = form.cleaned_data["position_kind"]
+        reference_defaults = self._resolve_reference_fields(form.cleaned_data)
         defaults = {
+            "position_kind": position_kind,
             "company_name": form.cleaned_data["company_name"],
             "quote_symbol": form.cleaned_data["quote_symbol"],
-            "benchmark_symbol": form.cleaned_data["benchmark_symbol"],
-            "benchmark_name": form.cleaned_data["benchmark_name"],
+            **reference_defaults,
             "shares": form.cleaned_data["shares"],
             "average_cost_per_share": form.cleaned_data["average_cost_per_share"],
             "current_price_per_share": form.cleaned_data["current_price_per_share"],
@@ -158,6 +188,7 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
             broker=broker,
             ticker=ticker,
             ownership_category=ownership_category,
+            position_kind=position_kind,
         )
         if matches.exists():
             position = matches.order_by("-updated_at", "-id").first()

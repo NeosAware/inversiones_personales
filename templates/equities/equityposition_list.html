@@ -10,8 +10,8 @@
       border-radius:28px;
       border:1px solid rgba(16,52,77,.12);
       background:
-        radial-gradient(circle at top right, rgba(98,181,220,.30), transparent 26%),
-        linear-gradient(135deg, #0f273a 0%, #103f61 48%, #d9eef8 140%);
+        radial-gradient(circle at top right, rgba(98,181,220,.28), transparent 28%),
+        linear-gradient(135deg, #0f273a 0%, #103f61 46%, #d9eef8 145%);
       color:#fff;
       box-shadow:0 28px 60px rgba(16,52,77,.22);
     }
@@ -23,7 +23,7 @@
       margin-bottom:20px;
     }
     .equity-hero h2{ margin:0; font-size:34px; }
-    .equity-hero p{ margin:8px 0 0; color:rgba(255,255,255,.82); max-width:860px; }
+    .equity-hero p{ margin:8px 0 0; color:rgba(255,255,255,.82); max-width:880px; }
     .equity-badges, .equity-nav{
       display:flex;
       flex-wrap:wrap;
@@ -49,7 +49,7 @@
       padding:14px 16px;
       border-radius:20px;
       border:1px solid var(--line);
-      background:rgba(255,255,255,.92);
+      background:rgba(255,255,255,.94);
       backdrop-filter:blur(12px);
       box-shadow:0 12px 28px rgba(18,37,53,.08);
     }
@@ -62,11 +62,12 @@
       color:var(--accent);
       border-color:var(--accent-2);
     }
-    .equity-hero-grid{
+    .equity-hero-grid, .equity-period-grid, .equity-card-grid, .equity-panel-grid{
       display:grid;
       gap:16px;
-      grid-template-columns:repeat(4, minmax(0,1fr));
     }
+    .equity-hero-grid{ grid-template-columns:repeat(4, minmax(0,1fr)); }
+    .equity-panel-grid{ grid-template-columns:repeat(2, minmax(0,1fr)); }
     .equity-kpi{
       padding:18px;
       border-radius:22px;
@@ -91,11 +92,6 @@
       font-size:13px;
       color:rgba(255,255,255,.8);
     }
-    .equity-panel-grid{
-      display:grid;
-      gap:18px;
-      grid-template-columns:1.1fr .9fr;
-    }
     .equity-panel{
       background:linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
       border:1px solid var(--line);
@@ -111,26 +107,22 @@
       gap:16px;
       margin-bottom:18px;
     }
-    .equity-panel-copy p{ margin:6px 0 0; color:var(--muted); max-width:760px; }
-    .equity-period-grid, .equity-mini-grid{
-      display:grid;
-      gap:14px;
-      grid-template-columns:repeat(4, minmax(0,1fr));
-    }
-    .equity-period-card{
+    .equity-panel-copy p{ margin:6px 0 0; color:var(--muted); max-width:780px; }
+    .equity-period-grid{ grid-template-columns:repeat(4, minmax(0,1fr)); }
+    .equity-period-card, .equity-stat{
       padding:16px;
       border-radius:18px;
       border:1px solid #dde9f1;
       background:#f8fbfe;
     }
-    .equity-period-label{
+    .equity-period-label, .equity-stat-label{
       font-size:12px;
       font-weight:700;
       letter-spacing:.12em;
       text-transform:uppercase;
       color:var(--accent);
     }
-    .equity-period-value{
+    .equity-period-value, .equity-stat-value{
       margin-top:10px;
       font-size:24px;
       font-weight:800;
@@ -143,7 +135,20 @@
       align-items:end;
       margin-top:18px;
     }
-    .equity-analysis-grid{
+    .equity-chart-shell{
+      padding:16px;
+      border-radius:20px;
+      border:1px solid #e1ebf3;
+      background:linear-gradient(180deg, #fbfdff 0%, #f4f9fc 100%);
+      margin-top:14px;
+    }
+    .equity-chart-shell svg{ display:block; width:100%; height:220px; }
+    .equity-chart-caption{
+      margin-top:10px;
+      font-size:13px;
+      color:var(--muted);
+    }
+    .equity-position-grid{
       display:grid;
       gap:18px;
       grid-template-columns:repeat(2, minmax(0,1fr));
@@ -181,43 +186,7 @@
       font-size:12px;
       font-weight:700;
     }
-    .equity-card-grid{
-      display:grid;
-      gap:12px;
-      grid-template-columns:repeat(3, minmax(0,1fr));
-      margin:16px 0;
-    }
-    .equity-stat{
-      padding:14px 16px;
-      border-radius:18px;
-      border:1px solid #e3edf4;
-      background:#f9fcfe;
-    }
-    .equity-stat-label{
-      font-size:12px;
-      text-transform:uppercase;
-      letter-spacing:.1em;
-      color:var(--muted);
-    }
-    .equity-stat-value{
-      margin-top:9px;
-      font-size:22px;
-      font-weight:800;
-      font-variant-numeric:tabular-nums;
-    }
-    .equity-chart-shell{
-      padding:16px;
-      border-radius:20px;
-      border:1px solid #e1ebf3;
-      background:linear-gradient(180deg, #fbfdff 0%, #f4f9fc 100%);
-      margin-top:14px;
-    }
-    .equity-chart-shell svg{ display:block; width:100%; height:220px; }
-    .equity-chart-caption{
-      margin-top:10px;
-      font-size:13px;
-      color:var(--muted);
-    }
+    .equity-card-grid{ grid-template-columns:repeat(4, minmax(0,1fr)); margin:16px 0; }
     .equity-fold{
       border:1px solid var(--line);
       border-radius:24px;
@@ -233,12 +202,10 @@
       font-weight:800;
     }
     .equity-fold summary::-webkit-details-marker{ display:none; }
-    .equity-fold-body{
-      padding:0 22px 22px;
-    }
+    .equity-fold-body{ padding:0 22px 22px; }
     .equity-table-note{ margin:0 0 16px; color:var(--muted); }
     @media (max-width: 1180px){
-      .equity-hero-grid, .equity-period-grid, .equity-mini-grid, .equity-card-grid, .equity-analysis-grid, .equity-range-form, .equity-panel-grid{
+      .equity-hero-grid, .equity-period-grid, .equity-card-grid, .equity-panel-grid, .equity-range-form, .equity-position-grid{
         grid-template-columns:1fr;
       }
     }
@@ -249,52 +216,51 @@
       <div class="equity-hero-top">
         <div>
           <p class="section-title" style="color:rgba(255,255,255,.78); margin-bottom:12px;">Cockpit de acciones</p>
-          <h2>Rentabilidad, flujo neto y pulso tecnico en una sola mirada</h2>
-          <p>La pantalla prioriza valor actual, rentabilidad neta y comportamiento del periodo. Los precios se sincronizan automaticamente al entrar para que el analisis salga actualizado sin pasos manuales.</p>
+          <h2>Cartera real y seguimiento en una vista mucho mas clara</h2>
+          <p>Primero separas lo que ya has comprado de lo que solo estas siguiendo. Despues analizas la rentabilidad mensual, trimestral, semestral y anual junto a una referencia que tenga sentido para cada tesis: indice bursatil, Euribor 12M o precio de vivienda en Espana.</p>
         </div>
         <div class="equity-badges">
-          <span class="equity-badge">{{ analysis_overview.positions_count }} posiciones</span>
+          <span class="equity-badge">{{ analysis_overview.owned_positions_count }} compradas</span>
+          <span class="equity-badge">{{ analysis_overview.watchlist_positions_count }} en seguimiento</span>
           <span class="equity-badge">Periodo {{ analysis_overview.selected_period_label }}</span>
           <span class="equity-badge">
             {% if auto_sync.attempted %}Auto-sync {{ auto_sync.updated_count }} OK{% else %}Auto-sync inactivo{% endif %}
           </span>
-          <span class="equity-badge">Ultimo precio {{ analysis_overview.latest_price_date|date:"Y-m-d"|default:"-" }}</span>
         </div>
       </div>
       <div class="equity-hero-grid">
         <div class="equity-kpi">
-          <div class="equity-kpi-label">Valor actual</div>
-          <div class="equity-kpi-value">{{ analysis_overview.current_value|floatformat:0 }} EUR</div>
-          <div class="equity-kpi-sub">Capital invertido {{ analysis_overview.invested_amount|floatformat:0 }} EUR</div>
+          <div class="equity-kpi-label">Acciones compradas</div>
+          <div class="equity-kpi-value">{{ summary.owned_positions_count }}</div>
+          <div class="equity-kpi-sub">Capital invertido {{ summary.owned_invested_amount|floatformat:0 }} EUR</div>
         </div>
         <div class="equity-kpi">
-          <div class="equity-kpi-label">Rentabilidad neta latente</div>
+          <div class="equity-kpi-label">En seguimiento</div>
+          <div class="equity-kpi-value">{{ summary.watchlist_positions_count }}</div>
+          <div class="equity-kpi-sub">Ideas y valores que aun no forman parte de la cartera.</div>
+        </div>
+        <div class="equity-kpi">
+          <div class="equity-kpi-label">Valor actual cartera</div>
+          <div class="equity-kpi-value">{{ analysis_overview.current_value|floatformat:0 }} EUR</div>
+          <div class="equity-kpi-sub">Solo incluye acciones compradas.</div>
+        </div>
+        <div class="equity-kpi">
+          <div class="equity-kpi-label">Rentabilidad neta</div>
           <div class="equity-kpi-value {% if analysis_overview.unrealized_return_pct or analysis_overview.unrealized_return_pct == 0 %}{% if analysis_overview.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
             {{ analysis_overview.unrealized_return_pct|floatformat:1|default:"-" }}{% if analysis_overview.unrealized_return_pct or analysis_overview.unrealized_return_pct == 0 %} %{% endif %}
           </div>
           <div class="equity-kpi-sub">{{ analysis_overview.unrealized_gain_total|floatformat:0 }} EUR despues de costes</div>
-        </div>
-        <div class="equity-kpi">
-          <div class="equity-kpi-label">Flujo anual neto</div>
-          <div class="equity-kpi-value {% if analysis_overview.net_annual_income_total >= 0 %}good{% else %}warn{% endif %}">
-            {{ analysis_overview.net_annual_income_total|floatformat:0 }} EUR
-          </div>
-          <div class="equity-kpi-sub">Dividendos {{ analysis_overview.annual_dividends_total|floatformat:0 }} EUR menos mantenimiento</div>
-        </div>
-        <div class="equity-kpi">
-          <div class="equity-kpi-label">Coste anual de mantenimiento</div>
-          <div class="equity-kpi-value">{{ analysis_overview.annual_maintenance_total|floatformat:0 }} EUR</div>
-          <div class="equity-kpi-sub">Impacta la rentabilidad neta y el flujo anual</div>
         </div>
       </div>
     </section>
 
     <nav class="equity-nav">
       <a href="#equity-cockpit">Cockpit</a>
-      <a href="#equity-periods">Periodos</a>
-      <a href="#equity-positions">Posiciones</a>
-      <a href="#equity-analysis">Analisis</a>
-      <a href="#equity-ops">Carga de datos</a>
+      <a href="#equity-periods">Rentabilidad</a>
+      <a href="#equity-owned">Compradas</a>
+      <a href="#equity-watchlist">Seguimiento</a>
+      <a href="#equity-analysis">Correlacion</a>
+      <a href="#equity-ops">Operativa</a>
     </nav>
 
     <section class="equity-panel-grid" id="equity-periods">
@@ -302,14 +268,9 @@
         <div class="equity-panel-copy">
           <div>
             <p class="section-title">Rentabilidad por periodos</p>
-            <h3>Lectura rapida de cartera</h3>
-            <p>Rentabilidad ponderada del conjunto para 1M, 3M, YTD y 1Y. Asi ves enseguida si la cartera acompana al mercado o se queda atras.</p>
+            <h3>Cartera comprada</h3>
+            <p>Las cuatro ventanas clave se calculan sobre la cartera real: mensual, trimestral, semestral y anual. Asi ves enseguida si vas mejor o peor que la referencia elegida.</p>
           </div>
-          {% if analysis_overview.weighted_selected_return is not None %}
-            <span class="pill {% if analysis_overview.weighted_selected_return or analysis_overview.weighted_selected_return == 0 %}{% if analysis_overview.weighted_selected_return >= 0 %}good{% else %}warn{% endif %}{% endif %}">
-              Periodo elegido {{ analysis_overview.weighted_selected_return|floatformat:1 }} %
-            </span>
-          {% endif %}
         </div>
         <div class="equity-period-grid">
           {% for item in analysis_overview.weighted_periods %}
@@ -334,7 +295,7 @@
             <label for="period_end">Fin</label>
             <input id="period_end" type="date" name="period_end" value="{{ selected_period_end|date:'Y-m-d' }}">
           </div>
-          <button class="button" type="submit">Analizar periodo</button>
+          <button class="button" type="submit">Analizar rango</button>
           <a class="button secondary" href="{% url 'equities:list' %}">Limpiar filtro</a>
         </form>
       </section>
@@ -342,32 +303,34 @@
       <section class="equity-panel">
         <div class="equity-panel-copy">
           <div>
-            <p class="section-title">Motor de mercado</p>
-            <h3>Sincronizacion automatica</h3>
-            <p>Al abrir la pantalla se intenta actualizar precio e historico. Si alguna accion falla, la cartera sigue siendo visible y aqui queda el diagnostico.</p>
+            <p class="section-title">Flujo y mantenimiento</p>
+            <h3>Lectura economica simple</h3>
+            <p>Dividendos, costes y valor actual quedan separados de las ideas en seguimiento para que el analisis no mezcle activos reales con oportunidades todavia no compradas.</p>
           </div>
-          <span class="pill">{% if analysis_overview.latest_sync_at %}{{ analysis_overview.latest_sync_at|date:"Y-m-d H:i" }}{% else %}Sin sync{% endif %}</span>
+          <span class="pill">{% if analysis_overview.latest_price_date %}Ultimo precio {{ analysis_overview.latest_price_date|date:"Y-m-d" }}{% else %}Sin historico{% endif %}</span>
         </div>
-        <div class="equity-mini-grid">
-          <div class="equity-period-card">
-            <div class="equity-period-label">Sincronizadas</div>
-            <div class="equity-period-value">{{ auto_sync.updated_count }}</div>
-            <div class="metric-sub">Posiciones refrescadas en esta entrada</div>
-          </div>
-          <div class="equity-period-card">
-            <div class="equity-period-label">Ultimo precio</div>
-            <div class="equity-period-value">{{ analysis_overview.latest_price_date|date:"Y-m-d"|default:"-" }}</div>
-            <div class="metric-sub">Fecha mas reciente disponible</div>
-          </div>
+        <div class="equity-period-grid">
           <div class="equity-period-card">
             <div class="equity-period-label">Dividendos</div>
             <div class="equity-period-value">{{ analysis_overview.annual_dividends_total|floatformat:0 }} EUR</div>
-            <div class="metric-sub">Antes de costes recurrentes</div>
+            <div class="metric-sub">Solo cartera comprada</div>
           </div>
           <div class="equity-period-card">
             <div class="equity-period-label">Costes</div>
             <div class="equity-period-value">{{ analysis_overview.annual_maintenance_total|floatformat:0 }} EUR</div>
-            <div class="metric-sub">Custodia, comisiones y mantenimiento</div>
+            <div class="metric-sub">Custodia y mantenimiento</div>
+          </div>
+          <div class="equity-period-card">
+            <div class="equity-period-label">Flujo neto anual</div>
+            <div class="equity-period-value {% if analysis_overview.net_annual_income_total >= 0 %}good{% else %}warn{% endif %}">
+              {{ analysis_overview.net_annual_income_total|floatformat:0 }} EUR
+            </div>
+            <div class="metric-sub">Dividendos menos costes</div>
+          </div>
+          <div class="equity-period-card">
+            <div class="equity-period-label">Precios seguidos</div>
+            <div class="equity-period-value">{{ summary.synced_positions }}</div>
+            <div class="metric-sub">Posiciones con ultimo sync registrado</div>
           </div>
         </div>
         {% if auto_sync.failed %}
@@ -378,52 +341,92 @@
       </section>
     </section>
 
-    <section class="equity-panel table-card" id="equity-positions">
+    <section class="equity-panel table-card" id="equity-owned">
       <div class="equity-panel-copy">
         <div>
-          <p class="section-title">Posiciones</p>
-          <h3>Tabla ejecutiva de cartera</h3>
-          <p>Primero una lectura financiera limpia: capital, valor actual, rentabilidad neta, dividendos y costes. La carga manual queda al final de la pagina.</p>
+          <p class="section-title">Acciones compradas</p>
+          <h3>Cartera real</h3>
+          <p>Esta tabla solo recoge posiciones ya compradas. Asi el valor actual, la rentabilidad y el flujo anual salen limpios y comparables.</p>
         </div>
       </div>
-      <p class="equity-table-note">La rentabilidad neta ya descuenta el coste anual de mantenimiento informado en cada posicion.</p>
       <table>
         <thead>
           <tr>
             <th>Ticker</th>
             <th>Empresa</th>
-            <th>Broker</th>
             <th>Titular</th>
+            <th>Acciones</th>
             <th>Invertido</th>
             <th>Valor actual</th>
             <th>Ganancia neta</th>
             <th>Rentabilidad neta</th>
-            <th>Dividendos</th>
-            <th>Costes</th>
-            <th>Flujo neto</th>
+            <th>Referencia</th>
             <th>Precio</th>
             <th>Fecha</th>
           </tr>
         </thead>
         <tbody>
-          {% for position in positions %}
+          {% for position in owned_positions %}
             <tr>
               <td><strong>{{ position.ticker }}</strong></td>
               <td>{{ position.company_name }}</td>
-              <td>{{ position.broker }}</td>
               <td>{{ position.get_ownership_category_display }}</td>
+              <td>{{ position.shares|floatformat:4 }}</td>
               <td>{{ position.invested_amount|floatformat:2 }} EUR</td>
               <td>{{ position.current_value|floatformat:2 }} EUR</td>
               <td class="{% if position.unrealized_gain_after_costs >= 0 %}good{% else %}warn{% endif %}">{{ position.unrealized_gain_after_costs|floatformat:2 }} EUR</td>
               <td class="{% if position.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ position.unrealized_return_pct|floatformat:2 }} %</td>
-              <td>{{ position.annual_dividend_income|floatformat:2 }} EUR</td>
-              <td>{{ position.annual_maintenance_cost|floatformat:2 }} EUR</td>
-              <td class="{% if position.net_annual_income >= 0 %}good{% else %}warn{% endif %}">{{ position.net_annual_income|floatformat:2 }} EUR</td>
+              <td>{{ position.analysis_reference_label }}</td>
               <td>{{ position.current_price_per_share|floatformat:4 }}</td>
               <td>{{ position.latest_price_date|date:"Y-m-d"|default:"-" }}</td>
             </tr>
           {% empty %}
-            <tr><td colspan="13" class="muted">Todavia no hay posiciones de acciones.</td></tr>
+            <tr><td colspan="11" class="muted">Todavia no hay acciones compradas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="equity-panel table-card" id="equity-watchlist">
+      <div class="equity-panel-copy">
+        <div>
+          <p class="section-title">Acciones en seguimiento</p>
+          <h3>Radar de oportunidades</h3>
+          <p>Las ideas que todavia no has comprado quedan fuera del patrimonio, pero siguen teniendo precio, referencia y correlacion para poder decidir con rapidez.</p>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Ticker</th>
+            <th>Empresa</th>
+            <th>Titular</th>
+            <th>Precio de referencia</th>
+            <th>Precio actual</th>
+            <th>1M</th>
+            <th>3M</th>
+            <th>6M</th>
+            <th>1Y</th>
+            <th>Referencia</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for card in watchlist_history_cards %}
+            <tr>
+              <td><strong>{{ card.position.ticker }}</strong></td>
+              <td>{{ card.position.company_name }}</td>
+              <td>{{ card.position.get_ownership_category_display }}</td>
+              <td>{{ card.position.average_cost_per_share|floatformat:4 }}</td>
+              <td>{{ card.position.current_price_per_share|floatformat:4 }}</td>
+              {% for snapshot in card.period_snapshots %}
+                <td class="{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
+                  {% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+                </td>
+              {% endfor %}
+              <td>{{ card.reference_label }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="10" class="muted">Todavia no hay acciones en seguimiento.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -432,40 +435,50 @@
     <section id="equity-analysis">
       <div class="equity-panel-copy" style="margin-bottom:18px;">
         <div>
-          <p class="section-title">Analisis por posicion</p>
-          <h3 style="margin:0;">Graficos, velas y rentabilidad por ventana temporal</h3>
-          <p>Para cada accion se muestra comparativa frente al indice, rentabilidad del periodo, soporte, resistencia y lectura rapida de velas para que el analisis sea util de verdad.</p>
+          <p class="section-title">Analisis y correlacion</p>
+          <h3 style="margin:0;">Cada tesis ligada a su variable de referencia</h3>
+          <p>La comparativa principal enfrenta el precio de la accion con la referencia que hayas elegido. Para bancos puedes usar Euribor 12M; para constructoras o inmobiliarias, precio de vivienda en Espana; y para el resto, un indice o activo cotizado.</p>
         </div>
       </div>
-      <div class="equity-analysis-grid">
-        {% for card in history_cards %}
+      <div class="equity-position-grid">
+        {% for card in owned_history_cards %}
           <article class="equity-position-card">
             <div class="equity-position-head">
               <div>
                 <h4>{{ card.position.company_name }}</h4>
-                <p>{{ card.position.ticker }} · {{ card.position.quote_symbol|default:"Sin simbolo" }} · {{ card.position.broker }}</p>
+                <p>{{ card.position.ticker }} · {{ card.position.broker }} · {{ card.position.get_ownership_category_display }}</p>
               </div>
               <div class="equity-chip-row">
-                <span class="equity-chip">{{ card.position.get_ownership_category_display }}</span>
-                <span class="equity-chip">{{ card.position.benchmark_name|default:card.position.benchmark_symbol|default:"Sin indice" }}</span>
-                {% if card.has_history %}<span class="equity-chip">{{ card.points_count }} puntos</span>{% endif %}
+                <span class="equity-chip">{{ card.position.get_position_kind_display }}</span>
+                <span class="equity-chip">{{ card.reference_profile_label }}</span>
+                <span class="equity-chip">{{ card.reference_label }}</span>
               </div>
             </div>
             {% if card.has_history %}
               <div class="equity-card-grid">
                 <div class="equity-stat">
-                  <div class="equity-stat-label">Periodo elegido</div>
-                  <div class="equity-stat-value {% if card.selected_period.stock_return_pct or card.selected_period.stock_return_pct == 0 %}{% if card.selected_period.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
-                    {% if card.selected_period.available %}{{ card.selected_period.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}
+                  <div class="equity-stat-label">1M</div>
+                  <div class="equity-stat-value {% with snapshot=card.period_snapshots.0 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
+                    {% with snapshot=card.period_snapshots.0 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
                   </div>
                 </div>
                 <div class="equity-stat">
-                  <div class="equity-stat-label">Rentabilidad neta</div>
-                  <div class="equity-stat-value {% if card.net_unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ card.net_unrealized_return_pct|floatformat:2 }} %</div>
+                  <div class="equity-stat-label">3M</div>
+                  <div class="equity-stat-value {% with snapshot=card.period_snapshots.1 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
+                    {% with snapshot=card.period_snapshots.1 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
+                  </div>
                 </div>
                 <div class="equity-stat">
-                  <div class="equity-stat-label">Flujo anual neto</div>
-                  <div class="equity-stat-value {% if card.net_annual_income >= 0 %}good{% else %}warn{% endif %}">{{ card.net_annual_income|floatformat:2 }} EUR</div>
+                  <div class="equity-stat-label">6M</div>
+                  <div class="equity-stat-value {% with snapshot=card.period_snapshots.2 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
+                    {% with snapshot=card.period_snapshots.2 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
+                  </div>
+                </div>
+                <div class="equity-stat">
+                  <div class="equity-stat-label">1Y</div>
+                  <div class="equity-stat-value {% with snapshot=card.period_snapshots.3 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
+                    {% with snapshot=card.period_snapshots.3 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
+                  </div>
                 </div>
               </div>
 
@@ -480,52 +493,53 @@
                 </svg>
                 <div class="equity-chart-caption">
                   Comparativa base 100 desde {{ card.start_date|date:"Y-m-d" }} hasta {{ card.end_date|date:"Y-m-d" }}.
-                  Accion {{ card.stock_return_pct|floatformat:2 }} %{% if card.benchmark_return_pct is not None %} · Indice {{ card.benchmark_return_pct|floatformat:2 }} %{% endif %}
+                  Accion {{ card.stock_return_pct|floatformat:2 }} %{% if card.benchmark_return_pct is not None %} · Referencia {{ card.benchmark_return_pct|floatformat:2 }} %{% endif %}
                 </div>
               </div>
 
-              {% if card.candlestick_svg %}
-                <div class="equity-chart-shell">
-                  <svg viewBox="0 0 640 220">{{ card.candlestick_svg|safe }}</svg>
-                  <div class="equity-chart-caption">{{ card.trend_label }} · Ultima lectura {{ card.last_candle_label }}</div>
+              <div class="equity-card-grid">
+                <div class="equity-stat">
+                  <div class="equity-stat-label">Periodo elegido</div>
+                  <div class="equity-stat-value {% if card.selected_period.stock_return_pct or card.selected_period.stock_return_pct == 0 %}{% if card.selected_period.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
+                    {% if card.selected_period.available %}{{ card.selected_period.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}
+                  </div>
                 </div>
-              {% endif %}
+                <div class="equity-stat">
+                  <div class="equity-stat-label">Referencia</div>
+                  <div class="equity-stat-value">
+                    {% if card.selected_period.available and card.selected_period.benchmark_return_pct is not None %}{{ card.selected_period.benchmark_return_pct|floatformat:2 }} %{% else %}-{% endif %}
+                  </div>
+                </div>
+                <div class="equity-stat">
+                  <div class="equity-stat-label">Correlacion</div>
+                  <div class="equity-stat-value">
+                    {% if card.correlation.coefficient is not None %}{{ card.correlation.coefficient|floatformat:2 }}{% else %}-{% endif %}
+                  </div>
+                </div>
+                <div class="equity-stat">
+                  <div class="equity-stat-label">Lectura</div>
+                  <div class="equity-stat-value" style="font-size:20px;">{{ card.correlation.label }}</div>
+                </div>
+              </div>
 
               <div class="equity-card-grid">
-                {% for snapshot in card.period_snapshots %}
-                  <div class="equity-stat">
-                    <div class="equity-stat-label">{{ snapshot.label }}</div>
-                    <div class="equity-stat-value {% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
-                      {% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}
-                    </div>
-                    <div class="metric-sub">
-                      {% if snapshot.available and snapshot.benchmark_return_pct is not None %}
-                        Indice {{ snapshot.benchmark_return_pct|floatformat:2 }} %
-                      {% else %}
-                        Sin comparativa completa
-                      {% endif %}
-                    </div>
+                <div class="equity-stat">
+                  <div class="equity-stat-label">Frecuencia</div>
+                  <div class="equity-stat-value" style="font-size:20px;">
+                    {% if card.correlation.frequency == "quarterly" %}Trimestral{% else %}Mensual{% endif %}
                   </div>
-                {% endfor %}
-                <div class="equity-stat">
-                  <div class="equity-stat-label">Soporte</div>
-                  <div class="equity-stat-value">{{ card.support_level|floatformat:4|default:"-" }}</div>
-                  <div class="metric-sub">Suelo reciente</div>
                 </div>
                 <div class="equity-stat">
-                  <div class="equity-stat-label">Resistencia</div>
-                  <div class="equity-stat-value">{{ card.resistance_level|floatformat:4|default:"-" }}</div>
-                  <div class="metric-sub">Techo reciente</div>
+                  <div class="equity-stat-label">Observaciones</div>
+                  <div class="equity-stat-value">{{ card.correlation.observations_count }}</div>
                 </div>
                 <div class="equity-stat">
-                  <div class="equity-stat-label">Rango medio</div>
-                  <div class="equity-stat-value">{{ card.average_range_pct|floatformat:2|default:"-" }} %</div>
-                  <div class="metric-sub">Volatilidad media de la vela</div>
+                  <div class="equity-stat-label">Flujo anual neto</div>
+                  <div class="equity-stat-value {% if card.net_annual_income >= 0 %}good{% else %}warn{% endif %}">{{ card.net_annual_income|floatformat:2 }} EUR</div>
                 </div>
                 <div class="equity-stat">
-                  <div class="equity-stat-label">Drag de costes</div>
-                  <div class="equity-stat-value">{{ card.maintenance_drag_pct|floatformat:2 }} %</div>
-                  <div class="metric-sub">Impacto anual del mantenimiento</div>
+                  <div class="equity-stat-label">Coste anual</div>
+                  <div class="equity-stat-value">{{ card.position.annual_maintenance_cost|floatformat:2 }} EUR</div>
                 </div>
               </div>
             {% else %}
@@ -536,21 +550,21 @@
           </article>
         {% empty %}
           <section class="equity-panel">
-            <p class="muted">Todavia no hay posiciones de acciones para analizar.</p>
+            <p class="muted">Todavia no hay acciones compradas con historico para analizar.</p>
           </section>
         {% endfor %}
       </div>
     </section>
 
     <details class="equity-fold" id="equity-ops">
-      <summary>Carga y mantenimiento de acciones</summary>
+      <summary>Operativa de acciones</summary>
       <div class="equity-fold-body">
-        <p class="equity-table-note">La operativa queda al final para no competir con el analisis. Aqui puedes forzar sincronizacion, importar documentos y registrar costes de mantenimiento.</p>
+        <p class="equity-table-note">La operativa queda al final para no competir con el analisis. Aqui puedes refrescar precios, rellenar el formulario desde un documento y registrar tanto cartera real como ideas en seguimiento.</p>
         <div class="equity-panel-grid">
           <section class="equity-panel">
             <p class="section-title">Sincronizacion manual</p>
-            <h3>Refrescar mercado ahora</h3>
-            <p class="metric-sub">Normalmente no hace falta porque el precio se actualiza al entrar, pero puedes forzar una nueva carga si acabas de guardar una posicion.</p>
+            <h3>Actualizar mercado ahora</h3>
+            <p class="metric-sub">Normalmente no hace falta porque el precio se actualiza al entrar, pero puedes forzar una nueva carga si acabas de guardar una accion o has cambiado su referencia.</p>
             <form method="post" style="margin-top:18px;">
               {% csrf_token %}
               <input type="hidden" name="action" value="sync_market_data">
@@ -580,20 +594,29 @@
 
         <section class="equity-panel" style="margin-top:18px;">
           <p class="section-title">Alta o actualizacion</p>
-          <h3>Registrar posicion y costes</h3>
+          <h3>Registrar cartera o seguimiento</h3>
           <form method="post" class="stack" style="margin-top:18px;">
             {% csrf_token %}
             <input type="hidden" name="action" value="create_position">
             <div class="grid cols-2">
+              <div><label for="{{ position_form.position_kind.id_for_label }}">{{ position_form.position_kind.label }}</label>{{ position_form.position_kind }}</div>
               <div><label for="{{ position_form.ownership_category.id_for_label }}">{{ position_form.ownership_category.label }}</label>{{ position_form.ownership_category }}</div>
               <div><label for="{{ position_form.broker.id_for_label }}">{{ position_form.broker.label }}</label>{{ position_form.broker }}</div>
               <div><label for="{{ position_form.ticker.id_for_label }}">{{ position_form.ticker.label }}</label>{{ position_form.ticker }}</div>
               <div><label for="{{ position_form.company_name.id_for_label }}">{{ position_form.company_name.label }}</label>{{ position_form.company_name }}</div>
               <div><label for="{{ position_form.quote_symbol.id_for_label }}">{{ position_form.quote_symbol.label }}</label>{{ position_form.quote_symbol }}</div>
-              <div><label for="{{ position_form.benchmark_symbol.id_for_label }}">{{ position_form.benchmark_symbol.label }}</label>{{ position_form.benchmark_symbol }}</div>
+              <div><label for="{{ position_form.reference_profile.id_for_label }}">{{ position_form.reference_profile.label }}</label>{{ position_form.reference_profile }}</div>
               <div><label for="{{ position_form.benchmark_name.id_for_label }}">{{ position_form.benchmark_name.label }}</label>{{ position_form.benchmark_name }}</div>
-              <div><label for="{{ position_form.shares.id_for_label }}">{{ position_form.shares.label }}</label>{{ position_form.shares }}</div>
-              <div><label for="{{ position_form.average_cost_per_share.id_for_label }}">{{ position_form.average_cost_per_share.label }}</label>{{ position_form.average_cost_per_share }}</div>
+              <div><label for="{{ position_form.benchmark_symbol.id_for_label }}">{{ position_form.benchmark_symbol.label }}</label>{{ position_form.benchmark_symbol }}</div>
+              <div>
+                <label for="{{ position_form.shares.id_for_label }}">{{ position_form.shares.label }}</label>
+                {{ position_form.shares }}
+                {% if position_form.shares.help_text %}<div class="metric-sub">{{ position_form.shares.help_text }}</div>{% endif %}
+              </div>
+              <div>
+                <label for="{{ position_form.average_cost_per_share.id_for_label }}">{{ position_form.average_cost_per_share.label }}</label>
+                {{ position_form.average_cost_per_share }}
+              </div>
               <div><label for="{{ position_form.current_price_per_share.id_for_label }}">{{ position_form.current_price_per_share.label }}</label>{{ position_form.current_price_per_share }}</div>
               <div><label for="{{ position_form.annual_dividend_income.id_for_label }}">{{ position_form.annual_dividend_income.label }}</label>{{ position_form.annual_dividend_income }}</div>
               <div><label for="{{ position_form.annual_maintenance_cost.id_for_label }}">{{ position_form.annual_maintenance_cost.label }}</label>{{ position_form.annual_maintenance_cost }}</div>
@@ -602,7 +625,7 @@
               <label for="{{ position_form.notes.id_for_label }}">{{ position_form.notes.label }}</label>
               {{ position_form.notes }}
             </div>
-            <button class="button" type="submit">Guardar posicion</button>
+            <button class="button" type="submit">Guardar accion</button>
           </form>
         </section>
       </div>

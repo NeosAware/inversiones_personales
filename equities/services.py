@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -23,6 +24,10 @@ from .models import EquityPosition, EquityPriceHistory
 ZERO = Decimal("0.00")
 DEFAULT_BENCHMARK_SYMBOL = "^IBEX"
 DEFAULT_BENCHMARK_NAME = "IBEX 35"
+EURIBOR_REFERENCE_SYMBOL = "ECB:M.S0.N.C_EUR1Y.E"
+EURIBOR_REFERENCE_NAME = "Euribor 12M"
+SPAIN_HOUSE_PRICE_SYMBOL = "EUROSTAT:prc_hpi_q:ES:TOTAL:I15_Q"
+SPAIN_HOUSE_PRICE_NAME = "Precio vivienda Espana"
 DEFAULT_EQUITY_COLUMN_MAP = {
     "broker": 0,
     "ticker": 1,
@@ -111,6 +116,105 @@ def fetch_market_series(symbol: str, range_key: str = "5y", interval: str = "1d"
         latest_date=latest_date,
         points=points,
     )
+
+
+def fetch_ecb_reference_series(series_key: str, series_name: str, last_n_observations: int = 120) -> MarketSeries:
+    url = (
+        "https://data-api.ecb.europa.eu/service/data/RTD/"
+        f"{series_key}?format=jsondata&lastNObservations={last_n_observations}"
+    )
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(request, timeout=20) as response:
+        payload = json.load(response)
+
+    time_values = payload["structure"]["dimensions"]["observation"][0]["values"]
+    series_map = payload["dataSets"][0]["series"]
+    if not series_map:
+        raise MarketDataError(f"No se han recibido observaciones del BCE para {series_name}.")
+
+    observations = next(iter(series_map.values()))["observations"]
+    points = []
+    for raw_index, values in observations.items():
+        period_label = time_values[int(raw_index)]["id"]
+        year, month = map(int, period_label.split("-"))
+        points.append(
+            {
+                "date": date(year, month, 1),
+                "open": None,
+                "high": None,
+                "low": None,
+                "close": Decimal(str(values[0])),
+            }
+        )
+
+    if not points:
+        raise MarketDataError(f"No se han recibido observaciones del BCE para {series_name}.")
+
+    latest = points[-1]
+    return MarketSeries(
+        symbol=f"ECB:{series_key}",
+        name=series_name,
+        latest_price=latest["close"],
+        latest_date=latest["date"],
+        points=points,
+    )
+
+
+def parse_eurostat_quarter_label(value: str) -> date:
+    year_text, quarter_text = value.split("-Q")
+    year = int(year_text)
+    quarter = int(quarter_text)
+    month = quarter * 3
+    month_day = {3: 31, 6: 30, 9: 30, 12: 31}[month]
+    return date(year, month, month_day)
+
+
+def fetch_eurostat_house_price_series() -> MarketSeries:
+    url = (
+        "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/"
+        "prc_hpi_q?geo=ES&purchase=TOTAL&unit=I15_Q"
+    )
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(request, timeout=20) as response:
+        payload = json.load(response)
+
+    time_index = payload["dimension"]["time"]["category"]["index"]
+    value_map = payload.get("value", {})
+    points = []
+    for label, raw_index in sorted(time_index.items(), key=lambda item: item[1]):
+        if str(raw_index) not in value_map:
+            continue
+        points.append(
+            {
+                "date": parse_eurostat_quarter_label(label),
+                "open": None,
+                "high": None,
+                "low": None,
+                "close": Decimal(str(value_map[str(raw_index)])),
+            }
+        )
+
+    if not points:
+        raise MarketDataError("No se han recibido observaciones del indice de vivienda de Eurostat.")
+
+    latest = points[-1]
+    return MarketSeries(
+        symbol=SPAIN_HOUSE_PRICE_SYMBOL,
+        name=SPAIN_HOUSE_PRICE_NAME,
+        latest_price=latest["close"],
+        latest_date=latest["date"],
+        points=points,
+    )
+
+
+def fetch_reference_series(position: EquityPosition) -> MarketSeries | None:
+    if position.reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
+        return fetch_ecb_reference_series("M.S0.N.C_EUR1Y.E", EURIBOR_REFERENCE_NAME)
+    if position.reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
+        return fetch_eurostat_house_price_series()
+    if position.benchmark_symbol:
+        return fetch_market_series(position.benchmark_symbol)
+    return None
 
 
 def normalize_document_text(value: str) -> str:
@@ -312,11 +416,13 @@ def build_equity_data_from_table_row(
         return {}
 
     return {
+        "position_kind": EquityPosition.PositionKind.OWNED,
         "ownership_category": ownership_category,
         "broker": broker,
         "ticker": ticker,
         "company_name": company_name,
         "quote_symbol": quote_symbol,
+        "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
         "benchmark_symbol": DEFAULT_BENCHMARK_SYMBOL,
         "benchmark_name": DEFAULT_BENCHMARK_NAME,
         "shares": shares,
@@ -400,7 +506,9 @@ def build_equity_data_from_key_value_rows(
         parsed["current_price_per_share"] = parsed["average_cost_per_share"]
 
     parsed.setdefault("broker", default_broker)
+    parsed.setdefault("position_kind", EquityPosition.PositionKind.OWNED)
     parsed.setdefault("ownership_category", default_ownership_category)
+    parsed.setdefault("reference_profile", EquityPosition.ReferenceProfile.MARKET_INDEX)
     parsed.setdefault("benchmark_symbol", DEFAULT_BENCHMARK_SYMBOL)
     parsed.setdefault("benchmark_name", DEFAULT_BENCHMARK_NAME)
     parsed.setdefault("annual_dividend_income", ZERO)
@@ -439,6 +547,8 @@ def finalize_equity_prefill(data: dict, default_ownership_category: str, documen
         document_text,
         result.get("ownership_category") or default_ownership_category,
     )
+    result.setdefault("position_kind", EquityPosition.PositionKind.OWNED)
+    result.setdefault("reference_profile", EquityPosition.ReferenceProfile.MARKET_INDEX)
     result.setdefault("benchmark_symbol", DEFAULT_BENCHMARK_SYMBOL)
     result.setdefault("benchmark_name", DEFAULT_BENCHMARK_NAME)
     result.setdefault("annual_dividend_income", ZERO)
@@ -587,13 +697,27 @@ def extract_equity_position_prefill(
     )
 
 
+def align_reference_points(position_points: list[dict], reference_points: list[dict]) -> dict[date, Decimal | None]:
+    ordered_reference = sorted(reference_points, key=lambda item: item["date"])
+    aligned: dict[date, Decimal | None] = {}
+    current_reference = None
+    reference_index = 0
+
+    for point in sorted(position_points, key=lambda item: item["date"]):
+        while reference_index < len(ordered_reference) and ordered_reference[reference_index]["date"] <= point["date"]:
+            current_reference = ordered_reference[reference_index]["close"]
+            reference_index += 1
+        aligned[point["date"]] = current_reference
+    return aligned
+
+
 def sync_equity_market_data(position: EquityPosition) -> EquityPosition:
     if not position.quote_symbol:
         raise MarketDataError(f"{position.ticker} no tiene configurado un simbolo de cotizacion.")
 
     position_series = fetch_market_series(position.quote_symbol)
-    benchmark_series = fetch_market_series(position.benchmark_symbol) if position.benchmark_symbol else None
-    benchmark_map = {point["date"]: point["close"] for point in (benchmark_series.points if benchmark_series else [])}
+    benchmark_series = fetch_reference_series(position)
+    benchmark_map = align_reference_points(position_series.points, benchmark_series.points) if benchmark_series else {}
     point_dates = {point["date"] for point in position_series.points}
 
     with transaction.atomic():
@@ -614,13 +738,15 @@ def sync_equity_market_data(position: EquityPosition) -> EquityPosition:
         position.current_price_per_share = position_series.latest_price
         position.latest_price_date = position_series.latest_date
         position.last_synced_at = django_timezone.now()
-        if benchmark_series and not position.benchmark_name:
+        if benchmark_series:
             position.benchmark_name = benchmark_series.name
+            position.benchmark_symbol = benchmark_series.symbol
         position.save(
             update_fields=[
                 "current_price_per_share",
                 "latest_price_date",
                 "last_synced_at",
+                "benchmark_symbol",
                 "benchmark_name",
             ]
         )
@@ -674,6 +800,76 @@ def percentage_change(current: Decimal | None, reference: Decimal | None) -> Dec
     if current is None or reference in {None, ZERO}:
         return None
     return ((current / reference) - Decimal("1")) * Decimal("100")
+
+
+def infer_reference_frequency(position: EquityPosition) -> str:
+    if position.reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
+        return "quarterly"
+    return "monthly"
+
+
+def bucket_label_for_date(value: date, frequency: str) -> str:
+    if frequency == "quarterly":
+        quarter = ((value.month - 1) // 3) + 1
+        return f"{value.year}-Q{quarter}"
+    return value.strftime("%Y-%m")
+
+
+def collapse_history_to_frequency(history, frequency: str) -> list:
+    buckets = {}
+    for point in history:
+        buckets[bucket_label_for_date(point.price_date, frequency)] = point
+    return [buckets[label] for label in sorted(buckets.keys())]
+
+
+def pearson_correlation(xs: list[Decimal], ys: list[Decimal]) -> Decimal | None:
+    if len(xs) != len(ys) or len(xs) < 3:
+        return None
+
+    x_values = [float(value) for value in xs]
+    y_values = [float(value) for value in ys]
+    mean_x = sum(x_values) / len(x_values)
+    mean_y = sum(y_values) / len(y_values)
+    covariance = sum((x - mean_x) * (y - mean_y) for x, y in zip(x_values, y_values))
+    variance_x = sum((x - mean_x) ** 2 for x in x_values)
+    variance_y = sum((y - mean_y) ** 2 for y in y_values)
+    if variance_x <= 0 or variance_y <= 0:
+        return None
+    correlation = covariance / math.sqrt(variance_x * variance_y)
+    return Decimal(str(round(correlation, 4)))
+
+
+def build_reference_correlation(history, position: EquityPosition) -> dict:
+    frequency = infer_reference_frequency(position)
+    collapsed = collapse_history_to_frequency(history, frequency)
+    stock_returns = []
+    reference_returns = []
+    for previous, current in zip(collapsed, collapsed[1:]):
+        stock_return = percentage_change(current.close_price, previous.close_price)
+        reference_return = percentage_change(current.benchmark_close, previous.benchmark_close)
+        if stock_return is None or reference_return is None:
+            continue
+        stock_returns.append(stock_return)
+        reference_returns.append(reference_return)
+
+    coefficient = pearson_correlation(stock_returns[-12:], reference_returns[-12:])
+    if coefficient is None:
+        label = "Sin correlacion suficiente"
+    elif coefficient >= Decimal("0.70"):
+        label = "Relacion positiva alta"
+    elif coefficient >= Decimal("0.35"):
+        label = "Relacion positiva moderada"
+    elif coefficient <= Decimal("-0.35"):
+        label = "Relacion inversa"
+    else:
+        label = "Relacion debil"
+
+    return {
+        "frequency": frequency,
+        "coefficient": coefficient,
+        "label": label,
+        "observations_count": len(stock_returns),
+    }
 
 
 def filter_history_window(history, start_date: date | None = None, end_date: date | None = None):
@@ -870,7 +1066,7 @@ def build_equity_history_cards(
         if not selected_period["available"] and latest_point.price_date:
             selected_period = build_period_snapshot(
                 history,
-                "90 dias",
+                "3M",
                 start_date=latest_point.price_date - timedelta(days=90),
                 end_date=latest_point.price_date,
             )
@@ -878,10 +1074,10 @@ def build_equity_history_cards(
         period_snapshots = [
             build_period_snapshot(history, "1M", start_date=latest_point.price_date - timedelta(days=30), end_date=latest_point.price_date),
             build_period_snapshot(history, "3M", start_date=latest_point.price_date - timedelta(days=90), end_date=latest_point.price_date),
-            build_period_snapshot(history, "YTD", start_date=date(latest_point.price_date.year, 1, 1), end_date=latest_point.price_date),
+            build_period_snapshot(history, "6M", start_date=latest_point.price_date - timedelta(days=182), end_date=latest_point.price_date),
             build_period_snapshot(history, "1Y", start_date=latest_point.price_date - timedelta(days=365), end_date=latest_point.price_date),
         ]
-        candlestick_metrics = build_candlestick_metrics(history)
+        correlation = build_reference_correlation(history, position)
         maintenance_drag_pct = (
             (position.annual_maintenance_cost / position.invested_amount) * Decimal("100")
             if position.invested_amount
@@ -895,6 +1091,8 @@ def build_equity_history_cards(
                 "points_count": len(history),
                 "start_date": history[0].price_date,
                 "end_date": history[-1].price_date,
+                "reference_label": position.analysis_reference_label,
+                "reference_profile_label": position.get_reference_profile_display(),
                 "stock_return_pct": ((history[-1].close_price / first_price) - 1) * Decimal("100") if first_price else ZERO,
                 "benchmark_return_pct": (
                     ((history[-1].benchmark_close / first_benchmark) - 1) * Decimal("100")
@@ -910,7 +1108,7 @@ def build_equity_history_cards(
                 "net_annual_income": position.net_annual_income,
                 "maintenance_drag_pct": maintenance_drag_pct,
                 "price_vs_cost_pct": percentage_change(position.current_price_per_share, position.average_cost_per_share),
-                **candlestick_metrics,
+                "correlation": correlation,
             }
         )
     return cards
@@ -926,19 +1124,23 @@ def build_equity_analysis_dashboard(
         selected_start_date=selected_start_date,
         selected_end_date=selected_end_date,
     )
-    current_value_total = sum((position.current_value for position in positions), ZERO)
-    invested_amount_total = sum((position.invested_amount for position in positions), ZERO)
-    annual_dividends_total = sum((position.annual_dividend_income for position in positions), ZERO)
-    annual_maintenance_total = sum((position.annual_maintenance_cost for position in positions), ZERO)
-    net_annual_income_total = sum((position.net_annual_income for position in positions), ZERO)
-    unrealized_gain_total = sum((position.unrealized_gain_after_costs for position in positions), ZERO)
+    owned_positions = [position for position in positions if position.is_owned]
+    watchlist_positions = [position for position in positions if not position.is_owned]
+    current_value_total = sum((position.current_value for position in owned_positions), ZERO)
+    invested_amount_total = sum((position.invested_amount for position in owned_positions), ZERO)
+    annual_dividends_total = sum((position.annual_dividend_income for position in owned_positions), ZERO)
+    annual_maintenance_total = sum((position.annual_maintenance_cost for position in owned_positions), ZERO)
+    net_annual_income_total = sum((position.net_annual_income for position in owned_positions), ZERO)
+    unrealized_gain_total = sum((position.unrealized_gain_after_costs for position in owned_positions), ZERO)
 
     weighted_periods = []
-    for label in ("1M", "3M", "YTD", "1Y"):
+    for label in ("1M", "3M", "6M", "1Y"):
         weighted_stock = ZERO
         weighted_benchmark = ZERO
         weight_total = ZERO
         for card in history_cards:
+            if not card["position"].is_owned:
+                continue
             snapshot = next((item for item in card.get("period_snapshots", []) if item["label"] == label), None)
             if not snapshot or not snapshot["available"] or snapshot["stock_return_pct"] is None:
                 continue
@@ -957,7 +1159,11 @@ def build_equity_analysis_dashboard(
 
     latest_sync_at = max((position.last_synced_at for position in positions if position.last_synced_at), default=None)
     latest_price_date = max((position.latest_price_date for position in positions if position.latest_price_date), default=None)
-    selected_cards = [card for card in history_cards if card.get("selected_period", {}).get("available")]
+    selected_cards = [
+        card
+        for card in history_cards
+        if card["position"].is_owned and card.get("selected_period", {}).get("available")
+    ]
     weighted_selected_return = None
     if selected_cards:
         numerator = sum(
@@ -979,6 +1185,8 @@ def build_equity_analysis_dashboard(
 
     overview = {
         "positions_count": len(positions),
+        "owned_positions_count": len(owned_positions),
+        "watchlist_positions_count": len(watchlist_positions),
         "invested_amount": invested_amount_total,
         "current_value": current_value_total,
         "annual_dividends_total": annual_dividends_total,
@@ -991,9 +1199,14 @@ def build_equity_analysis_dashboard(
         "weighted_selected_return": weighted_selected_return,
         "weighted_periods": weighted_periods,
         "selected_period_label": selected_period_label,
+        "watchlist_latest_price_count": sum(1 for position in watchlist_positions if position.current_price_per_share),
     }
 
     return {
         "overview": overview,
         "history_cards": history_cards,
+        "owned_positions": owned_positions,
+        "watchlist_positions": watchlist_positions,
+        "owned_history_cards": [card for card in history_cards if card["position"].is_owned],
+        "watchlist_history_cards": [card for card in history_cards if not card["position"].is_owned],
     }

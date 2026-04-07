@@ -10,7 +10,7 @@ from django.urls import reverse
 from portfolio.ownership import AssetOwnershipCategory
 
 from .models import EquityPosition
-from .services import MarketSeries, build_equity_history_cards, sync_equity_market_data
+from .services import MarketSeries, build_equity_analysis_dashboard, build_equity_history_cards, sync_equity_market_data
 
 
 class EquitiesServicesTests(TestCase):
@@ -96,7 +96,42 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(cards[0]["stock_return_pct"], Decimal("20.00"))
         self.assertEqual(cards[0]["benchmark_return_pct"], Decimal("10.00"))
         self.assertTrue(cards[0]["stock_line"])
-        self.assertEqual(cards[0]["selected_period"]["label"], "90 dias")
+        self.assertEqual(cards[0]["selected_period"]["label"], "3M")
+
+    def test_watchlist_positions_do_not_count_into_portfolio_totals(self):
+        EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            broker="Banco Sabadell",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola S.A.",
+            shares=Decimal("10"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            broker="Banco Sabadell",
+            ticker="FER",
+            quote_symbol="FER.MC",
+            reference_profile=EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE,
+            benchmark_symbol="EUROSTAT:prc_hpi_q:ES:TOTAL:I15_Q",
+            benchmark_name="Precio vivienda Espana",
+            company_name="Ferrovial",
+            shares=Decimal("0.0000"),
+            average_cost_per_share=Decimal("38.0000"),
+            current_price_per_share=Decimal("39.5000"),
+        )
+
+        dashboard = build_equity_analysis_dashboard(list(EquityPosition.objects.prefetch_related("price_history")))
+
+        self.assertEqual(dashboard["overview"]["owned_positions_count"], 1)
+        self.assertEqual(dashboard["overview"]["watchlist_positions_count"], 1)
+        self.assertEqual(dashboard["overview"]["invested_amount"], Decimal("100.0000"))
+        self.assertEqual(dashboard["overview"]["current_value"], Decimal("120.0000"))
 
 @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=False)
 class EquitiesViewTests(TestCase):
@@ -112,11 +147,13 @@ class EquitiesViewTests(TestCase):
             reverse("equities:list"),
             {
                 "action": "create_position",
+                "position_kind": EquityPosition.PositionKind.OWNED,
                 "ownership_category": AssetOwnershipCategory.XIMO,
                 "broker": "Interactive Brokers",
                 "ticker": "ibe",
                 "company_name": "Iberdrola",
                 "quote_symbol": "ibe.mc",
+                "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
                 "benchmark_symbol": "^ibex",
                 "benchmark_name": "IBEX 35",
                 "shares": "125,5000",
@@ -134,6 +171,7 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(position.quote_symbol, "IBE.MC")
         self.assertEqual(position.benchmark_symbol, "^IBEX")
         self.assertEqual(position.ownership_category, AssetOwnershipCategory.XIMO)
+        self.assertEqual(position.position_kind, EquityPosition.PositionKind.OWNED)
         self.assertEqual(position.shares, Decimal("125.5000"))
         self.assertEqual(position.average_cost_per_share, Decimal("10.2500"))
         self.assertEqual(position.current_price_per_share, Decimal("10.2500"))
@@ -158,11 +196,13 @@ class EquitiesViewTests(TestCase):
             reverse("equities:list"),
             {
                 "action": "create_position",
+                "position_kind": EquityPosition.PositionKind.OWNED,
                 "ownership_category": AssetOwnershipCategory.MONICA,
                 "broker": "Interactive Brokers",
                 "ticker": "IBE",
                 "company_name": "Iberdrola",
                 "quote_symbol": "IBE.MC",
+                "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
                 "benchmark_symbol": "^IBEX",
                 "benchmark_name": "IBEX 35",
                 "shares": "25",
@@ -216,11 +256,13 @@ class EquitiesViewTests(TestCase):
             reverse("equities:list"),
             {
                 "action": "create_position",
+                "position_kind": EquityPosition.PositionKind.OWNED,
                 "ownership_category": AssetOwnershipCategory.XIMO,
                 "broker": "Interactive Brokers",
                 "ticker": "IBE",
                 "company_name": "Iberdrola revisada",
                 "quote_symbol": "IBE.MC",
+                "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
                 "benchmark_symbol": "^IBEX",
                 "benchmark_name": "IBEX 35",
                 "shares": "25",
@@ -290,6 +332,7 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(form.initial["ticker"], "ENG")
         self.assertEqual(form.initial["company_name"], "Enagas")
         self.assertEqual(form.initial["ownership_category"], AssetOwnershipCategory.MONICA)
+        self.assertEqual(form.initial["position_kind"], EquityPosition.PositionKind.OWNED)
         self.assertEqual(form.initial["shares"], Decimal("150.0000"))
         self.assertEqual(form.initial["average_cost_per_share"], Decimal("13.4500"))
         self.assertEqual(form.initial["current_price_per_share"], Decimal("14.2000"))
@@ -336,6 +379,7 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(form.initial["ticker"], "IBE")
         self.assertEqual(form.initial["company_name"], "Iberdrola")
         self.assertEqual(form.initial["ownership_category"], AssetOwnershipCategory.XIMO)
+        self.assertEqual(form.initial["position_kind"], EquityPosition.PositionKind.OWNED)
         self.assertEqual(form.initial["shares"], Decimal("125.5000"))
         self.assertEqual(form.initial["average_cost_per_share"], Decimal("10.2500"))
         self.assertEqual(form.initial["current_price_per_share"], Decimal("11.0000"))
@@ -362,3 +406,47 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Cockpit de acciones")
         self.assertContains(response, "Coste anual de mantenimiento")
+
+    def test_can_store_same_ticker_as_owned_and_watchlist_without_collision(self):
+        EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.XIMO,
+            broker="Interactive Brokers",
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            reference_profile=EquityPosition.ReferenceProfile.EURIBOR_12M,
+            benchmark_symbol="ECB:M.S0.N.C_EUR1Y.E",
+            benchmark_name="Euribor 12M",
+            company_name="Banco Santander",
+            shares=Decimal("30.0000"),
+            average_cost_per_share=Decimal("4.2000"),
+            current_price_per_share=Decimal("4.7000"),
+        )
+
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "create_position",
+                "position_kind": EquityPosition.PositionKind.WATCHLIST,
+                "ownership_category": AssetOwnershipCategory.XIMO,
+                "broker": "Interactive Brokers",
+                "ticker": "SAN",
+                "company_name": "Banco Santander",
+                "quote_symbol": "SAN.MC",
+                "reference_profile": EquityPosition.ReferenceProfile.EURIBOR_12M,
+                "benchmark_symbol": "",
+                "benchmark_name": "",
+                "shares": "0",
+                "average_cost_per_share": "4,5000",
+                "current_price_per_share": "4,7000",
+                "annual_dividend_income": "0",
+                "annual_maintenance_cost": "0",
+                "notes": "Seguimiento",
+            },
+        )
+
+        self.assertRedirects(response, reverse("equities:list"))
+        self.assertEqual(
+            EquityPosition.objects.filter(broker="Interactive Brokers", ticker="SAN", ownership_category=AssetOwnershipCategory.XIMO).count(),
+            2,
+        )

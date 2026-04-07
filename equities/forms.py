@@ -14,6 +14,15 @@ class FlexibleDecimalField(forms.DecimalField):
 
 
 class EquityPositionForm(forms.Form):
+    position_kind = forms.ChoiceField(
+        choices=(
+            ("owned", "Comprada"),
+            ("watchlist", "En seguimiento"),
+        ),
+        initial="owned",
+        required=False,
+        label="Estado",
+    )
     ownership_category = forms.ChoiceField(
         choices=AssetOwnershipCategory.choices,
         initial=AssetOwnershipCategory.JOINT,
@@ -23,15 +32,44 @@ class EquityPositionForm(forms.Form):
     ticker = forms.CharField(max_length=20, label="Ticker")
     company_name = forms.CharField(max_length=160, label="Empresa")
     quote_symbol = forms.CharField(max_length=40, required=False, label="Simbolo de mercado")
-    benchmark_symbol = forms.CharField(max_length=40, required=False, initial="^IBEX", label="Indice de referencia")
-    benchmark_name = forms.CharField(max_length=120, required=False, initial="IBEX 35", label="Nombre del indice")
-    shares = FlexibleDecimalField(max_digits=14, decimal_places=4, label="Acciones")
-    average_cost_per_share = FlexibleDecimalField(max_digits=14, decimal_places=4, label="Coste medio por accion")
+    reference_profile = forms.ChoiceField(
+        choices=(
+            ("market_index", "Indice o activo cotizado"),
+            ("euribor_12m", "Euribor 12 meses"),
+            ("spain_house_price", "Precio vivienda Espana"),
+        ),
+        initial="market_index",
+        required=False,
+        label="Variable de referencia",
+    )
+    benchmark_symbol = forms.CharField(
+        max_length=40,
+        required=False,
+        initial="^IBEX",
+        label="Simbolo de referencia",
+    )
+    benchmark_name = forms.CharField(
+        max_length=120,
+        required=False,
+        initial="IBEX 35",
+        label="Nombre de referencia",
+    )
+    shares = FlexibleDecimalField(
+        max_digits=14,
+        decimal_places=4,
+        label="Acciones compradas",
+        help_text="Usa 0 si solo la estas siguiendo y aun no la has comprado.",
+    )
+    average_cost_per_share = FlexibleDecimalField(
+        max_digits=14,
+        decimal_places=4,
+        label="Precio de compra o referencia",
+    )
     current_price_per_share = FlexibleDecimalField(
         max_digits=14,
         decimal_places=4,
         required=False,
-        label="Precio actual por accion",
+        label="Precio actual",
     )
     annual_dividend_income = FlexibleDecimalField(
         max_digits=14,
@@ -71,12 +109,16 @@ class EquityPositionForm(forms.Form):
 
     def clean(self):
         cleaned_data = super().clean()
+        cleaned_data["position_kind"] = cleaned_data.get("position_kind") or "owned"
+        cleaned_data["reference_profile"] = cleaned_data.get("reference_profile") or "market_index"
         if cleaned_data.get("current_price_per_share") is None:
             cleaned_data["current_price_per_share"] = cleaned_data.get("average_cost_per_share")
         if cleaned_data.get("annual_dividend_income") is None:
             cleaned_data["annual_dividend_income"] = 0
         if cleaned_data.get("annual_maintenance_cost") is None:
             cleaned_data["annual_maintenance_cost"] = 0
+        if cleaned_data.get("position_kind") == "watchlist" and cleaned_data.get("shares") is None:
+            cleaned_data["shares"] = 0
         return cleaned_data
 
 
