@@ -348,7 +348,7 @@ class EquitiesViewTests(TestCase):
                 "action": "create_position",
                 "position_kind": EquityPosition.PositionKind.WATCHLIST,
                 "ownership_category": AssetOwnershipCategory.JOINT,
-                "broker": "Sabadell",
+                "broker": "",
                 "ticker": "",
                 "company_name": "Iberdrola",
                 "quote_symbol": "",
@@ -365,7 +365,7 @@ class EquitiesViewTests(TestCase):
         )
 
         self.assertRedirects(response, reverse("equities:list"))
-        position = EquityPosition.objects.get(ticker="IBE", broker="Sabadell")
+        position = EquityPosition.objects.get(ticker="IBE", broker="Seguimiento")
         self.assertEqual(position.position_kind, EquityPosition.PositionKind.WATCHLIST)
         self.assertEqual(position.shares, Decimal("0"))
         self.assertEqual(position.average_cost_per_share, Decimal("0"))

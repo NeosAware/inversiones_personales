@@ -33,7 +33,7 @@ class EquityPositionForm(forms.Form):
         initial=AssetOwnershipCategory.JOINT,
         label="Titular",
     )
-    broker = forms.CharField(max_length=120, label="Broker o entidad")
+    broker = forms.CharField(max_length=120, required=False, label="Broker o entidad")
     ticker = forms.CharField(max_length=20, required=False, label="Ticker")
     company_name = forms.CharField(max_length=160, required=False, label="Empresa")
     quote_symbol = forms.CharField(max_length=40, required=False, label="Simbolo de mercado")
@@ -98,6 +98,12 @@ class EquityPositionForm(forms.Form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields["broker"].widget.attrs.update(
+            {
+                "autocomplete": "off",
+                "placeholder": "Opcional en seguimiento",
+            }
+        )
         self.fields["company_name"].widget.attrs.update(
             {
                 "list": "equity-company-options",
@@ -129,7 +135,7 @@ class EquityPositionForm(forms.Form):
         )
 
     def clean_broker(self):
-        return self.cleaned_data["broker"].strip()
+        return str(self.cleaned_data.get("broker") or "").strip()
 
     def clean_ticker(self):
         return self.cleaned_data["ticker"].strip().upper()
@@ -176,6 +182,8 @@ class EquityPositionForm(forms.Form):
         if cleaned_data.get("annual_maintenance_cost") is None:
             cleaned_data["annual_maintenance_cost"] = 0
         if cleaned_data.get("position_kind") == "watchlist":
+            if not cleaned_data.get("broker"):
+                cleaned_data["broker"] = "Seguimiento"
             if cleaned_data.get("shares") is None:
                 cleaned_data["shares"] = Decimal("0")
             if cleaned_data.get("average_cost_per_share") is None and cleaned_data.get("current_price_per_share") is not None:
@@ -187,6 +195,8 @@ class EquityPositionForm(forms.Form):
             if cleaned_data.get("current_price_per_share") is None:
                 cleaned_data["current_price_per_share"] = Decimal("0")
         else:
+            if not cleaned_data.get("broker"):
+                self.add_error("broker", "Indica el broker o la entidad donde has comprado la posicion.")
             if cleaned_data.get("shares") is None:
                 self.add_error("shares", "Indica cuantas acciones has comprado.")
             if cleaned_data.get("average_cost_per_share") is None:

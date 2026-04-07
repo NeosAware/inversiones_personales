@@ -773,6 +773,7 @@
 
       const catalog = JSON.parse(catalogNode.textContent || "[]");
       const positionKindInput = document.getElementById("{{ position_form.position_kind.id_for_label }}");
+      const brokerInput = document.getElementById("{{ position_form.broker.id_for_label }}");
       const companyInput = document.getElementById("{{ position_form.company_name.id_for_label }}");
       const tickerInput = document.getElementById("{{ position_form.ticker.id_for_label }}");
       const quoteSymbolInput = document.getElementById("{{ position_form.quote_symbol.id_for_label }}");
@@ -787,7 +788,7 @@
       const matchBox = document.getElementById("equity-company-match");
       const suggestionsBox = document.getElementById("equity-reference-suggestions");
 
-      if (!positionKindInput || !companyInput || !tickerInput || !quoteSymbolInput || !referenceProfileInput || !benchmarkNameInput || !benchmarkSymbolInput || !sharesInput || !averageCostInput || !currentPriceInput || !annualDividendInput || !annualMaintenanceInput || !matchBox || !suggestionsBox) {
+      if (!positionKindInput || !brokerInput || !companyInput || !tickerInput || !quoteSymbolInput || !referenceProfileInput || !benchmarkNameInput || !benchmarkSymbolInput || !sharesInput || !averageCostInput || !currentPriceInput || !annualDividendInput || !annualMaintenanceInput || !matchBox || !suggestionsBox) {
         return;
       }
 
@@ -841,6 +842,7 @@
       const applyPositionKindMode = (resetValues = false) => {
         const isWatchlist = positionKindInput.value === "watchlist";
         if (isWatchlist && resetValues) {
+          brokerInput.value = "";
           sharesInput.value = "";
           averageCostInput.value = "";
           currentPriceInput.value = "";
@@ -848,6 +850,7 @@
           annualMaintenanceInput.value = "0";
         }
 
+        brokerInput.placeholder = isWatchlist ? "Opcional en seguimiento" : "Broker o entidad";
         sharesInput.placeholder = isWatchlist ? "Opcional en seguimiento" : "Numero de acciones compradas";
         averageCostInput.placeholder = isWatchlist ? "Opcional: precio base si quieres vigilar una entrada" : "";
         currentPriceInput.placeholder = isWatchlist ? "Se puede dejar vacio: se cargara con mercado" : "";
