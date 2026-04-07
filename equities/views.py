@@ -23,6 +23,7 @@ from .services import (
     build_equity_history_cards,
     extract_equity_position_prefill,
     get_equity_company_catalog,
+    sync_equity_market_data,
     sync_all_equities_market_data,
 )
 
@@ -94,6 +95,8 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
             return self._sync_market_data(request)
         if action == "prefill_from_document":
             return self._prefill_position_from_document(request)
+        if action == "change_reference":
+            return self._change_reference(request)
         return self._save_position(request)
 
     def _sync_market_data(self, request):
@@ -238,4 +241,32 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
                     request,
                     f"Se han detectado {duplicate_count} posiciones repetidas para {position.ticker}. Se ha actualizado la mas reciente.",
                 )
+        return redirect("equities:list")
+
+    def _change_reference(self, request):
+        position_id = request.POST.get("position_id", "").strip()
+        if not position_id:
+            messages.error(request, "No se ha encontrado la posicion a actualizar.")
+            return redirect("equities:list")
+
+        try:
+            position = EquityPosition.objects.get(pk=position_id)
+        except EquityPosition.DoesNotExist:
+            messages.error(request, "La posicion ya no existe.")
+            return redirect("equities:list")
+
+        position.reference_profile = request.POST.get("reference_profile", position.reference_profile).strip()
+        position.benchmark_symbol = request.POST.get("benchmark_symbol", position.benchmark_symbol).strip()
+        position.benchmark_name = request.POST.get("benchmark_name", position.benchmark_name).strip()
+        position.save(update_fields=["reference_profile", "benchmark_symbol", "benchmark_name", "updated_at"])
+
+        try:
+            sync_equity_market_data(position)
+            messages.success(request, f"Referencia de {position.ticker} actualizada a {position.benchmark_name}.")
+        except Exception as exc:
+            messages.warning(
+                request,
+                f"Se ha cambiado la referencia de {position.ticker}, pero no se pudo refrescar el historico: {exc}",
+            )
+
         return redirect("equities:list")

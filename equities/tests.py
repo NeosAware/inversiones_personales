@@ -372,6 +372,40 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(position.current_price_per_share, Decimal("0"))
         self.assertEqual(position.reference_profile, EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND)
 
+    def test_can_change_reference_from_analysis_card(self):
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Seguimiento",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("0"),
+            average_cost_per_share=Decimal("0"),
+            current_price_per_share=Decimal("0"),
+        )
+
+        with patch("equities.views.sync_equity_market_data") as mocked_sync:
+            response = self.client.post(
+                reverse("equities:list"),
+                {
+                    "action": "change_reference",
+                    "position_id": str(position.id),
+                    "reference_profile": EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND,
+                    "benchmark_symbol": SPAIN_ELECTRICITY_DEMAND_SYMBOL,
+                    "benchmark_name": SPAIN_ELECTRICITY_DEMAND_NAME,
+                },
+            )
+
+        self.assertRedirects(response, reverse("equities:list"))
+        position.refresh_from_db()
+        self.assertEqual(position.reference_profile, EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND)
+        self.assertEqual(position.benchmark_symbol, SPAIN_ELECTRICITY_DEMAND_SYMBOL)
+        mocked_sync.assert_called_once()
+
     def test_can_store_same_ticker_for_same_broker_with_different_owner(self):
         EquityPosition.objects.create(
             ownership_category=AssetOwnershipCategory.XIMO,

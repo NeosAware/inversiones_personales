@@ -1361,6 +1361,80 @@ def build_svg_polyline(values, width: int = 640, height: int = 220, padding: int
     return " ".join(points)
 
 
+def format_axis_value(value: Decimal | None) -> str:
+    if value is None:
+        return "-"
+    absolute = abs(value)
+    if absolute >= Decimal("1000000"):
+        return f"{(value / Decimal('1000000')):.1f}M"
+    if absolute >= Decimal("1000"):
+        return f"{(value / Decimal('1000')):.1f}k"
+    if absolute >= Decimal("100"):
+        return f"{value:.0f}"
+    if absolute >= Decimal("10"):
+        return f"{value:.1f}"
+    return f"{value:.2f}"
+
+
+def build_dual_axis_chart(
+    stock_values,
+    reference_values,
+    width: int = 640,
+    height: int = 220,
+    padding: int = 18,
+) -> dict:
+    stock_filtered = [Decimal(str(value)) for value in stock_values if value is not None]
+    reference_filtered = [Decimal(str(value)) for value in reference_values if value is not None]
+    if len(stock_filtered) < 2:
+        return {
+            "stock_line": "",
+            "reference_line": "",
+            "stock_min_label": "-",
+            "stock_max_label": "-",
+            "reference_min_label": "-",
+            "reference_max_label": "-",
+        }
+
+    stock_min = min(stock_filtered)
+    stock_max = max(stock_filtered)
+    if stock_min == stock_max:
+        stock_max += Decimal("1")
+
+    if reference_filtered:
+        reference_min = min(reference_filtered)
+        reference_max = max(reference_filtered)
+        if reference_min == reference_max:
+            reference_max += Decimal("1")
+    else:
+        reference_min = reference_max = None
+
+    def scale_series(values, series_min: Decimal | None, series_max: Decimal | None) -> str:
+        if series_min is None or series_max is None:
+            return ""
+        span_x = width - 2 * padding
+        span_y = height - 2 * padding
+        total_points = len(values) - 1 or 1
+        points = []
+        for index, raw_value in enumerate(values):
+            if raw_value is None:
+                continue
+            value = Decimal(str(raw_value))
+            x = padding + (span_x * index / total_points)
+            normalized = (value - series_min) / (series_max - series_min)
+            y = height - padding - (normalized * span_y)
+            points.append(f"{x:.1f},{y:.1f}")
+        return " ".join(points)
+
+    return {
+        "stock_line": scale_series(stock_values, stock_min, stock_max),
+        "reference_line": scale_series(reference_values, reference_min, reference_max),
+        "stock_min_label": format_axis_value(stock_min),
+        "stock_max_label": format_axis_value(stock_max),
+        "reference_min_label": format_axis_value(reference_min),
+        "reference_max_label": format_axis_value(reference_max),
+    }
+
+
 def average_decimal(values: list[Decimal]) -> Decimal | None:
     filtered = [value for value in values if value is not None]
     if not filtered:
@@ -1715,16 +1789,9 @@ def build_equity_history_cards(
 
         first_price = history[0].close_price
         first_benchmark = next((point.benchmark_close for point in history if point.benchmark_close is not None), None)
-        stock_series = [float((point.close_price / first_price) * Decimal("100")) for point in history]
-        benchmark_series = []
-        if first_benchmark:
-            for point in history:
-                if point.benchmark_close is None:
-                    benchmark_series.append(None)
-                else:
-                    benchmark_series.append(float((point.benchmark_close / first_benchmark) * Decimal("100")))
-        else:
-            benchmark_series = [None for _ in history]
+        stock_series = [point.close_price for point in history]
+        benchmark_series = [point.benchmark_close for point in history]
+        dual_axis_chart = build_dual_axis_chart(stock_series, benchmark_series)
 
         latest_point = history[-1]
         if selected_start_date or selected_end_date:
@@ -1772,8 +1839,9 @@ def build_equity_history_cards(
                     if first_benchmark and history[-1].benchmark_close
                     else None
                 ),
-                "stock_line": build_svg_polyline(stock_series),
-                "benchmark_line": build_svg_polyline(benchmark_series),
+                "stock_line": dual_axis_chart["stock_line"],
+                "benchmark_line": dual_axis_chart["reference_line"],
+                "dual_axis_chart": dual_axis_chart,
                 "period_snapshots": period_snapshots,
                 "selected_period": selected_period,
                 "net_unrealized_gain": position.unrealized_gain_after_costs,

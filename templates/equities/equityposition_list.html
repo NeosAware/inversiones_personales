@@ -221,6 +221,9 @@
       background:#eef7fc;
       box-shadow:inset 0 0 0 1px rgba(15,95,136,.08);
     }
+    .equity-suggestion-card form{
+      margin-top:12px;
+    }
     .equity-suggestion-head{
       display:flex;
       justify-content:space-between;
@@ -287,6 +290,36 @@
     .equity-suggestion-button span{
       font-size:13px;
       color:var(--muted);
+    }
+    .equity-mini-button{
+      width:100%;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid #c8dcea;
+      background:#fff;
+      color:#17384e;
+      font:inherit;
+      cursor:pointer;
+    }
+    .equity-chart-legend{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:16px;
+      margin-top:12px;
+      font-size:13px;
+      color:var(--muted);
+    }
+    .equity-legend-item{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+    }
+    .equity-legend-dot{
+      width:10px;
+      height:10px;
+      border-radius:999px;
+      display:inline-block;
     }
     @media (max-width: 1180px){
       .equity-hero-grid, .equity-period-grid, .equity-card-grid, .equity-panel-grid, .equity-range-form, .equity-position-grid, .equity-suggestion-grid{
@@ -578,13 +611,22 @@
                 <svg viewBox="0 0 640 220">
                   <line x1="18" y1="202" x2="622" y2="202" stroke="#d8e5ee" stroke-width="1" />
                   <line x1="18" y1="18" x2="18" y2="202" stroke="#d8e5ee" stroke-width="1" />
+                  <line x1="622" y1="18" x2="622" y2="202" stroke="#d8e5ee" stroke-width="1" />
+                  <polyline fill="none" stroke="#0f5f88" stroke-width="4" points="{{ card.stock_line }}" />
                   {% if card.benchmark_line %}
                     <polyline fill="none" stroke="#7f8ea0" stroke-width="3" points="{{ card.benchmark_line }}" />
                   {% endif %}
-                  <polyline fill="none" stroke="#0f5f88" stroke-width="4" points="{{ card.stock_line }}" />
+                  <text x="8" y="20" font-size="12" fill="#0f5f88">{{ card.dual_axis_chart.stock_max_label }}</text>
+                  <text x="8" y="214" font-size="12" fill="#0f5f88">{{ card.dual_axis_chart.stock_min_label }}</text>
+                  <text x="632" y="20" font-size="12" text-anchor="end" fill="#5b6c79">{{ card.dual_axis_chart.reference_max_label }}</text>
+                  <text x="632" y="214" font-size="12" text-anchor="end" fill="#5b6c79">{{ card.dual_axis_chart.reference_min_label }}</text>
                 </svg>
+                <div class="equity-chart-legend">
+                  <span class="equity-legend-item"><span class="equity-legend-dot" style="background:#0f5f88;"></span>Izquierda: accion</span>
+                  <span class="equity-legend-item"><span class="equity-legend-dot" style="background:#7f8ea0;"></span>Derecha: {{ card.reference_label }}</span>
+                </div>
                 <div class="equity-chart-caption">
-                  Comparativa base 100 desde {{ card.start_date|date:"Y-m-d" }} hasta {{ card.end_date|date:"Y-m-d" }}.
+                  Doble escala desde {{ card.start_date|date:"Y-m-d" }} hasta {{ card.end_date|date:"Y-m-d" }}.
                   Accion {{ card.stock_return_pct|floatformat:2 }} %{% if card.benchmark_return_pct is not None %} · Referencia {{ card.benchmark_return_pct|floatformat:2 }} %{% endif %}
                 </div>
               </div>
@@ -658,6 +700,17 @@
                         {% if suggestion.correlation.frequency == "quarterly" %}Trimestral{% else %}Mensual{% endif %}
                         | {{ suggestion.correlation.observations_count }} observaciones
                       </div>
+                      {% if not suggestion.is_selected %}
+                        <form method="post">
+                          {% csrf_token %}
+                          <input type="hidden" name="action" value="change_reference">
+                          <input type="hidden" name="position_id" value="{{ card.position.id }}">
+                          <input type="hidden" name="reference_profile" value="{{ suggestion.reference_profile }}">
+                          <input type="hidden" name="benchmark_symbol" value="{{ suggestion.benchmark_symbol }}">
+                          <input type="hidden" name="benchmark_name" value="{{ suggestion.benchmark_name }}">
+                          <button class="equity-mini-button" type="submit">Usar esta referencia en el grafico</button>
+                        </form>
+                      {% endif %}
                     </div>
                   {% endfor %}
                 </div>
