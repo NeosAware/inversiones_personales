@@ -1597,6 +1597,200 @@ def build_period_snapshot(history, label: str, start_date: date | None = None, e
     }
 
 
+def clamp_decimal(value: Decimal, lower: Decimal, upper: Decimal) -> Decimal:
+    return max(lower, min(upper, value))
+
+
+def annualize_return_pct(return_pct: Decimal | None, months: int) -> Decimal | None:
+    if return_pct is None or months <= 0:
+        return None
+    base = 1 + (float(return_pct) / 100)
+    if base <= 0:
+        return Decimal("-100.00")
+    annualized = (base ** (12 / months) - 1) * 100
+    return Decimal(str(round(annualized, 4)))
+
+
+def build_projection_signal(return_pct: Decimal | None, months: int) -> Decimal | None:
+    if return_pct is None:
+        return None
+    annualized = annualize_return_pct(return_pct, months)
+    if annualized is None:
+        return None
+    linearized = return_pct * (Decimal("12") / Decimal(months))
+    return (annualized * Decimal("0.55")) + (linearized * Decimal("0.45"))
+
+
+def standard_deviation_decimal(values: list[Decimal]) -> Decimal | None:
+    if len(values) < 2:
+        return None
+    numeric_values = [float(value) for value in values]
+    mean_value = sum(numeric_values) / len(numeric_values)
+    variance = sum((value - mean_value) ** 2 for value in numeric_values) / (len(numeric_values) - 1)
+    return Decimal(str(round(math.sqrt(variance), 4)))
+
+
+def build_recent_monthly_stock_returns(history, months_back: int = 6) -> list[Decimal]:
+    if not history:
+        return []
+    latest_date = history[-1].price_date
+    recent_history = filter_history_window(
+        history,
+        start_date=latest_date - timedelta(days=35 * (months_back + 1)),
+        end_date=latest_date,
+    )
+    monthly_history = collapse_history_to_frequency(recent_history, "monthly")[-(months_back + 1):]
+    monthly_returns = []
+    for previous, current in zip(monthly_history, monthly_history[1:]):
+        period_return = percentage_change(current.close_price, previous.close_price)
+        if period_return is not None:
+            monthly_returns.append(period_return)
+    return monthly_returns
+
+
+def build_projection_confidence(
+    coefficient: Decimal | None,
+    observations_count: int,
+    monthly_returns_count: int,
+) -> dict:
+    score = 0
+    absolute_coefficient = abs(coefficient) if coefficient is not None else None
+    if absolute_coefficient is not None:
+        if absolute_coefficient >= Decimal("0.25"):
+            score += 1
+        if absolute_coefficient >= Decimal("0.50"):
+            score += 1
+    if observations_count >= 4:
+        score += 1
+    if observations_count >= 8:
+        score += 1
+    if monthly_returns_count >= 4:
+        score += 1
+
+    if score >= 4:
+        return {
+            "label": "Alta",
+            "note": "La relacion reciente entre accion y referencia tiene bastante base para una lectura orientativa.",
+        }
+    if score >= 2:
+        return {
+            "label": "Media",
+            "note": "La lectura es util, pero conviene verla como una guia y no como una estimacion cerrada.",
+        }
+    return {
+        "label": "Baja",
+        "note": "Hay poca base historica o una relacion debil con la referencia, asi que la propuesta es muy tentativa.",
+    }
+
+
+def project_price_from_return(current_price: Decimal | None, return_pct: Decimal | None) -> Decimal | None:
+    if current_price in {None, ZERO} or return_pct is None:
+        return None
+    multiplier = Decimal("1") + (return_pct / Decimal("100"))
+    if multiplier <= 0:
+        multiplier = Decimal("0.01")
+    return current_price * multiplier
+
+
+def build_projection_path(current_price: Decimal | None, annual_return_pct: Decimal | None) -> list[dict]:
+    if current_price in {None, ZERO} or annual_return_pct is None:
+        return []
+    annual_multiplier = max(0.01, 1 + (float(annual_return_pct) / 100))
+    path = []
+    for months, label in ((3, "3M"), (6, "6M"), (9, "9M"), (12, "12M")):
+        projected_multiplier = annual_multiplier ** (months / 12)
+        projected_price = Decimal(str(round(float(current_price) * projected_multiplier, 4)))
+        path.append(
+            {
+                "label": label,
+                "projected_price": projected_price,
+            }
+        )
+    return path
+
+
+def build_one_year_projection(history, position: EquityPosition, correlation: dict, six_month_snapshot: dict) -> dict:
+    if not history or not six_month_snapshot.get("available") or six_month_snapshot.get("stock_return_pct") is None:
+        return {"available": False}
+
+    latest_price = history[-1].close_price if history[-1].close_price else position.current_price_per_share
+    stock_6m_return_pct = six_month_snapshot["stock_return_pct"]
+    reference_6m_return_pct = six_month_snapshot.get("benchmark_return_pct")
+    coefficient = correlation.get("coefficient")
+    observations_count = correlation.get("observations_count", 0)
+
+    stock_signal = build_projection_signal(stock_6m_return_pct, 6)
+    if stock_signal is None:
+        return {"available": False}
+
+    base_return_pct = stock_signal
+    reference_signal = build_projection_signal(reference_6m_return_pct, 6) if reference_6m_return_pct is not None else None
+    if coefficient is not None and reference_signal is not None:
+        reference_weight = abs(coefficient) * Decimal("0.30")
+        momentum_weight = Decimal("1") - reference_weight
+        base_return_pct = (stock_signal * momentum_weight) + (reference_signal * coefficient * Decimal("0.30"))
+
+    evidence_factor = Decimal("0.70")
+    if observations_count >= 8:
+        evidence_factor = Decimal("1.00")
+    elif observations_count >= 5:
+        evidence_factor = Decimal("0.90")
+    elif observations_count >= 3:
+        evidence_factor = Decimal("0.80")
+    base_return_pct *= evidence_factor
+    base_return_pct = clamp_decimal(base_return_pct, Decimal("-60.00"), Decimal("90.00"))
+
+    monthly_returns = build_recent_monthly_stock_returns(history, months_back=6)
+    monthly_volatility_pct = standard_deviation_decimal(monthly_returns)
+    annualized_volatility_pct = (
+        monthly_volatility_pct * Decimal(str(round(math.sqrt(12), 4)))
+        if monthly_volatility_pct is not None
+        else None
+    )
+    confidence = build_projection_confidence(coefficient, observations_count, len(monthly_returns))
+    band_pct = annualized_volatility_pct * Decimal("0.70") if annualized_volatility_pct is not None else Decimal("16.00")
+    if confidence["label"] == "Alta":
+        band_pct -= Decimal("2.00")
+    elif confidence["label"] == "Baja":
+        band_pct += Decimal("4.00")
+    band_pct = clamp_decimal(band_pct, Decimal("8.00"), Decimal("30.00"))
+
+    low_return_pct = clamp_decimal(base_return_pct - band_pct, Decimal("-80.00"), Decimal("120.00"))
+    high_return_pct = clamp_decimal(base_return_pct + band_pct, Decimal("-80.00"), Decimal("140.00"))
+
+    if coefficient is None or reference_6m_return_pct is None:
+        explanation = (
+            f"La propuesta a 12 meses se apoya sobre todo en el tono del ultimo semestre "
+            f"({stock_6m_return_pct:.2f} %) porque la relacion con {position.analysis_reference_label} "
+            f"todavia no tiene suficiente base."
+        )
+    else:
+        reference_direction = "acompanando" if coefficient >= 0 else "en sentido inverso a"
+        explanation = (
+            f"Se prolonga de forma prudente el tono de 6M de la accion ({stock_6m_return_pct:.2f} %) y se ajusta con "
+            f"{position.analysis_reference_label} ({reference_6m_return_pct:.2f} % en 6M), "
+            f"{reference_direction} la referencia con una correlacion de {coefficient:.2f}."
+        )
+
+    return {
+        "available": True,
+        "base_return_pct": base_return_pct,
+        "low_return_pct": low_return_pct,
+        "high_return_pct": high_return_pct,
+        "projected_price": project_price_from_return(latest_price, base_return_pct),
+        "low_price": project_price_from_return(latest_price, low_return_pct),
+        "high_price": project_price_from_return(latest_price, high_return_pct),
+        "quarterly_path": build_projection_path(latest_price, base_return_pct),
+        "confidence_label": confidence["label"],
+        "confidence_note": confidence["note"],
+        "stock_6m_return_pct": stock_6m_return_pct,
+        "reference_6m_return_pct": reference_6m_return_pct,
+        "coefficient": coefficient,
+        "reference_label": position.analysis_reference_label,
+        "explanation": explanation,
+    }
+
+
 def build_candlestick_svg(history, width: int = 640, height: int = 220, padding: int = 18) -> str:
     candles = history[-32:]
     if len(candles) < 2:
@@ -1782,6 +1976,7 @@ def build_equity_history_cards(
                 {
                     "position": position,
                     "has_history": False,
+                    "projection": {"available": False},
                     "suggested_references": [],
                 }
             )
@@ -1818,6 +2013,8 @@ def build_equity_history_cards(
             build_period_snapshot(history, "1Y", start_date=latest_point.price_date - timedelta(days=365), end_date=latest_point.price_date),
         ]
         correlation = build_reference_correlation(history, position)
+        six_month_snapshot = next((snapshot for snapshot in period_snapshots if snapshot["label"] == "6M"), {"available": False})
+        projection = build_one_year_projection(history, position, correlation, six_month_snapshot)
         maintenance_drag_pct = (
             (position.annual_maintenance_cost / position.invested_amount) * Decimal("100")
             if position.invested_amount
@@ -1850,6 +2047,7 @@ def build_equity_history_cards(
                 "maintenance_drag_pct": maintenance_drag_pct,
                 "price_vs_cost_pct": percentage_change(position.current_price_per_share, position.average_cost_per_share),
                 "correlation": correlation,
+                "projection": projection,
                 "suggested_references": build_suggested_reference_cards(history, position, reference_cache),
             }
         )

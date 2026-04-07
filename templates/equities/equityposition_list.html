@@ -321,6 +321,12 @@
       border-radius:999px;
       display:inline-block;
     }
+    .equity-projection-note{
+      margin-top:12px;
+      color:var(--muted);
+      font-size:14px;
+      line-height:1.5;
+    }
     @media (max-width: 1180px){
       .equity-hero-grid, .equity-period-grid, .equity-card-grid, .equity-panel-grid, .equity-range-form, .equity-position-grid, .equity-suggestion-grid{
         grid-template-columns:1fr;
@@ -571,7 +577,7 @@
             <div class="equity-position-head">
               <div>
                 <h4>{{ card.position.company_name }}</h4>
-                <p>{{ card.position.ticker }} · {{ card.position.broker }} · {{ card.position.get_ownership_category_display }}</p>
+                <p>{{ card.position.ticker }} | {{ card.position.broker }} | {{ card.position.get_ownership_category_display }}</p>
               </div>
               <div class="equity-chip-row">
                 <span class="equity-chip">{{ card.position.get_position_kind_display }}</span>
@@ -627,9 +633,59 @@
                 </div>
                 <div class="equity-chart-caption">
                   Doble escala desde {{ card.start_date|date:"Y-m-d" }} hasta {{ card.end_date|date:"Y-m-d" }}.
-                  Accion {{ card.stock_return_pct|floatformat:2 }} %{% if card.benchmark_return_pct is not None %} · Referencia {{ card.benchmark_return_pct|floatformat:2 }} %{% endif %}
+                  Accion {{ card.stock_return_pct|floatformat:2 }} %{% if card.benchmark_return_pct is not None %} | Referencia {{ card.benchmark_return_pct|floatformat:2 }} %{% endif %}
                 </div>
               </div>
+
+              {% if card.projection.available %}
+                <div class="equity-card-grid">
+                  <div class="equity-stat">
+                    <div class="equity-stat-label">Propuesta 12M</div>
+                    <div class="equity-stat-value {% if card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">
+                      {{ card.projection.base_return_pct|floatformat:2 }} %
+                    </div>
+                  </div>
+                  <div class="equity-stat">
+                    <div class="equity-stat-label">Precio objetivo</div>
+                    <div class="equity-stat-value">
+                      {% if card.projection.projected_price is not None %}{{ card.projection.projected_price|floatformat:4 }}{% else %}-{% endif %}
+                    </div>
+                  </div>
+                  <div class="equity-stat">
+                    <div class="equity-stat-label">Rango orientativo</div>
+                    <div class="equity-stat-value" style="font-size:18px;">
+                      {% if card.projection.low_return_pct is not None and card.projection.high_return_pct is not None %}
+                        {{ card.projection.low_return_pct|floatformat:1 }} % / {{ card.projection.high_return_pct|floatformat:1 }} %
+                      {% else %}
+                        -
+                      {% endif %}
+                    </div>
+                  </div>
+                  <div class="equity-stat">
+                    <div class="equity-stat-label">Confianza</div>
+                    <div class="equity-stat-value" style="font-size:20px;">{{ card.projection.confidence_label }}</div>
+                  </div>
+                </div>
+
+                <div class="equity-card-grid">
+                  {% for step in card.projection.quarterly_path %}
+                    <div class="equity-stat">
+                      <div class="equity-stat-label">{{ step.label }}</div>
+                      <div class="equity-stat-value" style="font-size:20px;">{{ step.projected_price|floatformat:4 }}</div>
+                      <div class="metric-sub">Precio orientativo</div>
+                    </div>
+                  {% endfor %}
+                </div>
+
+                <div class="equity-projection-note">
+                  {{ card.projection.explanation }}
+                  {{ card.projection.confidence_note }}
+                </div>
+              {% else %}
+                <div class="message info" style="margin-top:14px;">
+                  Todavia no hay base suficiente para proponer una evolucion a 12 meses con la referencia activa.
+                </div>
+              {% endif %}
 
               <div class="equity-card-grid">
                 <div class="equity-stat">
@@ -768,7 +824,7 @@
         <section class="equity-panel" style="margin-top:18px;">
           <p class="section-title">Alta o actualizacion</p>
           <h3>Registrar cartera o seguimiento</h3>
-          <form method="post" class="stack" style="margin-top:18px;">
+          <form method="post" class="stack" style="margin-top:18px;" novalidate>
             {% csrf_token %}
             <input type="hidden" name="action" value="create_position">
             <div class="equity-form-hint">
@@ -902,6 +958,13 @@
           annualDividendInput.value = "0";
           annualMaintenanceInput.value = "0";
         }
+
+        brokerInput.required = false;
+        sharesInput.required = false;
+        averageCostInput.required = false;
+        currentPriceInput.required = false;
+        annualDividendInput.required = false;
+        annualMaintenanceInput.required = false;
 
         brokerInput.placeholder = isWatchlist ? "Opcional en seguimiento" : "Broker o entidad";
         sharesInput.placeholder = isWatchlist ? "Opcional en seguimiento" : "Numero de acciones compradas";

@@ -204,6 +204,42 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(cards[0]["suggested_references"][0]["benchmark_name"], EURIBOR_REFERENCE_NAME)
         self.assertIsNotNone(cards[0]["suggested_references"][0]["correlation"]["coefficient"])
 
+    def test_history_cards_include_one_year_projection_from_six_months_and_reference(self):
+        position = EquityPosition.objects.create(
+            broker="Banco Sabadell",
+            ticker="IDR",
+            quote_symbol="IDR.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Indra Sistemas, S.A.",
+            shares=Decimal("20"),
+            average_cost_per_share=Decimal("18.0000"),
+            current_price_per_share=Decimal("22.0000"),
+        )
+        for price_date, close_price, benchmark_close in (
+            (date(2025, 12, 31), Decimal("15.00"), Decimal("100.00")),
+            (date(2026, 1, 31), Decimal("16.00"), Decimal("102.00")),
+            (date(2026, 2, 28), Decimal("17.20"), Decimal("104.50")),
+            (date(2026, 3, 31), Decimal("18.60"), Decimal("107.00")),
+            (date(2026, 4, 30), Decimal("19.80"), Decimal("109.80")),
+            (date(2026, 5, 31), Decimal("21.10"), Decimal("112.40")),
+            (date(2026, 6, 30), Decimal("22.00"), Decimal("115.00")),
+        ):
+            position.price_history.create(
+                price_date=price_date,
+                close_price=close_price,
+                benchmark_close=benchmark_close,
+            )
+
+        cards = build_equity_history_cards([position])
+
+        projection = cards[0]["projection"]
+        self.assertTrue(projection["available"])
+        self.assertGreater(projection["base_return_pct"], Decimal("0"))
+        self.assertGreater(projection["projected_price"], Decimal("22.00"))
+        self.assertEqual(len(projection["quarterly_path"]), 4)
+        self.assertIn("IBEX 35", projection["explanation"])
+
     def test_watchlist_positions_do_not_count_into_portfolio_totals(self):
         EquityPosition.objects.create(
             position_kind=EquityPosition.PositionKind.OWNED,
