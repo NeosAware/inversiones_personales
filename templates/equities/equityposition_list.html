@@ -622,6 +622,9 @@
                   {% if card.benchmark_line %}
                     <polyline fill="none" stroke="#7f8ea0" stroke-width="3" points="{{ card.benchmark_line }}" />
                   {% endif %}
+                  {% if card.projection_line %}
+                    <polyline fill="none" stroke="#c96a19" stroke-width="4" stroke-dasharray="10 8" points="{{ card.projection_line }}" />
+                  {% endif %}
                   <text x="8" y="20" font-size="12" fill="#0f5f88">{{ card.dual_axis_chart.stock_max_label }}</text>
                   <text x="8" y="214" font-size="12" fill="#0f5f88">{{ card.dual_axis_chart.stock_min_label }}</text>
                   <text x="632" y="20" font-size="12" text-anchor="end" fill="#5b6c79">{{ card.dual_axis_chart.reference_max_label }}</text>
@@ -630,6 +633,9 @@
                 <div class="equity-chart-legend">
                   <span class="equity-legend-item"><span class="equity-legend-dot" style="background:#0f5f88;"></span>Izquierda: accion</span>
                   <span class="equity-legend-item"><span class="equity-legend-dot" style="background:#7f8ea0;"></span>Derecha: {{ card.reference_label }}</span>
+                  {% if card.projection_line %}
+                    <span class="equity-legend-item"><span class="equity-legend-dot" style="background:#c96a19;"></span>Tramo final: extrapolacion 12M</span>
+                  {% endif %}
                 </div>
                 <div class="equity-chart-caption">
                   Doble escala desde {{ card.start_date|date:"Y-m-d" }} hasta {{ card.end_date|date:"Y-m-d" }}.

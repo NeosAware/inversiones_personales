@@ -1377,57 +1377,81 @@ def format_axis_value(value: Decimal | None) -> str:
 
 
 def build_dual_axis_chart(
-    stock_values,
-    reference_values,
+    stock_points,
+    reference_points,
+    projection_points=None,
     width: int = 640,
     height: int = 220,
     padding: int = 18,
 ) -> dict:
-    stock_filtered = [Decimal(str(value)) for value in stock_values if value is not None]
-    reference_filtered = [Decimal(str(value)) for value in reference_values if value is not None]
+    projection_points = projection_points or []
+
+    def normalize_points(points):
+        normalized = []
+        for point in points:
+            raw_date = point.get("date") if isinstance(point, dict) else None
+            raw_value = point.get("value") if isinstance(point, dict) else None
+            if raw_date is None or raw_value is None:
+                continue
+            normalized.append((raw_date, Decimal(str(raw_value))))
+        return normalized
+
+    stock_filtered = normalize_points(stock_points)
+    reference_filtered = normalize_points(reference_points)
+    projection_filtered = normalize_points(projection_points)
     if len(stock_filtered) < 2:
         return {
             "stock_line": "",
             "reference_line": "",
+            "projection_line": "",
             "stock_min_label": "-",
             "stock_max_label": "-",
             "reference_min_label": "-",
             "reference_max_label": "-",
         }
 
-    stock_min = min(stock_filtered)
-    stock_max = max(stock_filtered)
+    all_stock_values = [value for _, value in stock_filtered]
+    if projection_filtered:
+        all_stock_values.extend(value for _, value in projection_filtered)
+
+    stock_min = min(all_stock_values)
+    stock_max = max(all_stock_values)
     if stock_min == stock_max:
         stock_max += Decimal("1")
 
     if reference_filtered:
-        reference_min = min(reference_filtered)
-        reference_max = max(reference_filtered)
+        reference_values_only = [value for _, value in reference_filtered]
+        reference_min = min(reference_values_only)
+        reference_max = max(reference_values_only)
         if reference_min == reference_max:
             reference_max += Decimal("1")
     else:
         reference_min = reference_max = None
 
-    def scale_series(values, series_min: Decimal | None, series_max: Decimal | None) -> str:
+    all_dates = [point_date for point_date, _ in stock_filtered]
+    all_dates.extend(point_date for point_date, _ in reference_filtered)
+    all_dates.extend(point_date for point_date, _ in projection_filtered)
+    min_date = min(all_dates)
+    max_date = max(all_dates)
+    total_days = max((max_date - min_date).days, 1)
+
+    def scale_series(points, series_min: Decimal | None, series_max: Decimal | None) -> str:
         if series_min is None or series_max is None:
             return ""
         span_x = width - 2 * padding
         span_y = height - 2 * padding
-        total_points = len(values) - 1 or 1
-        points = []
-        for index, raw_value in enumerate(values):
-            if raw_value is None:
-                continue
-            value = Decimal(str(raw_value))
-            x = padding + (span_x * index / total_points)
+        line_points = []
+        for point_date, value in points:
+            x = padding + (span_x * ((point_date - min_date).days / total_days))
             normalized = (value - series_min) / (series_max - series_min)
             y = height - padding - (normalized * span_y)
-            points.append(f"{x:.1f},{y:.1f}")
-        return " ".join(points)
+            line_points.append(f"{x:.1f},{y:.1f}")
+        return " ".join(line_points)
 
     return {
-        "stock_line": scale_series(stock_values, stock_min, stock_max),
-        "reference_line": scale_series(reference_values, reference_min, reference_max),
+        "stock_line": scale_series(stock_filtered, stock_min, stock_max),
+        "reference_line": scale_series(reference_filtered, reference_min, reference_max),
+        "projection_line": scale_series(projection_filtered, stock_min, stock_max),
         "stock_min_label": format_axis_value(stock_min),
         "stock_max_label": format_axis_value(stock_max),
         "reference_min_label": format_axis_value(reference_min),
@@ -1692,17 +1716,18 @@ def project_price_from_return(current_price: Decimal | None, return_pct: Decimal
     return current_price * multiplier
 
 
-def build_projection_path(current_price: Decimal | None, annual_return_pct: Decimal | None) -> list[dict]:
+def build_projection_path(current_price: Decimal | None, annual_return_pct: Decimal | None, anchor_date: date | None = None) -> list[dict]:
     if current_price in {None, ZERO} or annual_return_pct is None:
         return []
     annual_multiplier = max(0.01, 1 + (float(annual_return_pct) / 100))
     path = []
-    for months, label in ((3, "3M"), (6, "6M"), (9, "9M"), (12, "12M")):
+    for months, label, days in ((3, "3M", 91), (6, "6M", 182), (9, "9M", 273), (12, "12M", 365)):
         projected_multiplier = annual_multiplier ** (months / 12)
         projected_price = Decimal(str(round(float(current_price) * projected_multiplier, 4)))
         path.append(
             {
                 "label": label,
+                "projected_date": anchor_date + timedelta(days=days) if anchor_date else None,
                 "projected_price": projected_price,
             }
         )
@@ -1780,7 +1805,7 @@ def build_one_year_projection(history, position: EquityPosition, correlation: di
         "projected_price": project_price_from_return(latest_price, base_return_pct),
         "low_price": project_price_from_return(latest_price, low_return_pct),
         "high_price": project_price_from_return(latest_price, high_return_pct),
-        "quarterly_path": build_projection_path(latest_price, base_return_pct),
+        "quarterly_path": build_projection_path(latest_price, base_return_pct, anchor_date=history[-1].price_date),
         "confidence_label": confidence["label"],
         "confidence_note": confidence["note"],
         "stock_6m_return_pct": stock_6m_return_pct,
@@ -1984,10 +2009,6 @@ def build_equity_history_cards(
 
         first_price = history[0].close_price
         first_benchmark = next((point.benchmark_close for point in history if point.benchmark_close is not None), None)
-        stock_series = [point.close_price for point in history]
-        benchmark_series = [point.benchmark_close for point in history]
-        dual_axis_chart = build_dual_axis_chart(stock_series, benchmark_series)
-
         latest_point = history[-1]
         if selected_start_date or selected_end_date:
             selected_period = build_period_snapshot(
@@ -2015,6 +2036,24 @@ def build_equity_history_cards(
         correlation = build_reference_correlation(history, position)
         six_month_snapshot = next((snapshot for snapshot in period_snapshots if snapshot["label"] == "6M"), {"available": False})
         projection = build_one_year_projection(history, position, correlation, six_month_snapshot)
+        stock_series = [{"date": point.price_date, "value": point.close_price} for point in history]
+        benchmark_series = [
+            {"date": point.price_date, "value": point.benchmark_close}
+            for point in history
+            if point.benchmark_close is not None
+        ]
+        projection_series = []
+        if projection.get("available"):
+            projection_series = [{"date": latest_point.price_date, "value": latest_point.close_price}]
+            projection_series.extend(
+                {
+                    "date": step["projected_date"],
+                    "value": step["projected_price"],
+                }
+                for step in projection.get("quarterly_path", [])
+                if step.get("projected_date") and step.get("projected_price") is not None
+            )
+        dual_axis_chart = build_dual_axis_chart(stock_series, benchmark_series, projection_points=projection_series)
         maintenance_drag_pct = (
             (position.annual_maintenance_cost / position.invested_amount) * Decimal("100")
             if position.invested_amount
@@ -2038,6 +2077,7 @@ def build_equity_history_cards(
                 ),
                 "stock_line": dual_axis_chart["stock_line"],
                 "benchmark_line": dual_axis_chart["reference_line"],
+                "projection_line": dual_axis_chart["projection_line"],
                 "dual_axis_chart": dual_axis_chart,
                 "period_snapshots": period_snapshots,
                 "selected_period": selected_period,

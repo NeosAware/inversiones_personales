@@ -238,7 +238,9 @@ class EquitiesServicesTests(TestCase):
         self.assertGreater(projection["base_return_pct"], Decimal("0"))
         self.assertGreater(projection["projected_price"], Decimal("22.00"))
         self.assertEqual(len(projection["quarterly_path"]), 4)
+        self.assertIsNotNone(projection["quarterly_path"][0]["projected_date"])
         self.assertIn("IBEX 35", projection["explanation"])
+        self.assertTrue(cards[0]["projection_line"])
 
     def test_watchlist_positions_do_not_count_into_portfolio_totals(self):
         EquityPosition.objects.create(
