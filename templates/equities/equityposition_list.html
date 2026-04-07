@@ -153,6 +153,67 @@
       gap:18px;
       grid-template-columns:repeat(2, minmax(0,1fr));
     }
+    .equity-analysis-shell{
+      display:grid;
+      gap:18px;
+    }
+    .equity-analysis-switch,
+    .equity-stock-tabs{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+    }
+    .equity-analysis-switch{
+      padding:14px;
+      border-radius:22px;
+      border:1px solid #dce8f1;
+      background:#f7fbfe;
+    }
+    .equity-analysis-switch button,
+    .equity-stock-tab{
+      appearance:none;
+      border:1px solid #cddfeb;
+      background:#ffffff;
+      color:#214157;
+      border-radius:16px;
+      padding:12px 14px;
+      cursor:pointer;
+      font:inherit;
+      text-align:left;
+    }
+    .equity-analysis-switch button.active,
+    .equity-stock-tab.active{
+      background:#103f61;
+      color:#ffffff;
+      border-color:#103f61;
+      box-shadow:0 10px 24px rgba(16,63,97,.18);
+    }
+    .equity-stock-tab{
+      min-width:190px;
+    }
+    .equity-stock-tab strong{
+      display:block;
+      font-size:15px;
+      margin-bottom:4px;
+    }
+    .equity-stock-tab span{
+      display:block;
+      font-size:12px;
+      color:inherit;
+      opacity:.82;
+    }
+    .equity-stock-panels{
+      margin-top:16px;
+    }
+    .equity-stock-panel{
+      display:none;
+    }
+    .equity-stock-panel.active{
+      display:block;
+    }
+    .equity-group-panel[hidden]{
+      display:none !important;
+    }
     .equity-position-card{
       border:1px solid var(--line);
       border-radius:24px;
@@ -563,231 +624,63 @@
       </table>
     </section>
 
-    <section id="equity-analysis">
+    <section class="equity-panel" id="equity-analysis">
       <div class="equity-panel-copy" style="margin-bottom:18px;">
         <div>
           <p class="section-title">Analisis y correlacion</p>
           <h3 style="margin:0;">Cada tesis ligada a su variable de referencia</h3>
-          <p>La comparativa principal enfrenta el precio de la accion con la referencia que hayas elegido. Ahora puedes comparar tambien con demanda electrica, consumo de gas, precio de vivienda, Euribor y otras referencias externas para ver cual explica mejor la tesis.</p>
+          <p>La comparativa principal enfrenta el precio de la accion con la referencia que hayas elegido. Ahora la navegacion se hace por pestañas: primero separas cartera real y seguimiento, y dentro de cada bloque abres la accion concreta que quieras estudiar.</p>
         </div>
       </div>
-      <div class="equity-position-grid">
-        {% for card in history_cards %}
-          <article class="equity-position-card">
-            <div class="equity-position-head">
-              <div>
-                <h4>{{ card.position.company_name }}</h4>
-                <p>{{ card.position.ticker }} | {{ card.position.broker }} | {{ card.position.get_ownership_category_display }}</p>
-              </div>
-              <div class="equity-chip-row">
-                <span class="equity-chip">{{ card.position.get_position_kind_display }}</span>
-                <span class="equity-chip">{{ card.reference_profile_label }}</span>
-                <span class="equity-chip">{{ card.reference_label }}</span>
-              </div>
+      <div class="equity-analysis-shell">
+        <div class="equity-analysis-switch" role="tablist" aria-label="Tipo de acciones">
+          <button type="button" class="active" data-group-target="owned">Compradas ({{ owned_history_cards|length }})</button>
+          <button type="button" data-group-target="watchlist">En seguimiento ({{ watchlist_history_cards|length }})</button>
+        </div>
+
+        <section class="equity-group-panel" data-group-panel="owned">
+          {% if owned_history_cards %}
+            <div class="equity-stock-tabs" role="tablist" aria-label="Acciones compradas">
+              {% for card in owned_history_cards %}
+                <button type="button" class="equity-stock-tab{% if forloop.first %} active{% endif %}" data-stock-target="owned-{{ card.position.id }}">
+                  <strong>{{ card.position.company_name }}</strong>
+                  <span>{{ card.position.ticker }} | {{ card.reference_label }}</span>
+                </button>
+              {% endfor %}
             </div>
-            {% if card.has_history %}
-              <div class="equity-card-grid">
-                <div class="equity-stat">
-                  <div class="equity-stat-label">1M</div>
-                  <div class="equity-stat-value {% with snapshot=card.period_snapshots.0 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
-                    {% with snapshot=card.period_snapshots.0 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
-                  </div>
+            <div class="equity-stock-panels">
+              {% for card in owned_history_cards %}
+                <div class="equity-stock-panel{% if forloop.first %} active{% endif %}" data-stock-panel="owned-{{ card.position.id }}">
+                  {% include "equities/_analysis_card.html" with card=card %}
                 </div>
-                <div class="equity-stat">
-                  <div class="equity-stat-label">3M</div>
-                  <div class="equity-stat-value {% with snapshot=card.period_snapshots.1 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
-                    {% with snapshot=card.period_snapshots.1 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
-                  </div>
-                </div>
-                <div class="equity-stat">
-                  <div class="equity-stat-label">6M</div>
-                  <div class="equity-stat-value {% with snapshot=card.period_snapshots.2 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
-                    {% with snapshot=card.period_snapshots.2 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
-                  </div>
-                </div>
-                <div class="equity-stat">
-                  <div class="equity-stat-label">1Y</div>
-                  <div class="equity-stat-value {% with snapshot=card.period_snapshots.3 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
-                    {% with snapshot=card.period_snapshots.3 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
-                  </div>
-                </div>
-              </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="message info">Todavia no hay acciones compradas con historico para analizar.</div>
+          {% endif %}
+        </section>
 
-              <div class="equity-chart-shell">
-                <svg viewBox="0 0 640 220">
-                  <line x1="18" y1="202" x2="622" y2="202" stroke="#d8e5ee" stroke-width="1" />
-                  <line x1="18" y1="18" x2="18" y2="202" stroke="#d8e5ee" stroke-width="1" />
-                  <line x1="622" y1="18" x2="622" y2="202" stroke="#d8e5ee" stroke-width="1" />
-                  <polyline fill="none" stroke="#0f5f88" stroke-width="4" points="{{ card.stock_line }}" />
-                  {% if card.benchmark_line %}
-                    <polyline fill="none" stroke="#7f8ea0" stroke-width="3" points="{{ card.benchmark_line }}" />
-                  {% endif %}
-                  {% if card.projection_line %}
-                    <polyline fill="none" stroke="#c96a19" stroke-width="4" stroke-dasharray="10 8" points="{{ card.projection_line }}" />
-                  {% endif %}
-                  <text x="8" y="20" font-size="12" fill="#0f5f88">{{ card.dual_axis_chart.stock_max_label }}</text>
-                  <text x="8" y="214" font-size="12" fill="#0f5f88">{{ card.dual_axis_chart.stock_min_label }}</text>
-                  <text x="632" y="20" font-size="12" text-anchor="end" fill="#5b6c79">{{ card.dual_axis_chart.reference_max_label }}</text>
-                  <text x="632" y="214" font-size="12" text-anchor="end" fill="#5b6c79">{{ card.dual_axis_chart.reference_min_label }}</text>
-                </svg>
-                <div class="equity-chart-legend">
-                  <span class="equity-legend-item"><span class="equity-legend-dot" style="background:#0f5f88;"></span>Izquierda: accion</span>
-                  <span class="equity-legend-item"><span class="equity-legend-dot" style="background:#7f8ea0;"></span>Derecha: {{ card.reference_label }}</span>
-                  {% if card.projection_line %}
-                    <span class="equity-legend-item"><span class="equity-legend-dot" style="background:#c96a19;"></span>Tramo final: extrapolacion 12M</span>
-                  {% endif %}
+        <section class="equity-group-panel" data-group-panel="watchlist" hidden>
+          {% if watchlist_history_cards %}
+            <div class="equity-stock-tabs" role="tablist" aria-label="Acciones en seguimiento">
+              {% for card in watchlist_history_cards %}
+                <button type="button" class="equity-stock-tab{% if forloop.first %} active{% endif %}" data-stock-target="watchlist-{{ card.position.id }}">
+                  <strong>{{ card.position.company_name }}</strong>
+                  <span>{{ card.position.ticker }} | {{ card.reference_label }}</span>
+                </button>
+              {% endfor %}
+            </div>
+            <div class="equity-stock-panels">
+              {% for card in watchlist_history_cards %}
+                <div class="equity-stock-panel{% if forloop.first %} active{% endif %}" data-stock-panel="watchlist-{{ card.position.id }}">
+                  {% include "equities/_analysis_card.html" with card=card %}
                 </div>
-                <div class="equity-chart-caption">
-                  Doble escala desde {{ card.start_date|date:"Y-m-d" }} hasta {{ card.end_date|date:"Y-m-d" }}.
-                  Accion {{ card.stock_return_pct|floatformat:2 }} %{% if card.benchmark_return_pct is not None %} | Referencia {{ card.benchmark_return_pct|floatformat:2 }} %{% endif %}
-                </div>
-              </div>
-
-              {% if card.projection.available %}
-                <div class="equity-card-grid">
-                  <div class="equity-stat">
-                    <div class="equity-stat-label">Propuesta 12M</div>
-                    <div class="equity-stat-value {% if card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">
-                      {{ card.projection.base_return_pct|floatformat:2 }} %
-                    </div>
-                  </div>
-                  <div class="equity-stat">
-                    <div class="equity-stat-label">Precio objetivo</div>
-                    <div class="equity-stat-value">
-                      {% if card.projection.projected_price is not None %}{{ card.projection.projected_price|floatformat:4 }}{% else %}-{% endif %}
-                    </div>
-                  </div>
-                  <div class="equity-stat">
-                    <div class="equity-stat-label">Rango orientativo</div>
-                    <div class="equity-stat-value" style="font-size:18px;">
-                      {% if card.projection.low_return_pct is not None and card.projection.high_return_pct is not None %}
-                        {{ card.projection.low_return_pct|floatformat:1 }} % / {{ card.projection.high_return_pct|floatformat:1 }} %
-                      {% else %}
-                        -
-                      {% endif %}
-                    </div>
-                  </div>
-                  <div class="equity-stat">
-                    <div class="equity-stat-label">Confianza</div>
-                    <div class="equity-stat-value" style="font-size:20px;">{{ card.projection.confidence_label }}</div>
-                  </div>
-                </div>
-
-                <div class="equity-card-grid">
-                  {% for step in card.projection.quarterly_path %}
-                    <div class="equity-stat">
-                      <div class="equity-stat-label">{{ step.label }}</div>
-                      <div class="equity-stat-value" style="font-size:20px;">{{ step.projected_price|floatformat:4 }}</div>
-                      <div class="metric-sub">Precio orientativo</div>
-                    </div>
-                  {% endfor %}
-                </div>
-
-                <div class="equity-projection-note">
-                  {{ card.projection.explanation }}
-                  {{ card.projection.confidence_note }}
-                </div>
-              {% else %}
-                <div class="message info" style="margin-top:14px;">
-                  Todavia no hay base suficiente para proponer una evolucion a 12 meses con la referencia activa.
-                </div>
-              {% endif %}
-
-              <div class="equity-card-grid">
-                <div class="equity-stat">
-                  <div class="equity-stat-label">Periodo elegido</div>
-                  <div class="equity-stat-value {% if card.selected_period.stock_return_pct or card.selected_period.stock_return_pct == 0 %}{% if card.selected_period.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
-                    {% if card.selected_period.available %}{{ card.selected_period.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}
-                  </div>
-                </div>
-                <div class="equity-stat">
-                  <div class="equity-stat-label">Referencia</div>
-                  <div class="equity-stat-value">
-                    {% if card.selected_period.available and card.selected_period.benchmark_return_pct is not None %}{{ card.selected_period.benchmark_return_pct|floatformat:2 }} %{% else %}-{% endif %}
-                  </div>
-                </div>
-                <div class="equity-stat">
-                  <div class="equity-stat-label">Correlacion</div>
-                  <div class="equity-stat-value">
-                    {% if card.correlation.coefficient is not None %}{{ card.correlation.coefficient|floatformat:2 }}{% else %}-{% endif %}
-                  </div>
-                </div>
-                <div class="equity-stat">
-                  <div class="equity-stat-label">Lectura</div>
-                  <div class="equity-stat-value" style="font-size:20px;">{{ card.correlation.label }}</div>
-                </div>
-              </div>
-
-              <div class="equity-card-grid">
-                <div class="equity-stat">
-                  <div class="equity-stat-label">Frecuencia</div>
-                  <div class="equity-stat-value" style="font-size:20px;">
-                    {% if card.correlation.frequency == "quarterly" %}Trimestral{% else %}Mensual{% endif %}
-                  </div>
-                </div>
-                <div class="equity-stat">
-                  <div class="equity-stat-label">Observaciones</div>
-                  <div class="equity-stat-value">{{ card.correlation.observations_count }}</div>
-                </div>
-                <div class="equity-stat">
-                  <div class="equity-stat-label">Flujo anual neto</div>
-                  <div class="equity-stat-value {% if card.net_annual_income >= 0 %}good{% else %}warn{% endif %}">{{ card.net_annual_income|floatformat:2 }} EUR</div>
-                </div>
-                <div class="equity-stat">
-                  <div class="equity-stat-label">Coste anual</div>
-                  <div class="equity-stat-value">{{ card.position.annual_maintenance_cost|floatformat:2 }} EUR</div>
-                </div>
-              </div>
-              {% if card.suggested_references %}
-                <div class="equity-suggestion-grid">
-                  {% for suggestion in card.suggested_references %}
-                    <div class="equity-suggestion-card {% if suggestion.is_selected %}selected{% endif %}">
-                      <div class="equity-suggestion-head">
-                        <div>
-                          <div class="equity-suggestion-title">{{ suggestion.benchmark_name }}</div>
-                          <div class="metric-sub">{{ suggestion.description }}</div>
-                        </div>
-                        {% if suggestion.is_selected %}<span class="pill">Activa</span>{% elif suggestion.is_best %}<span class="pill">Mejor ajuste</span>{% endif %}
-                      </div>
-                      <div class="metric-sub" style="margin-top:12px;">
-                        Correlacion:
-                        {% if suggestion.correlation.coefficient is not None %}
-                          {{ suggestion.correlation.coefficient|floatformat:2 }}
-                        {% else %}
-                          -
-                        {% endif %}
-                        | {{ suggestion.correlation.label }}
-                      </div>
-                      <div class="metric-sub">
-                        {% if suggestion.correlation.frequency == "quarterly" %}Trimestral{% else %}Mensual{% endif %}
-                        | {{ suggestion.correlation.observations_count }} observaciones
-                      </div>
-                      {% if not suggestion.is_selected %}
-                        <form method="post">
-                          {% csrf_token %}
-                          <input type="hidden" name="action" value="change_reference">
-                          <input type="hidden" name="position_id" value="{{ card.position.id }}">
-                          <input type="hidden" name="reference_profile" value="{{ suggestion.reference_profile }}">
-                          <input type="hidden" name="benchmark_symbol" value="{{ suggestion.benchmark_symbol }}">
-                          <input type="hidden" name="benchmark_name" value="{{ suggestion.benchmark_name }}">
-                          <button class="equity-mini-button" type="submit">Usar esta referencia en el grafico</button>
-                        </form>
-                      {% endif %}
-                    </div>
-                  {% endfor %}
-                </div>
-              {% endif %}
-            {% else %}
-              <div class="message info" style="margin-top:12px;">
-                Esta posicion todavia no tiene historico suficiente. El refresco automatico intentara cargarlo al entrar o puedes forzar una sincronizacion al final de la pagina.
-              </div>
-            {% endif %}
-          </article>
-        {% empty %}
-          <section class="equity-panel">
-            <p class="muted">Todavia no hay acciones con historico para analizar.</p>
-          </section>
-        {% endfor %}
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="message info">Todavia no hay acciones en seguimiento con historico para analizar.</div>
+          {% endif %}
+        </section>
       </div>
     </section>
 
@@ -1090,6 +983,51 @@
 
       applyPositionKindMode(positionKindInput.value === "watchlist");
       syncFromField(companyInput.value || tickerInput.value, { overwriteReference: false });
+    })();
+  </script>
+  <script>
+    (() => {
+      const groupButtons = Array.from(document.querySelectorAll("[data-group-target]"));
+      const groupPanels = Array.from(document.querySelectorAll("[data-group-panel]"));
+      if (!groupButtons.length || !groupPanels.length) {
+        return;
+      }
+
+      const activateStockTab = (scope, target) => {
+        scope.querySelectorAll("[data-stock-target]").forEach((button) => {
+          button.classList.toggle("active", button.dataset.stockTarget === target);
+        });
+        scope.querySelectorAll("[data-stock-panel]").forEach((panel) => {
+          panel.classList.toggle("active", panel.dataset.stockPanel === target);
+        });
+      };
+
+      const activateGroup = (target) => {
+        groupButtons.forEach((button) => {
+          button.classList.toggle("active", button.dataset.groupTarget === target);
+        });
+        groupPanels.forEach((panel) => {
+          const isActive = panel.dataset.groupPanel === target;
+          panel.hidden = !isActive;
+          if (isActive) {
+            const firstButton = panel.querySelector("[data-stock-target]");
+            const activeButton = panel.querySelector("[data-stock-target].active");
+            activateStockTab(panel, (activeButton || firstButton)?.dataset.stockTarget);
+          }
+        });
+      };
+
+      groupButtons.forEach((button) => {
+        button.addEventListener("click", () => activateGroup(button.dataset.groupTarget));
+      });
+
+      groupPanels.forEach((panel) => {
+        panel.querySelectorAll("[data-stock-target]").forEach((button) => {
+          button.addEventListener("click", () => activateStockTab(panel, button.dataset.stockTarget));
+        });
+      });
+
+      activateGroup(groupButtons[0].dataset.groupTarget);
     })();
   </script>
 {% endblock %}

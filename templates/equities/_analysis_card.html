@@ -1,0 +1,210 @@
+<article class="equity-position-card">
+  <div class="equity-position-head">
+    <div>
+      <h4>{{ card.position.company_name }}</h4>
+      <p>{{ card.position.ticker }} | {{ card.position.broker }} | {{ card.position.get_ownership_category_display }}</p>
+    </div>
+    <div class="equity-chip-row">
+      <span class="equity-chip">{{ card.position.get_position_kind_display }}</span>
+      <span class="equity-chip">{{ card.reference_profile_label }}</span>
+      <span class="equity-chip">{{ card.reference_label }}</span>
+    </div>
+  </div>
+  {% if card.has_history %}
+    <div class="equity-card-grid">
+      <div class="equity-stat">
+        <div class="equity-stat-label">1M</div>
+        <div class="equity-stat-value {% with snapshot=card.period_snapshots.0 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
+          {% with snapshot=card.period_snapshots.0 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
+        </div>
+      </div>
+      <div class="equity-stat">
+        <div class="equity-stat-label">3M</div>
+        <div class="equity-stat-value {% with snapshot=card.period_snapshots.1 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
+          {% with snapshot=card.period_snapshots.1 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
+        </div>
+      </div>
+      <div class="equity-stat">
+        <div class="equity-stat-label">6M</div>
+        <div class="equity-stat-value {% with snapshot=card.period_snapshots.2 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
+          {% with snapshot=card.period_snapshots.2 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
+        </div>
+      </div>
+      <div class="equity-stat">
+        <div class="equity-stat-label">1Y</div>
+        <div class="equity-stat-value {% with snapshot=card.period_snapshots.3 %}{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}{% endwith %}">
+          {% with snapshot=card.period_snapshots.3 %}{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}{% endwith %}
+        </div>
+      </div>
+    </div>
+
+    <div class="equity-chart-shell">
+      <svg viewBox="0 0 640 220">
+        <line x1="18" y1="202" x2="622" y2="202" stroke="#d8e5ee" stroke-width="1" />
+        <line x1="18" y1="18" x2="18" y2="202" stroke="#d8e5ee" stroke-width="1" />
+        <line x1="622" y1="18" x2="622" y2="202" stroke="#d8e5ee" stroke-width="1" />
+        <polyline fill="none" stroke="#0f5f88" stroke-width="4" points="{{ card.stock_line }}" />
+        {% if card.benchmark_line %}
+          <polyline fill="none" stroke="#7f8ea0" stroke-width="3" points="{{ card.benchmark_line }}" />
+        {% endif %}
+        {% if card.projection_line %}
+          <polyline fill="none" stroke="#c96a19" stroke-width="4" stroke-dasharray="10 8" points="{{ card.projection_line }}" />
+        {% endif %}
+        <text x="8" y="20" font-size="12" fill="#0f5f88">{{ card.dual_axis_chart.stock_max_label }}</text>
+        <text x="8" y="214" font-size="12" fill="#0f5f88">{{ card.dual_axis_chart.stock_min_label }}</text>
+        <text x="632" y="20" font-size="12" text-anchor="end" fill="#5b6c79">{{ card.dual_axis_chart.reference_max_label }}</text>
+        <text x="632" y="214" font-size="12" text-anchor="end" fill="#5b6c79">{{ card.dual_axis_chart.reference_min_label }}</text>
+      </svg>
+      <div class="equity-chart-legend">
+        <span class="equity-legend-item"><span class="equity-legend-dot" style="background:#0f5f88;"></span>Izquierda: accion</span>
+        <span class="equity-legend-item"><span class="equity-legend-dot" style="background:#7f8ea0;"></span>Derecha: {{ card.reference_label }}</span>
+        {% if card.projection_line %}
+          <span class="equity-legend-item"><span class="equity-legend-dot" style="background:#c96a19;"></span>Tramo final: extrapolacion 12M</span>
+        {% endif %}
+      </div>
+      <div class="equity-chart-caption">
+        Doble escala desde {{ card.start_date|date:"Y-m-d" }} hasta {{ card.end_date|date:"Y-m-d" }}.
+        Accion {{ card.stock_return_pct|floatformat:2 }} %{% if card.benchmark_return_pct is not None %} | Referencia {{ card.benchmark_return_pct|floatformat:2 }} %{% endif %}
+      </div>
+    </div>
+
+    {% if card.projection.available %}
+      <div class="equity-card-grid">
+        <div class="equity-stat">
+          <div class="equity-stat-label">Propuesta 12M</div>
+          <div class="equity-stat-value {% if card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">
+            {{ card.projection.base_return_pct|floatformat:2 }} %
+          </div>
+        </div>
+        <div class="equity-stat">
+          <div class="equity-stat-label">Precio objetivo</div>
+          <div class="equity-stat-value">
+            {% if card.projection.projected_price is not None %}{{ card.projection.projected_price|floatformat:4 }}{% else %}-{% endif %}
+          </div>
+        </div>
+        <div class="equity-stat">
+          <div class="equity-stat-label">Rango orientativo</div>
+          <div class="equity-stat-value" style="font-size:18px;">
+            {% if card.projection.low_return_pct is not None and card.projection.high_return_pct is not None %}
+              {{ card.projection.low_return_pct|floatformat:1 }} % / {{ card.projection.high_return_pct|floatformat:1 }} %
+            {% else %}
+              -
+            {% endif %}
+          </div>
+        </div>
+        <div class="equity-stat">
+          <div class="equity-stat-label">Confianza</div>
+          <div class="equity-stat-value" style="font-size:20px;">{{ card.projection.confidence_label }}</div>
+        </div>
+      </div>
+
+      <div class="equity-card-grid">
+        {% for step in card.projection.quarterly_path %}
+          <div class="equity-stat">
+            <div class="equity-stat-label">{{ step.label }}</div>
+            <div class="equity-stat-value" style="font-size:20px;">{{ step.projected_price|floatformat:4 }}</div>
+            <div class="metric-sub">Precio orientativo</div>
+          </div>
+        {% endfor %}
+      </div>
+
+      <div class="equity-projection-note">
+        {{ card.projection.explanation }}
+        {{ card.projection.confidence_note }}
+      </div>
+    {% else %}
+      <div class="message info" style="margin-top:14px;">
+        Todavia no hay base suficiente para proponer una evolucion a 12 meses con la referencia activa.
+      </div>
+    {% endif %}
+
+    <div class="equity-card-grid">
+      <div class="equity-stat">
+        <div class="equity-stat-label">Periodo elegido</div>
+        <div class="equity-stat-value {% if card.selected_period.stock_return_pct or card.selected_period.stock_return_pct == 0 %}{% if card.selected_period.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
+          {% if card.selected_period.available %}{{ card.selected_period.stock_return_pct|floatformat:2 }} %{% else %}-{% endif %}
+        </div>
+      </div>
+      <div class="equity-stat">
+        <div class="equity-stat-label">Referencia</div>
+        <div class="equity-stat-value">
+          {% if card.selected_period.available and card.selected_period.benchmark_return_pct is not None %}{{ card.selected_period.benchmark_return_pct|floatformat:2 }} %{% else %}-{% endif %}
+        </div>
+      </div>
+      <div class="equity-stat">
+        <div class="equity-stat-label">Correlacion</div>
+        <div class="equity-stat-value">
+          {% if card.correlation.coefficient is not None %}{{ card.correlation.coefficient|floatformat:2 }}{% else %}-{% endif %}
+        </div>
+      </div>
+      <div class="equity-stat">
+        <div class="equity-stat-label">Lectura</div>
+        <div class="equity-stat-value" style="font-size:20px;">{{ card.correlation.label }}</div>
+      </div>
+    </div>
+
+    <div class="equity-card-grid">
+      <div class="equity-stat">
+        <div class="equity-stat-label">Frecuencia</div>
+        <div class="equity-stat-value" style="font-size:20px;">
+          {% if card.correlation.frequency == "quarterly" %}Trimestral{% else %}Mensual{% endif %}
+        </div>
+      </div>
+      <div class="equity-stat">
+        <div class="equity-stat-label">Observaciones</div>
+        <div class="equity-stat-value">{{ card.correlation.observations_count }}</div>
+      </div>
+      <div class="equity-stat">
+        <div class="equity-stat-label">Flujo anual neto</div>
+        <div class="equity-stat-value {% if card.net_annual_income >= 0 %}good{% else %}warn{% endif %}">{{ card.net_annual_income|floatformat:2 }} EUR</div>
+      </div>
+      <div class="equity-stat">
+        <div class="equity-stat-label">Coste anual</div>
+        <div class="equity-stat-value">{{ card.position.annual_maintenance_cost|floatformat:2 }} EUR</div>
+      </div>
+    </div>
+    {% if card.suggested_references %}
+      <div class="equity-suggestion-grid">
+        {% for suggestion in card.suggested_references %}
+          <div class="equity-suggestion-card {% if suggestion.is_selected %}selected{% endif %}">
+            <div class="equity-suggestion-head">
+              <div>
+                <div class="equity-suggestion-title">{{ suggestion.benchmark_name }}</div>
+                <div class="metric-sub">{{ suggestion.description }}</div>
+              </div>
+              {% if suggestion.is_selected %}<span class="pill">Activa</span>{% elif suggestion.is_best %}<span class="pill">Mejor ajuste</span>{% endif %}
+            </div>
+            <div class="metric-sub" style="margin-top:12px;">
+              Correlacion:
+              {% if suggestion.correlation.coefficient is not None %}
+                {{ suggestion.correlation.coefficient|floatformat:2 }}
+              {% else %}
+                -
+              {% endif %}
+              | {{ suggestion.correlation.label }}
+            </div>
+            <div class="metric-sub">
+              {% if suggestion.correlation.frequency == "quarterly" %}Trimestral{% else %}Mensual{% endif %}
+              | {{ suggestion.correlation.observations_count }} observaciones
+            </div>
+            {% if not suggestion.is_selected %}
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="change_reference">
+                <input type="hidden" name="position_id" value="{{ card.position.id }}">
+                <input type="hidden" name="reference_profile" value="{{ suggestion.reference_profile }}">
+                <input type="hidden" name="benchmark_symbol" value="{{ suggestion.benchmark_symbol }}">
+                <input type="hidden" name="benchmark_name" value="{{ suggestion.benchmark_name }}">
+                <button class="equity-mini-button" type="submit">Usar esta referencia en el grafico</button>
+              </form>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="message info" style="margin-top:12px;">
+      Esta posicion todavia no tiene historico suficiente. El refresco automatico intentara cargarlo al entrar o puedes forzar una sincronizacion al final de la pagina.
+    </div>
+  {% endif %}
+</article>
