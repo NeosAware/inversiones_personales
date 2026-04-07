@@ -2190,3 +2190,124 @@ def build_equity_analysis_dashboard(
         "owned_history_cards": [card for card in history_cards if card["position"].is_owned],
         "watchlist_history_cards": [card for card in history_cards if not card["position"].is_owned],
     }
+
+
+def projection_confidence_multiplier(confidence_label: str) -> Decimal:
+    if confidence_label == "Alta":
+        return Decimal("1.00")
+    if confidence_label == "Media":
+        return Decimal("0.85")
+    return Decimal("0.70")
+
+
+def build_equity_allocation_plan(
+    history_cards: list[dict],
+    total_investment: Decimal,
+    max_company_pct: Decimal,
+) -> dict:
+    if total_investment <= 0 or max_company_pct <= 0:
+        return {
+            "available": False,
+            "reason": "Parametros insuficientes para calcular la propuesta.",
+        }
+
+    company_cap_amount = (total_investment * max_company_pct) / Decimal("100")
+    candidates = []
+    for card in history_cards:
+        projection = card.get("projection") or {}
+        if not projection.get("available") or projection.get("projected_price") is None:
+            continue
+
+        base_return_pct = projection.get("base_return_pct")
+        if base_return_pct is None:
+            continue
+
+        adjusted_return_pct = base_return_pct * projection_confidence_multiplier(projection.get("confidence_label", "Baja"))
+        candidates.append(
+            {
+                "card": card,
+                "base_return_pct": base_return_pct,
+                "adjusted_return_pct": adjusted_return_pct,
+                "confidence_label": projection.get("confidence_label", "Baja"),
+            }
+        )
+
+    if not candidates:
+        return {
+            "available": False,
+            "reason": "Todavia no hay suficientes proyecciones para proponer una distribucion a 12M.",
+        }
+
+    positive_candidates = [item for item in candidates if item["adjusted_return_pct"] > ZERO]
+    if not positive_candidates:
+        return {
+            "available": False,
+            "reason": "Ahora mismo ninguna accion tiene retorno esperado positivo a 12M con el ajuste de confianza activo.",
+        }
+
+    ranked_candidates = sorted(
+        positive_candidates,
+        key=lambda item: (
+            item["adjusted_return_pct"],
+            item["base_return_pct"],
+            item["card"]["projection"].get("coefficient") or ZERO,
+        ),
+        reverse=True,
+    )
+
+    allocations = []
+    remaining_amount = total_investment
+    for rank, candidate in enumerate(ranked_candidates, start=1):
+        if remaining_amount <= ZERO:
+            break
+        allocated_amount = min(company_cap_amount, remaining_amount)
+        if allocated_amount <= ZERO:
+            continue
+        projected_gain_amount = (allocated_amount * candidate["adjusted_return_pct"]) / Decimal("100")
+        allocations.append(
+            {
+                "rank": rank,
+                "position": candidate["card"]["position"],
+                "reference_label": candidate["card"]["reference_label"],
+                "allocated_amount": allocated_amount,
+                "allocated_weight_pct": (allocated_amount / total_investment) * Decimal("100"),
+                "base_return_pct": candidate["base_return_pct"],
+                "adjusted_return_pct": candidate["adjusted_return_pct"],
+                "projected_gain_amount": projected_gain_amount,
+                "confidence_label": candidate["confidence_label"],
+                "projected_price": candidate["card"]["projection"].get("projected_price"),
+            }
+        )
+        remaining_amount -= allocated_amount
+
+    allocated_amount_total = sum((item["allocated_amount"] for item in allocations), ZERO)
+    projected_gain_total = sum((item["projected_gain_amount"] for item in allocations), ZERO)
+    weighted_return_pct = (
+        (projected_gain_total / allocated_amount_total) * Decimal("100")
+        if allocated_amount_total
+        else None
+    )
+    owned_allocations_count = sum(1 for item in allocations if item["position"].is_owned)
+    watchlist_allocations_count = sum(1 for item in allocations if not item["position"].is_owned)
+
+    if remaining_amount > ZERO:
+        reserve_reason = "Queda importe sin asignar porque has puesto un limite maximo por empresa y no habia mas ideas positivas para completarlo."
+    else:
+        reserve_reason = ""
+
+    top_pick = allocations[0] if allocations else None
+    return {
+        "available": bool(allocations),
+        "allocations": allocations,
+        "total_investment": total_investment,
+        "max_company_pct": max_company_pct,
+        "company_cap_amount": company_cap_amount,
+        "allocated_amount_total": allocated_amount_total,
+        "cash_reserve_amount": remaining_amount,
+        "projected_gain_total": projected_gain_total,
+        "weighted_return_pct": weighted_return_pct,
+        "owned_allocations_count": owned_allocations_count,
+        "watchlist_allocations_count": watchlist_allocations_count,
+        "reserve_reason": reserve_reason,
+        "top_pick": top_pick,
+    }

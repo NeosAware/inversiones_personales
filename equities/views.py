@@ -7,7 +7,7 @@ from django.shortcuts import redirect
 from django.utils.dateparse import parse_date
 from django.views.generic import TemplateView
 
-from .forms import EquityDocumentImportForm, EquityPositionForm
+from .forms import EquityAllocationOptimizerForm, EquityDocumentImportForm, EquityPositionForm
 from .models import EquityPosition
 from .services import (
     EURIBOR_REFERENCE_NAME,
@@ -19,6 +19,7 @@ from .services import (
     SPAIN_HOUSE_PRICE_NAME,
     SPAIN_HOUSE_PRICE_SYMBOL,
     build_equity_analysis_dashboard,
+    build_equity_allocation_plan,
     EquityDocumentImportError,
     build_equity_history_cards,
     extract_equity_position_prefill,
@@ -85,6 +86,23 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         context["selected_period_end"] = selected_end_date
         context["position_form"] = kwargs.get("position_form", EquityPositionForm())
         context["document_form"] = kwargs.get("document_form", EquityDocumentImportForm())
+        optimizer_default_total = dashboard["overview"]["current_value"] or dashboard["overview"]["invested_amount"] or Decimal("100000")
+        optimizer_form = kwargs.get(
+            "optimizer_form",
+            EquityAllocationOptimizerForm(
+                self.request.GET or None,
+                default_total_investment=optimizer_default_total,
+            ),
+        )
+        optimizer_plan = None
+        if optimizer_form.is_valid():
+            optimizer_plan = build_equity_allocation_plan(
+                dashboard["history_cards"],
+                optimizer_form.cleaned_data["total_investment"],
+                optimizer_form.cleaned_data["max_company_pct"],
+            )
+        context["optimizer_form"] = optimizer_form
+        context["optimizer_plan"] = optimizer_plan
         context["prefill_source_filename"] = kwargs.get("prefill_source_filename")
         context["equity_company_catalog"] = get_equity_company_catalog()
         return context

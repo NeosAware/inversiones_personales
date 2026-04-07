@@ -231,3 +231,45 @@ class EquityDocumentImportForm(forms.Form):
 
     def clean_default_broker(self):
         return self.cleaned_data["default_broker"].strip()
+
+
+class EquityAllocationOptimizerForm(forms.Form):
+    total_investment = FlexibleDecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("1"),
+        label="Capital total a invertir",
+    )
+    max_company_pct = FlexibleDecimalField(
+        max_digits=5,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("1"),
+        max_value=Decimal("100"),
+        label="Peso maximo por empresa (%)",
+    )
+
+    def __init__(self, *args, **kwargs):
+        default_total_investment = kwargs.pop("default_total_investment", Decimal("100000"))
+        super().__init__(*args, **kwargs)
+        self.fields["total_investment"].initial = default_total_investment
+        self.fields["max_company_pct"].initial = Decimal("20")
+        self.fields["total_investment"].widget.attrs.update(
+            {
+                "placeholder": "Ejemplo: 100000",
+            }
+        )
+        self.fields["max_company_pct"].widget.attrs.update(
+            {
+                "placeholder": "Ejemplo: 20",
+            }
+        )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if cleaned_data.get("total_investment") is None:
+            cleaned_data["total_investment"] = self.fields["total_investment"].initial or Decimal("100000")
+        if cleaned_data.get("max_company_pct") is None:
+            cleaned_data["max_company_pct"] = self.fields["max_company_pct"].initial or Decimal("20")
+        return cleaned_data

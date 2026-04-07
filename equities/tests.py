@@ -18,6 +18,7 @@ from .services import (
     SPAIN_ELECTRICITY_DEMAND_SYMBOL,
     SPAIN_GAS_CONSUMPTION_NAME,
     SPAIN_GAS_CONSUMPTION_SYMBOL,
+    build_equity_allocation_plan,
     build_equity_analysis_dashboard,
     build_equity_history_cards,
     build_reference_suggestions_for_equity,
@@ -276,6 +277,110 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(dashboard["overview"]["watchlist_positions_count"], 1)
         self.assertEqual(dashboard["overview"]["invested_amount"], Decimal("100.0000"))
         self.assertEqual(dashboard["overview"]["current_value"], Decimal("120.0000"))
+
+    def test_allocation_plan_respects_max_company_weight_and_sorts_by_projection(self):
+        stronger = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="IDR",
+                company_name="Indra",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("18"),
+            ),
+            "reference_label": "IBEX 35",
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("24.0"),
+                "projected_price": Decimal("22.32"),
+                "confidence_label": "Alta",
+                "coefficient": Decimal("0.55"),
+            },
+        }
+        medium = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.OWNED,
+                ticker="IBE",
+                company_name="Iberdrola",
+                reference_profile=EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND,
+                benchmark_name="Demanda electrica Espana",
+                benchmark_symbol="REE:demand:es:peninsular",
+                shares=Decimal("10"),
+                average_cost_per_share=Decimal("10"),
+                current_price_per_share=Decimal("14"),
+            ),
+            "reference_label": "Demanda electrica Espana",
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("16.0"),
+                "projected_price": Decimal("16.24"),
+                "confidence_label": "Media",
+                "coefficient": Decimal("0.31"),
+            },
+        }
+        weak = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="MRL",
+                company_name="Merlin",
+                reference_profile=EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE,
+                benchmark_name="Precio vivienda Espana",
+                benchmark_symbol="EUROSTAT:prc_hpi_q:ES:TOTAL:I15_Q",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("10"),
+            ),
+            "reference_label": "Precio vivienda Espana",
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("8.0"),
+                "projected_price": Decimal("10.80"),
+                "confidence_label": "Baja",
+                "coefficient": Decimal("0.10"),
+            },
+        }
+
+        plan = build_equity_allocation_plan([medium, weak, stronger], Decimal("100000"), Decimal("40"))
+
+        self.assertTrue(plan["available"])
+        self.assertEqual(len(plan["allocations"]), 3)
+        self.assertEqual(plan["allocations"][0]["position"].ticker, "IDR")
+        self.assertEqual(plan["allocations"][0]["allocated_amount"], Decimal("40000"))
+        self.assertEqual(plan["allocations"][1]["allocated_amount"], Decimal("40000"))
+        self.assertEqual(plan["allocations"][2]["allocated_amount"], Decimal("20000"))
+        self.assertEqual(plan["cash_reserve_amount"], Decimal("0"))
+        self.assertGreater(plan["projected_gain_total"], Decimal("0"))
+
+    def test_allocation_plan_can_keep_cash_when_no_positive_candidates(self):
+        losing_card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="TEF",
+                company_name="Telefonica",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("4"),
+            ),
+            "reference_label": "IBEX 35",
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("-6.0"),
+                "projected_price": Decimal("3.76"),
+                "confidence_label": "Media",
+                "coefficient": Decimal("0.22"),
+            },
+        }
+
+        plan = build_equity_allocation_plan([losing_card], Decimal("50000"), Decimal("25"))
+
+        self.assertFalse(plan["available"])
+        self.assertIn("ninguna accion", plan["reason"].lower())
 
 @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=False)
 class EquitiesViewTests(TestCase):

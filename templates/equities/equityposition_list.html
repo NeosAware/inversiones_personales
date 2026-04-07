@@ -68,6 +68,11 @@
     }
     .equity-hero-grid{ grid-template-columns:repeat(4, minmax(0,1fr)); }
     .equity-panel-grid{ grid-template-columns:repeat(2, minmax(0,1fr)); }
+    .equity-optimizer-grid{
+      display:grid;
+      grid-template-columns:1.15fr .85fr;
+      gap:18px;
+    }
     .equity-kpi{
       padding:18px;
       border-radius:22px;
@@ -265,6 +270,21 @@
     .equity-fold summary::-webkit-details-marker{ display:none; }
     .equity-fold-body{ padding:0 22px 22px; }
     .equity-table-note{ margin:0 0 16px; color:var(--muted); }
+    .equity-optimizer-summary{
+      display:grid;
+      gap:14px;
+      grid-template-columns:repeat(4, minmax(0,1fr));
+      margin-top:16px;
+    }
+    .equity-optimizer-note{
+      margin-top:14px;
+      color:var(--muted);
+      font-size:14px;
+      line-height:1.5;
+    }
+    .equity-optimizer-table{
+      margin-top:18px;
+    }
     .equity-suggestion-grid{
       display:grid;
       gap:12px;
@@ -389,7 +409,7 @@
       line-height:1.5;
     }
     @media (max-width: 1180px){
-      .equity-hero-grid, .equity-period-grid, .equity-card-grid, .equity-panel-grid, .equity-range-form, .equity-position-grid, .equity-suggestion-grid{
+      .equity-hero-grid, .equity-period-grid, .equity-card-grid, .equity-panel-grid, .equity-range-form, .equity-position-grid, .equity-suggestion-grid, .equity-optimizer-grid, .equity-optimizer-summary{
         grid-template-columns:1fr;
       }
     }
@@ -441,6 +461,7 @@
     <nav class="equity-nav">
       <a href="#equity-cockpit">Cockpit</a>
       <a href="#equity-periods">Rentabilidad</a>
+      <a href="#equity-optimizer">Optimizador</a>
       <a href="#equity-owned">Compradas</a>
       <a href="#equity-watchlist">Seguimiento</a>
       <a href="#equity-analysis">Correlacion</a>
@@ -521,6 +542,129 @@
           <div class="message warning" style="margin-top:16px;">
             No se pudieron actualizar {{ auto_sync.failed|length }} posicion(es): {{ auto_sync.failed|join:", " }}.
           </div>
+        {% endif %}
+      </section>
+    </section>
+
+    <section class="equity-optimizer-grid" id="equity-optimizer">
+      <section class="equity-panel">
+        <div class="equity-panel-copy">
+          <div>
+            <p class="section-title">Optimizador 12M</p>
+            <h3>Distribucion sugerida para maximizar el beneficio esperado</h3>
+            <p>La propuesta usa la proyeccion a 12 meses ya calculada por accion, la ajusta por nivel de confianza y respeta el limite maximo que pongas por empresa. Si faltan ideas con retorno atractivo, deja el resto en reserva.</p>
+          </div>
+        </div>
+        <form method="get" class="equity-range-form">
+          <div>
+            <label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>
+            {{ optimizer_form.total_investment }}
+          </div>
+          <div>
+            <label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>
+            {{ optimizer_form.max_company_pct }}
+          </div>
+          <button class="button" type="submit">Calcular propuesta</button>
+          <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
+        </form>
+        {% if optimizer_plan and optimizer_plan.available %}
+          <div class="equity-optimizer-summary">
+            <div class="equity-stat">
+              <div class="equity-stat-label">Capital analizado</div>
+              <div class="equity-stat-value">{{ optimizer_plan.total_investment|floatformat:0 }} EUR</div>
+            </div>
+            <div class="equity-stat">
+              <div class="equity-stat-label">Ganancia 12M</div>
+              <div class="equity-stat-value {% if optimizer_plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ optimizer_plan.projected_gain_total|floatformat:0 }} EUR</div>
+            </div>
+            <div class="equity-stat">
+              <div class="equity-stat-label">Rentabilidad media</div>
+              <div class="equity-stat-value {% if optimizer_plan.weighted_return_pct and optimizer_plan.weighted_return_pct >= 0 %}good{% elif optimizer_plan.weighted_return_pct %}warn{% endif %}">
+                {% if optimizer_plan.weighted_return_pct is not None %}{{ optimizer_plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}
+              </div>
+            </div>
+            <div class="equity-stat">
+              <div class="equity-stat-label">Caja en reserva</div>
+              <div class="equity-stat-value">{{ optimizer_plan.cash_reserve_amount|floatformat:0 }} EUR</div>
+            </div>
+          </div>
+          <div class="equity-optimizer-note">
+            {% if optimizer_plan.top_pick %}
+              Mejor idea segun el modelo: <strong>{{ optimizer_plan.top_pick.position.company_name }}</strong> con una propuesta ajustada del {{ optimizer_plan.top_pick.adjusted_return_pct|floatformat:2 }} %.
+            {% endif %}
+            La distribucion mezcla {{ optimizer_plan.owned_allocations_count }} acciones compradas y {{ optimizer_plan.watchlist_allocations_count }} en seguimiento.
+          </div>
+          <div class="equity-optimizer-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Orden</th>
+                  <th>Empresa</th>
+                  <th>Estado</th>
+                  <th>Referencia</th>
+                  <th>Peso</th>
+                  <th>Importe</th>
+                  <th>Retorno 12M</th>
+                  <th>Retorno ajustado</th>
+                  <th>Ganancia estimada</th>
+                  <th>Confianza</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in optimizer_plan.allocations %}
+                  <tr>
+                    <td>{{ item.rank }}</td>
+                    <td><strong>{{ item.position.company_name }}</strong><br><span class="metric-sub">{{ item.position.ticker }}</span></td>
+                    <td>{{ item.position.get_position_kind_display }}</td>
+                    <td>{{ item.reference_label }}</td>
+                    <td>{{ item.allocated_weight_pct|floatformat:2 }} %</td>
+                    <td>{{ item.allocated_amount|floatformat:2 }} EUR</td>
+                    <td class="{% if item.base_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.base_return_pct|floatformat:2 }} %</td>
+                    <td class="{% if item.adjusted_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.adjusted_return_pct|floatformat:2 }} %</td>
+                    <td class="{% if item.projected_gain_amount >= 0 %}good{% else %}warn{% endif %}">{{ item.projected_gain_amount|floatformat:2 }} EUR</td>
+                    <td>{{ item.confidence_label }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% elif optimizer_plan %}
+          <div class="message info" style="margin-top:16px;">{{ optimizer_plan.reason }}</div>
+        {% endif %}
+      </section>
+
+      <section class="equity-panel">
+        <div class="equity-panel-copy">
+          <div>
+            <p class="section-title">Como lo reparte</p>
+            <h3>Reglas del optimizador</h3>
+            <p>Para ser util de verdad, la propuesta no se limita a coger la accion con mejor pinta y ya. Respeta el tope por empresa y trata de no forzar compras con una lectura floja.</p>
+          </div>
+        </div>
+        <div class="equity-period-grid">
+          <div class="equity-period-card">
+            <div class="equity-period-label">Tope por valor</div>
+            <div class="equity-period-value">{% if optimizer_plan %}{{ optimizer_plan.max_company_pct|floatformat:0 }} %{% else %}20 %{% endif %}</div>
+            <div class="metric-sub">Nunca supera el porcentaje maximo que marques.</div>
+          </div>
+          <div class="equity-period-card">
+            <div class="equity-period-label">Base 12M</div>
+            <div class="equity-period-value">6M + Ref</div>
+            <div class="metric-sub">Parte de la evolucion reciente y la referencia activa.</div>
+          </div>
+          <div class="equity-period-card">
+            <div class="equity-period-label">Ajuste</div>
+            <div class="equity-period-value">Confianza</div>
+            <div class="metric-sub">Reduce la agresividad si la correlacion es debil o hay pocas observaciones.</div>
+          </div>
+          <div class="equity-period-card">
+            <div class="equity-period-label">Liquidez</div>
+            <div class="equity-period-value">Reserva</div>
+            <div class="metric-sub">Si no hay suficientes ideas buenas, deja parte sin asignar.</div>
+          </div>
+        </div>
+        {% if optimizer_plan and optimizer_plan.reserve_reason %}
+          <div class="equity-optimizer-note">{{ optimizer_plan.reserve_reason }}</div>
         {% endif %}
       </section>
     </section>
