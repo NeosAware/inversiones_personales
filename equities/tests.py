@@ -14,6 +14,10 @@ from .services import (
     EURIBOR_REFERENCE_NAME,
     EURIBOR_REFERENCE_SYMBOL,
     MarketSeries,
+    SPAIN_ELECTRICITY_DEMAND_NAME,
+    SPAIN_ELECTRICITY_DEMAND_SYMBOL,
+    SPAIN_GAS_CONSUMPTION_NAME,
+    SPAIN_GAS_CONSUMPTION_SYMBOL,
     build_equity_analysis_dashboard,
     build_equity_history_cards,
     build_reference_suggestions_for_equity,
@@ -37,6 +41,20 @@ class EquitiesServicesTests(TestCase):
         self.assertGreaterEqual(len(suggestions), 2)
         self.assertEqual(suggestions[0]["benchmark_name"], EURIBOR_REFERENCE_NAME)
         self.assertEqual(suggestions[0]["benchmark_symbol"], EURIBOR_REFERENCE_SYMBOL)
+
+    def test_build_reference_suggestions_for_enagas_prioritizes_gas_consumption(self):
+        suggestions = build_reference_suggestions_for_equity("Enagas", "ENG")
+
+        self.assertGreaterEqual(len(suggestions), 2)
+        self.assertEqual(suggestions[0]["benchmark_name"], SPAIN_GAS_CONSUMPTION_NAME)
+        self.assertEqual(suggestions[0]["benchmark_symbol"], SPAIN_GAS_CONSUMPTION_SYMBOL)
+
+    def test_build_reference_suggestions_for_iberdrola_prioritizes_electricity_demand(self):
+        suggestions = build_reference_suggestions_for_equity("Iberdrola", "IBE")
+
+        self.assertGreaterEqual(len(suggestions), 2)
+        self.assertEqual(suggestions[0]["benchmark_name"], SPAIN_ELECTRICITY_DEMAND_NAME)
+        self.assertEqual(suggestions[0]["benchmark_symbol"], SPAIN_ELECTRICITY_DEMAND_SYMBOL)
 
     def test_sync_equity_market_data_updates_latest_price_and_history(self):
         position = EquityPosition.objects.create(
@@ -322,6 +340,37 @@ class EquitiesViewTests(TestCase):
         position = EquityPosition.objects.get(ticker="SAN", broker="Banco Sabadell")
         self.assertEqual(position.reference_profile, EquityPosition.ReferenceProfile.EURIBOR_12M)
         self.assertEqual(position.benchmark_symbol, EURIBOR_REFERENCE_SYMBOL)
+
+    def test_watchlist_can_be_saved_without_shares_or_prices(self):
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "create_position",
+                "position_kind": EquityPosition.PositionKind.WATCHLIST,
+                "ownership_category": AssetOwnershipCategory.JOINT,
+                "broker": "Sabadell",
+                "ticker": "",
+                "company_name": "Iberdrola",
+                "quote_symbol": "",
+                "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
+                "benchmark_symbol": "",
+                "benchmark_name": "",
+                "shares": "",
+                "average_cost_per_share": "",
+                "current_price_per_share": "",
+                "annual_dividend_income": "",
+                "annual_maintenance_cost": "",
+                "notes": "",
+            },
+        )
+
+        self.assertRedirects(response, reverse("equities:list"))
+        position = EquityPosition.objects.get(ticker="IBE", broker="Sabadell")
+        self.assertEqual(position.position_kind, EquityPosition.PositionKind.WATCHLIST)
+        self.assertEqual(position.shares, Decimal("0"))
+        self.assertEqual(position.average_cost_per_share, Decimal("0"))
+        self.assertEqual(position.current_price_per_share, Decimal("0"))
+        self.assertEqual(position.reference_profile, EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND)
 
     def test_can_store_same_ticker_for_same_broker_with_different_owner(self):
         EquityPosition.objects.create(

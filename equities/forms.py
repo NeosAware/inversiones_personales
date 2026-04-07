@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django import forms
 
 from portfolio.ownership import AssetOwnershipCategory
@@ -40,6 +42,8 @@ class EquityPositionForm(forms.Form):
             ("market_index", "Indice o activo cotizado"),
             ("euribor_12m", "Euribor 12 meses"),
             ("spain_house_price", "Precio vivienda Espana"),
+            ("spain_electricity_demand", "Demanda electrica Espana"),
+            ("spain_gas_consumption", "Consumo de gas Espana"),
         ),
         initial="market_index",
         required=False,
@@ -60,12 +64,14 @@ class EquityPositionForm(forms.Form):
     shares = FlexibleDecimalField(
         max_digits=14,
         decimal_places=4,
+        required=False,
         label="Acciones compradas",
         help_text="Usa 0 si solo la estas siguiendo y aun no la has comprado.",
     )
     average_cost_per_share = FlexibleDecimalField(
         max_digits=14,
         decimal_places=4,
+        required=False,
         label="Precio de compra o referencia",
     )
     current_price_per_share = FlexibleDecimalField(
@@ -146,7 +152,17 @@ class EquityPositionForm(forms.Form):
         cleaned_data = super().clean()
         cleaned_data["position_kind"] = cleaned_data.get("position_kind") or "owned"
         cleaned_data["reference_profile"] = cleaned_data.get("reference_profile") or "market_index"
-        cleaned_data = apply_equity_company_defaults(cleaned_data)
+        raw_reference_profile = str(self.data.get("reference_profile", "")).strip()
+        raw_benchmark_symbol = str(self.data.get("benchmark_symbol", "")).strip()
+        raw_benchmark_name = str(self.data.get("benchmark_name", "")).strip()
+        cleaned_data = apply_equity_company_defaults(
+            cleaned_data,
+            override_generic_reference=not (
+                (raw_reference_profile and raw_reference_profile != EquityPosition.ReferenceProfile.MARKET_INDEX)
+                or raw_benchmark_symbol
+                or raw_benchmark_name
+            ),
+        )
         if not cleaned_data.get("company_name") and not cleaned_data.get("ticker"):
             message = "Escribe una empresa reconocida o su ticker."
             self.add_error("company_name", message)
@@ -155,14 +171,28 @@ class EquityPositionForm(forms.Form):
             self.add_error("ticker", "No se ha podido reconocer el ticker automaticamente.")
         elif not cleaned_data.get("company_name"):
             self.add_error("company_name", "Completa el nombre de la empresa.")
-        if cleaned_data.get("current_price_per_share") is None:
-            cleaned_data["current_price_per_share"] = cleaned_data.get("average_cost_per_share")
         if cleaned_data.get("annual_dividend_income") is None:
             cleaned_data["annual_dividend_income"] = 0
         if cleaned_data.get("annual_maintenance_cost") is None:
             cleaned_data["annual_maintenance_cost"] = 0
-        if cleaned_data.get("position_kind") == "watchlist" and cleaned_data.get("shares") is None:
-            cleaned_data["shares"] = 0
+        if cleaned_data.get("position_kind") == "watchlist":
+            if cleaned_data.get("shares") is None:
+                cleaned_data["shares"] = Decimal("0")
+            if cleaned_data.get("average_cost_per_share") is None and cleaned_data.get("current_price_per_share") is not None:
+                cleaned_data["average_cost_per_share"] = cleaned_data.get("current_price_per_share")
+            if cleaned_data.get("current_price_per_share") is None and cleaned_data.get("average_cost_per_share") is not None:
+                cleaned_data["current_price_per_share"] = cleaned_data.get("average_cost_per_share")
+            if cleaned_data.get("average_cost_per_share") is None:
+                cleaned_data["average_cost_per_share"] = Decimal("0")
+            if cleaned_data.get("current_price_per_share") is None:
+                cleaned_data["current_price_per_share"] = Decimal("0")
+        else:
+            if cleaned_data.get("shares") is None:
+                self.add_error("shares", "Indica cuantas acciones has comprado.")
+            if cleaned_data.get("average_cost_per_share") is None:
+                self.add_error("average_cost_per_share", "Indica el precio medio de compra.")
+            if cleaned_data.get("current_price_per_share") is None:
+                cleaned_data["current_price_per_share"] = cleaned_data.get("average_cost_per_share")
         if (
             cleaned_data.get("reference_profile") == EquityPosition.ReferenceProfile.MARKET_INDEX
             and not cleaned_data.get("benchmark_symbol")

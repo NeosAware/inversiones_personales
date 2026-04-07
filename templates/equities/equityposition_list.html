@@ -476,7 +476,7 @@
         <div>
           <p class="section-title">Acciones en seguimiento</p>
           <h3>Radar de oportunidades</h3>
-          <p>Las ideas que todavia no has comprado quedan fuera del patrimonio, pero siguen teniendo precio, referencia y correlacion para poder decidir con rapidez.</p>
+          <p>Las ideas que todavia no has comprado quedan fuera del patrimonio. No necesitas meter acciones ni precio de compra: la app puede seguirlas solo con el valor y la referencia.</p>
         </div>
       </div>
       <table>
@@ -500,7 +500,15 @@
               <td><strong>{{ card.position.ticker }}</strong></td>
               <td>{{ card.position.company_name }}</td>
               <td>{{ card.position.get_ownership_category_display }}</td>
-              <td>{{ card.position.average_cost_per_share|floatformat:4 }}</td>
+              <td>
+                {% if card.position.average_cost_per_share > 0 %}
+                  {{ card.position.average_cost_per_share|floatformat:4 }}
+                {% elif card.position.current_price_per_share > 0 %}
+                  {{ card.position.current_price_per_share|floatformat:4 }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
               <td>{{ card.position.current_price_per_share|floatformat:4 }}</td>
               {% for snapshot in card.period_snapshots %}
                 <td class="{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
@@ -521,11 +529,11 @@
         <div>
           <p class="section-title">Analisis y correlacion</p>
           <h3 style="margin:0;">Cada tesis ligada a su variable de referencia</h3>
-          <p>La comparativa principal enfrenta el precio de la accion con la referencia que hayas elegido. Para bancos puedes usar Euribor 12M; para constructoras o inmobiliarias, precio de vivienda en Espana; y para el resto, un indice o activo cotizado.</p>
+          <p>La comparativa principal enfrenta el precio de la accion con la referencia que hayas elegido. Ahora puedes comparar tambien con demanda electrica, consumo de gas, precio de vivienda, Euribor y otras referencias externas para ver cual explica mejor la tesis.</p>
         </div>
       </div>
       <div class="equity-position-grid">
-        {% for card in owned_history_cards %}
+        {% for card in history_cards %}
           <article class="equity-position-card">
             <div class="equity-position-head">
               <div>
@@ -635,7 +643,7 @@
                           <div class="equity-suggestion-title">{{ suggestion.benchmark_name }}</div>
                           <div class="metric-sub">{{ suggestion.description }}</div>
                         </div>
-                        {% if suggestion.is_selected %}<span class="pill">Activa</span>{% endif %}
+                        {% if suggestion.is_selected %}<span class="pill">Activa</span>{% elif suggestion.is_best %}<span class="pill">Mejor ajuste</span>{% endif %}
                       </div>
                       <div class="metric-sub" style="margin-top:12px;">
                         Correlacion:
@@ -662,7 +670,7 @@
           </article>
         {% empty %}
           <section class="equity-panel">
-            <p class="muted">Todavia no hay acciones compradas con historico para analizar.</p>
+            <p class="muted">Todavia no hay acciones con historico para analizar.</p>
           </section>
         {% endfor %}
       </div>
@@ -711,7 +719,7 @@
             {% csrf_token %}
             <input type="hidden" name="action" value="create_position">
             <div class="equity-form-hint">
-              Escribe una empresa del IBEX, por ejemplo <strong>Indra</strong>, y la app te rellenara ticker, simbolo cotizado y la referencia externa mas util para analizarla.
+              Escribe una empresa del IBEX, por ejemplo <strong>Indra</strong>, y la app te rellenara ticker, simbolo cotizado y la referencia externa mas util para analizarla. Si marcas <strong>En seguimiento</strong>, acciones y precios pasan a ser opcionales.
             </div>
             <div class="grid cols-2">
               <div><label for="{{ position_form.position_kind.id_for_label }}">{{ position_form.position_kind.label }}</label>{{ position_form.position_kind }}</div>
@@ -764,16 +772,22 @@
       }
 
       const catalog = JSON.parse(catalogNode.textContent || "[]");
+      const positionKindInput = document.getElementById("{{ position_form.position_kind.id_for_label }}");
       const companyInput = document.getElementById("{{ position_form.company_name.id_for_label }}");
       const tickerInput = document.getElementById("{{ position_form.ticker.id_for_label }}");
       const quoteSymbolInput = document.getElementById("{{ position_form.quote_symbol.id_for_label }}");
       const referenceProfileInput = document.getElementById("{{ position_form.reference_profile.id_for_label }}");
       const benchmarkNameInput = document.getElementById("{{ position_form.benchmark_name.id_for_label }}");
       const benchmarkSymbolInput = document.getElementById("{{ position_form.benchmark_symbol.id_for_label }}");
+      const sharesInput = document.getElementById("{{ position_form.shares.id_for_label }}");
+      const averageCostInput = document.getElementById("{{ position_form.average_cost_per_share.id_for_label }}");
+      const currentPriceInput = document.getElementById("{{ position_form.current_price_per_share.id_for_label }}");
+      const annualDividendInput = document.getElementById("{{ position_form.annual_dividend_income.id_for_label }}");
+      const annualMaintenanceInput = document.getElementById("{{ position_form.annual_maintenance_cost.id_for_label }}");
       const matchBox = document.getElementById("equity-company-match");
       const suggestionsBox = document.getElementById("equity-reference-suggestions");
 
-      if (!companyInput || !tickerInput || !quoteSymbolInput || !referenceProfileInput || !benchmarkNameInput || !benchmarkSymbolInput || !matchBox || !suggestionsBox) {
+      if (!positionKindInput || !companyInput || !tickerInput || !quoteSymbolInput || !referenceProfileInput || !benchmarkNameInput || !benchmarkSymbolInput || !sharesInput || !averageCostInput || !currentPriceInput || !annualDividendInput || !annualMaintenanceInput || !matchBox || !suggestionsBox) {
         return;
       }
 
@@ -822,6 +836,23 @@
         referenceProfileInput.value = reference.reference_profile || "market_index";
         benchmarkNameInput.value = reference.benchmark_name || "";
         benchmarkSymbolInput.value = reference.benchmark_symbol || "";
+      };
+
+      const applyPositionKindMode = (resetValues = false) => {
+        const isWatchlist = positionKindInput.value === "watchlist";
+        if (isWatchlist && resetValues) {
+          sharesInput.value = "";
+          averageCostInput.value = "";
+          currentPriceInput.value = "";
+          annualDividendInput.value = "0";
+          annualMaintenanceInput.value = "0";
+        }
+
+        sharesInput.placeholder = isWatchlist ? "Opcional en seguimiento" : "Numero de acciones compradas";
+        averageCostInput.placeholder = isWatchlist ? "Opcional: precio base si quieres vigilar una entrada" : "";
+        currentPriceInput.placeholder = isWatchlist ? "Se puede dejar vacio: se cargara con mercado" : "";
+        annualDividendInput.placeholder = isWatchlist ? "Opcional en seguimiento" : "";
+        annualMaintenanceInput.placeholder = isWatchlist ? "Opcional en seguimiento" : "";
       };
 
       const renderSuggestions = (entry) => {
@@ -928,6 +959,11 @@
         renderMatch(entry);
       });
 
+      positionKindInput.addEventListener("change", () => {
+        applyPositionKindMode(true);
+      });
+
+      applyPositionKindMode(positionKindInput.value === "watchlist");
       syncFromField(companyInput.value || tickerInput.value, { overwriteReference: false });
     })();
   </script>

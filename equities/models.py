@@ -14,6 +14,8 @@ class EquityPosition(models.Model):
         MARKET_INDEX = "market_index", "Indice o activo cotizado"
         EURIBOR_12M = "euribor_12m", "Euribor 12 meses"
         SPAIN_HOUSE_PRICE = "spain_house_price", "Precio vivienda Espana"
+        SPAIN_ELECTRICITY_DEMAND = "spain_electricity_demand", "Demanda electrica Espana"
+        SPAIN_GAS_CONSUMPTION = "spain_gas_consumption", "Consumo de gas Espana"
 
     position_kind = models.CharField(
         max_length=16,

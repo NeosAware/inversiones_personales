@@ -10,6 +10,14 @@ from django.views.generic import TemplateView
 from .forms import EquityDocumentImportForm, EquityPositionForm
 from .models import EquityPosition
 from .services import (
+    EURIBOR_REFERENCE_NAME,
+    EURIBOR_REFERENCE_SYMBOL,
+    SPAIN_ELECTRICITY_DEMAND_NAME,
+    SPAIN_ELECTRICITY_DEMAND_SYMBOL,
+    SPAIN_GAS_CONSUMPTION_NAME,
+    SPAIN_GAS_CONSUMPTION_SYMBOL,
+    SPAIN_HOUSE_PRICE_NAME,
+    SPAIN_HOUSE_PRICE_SYMBOL,
     build_equity_analysis_dashboard,
     EquityDocumentImportError,
     build_equity_history_cards,
@@ -148,14 +156,26 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         if reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
             return {
                 "reference_profile": reference_profile,
-                "benchmark_symbol": "ECB:M.S0.N.C_EUR1Y.E",
-                "benchmark_name": "Euribor 12M",
+                "benchmark_symbol": EURIBOR_REFERENCE_SYMBOL,
+                "benchmark_name": EURIBOR_REFERENCE_NAME,
             }
         if reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
             return {
                 "reference_profile": reference_profile,
-                "benchmark_symbol": "EUROSTAT:prc_hpi_q:ES:TOTAL:I15_Q",
-                "benchmark_name": "Precio vivienda Espana",
+                "benchmark_symbol": SPAIN_HOUSE_PRICE_SYMBOL,
+                "benchmark_name": SPAIN_HOUSE_PRICE_NAME,
+            }
+        if reference_profile == EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND:
+            return {
+                "reference_profile": reference_profile,
+                "benchmark_symbol": SPAIN_ELECTRICITY_DEMAND_SYMBOL,
+                "benchmark_name": SPAIN_ELECTRICITY_DEMAND_NAME,
+            }
+        if reference_profile == EquityPosition.ReferenceProfile.SPAIN_GAS_CONSUMPTION:
+            return {
+                "reference_profile": reference_profile,
+                "benchmark_symbol": SPAIN_GAS_CONSUMPTION_SYMBOL,
+                "benchmark_name": SPAIN_GAS_CONSUMPTION_NAME,
             }
         return {
             "reference_profile": reference_profile,

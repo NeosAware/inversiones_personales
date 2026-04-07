@@ -28,6 +28,10 @@ EURIBOR_REFERENCE_SYMBOL = "ECB:M.S0.N.C_EUR1Y.E"
 EURIBOR_REFERENCE_NAME = "Euribor 12M"
 SPAIN_HOUSE_PRICE_SYMBOL = "EUROSTAT:prc_hpi_q:ES:TOTAL:I15_Q"
 SPAIN_HOUSE_PRICE_NAME = "Precio vivienda Espana"
+SPAIN_ELECTRICITY_DEMAND_SYMBOL = "REE:demand:es:peninsular"
+SPAIN_ELECTRICITY_DEMAND_NAME = "Demanda electrica Espana"
+SPAIN_GAS_CONSUMPTION_SYMBOL = "EUROSTAT:nrg_cb_gasm:ES:IC_OBS:TJ_GCV"
+SPAIN_GAS_CONSUMPTION_NAME = "Consumo de gas Espana"
 BRENT_REFERENCE_SYMBOL = "BZ=F"
 BRENT_REFERENCE_NAME = "Petroleo Brent"
 COPPER_REFERENCE_SYMBOL = "HG=F"
@@ -66,6 +70,22 @@ REFERENCE_PRESETS = {
         "benchmark_symbol": SPAIN_HOUSE_PRICE_SYMBOL,
         "benchmark_name": SPAIN_HOUSE_PRICE_NAME,
         "description": "Sirve para constructoras, promotoras e inmobiliarias.",
+    },
+    "spain_electricity_demand": {
+        "key": "spain_electricity_demand",
+        "label": SPAIN_ELECTRICITY_DEMAND_NAME,
+        "reference_profile": EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND,
+        "benchmark_symbol": SPAIN_ELECTRICITY_DEMAND_SYMBOL,
+        "benchmark_name": SPAIN_ELECTRICITY_DEMAND_NAME,
+        "description": "Muy util para electricas, redes y negocios sensibles al pulso de demanda.",
+    },
+    "spain_gas_consumption": {
+        "key": "spain_gas_consumption",
+        "label": SPAIN_GAS_CONSUMPTION_NAME,
+        "reference_profile": EquityPosition.ReferenceProfile.SPAIN_GAS_CONSUMPTION,
+        "benchmark_symbol": SPAIN_GAS_CONSUMPTION_SYMBOL,
+        "benchmark_name": SPAIN_GAS_CONSUMPTION_NAME,
+        "description": "Ayuda a leer gasistas, utilities y negocios expuestos al consumo de gas.",
     },
     "brent": {
         "key": "brent",
@@ -126,8 +146,8 @@ IBEX_COMPANY_PROFILES = [
         "quote_symbol": "ANE.MC",
         "sector_label": "Energia renovable",
         "aliases": ["ACCIONA ENERGIA"],
-        "default_reference_key": "ibex_35",
-        "reference_keys": ["ibex_35", "eurusd", "brent"],
+        "default_reference_key": "spain_electricity_demand",
+        "reference_keys": ["spain_electricity_demand", "ibex_35", "eurusd", "brent"],
     },
     {
         "company_name": "Aena SME, S.A.",
@@ -216,8 +236,8 @@ IBEX_COMPANY_PROFILES = [
         "quote_symbol": "ENG.MC",
         "sector_label": "Infraestructura energetica",
         "aliases": ["ENAGAS"],
-        "default_reference_key": "brent",
-        "reference_keys": ["brent", "ibex_35", "euribor_12m"],
+        "default_reference_key": "spain_gas_consumption",
+        "reference_keys": ["spain_gas_consumption", "brent", "ibex_35", "euribor_12m"],
     },
     {
         "company_name": "Endesa, S.A.",
@@ -225,8 +245,8 @@ IBEX_COMPANY_PROFILES = [
         "quote_symbol": "ELE.MC",
         "sector_label": "Electrica",
         "aliases": ["ENDESA"],
-        "default_reference_key": "ibex_35",
-        "reference_keys": ["ibex_35", "brent", "euribor_12m"],
+        "default_reference_key": "spain_electricity_demand",
+        "reference_keys": ["spain_electricity_demand", "ibex_35", "brent", "euribor_12m"],
     },
     {
         "company_name": "Ferrovial SE",
@@ -261,8 +281,8 @@ IBEX_COMPANY_PROFILES = [
         "quote_symbol": "IBE.MC",
         "sector_label": "Electrica",
         "aliases": ["IBERDROLA"],
-        "default_reference_key": "ibex_35",
-        "reference_keys": ["ibex_35", "brent", "euribor_12m"],
+        "default_reference_key": "spain_electricity_demand",
+        "reference_keys": ["spain_electricity_demand", "ibex_35", "brent", "euribor_12m"],
     },
     {
         "company_name": "Inditex, S.A.",
@@ -324,8 +344,8 @@ IBEX_COMPANY_PROFILES = [
         "quote_symbol": "NTGY.MC",
         "sector_label": "Gas y energia",
         "aliases": ["NATURGY"],
-        "default_reference_key": "brent",
-        "reference_keys": ["brent", "ibex_35", "euribor_12m"],
+        "default_reference_key": "spain_gas_consumption",
+        "reference_keys": ["spain_gas_consumption", "spain_electricity_demand", "brent", "ibex_35", "euribor_12m"],
     },
     {
         "company_name": "Redeia Corporacion, S.A.",
@@ -333,8 +353,8 @@ IBEX_COMPANY_PROFILES = [
         "quote_symbol": "RED.MC",
         "sector_label": "Redes electricas",
         "aliases": ["REDEIA", "RED ELECTRICA", "RED ELECTRICA CORPORACION"],
-        "default_reference_key": "ibex_35",
-        "reference_keys": ["ibex_35", "euribor_12m"],
+        "default_reference_key": "spain_electricity_demand",
+        "reference_keys": ["spain_electricity_demand", "ibex_35", "euribor_12m"],
     },
     {
         "company_name": "Repsol, S.A.",
@@ -343,7 +363,7 @@ IBEX_COMPANY_PROFILES = [
         "sector_label": "Energia",
         "aliases": ["REPSOL"],
         "default_reference_key": "brent",
-        "reference_keys": ["brent", "eurusd", "ibex_35"],
+        "reference_keys": ["brent", "spain_gas_consumption", "eurusd", "ibex_35"],
     },
     {
         "company_name": "Sacyr, S.A.",
@@ -360,8 +380,8 @@ IBEX_COMPANY_PROFILES = [
         "quote_symbol": "SLR.MC",
         "sector_label": "Solar",
         "aliases": ["SOLARIA", "SOLARIA ENERGIA"],
-        "default_reference_key": "ibex_35",
-        "reference_keys": ["ibex_35", "eurusd", "euribor_12m"],
+        "default_reference_key": "spain_electricity_demand",
+        "reference_keys": ["spain_electricity_demand", "ibex_35", "eurusd", "euribor_12m"],
     },
     {
         "company_name": "Telefonica, S.A.",
@@ -477,7 +497,7 @@ def build_reference_suggestions_for_equity(company_name: str = "", ticker: str =
     return [get_reference_preset("ibex_35")]
 
 
-def apply_equity_company_defaults(data: dict) -> dict:
+def apply_equity_company_defaults(data: dict, override_generic_reference: bool = True) -> dict:
     result = dict(data)
     profile = (
         find_equity_company_profile(result.get("company_name"))
@@ -496,7 +516,7 @@ def apply_equity_company_defaults(data: dict) -> dict:
         and (result.get("benchmark_symbol") in {None, "", DEFAULT_BENCHMARK_SYMBOL})
         and (result.get("benchmark_name") in {None, "", DEFAULT_BENCHMARK_NAME})
     )
-    if generic_reference:
+    if generic_reference and override_generic_reference:
         default_reference = profile["default_reference"]
         result["reference_profile"] = default_reference["reference_profile"]
         result["benchmark_symbol"] = default_reference["benchmark_symbol"]
@@ -649,6 +669,98 @@ def fetch_eurostat_house_price_series() -> MarketSeries:
     )
 
 
+def parse_datetime_to_date(value: str) -> date:
+    normalized = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).date()
+    except ValueError:
+        return datetime.strptime(value[:10], "%Y-%m-%d").date()
+
+
+def fetch_ree_electricity_demand_series() -> MarketSeries:
+    end_date = datetime.now(timezone.utc).date()
+    start_date = end_date - timedelta(days=365 * 5)
+    params = urlencode(
+        {
+            "start_date": f"{start_date.isoformat()}T00:00",
+            "end_date": f"{end_date.isoformat()}T23:59",
+            "time_trunc": "month",
+            "geo_trunc": "electric_system",
+            "geo_limit": "peninsular",
+            "geo_ids": "8741",
+        }
+    )
+    url = f"https://apidatos.ree.es/es/datos/demanda/evolucion?{params}"
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+    with urlopen(request, timeout=20) as response:
+        payload = json.load(response)
+
+    series = (payload.get("included") or [{}])[0]
+    values = series.get("attributes", {}).get("values", [])
+    points = [
+        {
+            "date": parse_datetime_to_date(item["datetime"]),
+            "open": None,
+            "high": None,
+            "low": None,
+            "close": Decimal(str(item["value"])),
+        }
+        for item in values
+        if item.get("value") is not None and item.get("datetime")
+    ]
+    if not points:
+        raise MarketDataError("No se han recibido observaciones de demanda electrica de REE.")
+
+    latest = points[-1]
+    return MarketSeries(
+        symbol=SPAIN_ELECTRICITY_DEMAND_SYMBOL,
+        name=SPAIN_ELECTRICITY_DEMAND_NAME,
+        latest_price=latest["close"],
+        latest_date=latest["date"],
+        points=points,
+    )
+
+
+def fetch_eurostat_gas_consumption_series() -> MarketSeries:
+    url = (
+        "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/"
+        "nrg_cb_gasm?freq=M&nrg_bal=IC_OBS&siec=G3000&unit=TJ_GCV&geo=ES"
+    )
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(request, timeout=20) as response:
+        payload = json.load(response)
+
+    time_index = payload["dimension"]["time"]["category"]["index"]
+    value_map = payload.get("value", {})
+    points = []
+    for label, raw_index in sorted(time_index.items(), key=lambda item: item[1]):
+        raw_value = value_map.get(str(raw_index))
+        if raw_value is None:
+            continue
+        year, month = map(int, label.split("-"))
+        points.append(
+            {
+                "date": date(year, month, 1),
+                "open": None,
+                "high": None,
+                "low": None,
+                "close": Decimal(str(raw_value)),
+            }
+        )
+
+    if not points:
+        raise MarketDataError("No se han recibido observaciones del consumo de gas de Eurostat.")
+
+    latest = points[-1]
+    return MarketSeries(
+        symbol=SPAIN_GAS_CONSUMPTION_SYMBOL,
+        name=SPAIN_GAS_CONSUMPTION_NAME,
+        latest_price=latest["close"],
+        latest_date=latest["date"],
+        points=points,
+    )
+
+
 def fetch_reference_series_for_choice(
     reference_profile: str,
     benchmark_symbol: str = "",
@@ -658,6 +770,10 @@ def fetch_reference_series_for_choice(
         return fetch_ecb_reference_series("M.S0.N.C_EUR1Y.E", EURIBOR_REFERENCE_NAME)
     if reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
         return fetch_eurostat_house_price_series()
+    if reference_profile == EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND:
+        return fetch_ree_electricity_demand_series()
+    if reference_profile == EquityPosition.ReferenceProfile.SPAIN_GAS_CONSUMPTION:
+        return fetch_eurostat_gas_consumption_series()
     if benchmark_symbol:
         return fetch_market_series(benchmark_symbol)
     return None
@@ -1561,6 +1677,20 @@ def build_suggested_reference_cards(history, position: EquityPosition, reference
                 "correlation": correlation,
             }
         )
+    suggestions.sort(
+        key=lambda item: (
+            0 if item["correlation"]["coefficient"] is not None else 1,
+            -(abs(item["correlation"]["coefficient"])) if item["correlation"]["coefficient"] is not None else Decimal("0"),
+            item["benchmark_name"],
+        )
+    )
+    best_marked = False
+    for suggestion in suggestions:
+        coefficient = suggestion["correlation"]["coefficient"]
+        is_best = coefficient is not None and not best_marked
+        suggestion["is_best"] = is_best
+        if is_best:
+            best_marked = True
     return suggestions
 
 
