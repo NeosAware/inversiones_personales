@@ -10,10 +10,34 @@ from django.urls import reverse
 from portfolio.ownership import AssetOwnershipCategory
 
 from .models import EquityPosition
-from .services import MarketSeries, build_equity_analysis_dashboard, build_equity_history_cards, sync_equity_market_data
+from .services import (
+    EURIBOR_REFERENCE_NAME,
+    EURIBOR_REFERENCE_SYMBOL,
+    MarketSeries,
+    build_equity_analysis_dashboard,
+    build_equity_history_cards,
+    build_reference_suggestions_for_equity,
+    find_equity_company_profile,
+    sync_equity_market_data,
+)
 
 
 class EquitiesServicesTests(TestCase):
+    def test_find_equity_company_profile_by_ibex_name_returns_indra_defaults(self):
+        profile = find_equity_company_profile("Indra")
+
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile["ticker"], "IDR")
+        self.assertEqual(profile["quote_symbol"], "IDR.MC")
+        self.assertEqual(profile["default_reference"]["benchmark_name"], "IBEX 35")
+
+    def test_build_reference_suggestions_for_bank_prioritizes_euribor(self):
+        suggestions = build_reference_suggestions_for_equity("Banco Santander", "SAN")
+
+        self.assertGreaterEqual(len(suggestions), 2)
+        self.assertEqual(suggestions[0]["benchmark_name"], EURIBOR_REFERENCE_NAME)
+        self.assertEqual(suggestions[0]["benchmark_symbol"], EURIBOR_REFERENCE_SYMBOL)
+
     def test_sync_equity_market_data_updates_latest_price_and_history(self):
         position = EquityPosition.objects.create(
             broker="Banco Sabadell",
@@ -98,6 +122,70 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(cards[0]["stock_line"])
         self.assertEqual(cards[0]["selected_period"]["label"], "3M")
 
+    def test_history_cards_include_suggested_reference_correlations(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            reference_profile=EquityPosition.ReferenceProfile.EURIBOR_12M,
+            benchmark_symbol=EURIBOR_REFERENCE_SYMBOL,
+            benchmark_name=EURIBOR_REFERENCE_NAME,
+            company_name="Banco Santander, S.A.",
+            shares=Decimal("30"),
+            average_cost_per_share=Decimal("4.0000"),
+            current_price_per_share=Decimal("5.0000"),
+        )
+        for price_date, close_price, benchmark_close in (
+            (date(2026, 1, 31), Decimal("4.00"), Decimal("2.10")),
+            (date(2026, 2, 28), Decimal("4.20"), Decimal("2.20")),
+            (date(2026, 3, 31), Decimal("4.50"), Decimal("2.35")),
+            (date(2026, 4, 30), Decimal("4.80"), Decimal("2.50")),
+            (date(2026, 5, 31), Decimal("5.00"), Decimal("2.65")),
+        ):
+            position.price_history.create(
+                price_date=price_date,
+                close_price=close_price,
+                benchmark_close=benchmark_close,
+            )
+
+        euribor_series = MarketSeries(
+            symbol=EURIBOR_REFERENCE_SYMBOL,
+            name=EURIBOR_REFERENCE_NAME,
+            latest_price=Decimal("2.65"),
+            latest_date=date(2026, 5, 1),
+            points=[
+                {"date": date(2026, 1, 1), "close": Decimal("2.10")},
+                {"date": date(2026, 2, 1), "close": Decimal("2.20")},
+                {"date": date(2026, 3, 1), "close": Decimal("2.35")},
+                {"date": date(2026, 4, 1), "close": Decimal("2.50")},
+                {"date": date(2026, 5, 1), "close": Decimal("2.65")},
+            ],
+        )
+        generic_series = MarketSeries(
+            symbol="^IBEX",
+            name="IBEX 35",
+            latest_price=Decimal("14000.00"),
+            latest_date=date(2026, 5, 31),
+            points=[
+                {"date": date(2026, 1, 31), "close": Decimal("12000.00")},
+                {"date": date(2026, 2, 28), "close": Decimal("12300.00")},
+                {"date": date(2026, 3, 31), "close": Decimal("12700.00")},
+                {"date": date(2026, 4, 30), "close": Decimal("13200.00")},
+                {"date": date(2026, 5, 31), "close": Decimal("14000.00")},
+            ],
+        )
+
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+            if reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
+                return euribor_series
+            return generic_series
+
+        with patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series):
+            cards = build_equity_history_cards([position])
+
+        self.assertEqual(cards[0]["suggested_references"][0]["benchmark_name"], EURIBOR_REFERENCE_NAME)
+        self.assertIsNotNone(cards[0]["suggested_references"][0]["correlation"]["coefficient"])
+
     def test_watchlist_positions_do_not_count_into_portfolio_totals(self):
         EquityPosition.objects.create(
             position_kind=EquityPosition.PositionKind.OWNED,
@@ -177,6 +265,63 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(position.current_price_per_share, Decimal("10.2500"))
         self.assertEqual(position.annual_dividend_income, Decimal("72.50"))
         self.assertEqual(position.annual_maintenance_cost, Decimal("18.75"))
+
+    def test_can_create_equity_position_by_only_typing_indra(self):
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "create_position",
+                "position_kind": EquityPosition.PositionKind.OWNED,
+                "ownership_category": AssetOwnershipCategory.XIMO,
+                "broker": "Interactive Brokers",
+                "ticker": "",
+                "company_name": "Indra",
+                "quote_symbol": "",
+                "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
+                "benchmark_symbol": "",
+                "benchmark_name": "",
+                "shares": "20",
+                "average_cost_per_share": "18,5000",
+                "current_price_per_share": "",
+                "annual_dividend_income": "0",
+                "annual_maintenance_cost": "5,00",
+                "notes": "Alta rapida",
+            },
+        )
+
+        self.assertRedirects(response, reverse("equities:list"))
+        position = EquityPosition.objects.get(ticker="IDR", broker="Interactive Brokers")
+        self.assertEqual(position.ticker, "IDR")
+        self.assertEqual(position.quote_symbol, "IDR.MC")
+        self.assertEqual(position.benchmark_symbol, "^IBEX")
+
+    def test_bank_company_name_switches_default_reference_to_euribor(self):
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "create_position",
+                "position_kind": EquityPosition.PositionKind.OWNED,
+                "ownership_category": AssetOwnershipCategory.JOINT,
+                "broker": "Banco Sabadell",
+                "ticker": "",
+                "company_name": "Banco Santander",
+                "quote_symbol": "",
+                "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
+                "benchmark_symbol": "",
+                "benchmark_name": "",
+                "shares": "15",
+                "average_cost_per_share": "4,2500",
+                "current_price_per_share": "",
+                "annual_dividend_income": "20",
+                "annual_maintenance_cost": "0",
+                "notes": "",
+            },
+        )
+
+        self.assertRedirects(response, reverse("equities:list"))
+        position = EquityPosition.objects.get(ticker="SAN", broker="Banco Sabadell")
+        self.assertEqual(position.reference_profile, EquityPosition.ReferenceProfile.EURIBOR_12M)
+        self.assertEqual(position.benchmark_symbol, EURIBOR_REFERENCE_SYMBOL)
 
     def test_can_store_same_ticker_for_same_broker_with_different_owner(self):
         EquityPosition.objects.create(
@@ -406,6 +551,7 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Cockpit de acciones")
         self.assertContains(response, "Coste anual de mantenimiento")
+        self.assertContains(response, "Indra Sistemas, S.A.")
 
     def test_can_store_same_ticker_as_owned_and_watchlist_without_collision(self):
         EquityPosition.objects.create(

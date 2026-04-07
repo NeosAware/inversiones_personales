@@ -2,6 +2,9 @@ from django import forms
 
 from portfolio.ownership import AssetOwnershipCategory
 
+from .models import EquityPosition
+from .services import apply_equity_company_defaults
+
 
 class FlexibleDecimalField(forms.DecimalField):
     def to_python(self, value):
@@ -29,8 +32,8 @@ class EquityPositionForm(forms.Form):
         label="Titular",
     )
     broker = forms.CharField(max_length=120, label="Broker o entidad")
-    ticker = forms.CharField(max_length=20, label="Ticker")
-    company_name = forms.CharField(max_length=160, label="Empresa")
+    ticker = forms.CharField(max_length=20, required=False, label="Ticker")
+    company_name = forms.CharField(max_length=160, required=False, label="Empresa")
     quote_symbol = forms.CharField(max_length=40, required=False, label="Simbolo de mercado")
     reference_profile = forms.ChoiceField(
         choices=(
@@ -87,6 +90,38 @@ class EquityPositionForm(forms.Form):
     )
     notes = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 3}), label="Notas")
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["company_name"].widget.attrs.update(
+            {
+                "list": "equity-company-options",
+                "autocomplete": "off",
+                "placeholder": "Ejemplo: Indra",
+            }
+        )
+        self.fields["ticker"].widget.attrs.update(
+            {
+                "autocomplete": "off",
+                "placeholder": "Se rellena al reconocer la empresa",
+            }
+        )
+        self.fields["quote_symbol"].widget.attrs.update(
+            {
+                "autocomplete": "off",
+                "placeholder": "Se rellena con el simbolo cotizado",
+            }
+        )
+        self.fields["benchmark_name"].widget.attrs.update(
+            {
+                "placeholder": "La referencia sugerida se completa sola",
+            }
+        )
+        self.fields["benchmark_symbol"].widget.attrs.update(
+            {
+                "placeholder": "Simbolo externo o indice",
+            }
+        )
+
     def clean_broker(self):
         return self.cleaned_data["broker"].strip()
 
@@ -111,6 +146,15 @@ class EquityPositionForm(forms.Form):
         cleaned_data = super().clean()
         cleaned_data["position_kind"] = cleaned_data.get("position_kind") or "owned"
         cleaned_data["reference_profile"] = cleaned_data.get("reference_profile") or "market_index"
+        cleaned_data = apply_equity_company_defaults(cleaned_data)
+        if not cleaned_data.get("company_name") and not cleaned_data.get("ticker"):
+            message = "Escribe una empresa reconocida o su ticker."
+            self.add_error("company_name", message)
+            self.add_error("ticker", message)
+        elif not cleaned_data.get("ticker"):
+            self.add_error("ticker", "No se ha podido reconocer el ticker automaticamente.")
+        elif not cleaned_data.get("company_name"):
+            self.add_error("company_name", "Completa el nombre de la empresa.")
         if cleaned_data.get("current_price_per_share") is None:
             cleaned_data["current_price_per_share"] = cleaned_data.get("average_cost_per_share")
         if cleaned_data.get("annual_dividend_income") is None:
@@ -119,6 +163,11 @@ class EquityPositionForm(forms.Form):
             cleaned_data["annual_maintenance_cost"] = 0
         if cleaned_data.get("position_kind") == "watchlist" and cleaned_data.get("shares") is None:
             cleaned_data["shares"] = 0
+        if (
+            cleaned_data.get("reference_profile") == EquityPosition.ReferenceProfile.MARKET_INDEX
+            and not cleaned_data.get("benchmark_symbol")
+        ):
+            self.add_error("benchmark_symbol", "Completa el simbolo de referencia o usa una sugerencia.")
         return cleaned_data
 
 

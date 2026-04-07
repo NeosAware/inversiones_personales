@@ -204,8 +204,92 @@
     .equity-fold summary::-webkit-details-marker{ display:none; }
     .equity-fold-body{ padding:0 22px 22px; }
     .equity-table-note{ margin:0 0 16px; color:var(--muted); }
+    .equity-suggestion-grid{
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(3, minmax(0,1fr));
+      margin-top:16px;
+    }
+    .equity-suggestion-card{
+      padding:16px;
+      border-radius:18px;
+      border:1px solid #d9e7f0;
+      background:#f8fbfe;
+    }
+    .equity-suggestion-card.selected{
+      border-color:#0f5f88;
+      background:#eef7fc;
+      box-shadow:inset 0 0 0 1px rgba(15,95,136,.08);
+    }
+    .equity-suggestion-head{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:12px;
+    }
+    .equity-suggestion-title{
+      font-size:16px;
+      font-weight:800;
+      color:#16384d;
+    }
+    .equity-form-hint,
+    .equity-autofill-card{
+      padding:16px 18px;
+      border-radius:18px;
+      border:1px solid #d9e7f0;
+      background:#f8fbfe;
+    }
+    .equity-autofill-shell{
+      display:grid;
+      gap:14px;
+      margin-top:18px;
+    }
+    .equity-autofill-title{
+      margin:0;
+      font-size:18px;
+      font-weight:800;
+      color:#16384d;
+    }
+    .equity-autofill-meta{
+      margin-top:8px;
+      color:var(--muted);
+      font-size:14px;
+    }
+    .equity-suggestion-actions{
+      display:grid;
+      gap:10px;
+      margin-top:14px;
+    }
+    .equity-suggestion-button{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:14px;
+      width:100%;
+      padding:12px 14px;
+      border-radius:16px;
+      border:1px solid #d7e6f0;
+      background:#ffffff;
+      color:#17384e;
+      text-align:left;
+      cursor:pointer;
+      font:inherit;
+    }
+    .equity-suggestion-button.selected{
+      border-color:#0f5f88;
+      background:#eef7fc;
+    }
+    .equity-suggestion-button strong{
+      display:block;
+      font-size:15px;
+      margin-bottom:4px;
+    }
+    .equity-suggestion-button span{
+      font-size:13px;
+      color:var(--muted);
+    }
     @media (max-width: 1180px){
-      .equity-hero-grid, .equity-period-grid, .equity-card-grid, .equity-panel-grid, .equity-range-form, .equity-position-grid{
+      .equity-hero-grid, .equity-period-grid, .equity-card-grid, .equity-panel-grid, .equity-range-form, .equity-position-grid, .equity-suggestion-grid{
         grid-template-columns:1fr;
       }
     }
@@ -542,6 +626,34 @@
                   <div class="equity-stat-value">{{ card.position.annual_maintenance_cost|floatformat:2 }} EUR</div>
                 </div>
               </div>
+              {% if card.suggested_references %}
+                <div class="equity-suggestion-grid">
+                  {% for suggestion in card.suggested_references %}
+                    <div class="equity-suggestion-card {% if suggestion.is_selected %}selected{% endif %}">
+                      <div class="equity-suggestion-head">
+                        <div>
+                          <div class="equity-suggestion-title">{{ suggestion.benchmark_name }}</div>
+                          <div class="metric-sub">{{ suggestion.description }}</div>
+                        </div>
+                        {% if suggestion.is_selected %}<span class="pill">Activa</span>{% endif %}
+                      </div>
+                      <div class="metric-sub" style="margin-top:12px;">
+                        Correlacion:
+                        {% if suggestion.correlation.coefficient is not None %}
+                          {{ suggestion.correlation.coefficient|floatformat:2 }}
+                        {% else %}
+                          -
+                        {% endif %}
+                        | {{ suggestion.correlation.label }}
+                      </div>
+                      <div class="metric-sub">
+                        {% if suggestion.correlation.frequency == "quarterly" %}Trimestral{% else %}Mensual{% endif %}
+                        | {{ suggestion.correlation.observations_count }} observaciones
+                      </div>
+                    </div>
+                  {% endfor %}
+                </div>
+              {% endif %}
             {% else %}
               <div class="message info" style="margin-top:12px;">
                 Esta posicion todavia no tiene historico suficiente. El refresco automatico intentara cargarlo al entrar o puedes forzar una sincronizacion al final de la pagina.
@@ -598,6 +710,9 @@
           <form method="post" class="stack" style="margin-top:18px;">
             {% csrf_token %}
             <input type="hidden" name="action" value="create_position">
+            <div class="equity-form-hint">
+              Escribe una empresa del IBEX, por ejemplo <strong>Indra</strong>, y la app te rellenara ticker, simbolo cotizado y la referencia externa mas util para analizarla.
+            </div>
             <div class="grid cols-2">
               <div><label for="{{ position_form.position_kind.id_for_label }}">{{ position_form.position_kind.label }}</label>{{ position_form.position_kind }}</div>
               <div><label for="{{ position_form.ownership_category.id_for_label }}">{{ position_form.ownership_category.label }}</label>{{ position_form.ownership_category }}</div>
@@ -621,6 +736,10 @@
               <div><label for="{{ position_form.annual_dividend_income.id_for_label }}">{{ position_form.annual_dividend_income.label }}</label>{{ position_form.annual_dividend_income }}</div>
               <div><label for="{{ position_form.annual_maintenance_cost.id_for_label }}">{{ position_form.annual_maintenance_cost.label }}</label>{{ position_form.annual_maintenance_cost }}</div>
             </div>
+            <div class="equity-autofill-shell">
+              <div class="equity-autofill-card" id="equity-company-match" hidden></div>
+              <div class="equity-autofill-card" id="equity-reference-suggestions" hidden></div>
+            </div>
             <div>
               <label for="{{ position_form.notes.id_for_label }}">{{ position_form.notes.label }}</label>
               {{ position_form.notes }}
@@ -631,4 +750,185 @@
       </div>
     </details>
   </div>
+  {{ equity_company_catalog|json_script:"equity-company-catalog" }}
+  <datalist id="equity-company-options">
+    {% for entry in equity_company_catalog %}
+      <option value="{{ entry.company_name }}">{{ entry.ticker }} | {{ entry.company_name }}</option>
+    {% endfor %}
+  </datalist>
+  <script>
+    (() => {
+      const catalogNode = document.getElementById("equity-company-catalog");
+      if (!catalogNode) {
+        return;
+      }
+
+      const catalog = JSON.parse(catalogNode.textContent || "[]");
+      const companyInput = document.getElementById("{{ position_form.company_name.id_for_label }}");
+      const tickerInput = document.getElementById("{{ position_form.ticker.id_for_label }}");
+      const quoteSymbolInput = document.getElementById("{{ position_form.quote_symbol.id_for_label }}");
+      const referenceProfileInput = document.getElementById("{{ position_form.reference_profile.id_for_label }}");
+      const benchmarkNameInput = document.getElementById("{{ position_form.benchmark_name.id_for_label }}");
+      const benchmarkSymbolInput = document.getElementById("{{ position_form.benchmark_symbol.id_for_label }}");
+      const matchBox = document.getElementById("equity-company-match");
+      const suggestionsBox = document.getElementById("equity-reference-suggestions");
+
+      if (!companyInput || !tickerInput || !quoteSymbolInput || !referenceProfileInput || !benchmarkNameInput || !benchmarkSymbolInput || !matchBox || !suggestionsBox) {
+        return;
+      }
+
+      const normalize = (value) => (value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, " ")
+        .trim();
+
+      const escapeHtml = (value) => (value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+      const findMatch = (rawValue) => {
+        const query = normalize(rawValue);
+        if (!query) {
+          return null;
+        }
+        let partialMatch = null;
+        for (const entry of catalog) {
+          const keys = entry.lookup_keys || [];
+          if (keys.includes(query)) {
+            return entry;
+          }
+          if (!partialMatch && query.length >= 3 && keys.some((key) => key.startsWith(query) || key.includes(query))) {
+            partialMatch = entry;
+          }
+        }
+        return partialMatch;
+      };
+
+      const currentReferenceKey = () => [
+        referenceProfileInput.value || "",
+        benchmarkSymbolInput.value || "",
+        benchmarkNameInput.value || "",
+      ].join("|");
+
+      const applyReference = (reference) => {
+        if (!reference) {
+          return;
+        }
+        referenceProfileInput.value = reference.reference_profile || "market_index";
+        benchmarkNameInput.value = reference.benchmark_name || "";
+        benchmarkSymbolInput.value = reference.benchmark_symbol || "";
+      };
+
+      const renderSuggestions = (entry) => {
+        if (!entry || !(entry.reference_suggestions || []).length) {
+          suggestionsBox.hidden = true;
+          suggestionsBox.innerHTML = "";
+          return;
+        }
+
+        const activeKey = currentReferenceKey();
+        suggestionsBox.hidden = false;
+        suggestionsBox.innerHTML = `
+          <div class="equity-autofill-title">Variables sugeridas para esta tesis</div>
+          <div class="equity-autofill-meta">Las referencias propuestas intentan explicar mejor la empresa que un indice general sin quitarte libertad para cambiarla.</div>
+          <div class="equity-suggestion-actions">
+            ${(entry.reference_suggestions || []).map((reference) => {
+              const referenceKey = [reference.reference_profile || "", reference.benchmark_symbol || "", reference.benchmark_name || ""].join("|");
+              return `
+                <button type="button" class="equity-suggestion-button ${referenceKey === activeKey ? "selected" : ""}" data-reference-key="${escapeHtml(reference.key || "")}">
+                  <div>
+                    <strong>${escapeHtml(reference.benchmark_name || reference.label || "")}</strong>
+                    <span>${escapeHtml(reference.description || "")}</span>
+                  </div>
+                  <span>Usar</span>
+                </button>
+              `;
+            }).join("")}
+          </div>
+        `;
+      };
+
+      const renderMatch = (entry) => {
+        if (!entry) {
+          matchBox.hidden = true;
+          matchBox.innerHTML = "";
+          renderSuggestions(null);
+          return;
+        }
+
+        matchBox.hidden = false;
+        matchBox.innerHTML = `
+          <div class="equity-autofill-title">${escapeHtml(entry.company_name || "")}</div>
+          <div class="equity-autofill-meta">Ticker ${escapeHtml(entry.ticker || "")} | Simbolo ${escapeHtml(entry.quote_symbol || "")} | Sector ${escapeHtml(entry.sector_label || "")}</div>
+          <div class="equity-autofill-meta">Referencia inicial sugerida: ${escapeHtml((entry.default_reference || {}).benchmark_name || "")}</div>
+        `;
+        renderSuggestions(entry);
+      };
+
+      const isGenericReference = () => {
+        const profile = referenceProfileInput.value || "market_index";
+        const name = (benchmarkNameInput.value || "").trim();
+        const symbol = (benchmarkSymbolInput.value || "").trim();
+        return profile === "market_index" && (!name || name === "IBEX 35") && (!symbol || symbol === "^IBEX");
+      };
+
+      const applyCompany = (entry, options = {}) => {
+        if (!entry) {
+          renderMatch(null);
+          return;
+        }
+        companyInput.value = entry.company_name || companyInput.value;
+        tickerInput.value = entry.ticker || tickerInput.value;
+        quoteSymbolInput.value = entry.quote_symbol || quoteSymbolInput.value;
+        if (options.overwriteReference || isGenericReference()) {
+          applyReference(entry.default_reference);
+        }
+        renderMatch(entry);
+      };
+
+      const syncFromField = (fieldValue, options = {}) => {
+        const entry = findMatch(fieldValue);
+        if (!entry) {
+          if (!companyInput.value.trim() && !tickerInput.value.trim()) {
+            renderMatch(null);
+          }
+          return;
+        }
+        applyCompany(entry, options);
+      };
+
+      companyInput.addEventListener("input", () => {
+        renderMatch(findMatch(companyInput.value));
+      });
+      companyInput.addEventListener("change", () => syncFromField(companyInput.value, { overwriteReference: true }));
+      companyInput.addEventListener("blur", () => syncFromField(companyInput.value, { overwriteReference: true }));
+
+      tickerInput.addEventListener("input", () => {
+        renderMatch(findMatch(tickerInput.value));
+      });
+      tickerInput.addEventListener("change", () => syncFromField(tickerInput.value, { overwriteReference: true }));
+      tickerInput.addEventListener("blur", () => syncFromField(tickerInput.value, { overwriteReference: true }));
+
+      suggestionsBox.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-reference-key]");
+        if (!button) {
+          return;
+        }
+        const entry = findMatch(companyInput.value) || findMatch(tickerInput.value);
+        if (!entry) {
+          return;
+        }
+        const reference = (entry.reference_suggestions || []).find((item) => item.key === button.dataset.referenceKey);
+        applyReference(reference);
+        renderMatch(entry);
+      });
+
+      syncFromField(companyInput.value || tickerInput.value, { overwriteReference: false });
+    })();
+  </script>
 {% endblock %}

@@ -28,6 +28,12 @@ EURIBOR_REFERENCE_SYMBOL = "ECB:M.S0.N.C_EUR1Y.E"
 EURIBOR_REFERENCE_NAME = "Euribor 12M"
 SPAIN_HOUSE_PRICE_SYMBOL = "EUROSTAT:prc_hpi_q:ES:TOTAL:I15_Q"
 SPAIN_HOUSE_PRICE_NAME = "Precio vivienda Espana"
+BRENT_REFERENCE_SYMBOL = "BZ=F"
+BRENT_REFERENCE_NAME = "Petroleo Brent"
+COPPER_REFERENCE_SYMBOL = "HG=F"
+COPPER_REFERENCE_NAME = "Cobre"
+EURUSD_REFERENCE_SYMBOL = "EURUSD=X"
+EURUSD_REFERENCE_NAME = "Euro / Dolar"
 DEFAULT_EQUITY_COLUMN_MAP = {
     "broker": 0,
     "ticker": 1,
@@ -36,6 +42,346 @@ DEFAULT_EQUITY_COLUMN_MAP = {
     "average_cost_per_share": 4,
     "current_price_per_share": 5,
 }
+REFERENCE_PRESETS = {
+    "ibex_35": {
+        "key": "ibex_35",
+        "label": DEFAULT_BENCHMARK_NAME,
+        "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
+        "benchmark_symbol": DEFAULT_BENCHMARK_SYMBOL,
+        "benchmark_name": DEFAULT_BENCHMARK_NAME,
+        "description": "Pulso general de la bolsa espanola.",
+    },
+    "euribor_12m": {
+        "key": "euribor_12m",
+        "label": EURIBOR_REFERENCE_NAME,
+        "reference_profile": EquityPosition.ReferenceProfile.EURIBOR_12M,
+        "benchmark_symbol": EURIBOR_REFERENCE_SYMBOL,
+        "benchmark_name": EURIBOR_REFERENCE_NAME,
+        "description": "Muy util para bancos, deuda y negocios sensibles a tipos.",
+    },
+    "spain_house_price": {
+        "key": "spain_house_price",
+        "label": SPAIN_HOUSE_PRICE_NAME,
+        "reference_profile": EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE,
+        "benchmark_symbol": SPAIN_HOUSE_PRICE_SYMBOL,
+        "benchmark_name": SPAIN_HOUSE_PRICE_NAME,
+        "description": "Sirve para constructoras, promotoras e inmobiliarias.",
+    },
+    "brent": {
+        "key": "brent",
+        "label": BRENT_REFERENCE_NAME,
+        "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
+        "benchmark_symbol": BRENT_REFERENCE_SYMBOL,
+        "benchmark_name": BRENT_REFERENCE_NAME,
+        "description": "Referencia util para energia, transporte y costes industriales.",
+    },
+    "copper": {
+        "key": "copper",
+        "label": COPPER_REFERENCE_NAME,
+        "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
+        "benchmark_symbol": COPPER_REFERENCE_SYMBOL,
+        "benchmark_name": COPPER_REFERENCE_NAME,
+        "description": "Buen termometro para industria, materiales y ciclo manufacturero.",
+    },
+    "eurusd": {
+        "key": "eurusd",
+        "label": EURUSD_REFERENCE_NAME,
+        "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
+        "benchmark_symbol": EURUSD_REFERENCE_SYMBOL,
+        "benchmark_name": EURUSD_REFERENCE_NAME,
+        "description": "Ayuda a leer negocios globales con ventas o compras fuera del euro.",
+    },
+}
+IBEX_COMPANY_PROFILES = [
+    {
+        "company_name": "Acerinox, S.A.",
+        "ticker": "ACX",
+        "quote_symbol": "ACX.MC",
+        "sector_label": "Materiales e industria",
+        "aliases": ["ACERINOX"],
+        "default_reference_key": "copper",
+        "reference_keys": ["copper", "eurusd", "ibex_35"],
+    },
+    {
+        "company_name": "ACS, Actividades de Construccion y Servicios, S.A.",
+        "ticker": "ACS",
+        "quote_symbol": "ACS.MC",
+        "sector_label": "Construccion e infraestructuras",
+        "aliases": ["ACS", "ACTIVIDADES DE CONSTRUCCION Y SERVICIOS"],
+        "default_reference_key": "spain_house_price",
+        "reference_keys": ["spain_house_price", "euribor_12m", "ibex_35"],
+    },
+    {
+        "company_name": "Acciona, S.A.",
+        "ticker": "ANA",
+        "quote_symbol": "ANA.MC",
+        "sector_label": "Infraestructuras y energia",
+        "aliases": ["ACCIONA"],
+        "default_reference_key": "spain_house_price",
+        "reference_keys": ["spain_house_price", "ibex_35", "brent"],
+    },
+    {
+        "company_name": "Acciona Energia, S.A.",
+        "ticker": "ANE",
+        "quote_symbol": "ANE.MC",
+        "sector_label": "Energia renovable",
+        "aliases": ["ACCIONA ENERGIA"],
+        "default_reference_key": "ibex_35",
+        "reference_keys": ["ibex_35", "eurusd", "brent"],
+    },
+    {
+        "company_name": "Aena SME, S.A.",
+        "ticker": "AENA",
+        "quote_symbol": "AENA.MC",
+        "sector_label": "Aeropuertos y movilidad",
+        "aliases": ["AENA"],
+        "default_reference_key": "brent",
+        "reference_keys": ["brent", "eurusd", "ibex_35"],
+    },
+    {
+        "company_name": "Amadeus IT Group, S.A.",
+        "ticker": "AMS",
+        "quote_symbol": "AMS.MC",
+        "sector_label": "Tecnologia de viajes",
+        "aliases": ["AMADEUS", "AMADEUS IT GROUP"],
+        "default_reference_key": "eurusd",
+        "reference_keys": ["eurusd", "brent", "ibex_35"],
+    },
+    {
+        "company_name": "ArcelorMittal, S.A.",
+        "ticker": "MTS",
+        "quote_symbol": "MTS.MC",
+        "sector_label": "Acero e industria",
+        "aliases": ["ARCELORMITTAL", "ARCELOR MITTAL"],
+        "default_reference_key": "copper",
+        "reference_keys": ["copper", "eurusd", "ibex_35"],
+    },
+    {
+        "company_name": "Banco Bilbao Vizcaya Argentaria, S.A.",
+        "ticker": "BBVA",
+        "quote_symbol": "BBVA.MC",
+        "sector_label": "Banca",
+        "aliases": ["BBVA", "BANCO BILBAO VIZCAYA ARGENTARIA"],
+        "default_reference_key": "euribor_12m",
+        "reference_keys": ["euribor_12m", "ibex_35", "eurusd"],
+    },
+    {
+        "company_name": "Banco de Sabadell, S.A.",
+        "ticker": "SAB",
+        "quote_symbol": "SAB.MC",
+        "sector_label": "Banca",
+        "aliases": ["SABADELL", "BANCO SABADELL", "BANCO DE SABADELL"],
+        "default_reference_key": "euribor_12m",
+        "reference_keys": ["euribor_12m", "ibex_35"],
+    },
+    {
+        "company_name": "Banco Santander, S.A.",
+        "ticker": "SAN",
+        "quote_symbol": "SAN.MC",
+        "sector_label": "Banca",
+        "aliases": ["SANTANDER", "BANCO SANTANDER"],
+        "default_reference_key": "euribor_12m",
+        "reference_keys": ["euribor_12m", "ibex_35", "eurusd"],
+    },
+    {
+        "company_name": "Bankinter, S.A.",
+        "ticker": "BKT",
+        "quote_symbol": "BKT.MC",
+        "sector_label": "Banca",
+        "aliases": ["BANKINTER"],
+        "default_reference_key": "euribor_12m",
+        "reference_keys": ["euribor_12m", "ibex_35"],
+    },
+    {
+        "company_name": "CaixaBank, S.A.",
+        "ticker": "CABK",
+        "quote_symbol": "CABK.MC",
+        "sector_label": "Banca",
+        "aliases": ["CAIXABANK", "CAIXA BANK"],
+        "default_reference_key": "euribor_12m",
+        "reference_keys": ["euribor_12m", "ibex_35"],
+    },
+    {
+        "company_name": "Cellnex Telecom, S.A.",
+        "ticker": "CLNX",
+        "quote_symbol": "CLNX.MC",
+        "sector_label": "Telecomunicaciones",
+        "aliases": ["CELLNEX", "CELLNEX TELECOM"],
+        "default_reference_key": "ibex_35",
+        "reference_keys": ["ibex_35", "euribor_12m", "eurusd"],
+    },
+    {
+        "company_name": "Enagas, S.A.",
+        "ticker": "ENG",
+        "quote_symbol": "ENG.MC",
+        "sector_label": "Infraestructura energetica",
+        "aliases": ["ENAGAS"],
+        "default_reference_key": "brent",
+        "reference_keys": ["brent", "ibex_35", "euribor_12m"],
+    },
+    {
+        "company_name": "Endesa, S.A.",
+        "ticker": "ELE",
+        "quote_symbol": "ELE.MC",
+        "sector_label": "Electrica",
+        "aliases": ["ENDESA"],
+        "default_reference_key": "ibex_35",
+        "reference_keys": ["ibex_35", "brent", "euribor_12m"],
+    },
+    {
+        "company_name": "Ferrovial SE",
+        "ticker": "FER",
+        "quote_symbol": "FER.MC",
+        "sector_label": "Infraestructuras y concesiones",
+        "aliases": ["FERROVIAL"],
+        "default_reference_key": "spain_house_price",
+        "reference_keys": ["spain_house_price", "euribor_12m", "ibex_35"],
+    },
+    {
+        "company_name": "Fluidra, S.A.",
+        "ticker": "FDR",
+        "quote_symbol": "FDR.MC",
+        "sector_label": "Equipamiento y consumo ligado al hogar",
+        "aliases": ["FLUIDRA"],
+        "default_reference_key": "spain_house_price",
+        "reference_keys": ["spain_house_price", "ibex_35", "eurusd"],
+    },
+    {
+        "company_name": "Grifols, S.A.",
+        "ticker": "GRF",
+        "quote_symbol": "GRF.MC",
+        "sector_label": "Salud",
+        "aliases": ["GRIFOLS"],
+        "default_reference_key": "eurusd",
+        "reference_keys": ["eurusd", "ibex_35"],
+    },
+    {
+        "company_name": "Iberdrola, S.A.",
+        "ticker": "IBE",
+        "quote_symbol": "IBE.MC",
+        "sector_label": "Electrica",
+        "aliases": ["IBERDROLA"],
+        "default_reference_key": "ibex_35",
+        "reference_keys": ["ibex_35", "brent", "euribor_12m"],
+    },
+    {
+        "company_name": "Inditex, S.A.",
+        "ticker": "ITX",
+        "quote_symbol": "ITX.MC",
+        "sector_label": "Consumo global",
+        "aliases": ["INDITEX", "INDUSTRIA DE DISENO TEXTIL", "ZARA"],
+        "default_reference_key": "eurusd",
+        "reference_keys": ["eurusd", "ibex_35"],
+    },
+    {
+        "company_name": "Indra Sistemas, S.A.",
+        "ticker": "IDR",
+        "quote_symbol": "IDR.MC",
+        "sector_label": "Tecnologia y defensa",
+        "aliases": ["INDRA", "INDRA SISTEMAS"],
+        "default_reference_key": "ibex_35",
+        "reference_keys": ["ibex_35", "eurusd"],
+    },
+    {
+        "company_name": "International Consolidated Airlines Group, S.A.",
+        "ticker": "IAG",
+        "quote_symbol": "IAG.MC",
+        "sector_label": "Aerolineas",
+        "aliases": ["IAG", "INTERNATIONAL AIRLINES GROUP"],
+        "default_reference_key": "brent",
+        "reference_keys": ["brent", "eurusd", "ibex_35"],
+    },
+    {
+        "company_name": "Logista Integral, S.A.",
+        "ticker": "LOG",
+        "quote_symbol": "LOG.MC",
+        "sector_label": "Logistica y distribucion",
+        "aliases": ["LOGISTA", "LOGISTA INTEGRAL"],
+        "default_reference_key": "brent",
+        "reference_keys": ["brent", "ibex_35", "eurusd"],
+    },
+    {
+        "company_name": "Mapfre, S.A.",
+        "ticker": "MAP",
+        "quote_symbol": "MAP.MC",
+        "sector_label": "Seguros",
+        "aliases": ["MAPFRE"],
+        "default_reference_key": "euribor_12m",
+        "reference_keys": ["euribor_12m", "ibex_35"],
+    },
+    {
+        "company_name": "Merlin Properties SOCIMI, S.A.",
+        "ticker": "MRL",
+        "quote_symbol": "MRL.MC",
+        "sector_label": "Inmobiliario",
+        "aliases": ["MERLIN", "MERLIN PROPERTIES"],
+        "default_reference_key": "spain_house_price",
+        "reference_keys": ["spain_house_price", "euribor_12m", "ibex_35"],
+    },
+    {
+        "company_name": "Naturgy Energy Group, S.A.",
+        "ticker": "NTGY",
+        "quote_symbol": "NTGY.MC",
+        "sector_label": "Gas y energia",
+        "aliases": ["NATURGY"],
+        "default_reference_key": "brent",
+        "reference_keys": ["brent", "ibex_35", "euribor_12m"],
+    },
+    {
+        "company_name": "Redeia Corporacion, S.A.",
+        "ticker": "RED",
+        "quote_symbol": "RED.MC",
+        "sector_label": "Redes electricas",
+        "aliases": ["REDEIA", "RED ELECTRICA", "RED ELECTRICA CORPORACION"],
+        "default_reference_key": "ibex_35",
+        "reference_keys": ["ibex_35", "euribor_12m"],
+    },
+    {
+        "company_name": "Repsol, S.A.",
+        "ticker": "REP",
+        "quote_symbol": "REP.MC",
+        "sector_label": "Energia",
+        "aliases": ["REPSOL"],
+        "default_reference_key": "brent",
+        "reference_keys": ["brent", "eurusd", "ibex_35"],
+    },
+    {
+        "company_name": "Sacyr, S.A.",
+        "ticker": "SCYR",
+        "quote_symbol": "SCYR.MC",
+        "sector_label": "Construccion e infraestructuras",
+        "aliases": ["SACYR"],
+        "default_reference_key": "spain_house_price",
+        "reference_keys": ["spain_house_price", "euribor_12m", "ibex_35"],
+    },
+    {
+        "company_name": "Solaria Energia y Medio Ambiente, S.A.",
+        "ticker": "SLR",
+        "quote_symbol": "SLR.MC",
+        "sector_label": "Solar",
+        "aliases": ["SOLARIA", "SOLARIA ENERGIA"],
+        "default_reference_key": "ibex_35",
+        "reference_keys": ["ibex_35", "eurusd", "euribor_12m"],
+    },
+    {
+        "company_name": "Telefonica, S.A.",
+        "ticker": "TEF",
+        "quote_symbol": "TEF.MC",
+        "sector_label": "Telecomunicaciones",
+        "aliases": ["TELEFONICA", "TELEFONICA SA"],
+        "default_reference_key": "eurusd",
+        "reference_keys": ["eurusd", "ibex_35", "euribor_12m"],
+    },
+    {
+        "company_name": "Unicaja Banco, S.A.",
+        "ticker": "UNI",
+        "quote_symbol": "UNI.MC",
+        "sector_label": "Banca",
+        "aliases": ["UNICAJA", "UNICAJA BANCO"],
+        "default_reference_key": "euribor_12m",
+        "reference_keys": ["euribor_12m", "ibex_35"],
+    },
+]
 
 
 class MarketDataError(Exception):
@@ -61,6 +407,102 @@ class EquityDocumentPrefill:
     detected_fields: list[str]
     candidate_count: int
     source_kind: str
+
+
+def normalize_company_lookup(value: str) -> str:
+    ascii_text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    cleaned = re.sub(r"[^A-Z0-9]+", " ", ascii_text.upper())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def get_reference_preset(reference_key: str) -> dict:
+    preset = REFERENCE_PRESETS.get(reference_key)
+    return dict(preset) if preset else {}
+
+
+def get_equity_company_catalog() -> list[dict]:
+    catalog = []
+    for profile in IBEX_COMPANY_PROFILES:
+        default_reference = get_reference_preset(profile["default_reference_key"])
+        reference_suggestions = [get_reference_preset(reference_key) for reference_key in profile["reference_keys"]]
+        lookup_keys = {
+            normalize_company_lookup(profile["company_name"]),
+            normalize_company_lookup(profile["ticker"]),
+            normalize_company_lookup(profile["quote_symbol"]),
+        }
+        lookup_keys.update(normalize_company_lookup(alias) for alias in profile.get("aliases", []))
+        catalog.append(
+            {
+                "company_name": profile["company_name"],
+                "ticker": profile["ticker"],
+                "quote_symbol": profile["quote_symbol"],
+                "sector_label": profile["sector_label"],
+                "default_reference": default_reference,
+                "reference_suggestions": reference_suggestions,
+                "lookup_keys": sorted(key for key in lookup_keys if key),
+            }
+        )
+    return catalog
+
+
+def find_equity_company_profile(query: str) -> dict | None:
+    normalized_query = normalize_company_lookup(query)
+    if not normalized_query:
+        return None
+
+    catalog = get_equity_company_catalog()
+    for entry in catalog:
+        if normalized_query in entry["lookup_keys"]:
+            return entry
+
+    partial_matches = []
+    for entry in catalog:
+        best_key = None
+        for lookup_key in entry["lookup_keys"]:
+            if normalized_query and (lookup_key.startswith(normalized_query) or normalized_query in lookup_key):
+                best_key = lookup_key
+                break
+        if best_key:
+            partial_matches.append((len(best_key), entry["company_name"], entry))
+    if partial_matches:
+        partial_matches.sort(key=lambda item: (item[0], item[1]))
+        return partial_matches[0][2]
+    return None
+
+
+def build_reference_suggestions_for_equity(company_name: str = "", ticker: str = "") -> list[dict]:
+    profile = find_equity_company_profile(company_name) or find_equity_company_profile(ticker)
+    if profile:
+        return [dict(item) for item in profile["reference_suggestions"]]
+    return [get_reference_preset("ibex_35")]
+
+
+def apply_equity_company_defaults(data: dict) -> dict:
+    result = dict(data)
+    profile = (
+        find_equity_company_profile(result.get("company_name"))
+        or find_equity_company_profile(result.get("ticker"))
+        or find_equity_company_profile(result.get("quote_symbol"))
+    )
+    if not profile:
+        return result
+
+    result["company_name"] = result.get("company_name") or profile["company_name"]
+    result["ticker"] = result.get("ticker") or profile["ticker"]
+    result["quote_symbol"] = result.get("quote_symbol") or profile["quote_symbol"]
+
+    generic_reference = (
+        result.get("reference_profile") in {None, "", EquityPosition.ReferenceProfile.MARKET_INDEX}
+        and (result.get("benchmark_symbol") in {None, "", DEFAULT_BENCHMARK_SYMBOL})
+        and (result.get("benchmark_name") in {None, "", DEFAULT_BENCHMARK_NAME})
+    )
+    if generic_reference:
+        default_reference = profile["default_reference"]
+        result["reference_profile"] = default_reference["reference_profile"]
+        result["benchmark_symbol"] = default_reference["benchmark_symbol"]
+        result["benchmark_name"] = default_reference["benchmark_name"]
+
+    return result
 
 
 def fetch_market_series(symbol: str, range_key: str = "5y", interval: str = "1d") -> MarketSeries:
@@ -207,14 +649,26 @@ def fetch_eurostat_house_price_series() -> MarketSeries:
     )
 
 
-def fetch_reference_series(position: EquityPosition) -> MarketSeries | None:
-    if position.reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
+def fetch_reference_series_for_choice(
+    reference_profile: str,
+    benchmark_symbol: str = "",
+    benchmark_name: str = "",
+) -> MarketSeries | None:
+    if reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
         return fetch_ecb_reference_series("M.S0.N.C_EUR1Y.E", EURIBOR_REFERENCE_NAME)
-    if position.reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
+    if reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
         return fetch_eurostat_house_price_series()
-    if position.benchmark_symbol:
-        return fetch_market_series(position.benchmark_symbol)
+    if benchmark_symbol:
+        return fetch_market_series(benchmark_symbol)
     return None
+
+
+def fetch_reference_series(position: EquityPosition) -> MarketSeries | None:
+    return fetch_reference_series_for_choice(
+        position.reference_profile,
+        benchmark_symbol=position.benchmark_symbol,
+        benchmark_name=position.benchmark_name,
+    )
 
 
 def normalize_document_text(value: str) -> str:
@@ -415,22 +869,24 @@ def build_equity_data_from_table_row(
     if not ticker and not company_name:
         return {}
 
-    return {
-        "position_kind": EquityPosition.PositionKind.OWNED,
-        "ownership_category": ownership_category,
-        "broker": broker,
-        "ticker": ticker,
-        "company_name": company_name,
+    return apply_equity_company_defaults(
+        {
+            "position_kind": EquityPosition.PositionKind.OWNED,
+            "ownership_category": ownership_category,
+            "broker": broker,
+            "ticker": ticker,
+            "company_name": company_name,
         "quote_symbol": quote_symbol,
         "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
         "benchmark_symbol": DEFAULT_BENCHMARK_SYMBOL,
         "benchmark_name": DEFAULT_BENCHMARK_NAME,
         "shares": shares,
         "average_cost_per_share": average_cost,
-        "current_price_per_share": current_price,
-        "annual_dividend_income": annual_dividend_income,
-        "notes": "",
-    }
+            "current_price_per_share": current_price,
+            "annual_dividend_income": annual_dividend_income,
+            "notes": "",
+        }
+    )
 
 
 def assign_prefill_value(target: dict, label: str, value: str):
@@ -521,7 +977,7 @@ def build_equity_data_from_key_value_rows(
     if parsed.get("average_cost_per_share") is None:
         return {}
 
-    return parsed
+    return apply_equity_company_defaults(parsed)
 
 
 def score_equity_data(data: dict) -> int:
@@ -542,7 +998,7 @@ def score_equity_data(data: dict) -> int:
 
 
 def finalize_equity_prefill(data: dict, default_ownership_category: str, document_text: str) -> dict:
-    result = dict(data)
+    result = apply_equity_company_defaults(data)
     result["ownership_category"] = infer_ownership_category_from_text(
         document_text,
         result.get("ownership_category") or default_ownership_category,
@@ -802,10 +1258,14 @@ def percentage_change(current: Decimal | None, reference: Decimal | None) -> Dec
     return ((current / reference) - Decimal("1")) * Decimal("100")
 
 
-def infer_reference_frequency(position: EquityPosition) -> str:
-    if position.reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
+def infer_reference_frequency_from_profile(reference_profile: str) -> str:
+    if reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
         return "quarterly"
     return "monthly"
+
+
+def infer_reference_frequency(position: EquityPosition) -> str:
+    return infer_reference_frequency_from_profile(position.reference_profile)
 
 
 def bucket_label_for_date(value: date, frequency: str) -> str:
@@ -839,37 +1299,70 @@ def pearson_correlation(xs: list[Decimal], ys: list[Decimal]) -> Decimal | None:
     return Decimal(str(round(correlation, 4)))
 
 
-def build_reference_correlation(history, position: EquityPosition) -> dict:
-    frequency = infer_reference_frequency(position)
-    collapsed = collapse_history_to_frequency(history, frequency)
+def describe_correlation(coefficient: Decimal | None) -> str:
+    if coefficient is None:
+        return "Sin correlacion suficiente"
+    if coefficient >= Decimal("0.70"):
+        return "Relacion positiva alta"
+    if coefficient >= Decimal("0.35"):
+        return "Relacion positiva moderada"
+    if coefficient <= Decimal("-0.35"):
+        return "Relacion inversa"
+    return "Relacion debil"
+
+
+def build_correlation_from_rows(rows: list[dict], frequency: str) -> dict:
+    buckets = {}
+    for row in rows:
+        buckets[bucket_label_for_date(row["date"], frequency)] = row
+    collapsed = [buckets[label] for label in sorted(buckets.keys())]
+
     stock_returns = []
     reference_returns = []
     for previous, current in zip(collapsed, collapsed[1:]):
-        stock_return = percentage_change(current.close_price, previous.close_price)
-        reference_return = percentage_change(current.benchmark_close, previous.benchmark_close)
+        stock_return = percentage_change(current.get("stock_close"), previous.get("stock_close"))
+        reference_return = percentage_change(current.get("reference_close"), previous.get("reference_close"))
         if stock_return is None or reference_return is None:
             continue
         stock_returns.append(stock_return)
         reference_returns.append(reference_return)
 
     coefficient = pearson_correlation(stock_returns[-12:], reference_returns[-12:])
-    if coefficient is None:
-        label = "Sin correlacion suficiente"
-    elif coefficient >= Decimal("0.70"):
-        label = "Relacion positiva alta"
-    elif coefficient >= Decimal("0.35"):
-        label = "Relacion positiva moderada"
-    elif coefficient <= Decimal("-0.35"):
-        label = "Relacion inversa"
-    else:
-        label = "Relacion debil"
-
     return {
         "frequency": frequency,
         "coefficient": coefficient,
-        "label": label,
+        "label": describe_correlation(coefficient),
         "observations_count": len(stock_returns),
     }
+
+
+def build_reference_correlation(history, position: EquityPosition) -> dict:
+    frequency = infer_reference_frequency(position)
+    rows = [
+        {
+            "date": point.price_date,
+            "stock_close": point.close_price,
+            "reference_close": point.benchmark_close,
+        }
+        for point in history
+    ]
+    return build_correlation_from_rows(rows, frequency)
+
+
+def build_reference_correlation_for_series(history, reference_series: MarketSeries, reference_profile: str) -> dict:
+    aligned = align_reference_points(
+        [{"date": point.price_date} for point in history],
+        reference_series.points,
+    )
+    rows = [
+        {
+            "date": point.price_date,
+            "stock_close": point.close_price,
+            "reference_close": aligned.get(point.price_date),
+        }
+        for point in history
+    ]
+    return build_correlation_from_rows(rows, infer_reference_frequency_from_profile(reference_profile))
 
 
 def filter_history_window(history, start_date: date | None = None, end_date: date | None = None):
@@ -1023,12 +1516,61 @@ def build_candlestick_metrics(history) -> dict:
     }
 
 
+def build_suggested_reference_cards(history, position: EquityPosition, reference_cache: dict) -> list[dict]:
+    suggestions = []
+    selected_key = (
+        position.reference_profile,
+        position.benchmark_symbol,
+        position.benchmark_name,
+    )
+    for reference in build_reference_suggestions_for_equity(position.company_name, position.ticker):
+        cache_key = (
+            reference["reference_profile"],
+            reference["benchmark_symbol"],
+            reference["benchmark_name"],
+        )
+        correlation = {
+            "frequency": infer_reference_frequency_from_profile(reference["reference_profile"]),
+            "coefficient": None,
+            "label": "Sin datos",
+            "observations_count": 0,
+        }
+        try:
+            cached_value = reference_cache.get(cache_key)
+            if cached_value is None:
+                cached_value = fetch_reference_series_for_choice(
+                    reference["reference_profile"],
+                    benchmark_symbol=reference["benchmark_symbol"],
+                    benchmark_name=reference["benchmark_name"],
+                )
+                reference_cache[cache_key] = cached_value
+            if isinstance(cached_value, Exception):
+                raise cached_value
+            correlation = build_reference_correlation_for_series(
+                history,
+                cached_value,
+                reference["reference_profile"],
+            )
+        except Exception as exc:
+            reference_cache[cache_key] = exc
+
+        suggestions.append(
+            {
+                **reference,
+                "is_selected": cache_key == selected_key,
+                "correlation": correlation,
+            }
+        )
+    return suggestions
+
+
 def build_equity_history_cards(
     positions,
     selected_start_date: date | None = None,
     selected_end_date: date | None = None,
 ) -> list[dict]:
     cards = []
+    reference_cache: dict = {}
     for position in positions:
         history = list(position.price_history.order_by("price_date"))
         if not history:
@@ -1036,6 +1578,7 @@ def build_equity_history_cards(
                 {
                     "position": position,
                     "has_history": False,
+                    "suggested_references": [],
                 }
             )
             continue
@@ -1109,6 +1652,7 @@ def build_equity_history_cards(
                 "maintenance_drag_pct": maintenance_drag_pct,
                 "price_vs_cost_pct": percentage_change(position.current_price_per_share, position.average_cost_per_share),
                 "correlation": correlation,
+                "suggested_references": build_suggested_reference_cards(history, position, reference_cache),
             }
         )
     return cards

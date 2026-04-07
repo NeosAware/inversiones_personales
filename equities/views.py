@@ -14,6 +14,7 @@ from .services import (
     EquityDocumentImportError,
     build_equity_history_cards,
     extract_equity_position_prefill,
+    get_equity_company_catalog,
     sync_all_equities_market_data,
 )
 
@@ -76,6 +77,7 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         context["position_form"] = kwargs.get("position_form", EquityPositionForm())
         context["document_form"] = kwargs.get("document_form", EquityDocumentImportForm())
         context["prefill_source_filename"] = kwargs.get("prefill_source_filename")
+        context["equity_company_catalog"] = get_equity_company_catalog()
         return context
 
     def post(self, request, *args, **kwargs):
