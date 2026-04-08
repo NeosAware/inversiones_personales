@@ -1,3 +1,4 @@
+from calendar import monthrange
 from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
@@ -242,6 +243,42 @@ class EquitiesServicesTests(TestCase):
         self.assertIsNotNone(projection["quarterly_path"][0]["projected_date"])
         self.assertIn("IBEX 35", projection["explanation"])
         self.assertTrue(cards[0]["projection_line"])
+
+    def test_history_cards_include_projection_backtest_accuracy(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola S.A.",
+            shares=Decimal("15"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+        )
+
+        stock_price = Decimal("10.00")
+        benchmark_price = Decimal("100.00")
+        for index in range(24):
+            year = 2024 + (index // 12)
+            month = (index % 12) + 1
+            month_end = monthrange(year, month)[1]
+            stock_price = (stock_price * Decimal("1.02")).quantize(Decimal("0.0001"))
+            benchmark_price = (benchmark_price * Decimal("1.01")).quantize(Decimal("0.0001"))
+            position.price_history.create(
+                price_date=date(year, month, month_end),
+                close_price=stock_price,
+                benchmark_close=benchmark_price,
+            )
+
+        cards = build_equity_history_cards([position])
+
+        backtest = cards[0]["projection_backtest"]
+        self.assertTrue(backtest["available"])
+        self.assertGreaterEqual(backtest["comparisons_count"], 5)
+        self.assertLess(backtest["mean_absolute_error_pct"], Decimal("12.00"))
+        self.assertGreater(backtest["direction_hit_rate_pct"], Decimal("80.00"))
+        self.assertTrue(backtest["rows"])
 
     def test_watchlist_positions_do_not_count_into_portfolio_totals(self):
         EquityPosition.objects.create(

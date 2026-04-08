@@ -112,9 +112,69 @@
         {{ card.projection.explanation }}
         {{ card.projection.confidence_note }}
       </div>
-    {% else %}
-      <div class="message info" style="margin-top:14px;">
-        Todavia no hay base suficiente para proponer una evolucion a 12 meses con la referencia activa.
+
+      {% if card.projection_backtest.available %}
+        <div class="equity-card-grid" style="margin-top:18px;">
+          <div class="equity-stat">
+            <div class="equity-stat-label">Precision</div>
+            <div class="equity-stat-value" style="font-size:20px;">{{ card.projection_backtest.precision_label }}</div>
+          </div>
+          <div class="equity-stat">
+            <div class="equity-stat-label">Error medio</div>
+            <div class="equity-stat-value">{{ card.projection_backtest.mean_absolute_error_pct|floatformat:2 }} %</div>
+          </div>
+          <div class="equity-stat">
+            <div class="equity-stat-label">Acierto direccion</div>
+            <div class="equity-stat-value">{{ card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %</div>
+          </div>
+          <div class="equity-stat">
+            <div class="equity-stat-label">Dentro del rango</div>
+            <div class="equity-stat-value">{{ card.projection_backtest.in_range_rate_pct|floatformat:0 }} %</div>
+          </div>
+        </div>
+
+        <div class="equity-projection-note">
+          Historico retroactivo del modelo con {{ card.projection_backtest.comparisons_count }} comparativas:
+          cada fila muestra lo que la app habria proyectado a 12 meses con la informacion disponible en esa fecha
+          y lo compara con el resultado real posterior.
+        </div>
+
+        <table style="margin-top:16px;">
+          <thead>
+            <tr>
+              <th>Fecha prevision</th>
+              <th>Fecha real</th>
+              <th>Confianza</th>
+              <th>Rent. prevista</th>
+              <th>Rent. real</th>
+              <th>Error abs.</th>
+              <th>Direccion</th>
+              <th>Rango</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in card.projection_backtest.rows %}
+              <tr>
+                <td>{{ row.forecast_date|date:"Y-m-d" }}</td>
+                <td>{{ row.target_date|date:"Y-m-d" }}</td>
+                <td>{{ row.confidence_label }}</td>
+                <td class="{% if row.forecast_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.forecast_return_pct|floatformat:2 }} %</td>
+                <td class="{% if row.actual_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.actual_return_pct|floatformat:2 }} %</td>
+                <td>{{ row.absolute_error_pct|floatformat:2 }} %</td>
+                <td>{% if row.direction_hit %}Acertada{% else %}Fallida{% endif %}</td>
+                <td>{% if row.in_range %}Dentro{% else %}Fuera{% endif %}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="equity-projection-note">
+          Todavia no hay suficiente historico para comparar previsiones antiguas con resultados reales a 12 meses.
+        </div>
+      {% endif %}
+  {% else %}
+    <div class="message info" style="margin-top:14px;">
+      Todavia no hay base suficiente para proponer una evolucion a 12 meses con la referencia activa.
       </div>
     {% endif %}
 

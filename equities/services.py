@@ -1621,6 +1621,12 @@ def build_period_snapshot(history, label: str, start_date: date | None = None, e
     }
 
 
+def quantize_decimal(value: Decimal | None, places: str = "0.01") -> Decimal | None:
+    if value is None:
+        return None
+    return value.quantize(Decimal(places))
+
+
 def clamp_decimal(value: Decimal, lower: Decimal, upper: Decimal) -> Decimal:
     return max(lower, min(upper, value))
 
@@ -1813,6 +1819,121 @@ def build_one_year_projection(history, position: EquityPosition, correlation: di
         "coefficient": coefficient,
         "reference_label": position.analysis_reference_label,
         "explanation": explanation,
+    }
+
+
+def find_closest_history_point(history, target_date: date, tolerance_days: int = 20):
+    candidates = [point for point in history if abs((point.price_date - target_date).days) <= tolerance_days]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda point: (abs((point.price_date - target_date).days), point.price_date))
+
+
+def build_projection_backtest(history, position: EquityPosition, max_rows: int = 8) -> dict:
+    monthly_points = collapse_history_to_frequency(history, "monthly")
+    if len(monthly_points) < 20:
+        return {
+            "available": False,
+            "comparisons_count": 0,
+            "rows": [],
+            "mean_absolute_error_pct": None,
+            "direction_hit_rate_pct": None,
+            "in_range_rate_pct": None,
+            "precision_label": "Sin historico suficiente",
+        }
+
+    rows = []
+    for anchor_point in monthly_points:
+        anchor_date = anchor_point.price_date
+        if anchor_date - monthly_points[0].price_date < timedelta(days=182):
+            continue
+
+        future_point = find_closest_history_point(history, anchor_date + timedelta(days=365))
+        if future_point is None or future_point.price_date <= anchor_date:
+            continue
+
+        visible_history = [point for point in history if point.price_date <= anchor_date]
+        six_month_snapshot = build_period_snapshot(
+            visible_history,
+            "6M",
+            start_date=anchor_date - timedelta(days=182),
+            end_date=anchor_date,
+        )
+        if not six_month_snapshot["available"]:
+            continue
+
+        correlation = build_reference_correlation(visible_history, position)
+        projection = build_one_year_projection(visible_history, position, correlation, six_month_snapshot)
+        if not projection.get("available"):
+            continue
+
+        actual_return_pct = percentage_change(future_point.close_price, anchor_point.close_price)
+        if actual_return_pct is None:
+            continue
+
+        forecast_return_pct = projection["base_return_pct"]
+        absolute_error_pct = abs(forecast_return_pct - actual_return_pct)
+        direction_hit = (
+            (forecast_return_pct >= 0 and actual_return_pct >= 0)
+            or (forecast_return_pct < 0 and actual_return_pct < 0)
+        )
+        in_range = False
+        if projection.get("low_return_pct") is not None and projection.get("high_return_pct") is not None:
+            in_range = projection["low_return_pct"] <= actual_return_pct <= projection["high_return_pct"]
+
+        rows.append(
+            {
+                "forecast_date": anchor_date,
+                "target_date": future_point.price_date,
+                "forecast_return_pct": quantize_decimal(forecast_return_pct),
+                "actual_return_pct": quantize_decimal(actual_return_pct),
+                "absolute_error_pct": quantize_decimal(absolute_error_pct),
+                "direction_hit": direction_hit,
+                "in_range": in_range,
+                "forecast_price": quantize_decimal(projection.get("projected_price"), "0.0001"),
+                "actual_price": quantize_decimal(future_point.close_price, "0.0001"),
+                "confidence_label": projection.get("confidence_label"),
+            }
+        )
+
+    if not rows:
+        return {
+            "available": False,
+            "comparisons_count": 0,
+            "rows": [],
+            "mean_absolute_error_pct": None,
+            "direction_hit_rate_pct": None,
+            "in_range_rate_pct": None,
+            "precision_label": "Sin historico suficiente",
+        }
+
+    recent_rows = list(reversed(rows[-max_rows:]))
+    comparisons_count = len(rows)
+    mean_absolute_error_pct = quantize_decimal(
+        sum((row["absolute_error_pct"] for row in rows), ZERO) / Decimal(comparisons_count)
+    )
+    direction_hit_rate_pct = quantize_decimal(
+        Decimal(sum(1 for row in rows if row["direction_hit"])) * Decimal("100") / Decimal(comparisons_count)
+    )
+    in_range_rate_pct = quantize_decimal(
+        Decimal(sum(1 for row in rows if row["in_range"])) * Decimal("100") / Decimal(comparisons_count)
+    )
+
+    if mean_absolute_error_pct <= Decimal("8") and direction_hit_rate_pct >= Decimal("70"):
+        precision_label = "Alta"
+    elif mean_absolute_error_pct <= Decimal("15") and direction_hit_rate_pct >= Decimal("55"):
+        precision_label = "Media"
+    else:
+        precision_label = "Baja"
+
+    return {
+        "available": True,
+        "comparisons_count": comparisons_count,
+        "rows": recent_rows,
+        "mean_absolute_error_pct": mean_absolute_error_pct,
+        "direction_hit_rate_pct": direction_hit_rate_pct,
+        "in_range_rate_pct": in_range_rate_pct,
+        "precision_label": precision_label,
     }
 
 
@@ -2036,6 +2157,7 @@ def build_equity_history_cards(
         correlation = build_reference_correlation(history, position)
         six_month_snapshot = next((snapshot for snapshot in period_snapshots if snapshot["label"] == "6M"), {"available": False})
         projection = build_one_year_projection(history, position, correlation, six_month_snapshot)
+        projection_backtest = build_projection_backtest(history, position)
         stock_series = [{"date": point.price_date, "value": point.close_price} for point in history]
         benchmark_series = [
             {"date": point.price_date, "value": point.benchmark_close}
@@ -2088,6 +2210,7 @@ def build_equity_history_cards(
                 "price_vs_cost_pct": percentage_change(position.current_price_per_share, position.average_cost_per_share),
                 "correlation": correlation,
                 "projection": projection,
+                "projection_backtest": projection_backtest,
                 "suggested_references": build_suggested_reference_cards(history, position, reference_cache),
             }
         )
