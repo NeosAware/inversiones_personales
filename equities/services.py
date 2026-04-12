@@ -34,6 +34,9 @@ MONTHLY_CORRELATION_WINDOW = 120
 QUARTERLY_CORRELATION_WINDOW = 40
 MONTHLY_RECENT_WINDOW = 12
 QUARTERLY_RECENT_WINDOW = 4
+OPTIMIZER_MAX_ENTRY_DRAG_PCT = Decimal("1.00")
+OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT = Decimal("2.00")
+OPTIMIZER_MIN_GAIN_TO_ROUNDTRIP_MULTIPLE = Decimal("1.80")
 DEFAULT_BENCHMARK_SYMBOL = "^IBEX"
 DEFAULT_BENCHMARK_NAME = "IBEX 35"
 EURIBOR_REFERENCE_SYMBOL = "ECB:M.S0.N.C_EUR1Y.E"
@@ -4373,6 +4376,84 @@ def build_optimizer_allocation_scenario(candidate: dict, allocated_amount: Decim
     }
 
 
+def review_optimizer_ticket_efficiency(candidate: dict, allocated_amount: Decimal, scenario: dict) -> dict:
+    if allocated_amount <= ZERO:
+        return {
+            "keep": False,
+            "reason": "sin_asignacion",
+            "entry_drag_pct": None,
+            "roundtrip_drag_pct": None,
+            "gain_to_roundtrip_multiple": None,
+        }
+
+    purchase_total_cost = scenario.get("purchase_total_cost", ZERO)
+    roundtrip_total_cost = scenario.get("roundtrip_total_cost", ZERO)
+    projected_gain_amount = scenario.get("projected_gain_amount", ZERO)
+    entry_drag_pct = (
+        (purchase_total_cost / allocated_amount) * ONE_HUNDRED
+        if allocated_amount and purchase_total_cost > ZERO
+        else ZERO
+    )
+    roundtrip_drag_pct = (
+        (roundtrip_total_cost / allocated_amount) * ONE_HUNDRED
+        if allocated_amount and roundtrip_total_cost > ZERO
+        else ZERO
+    )
+    gain_to_roundtrip_multiple = (
+        (projected_gain_amount / roundtrip_total_cost)
+        if roundtrip_total_cost > ZERO and projected_gain_amount is not None
+        else None
+    )
+
+    if purchase_total_cost <= ZERO and roundtrip_total_cost <= ZERO:
+        return {
+            "keep": True,
+            "reason": "",
+            "entry_drag_pct": entry_drag_pct,
+            "roundtrip_drag_pct": roundtrip_drag_pct,
+            "gain_to_roundtrip_multiple": gain_to_roundtrip_multiple,
+        }
+
+    if entry_drag_pct > OPTIMIZER_MAX_ENTRY_DRAG_PCT:
+        return {
+            "keep": False,
+            "reason": "entry_drag",
+            "entry_drag_pct": entry_drag_pct,
+            "roundtrip_drag_pct": roundtrip_drag_pct,
+            "gain_to_roundtrip_multiple": gain_to_roundtrip_multiple,
+        }
+
+    if roundtrip_drag_pct > OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT:
+        return {
+            "keep": False,
+            "reason": "roundtrip_drag",
+            "entry_drag_pct": entry_drag_pct,
+            "roundtrip_drag_pct": roundtrip_drag_pct,
+            "gain_to_roundtrip_multiple": gain_to_roundtrip_multiple,
+        }
+
+    if (
+        gain_to_roundtrip_multiple is not None
+        and projected_gain_amount > ZERO
+        and gain_to_roundtrip_multiple < OPTIMIZER_MIN_GAIN_TO_ROUNDTRIP_MULTIPLE
+    ):
+        return {
+            "keep": False,
+            "reason": "gain_vs_cost",
+            "entry_drag_pct": entry_drag_pct,
+            "roundtrip_drag_pct": roundtrip_drag_pct,
+            "gain_to_roundtrip_multiple": gain_to_roundtrip_multiple,
+        }
+
+    return {
+        "keep": True,
+        "reason": "",
+        "entry_drag_pct": entry_drag_pct,
+        "roundtrip_drag_pct": roundtrip_drag_pct,
+        "gain_to_roundtrip_multiple": gain_to_roundtrip_multiple,
+    }
+
+
 def build_equity_allocation_plan(
     history_cards: list[dict],
     total_investment: Decimal,
@@ -4417,16 +4498,77 @@ def build_equity_allocation_plan(
         reverse=True,
     )
 
-    allocated_amounts, remaining_amount = distribute_optimizer_amounts(
-        ranked_candidates,
-        total_investment,
-        company_cap_amount,
-    )
+    ticket_filtered_count = 0
+    ticket_filter_reasons = {"entry_drag": 0, "roundtrip_drag": 0, "gain_vs_cost": 0}
+    iteration_candidates = ranked_candidates
+    remaining_amount = total_investment
+    allocated_amounts = []
+    kept_scenarios = []
+    max_iterations = len(ranked_candidates) + 1
+
+    for _ in range(max_iterations):
+        allocated_amounts, remaining_amount = distribute_optimizer_amounts(
+            iteration_candidates,
+            total_investment,
+            company_cap_amount,
+        )
+        rejected_reviews = []
+        kept_scenarios = []
+        for index, (candidate, allocated_amount) in enumerate(zip(iteration_candidates, allocated_amounts)):
+            if allocated_amount <= ZERO:
+                kept_scenarios.append(None)
+                continue
+            scenario = build_optimizer_allocation_scenario(candidate, allocated_amount)
+            review = review_optimizer_ticket_efficiency(candidate, allocated_amount, scenario)
+            scenario["entry_drag_pct"] = quantize_decimal(review.get("entry_drag_pct")) or ZERO
+            scenario["roundtrip_drag_pct"] = quantize_decimal(review.get("roundtrip_drag_pct")) or ZERO
+            scenario["gain_to_roundtrip_multiple"] = quantize_decimal(review.get("gain_to_roundtrip_multiple")) if review.get("gain_to_roundtrip_multiple") is not None else None
+            if not review["keep"]:
+                rejected_reviews.append(
+                    {
+                        "index": index,
+                        "reason": review["reason"],
+                        "entry_drag_pct": review.get("entry_drag_pct") or ZERO,
+                        "roundtrip_drag_pct": review.get("roundtrip_drag_pct") or ZERO,
+                        "gain_to_roundtrip_multiple": review.get("gain_to_roundtrip_multiple"),
+                        "allocated_amount": allocated_amount,
+                    }
+                )
+                kept_scenarios.append(None)
+                continue
+            kept_scenarios.append(scenario)
+
+        if not rejected_reviews:
+            break
+        rejected_reviews.sort(
+            key=lambda item: (
+                item["roundtrip_drag_pct"],
+                item["entry_drag_pct"],
+                -(item["gain_to_roundtrip_multiple"] if item["gain_to_roundtrip_multiple"] is not None else Decimal("999")),
+                -item["allocated_amount"],
+            ),
+            reverse=True,
+        )
+        rejected_index = rejected_reviews[0]["index"]
+        rejected_reason = rejected_reviews[0]["reason"]
+        ticket_filtered_count += 1
+        if rejected_reason in ticket_filter_reasons:
+            ticket_filter_reasons[rejected_reason] += 1
+        iteration_candidates = [
+            candidate
+            for index, candidate in enumerate(iteration_candidates)
+            if index != rejected_index
+        ]
+        if not iteration_candidates:
+            break
+
+    ranked_candidates = iteration_candidates
     allocations = []
-    for rank, (candidate, allocated_amount) in enumerate(zip(ranked_candidates, allocated_amounts), start=1):
+    for rank, (candidate, allocated_amount, scenario) in enumerate(zip(ranked_candidates, allocated_amounts, kept_scenarios), start=1):
         if allocated_amount <= ZERO:
             continue
-        scenario = build_optimizer_allocation_scenario(candidate, allocated_amount)
+        if scenario is None:
+            scenario = build_optimizer_allocation_scenario(candidate, allocated_amount)
         allocations.append(
             {
                 "rank": rank,
@@ -4448,6 +4590,9 @@ def build_equity_allocation_plan(
                 "annual_cost_used": scenario["annual_cost_used"],
                 "roundtrip_total_cost": scenario["roundtrip_total_cost"],
                 "purchase_total_cost": scenario["purchase_total_cost"],
+                "entry_drag_pct": scenario.get("entry_drag_pct", ZERO),
+                "roundtrip_drag_pct": scenario.get("roundtrip_drag_pct", ZERO),
+                "gain_to_roundtrip_multiple": scenario.get("gain_to_roundtrip_multiple"),
                 "transaction_drag_pct": scenario["transaction_drag_pct"],
                 "net_income_yield_pct": scenario["net_income_yield_pct"],
                 "confidence_label": candidate["confidence_label"],
@@ -4511,10 +4656,24 @@ def build_equity_allocation_plan(
         )
     else:
         reserve_reason = ""
+    if ticket_filtered_count:
+        ticket_filter_note = (
+            "Se han descartado "
+            f"{ticket_filtered_count} propuesta(s) porque el coste fijo+variable por operacion se comia demasiado retorno esperado."
+        )
+    else:
+        ticket_filter_note = ""
+    reason = ""
+    if not allocations:
+        reason = (
+            ticket_filter_note
+            or "Con las tarifas actuales del broker, las compras que caben por peso maximo no compensan el coste fijo+variable por operacion."
+        )
 
     top_pick = allocations[0] if allocations else None
     return {
         "available": bool(allocations),
+        "reason": reason,
         "allocations": allocations,
         "total_investment": total_investment,
         "max_company_pct": max_company_pct,
@@ -4533,10 +4692,13 @@ def build_equity_allocation_plan(
         "owned_allocations_count": owned_allocations_count,
         "watchlist_allocations_count": watchlist_allocations_count,
         "ibex_allocations_count": ibex_allocations_count,
+        "ticket_filtered_count": ticket_filtered_count,
+        "ticket_filter_reasons": ticket_filter_reasons,
+        "ticket_filter_note": ticket_filter_note,
         "reserve_reason": reserve_reason,
         "top_pick": top_pick,
         "methodology_note": (
             "La optimizacion prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
-            "seguridad, fiabilidad del modelo, alertas de tendencia y riesgo historico de varios anos."
+            "seguridad, fiabilidad del modelo, alertas de tendencia, riesgo historico y eficiencia real del ticket de compra."
         ),
     }

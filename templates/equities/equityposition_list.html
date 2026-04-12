@@ -641,6 +641,7 @@
             </div>
             <div class="equity-compact-note" style="margin-top:16px;">
               {{ optimizer_plan.methodology_note }}
+              {% if optimizer_plan.ticket_filter_note %} {{ optimizer_plan.ticket_filter_note }}{% endif %}
               {% if ibex_universe_summary.available %} Se han evaluado {{ ibex_universe_summary.analyzed_count }} valores adicionales del IBEX.{% endif %}
               {% if optimizer_plan.top_pick %}
                 La mejor relacion actual entre beneficio esperado y seguridad es <strong>{{ optimizer_plan.top_pick.position.company_name }}</strong>.

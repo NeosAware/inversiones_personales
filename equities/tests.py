@@ -710,6 +710,66 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(allocation["low_return_pct"], Decimal("-3.79"))
         self.assertLess(allocation["net_projected_return_pct"], Decimal("10.50"))
 
+    def test_allocation_plan_discards_small_tickets_when_fixed_costs_are_too_high(self):
+        base_projection = {
+            "available": True,
+            "base_return_pct": Decimal("9.50"),
+            "price_return_pct": Decimal("7.40"),
+            "price_low_return_pct": Decimal("-4.50"),
+            "price_high_return_pct": Decimal("15.20"),
+            "projected_price": Decimal("11.7400"),
+            "confidence_label": "Alta",
+            "safety_score": Decimal("72.00"),
+            "gross_dividend_yield_pct": Decimal("3.80"),
+            "net_income_yield_pct": Decimal("3.20"),
+            "transaction_drag_pct": Decimal("1.50"),
+            "annualized_volatility_pct": Decimal("14.00"),
+            "positive_year_ratio_pct": Decimal("68.00"),
+            "years_covered": Decimal("10.00"),
+            "cycle_phase": "Expansion",
+            "current_drawdown_pct": Decimal("-3.50"),
+            "max_drawdown_pct": Decimal("-18.00"),
+        }
+        cards = []
+        for ticker in ("IBE", "ELE", "ENG"):
+            cards.append(
+                {
+                    "position": EquityPosition(
+                        position_kind=EquityPosition.PositionKind.WATCHLIST,
+                        broker="Banco Santander",
+                        trade_channel=EquityPosition.TradeChannel.OFFICE,
+                        ticker=ticker,
+                        quote_symbol=f"{ticker}.MC",
+                        company_name=ticker,
+                        reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                        benchmark_name="IBEX 35",
+                        benchmark_symbol="^IBEX",
+                        shares=Decimal("0"),
+                        average_cost_per_share=Decimal("0"),
+                        current_price_per_share=Decimal("11.00"),
+                        annual_maintenance_cost=Decimal("0"),
+                    ),
+                    "status_key": "ibex",
+                    "status_label": "Radar IBEX",
+                    "reference_label": "IBEX 35",
+                    "trade_alert": {"label": "Comprar", "tone": "buy", "note": ""},
+                    "projection_reliability": {
+                        "label": "Alta",
+                        "score": Decimal("80.00"),
+                    },
+                    "projection": dict(base_projection),
+                }
+            )
+
+        plan = build_equity_allocation_plan(cards, Decimal("3000"), Decimal("50"))
+
+        self.assertTrue(plan["available"])
+        self.assertEqual(len(plan["allocations"]), 2)
+        self.assertEqual(plan["ticket_filtered_count"], 1)
+        self.assertIn("coste fijo+variable", plan["ticket_filter_note"].lower())
+        self.assertTrue(all(item["purchase_total_cost"] == Decimal("13.00") for item in plan["allocations"]))
+        self.assertTrue(all(item["allocated_amount"] == Decimal("1500.00") for item in plan["allocations"]))
+
     def test_dashboard_can_extend_optimizer_to_full_ibex_universe(self):
         acerinox = find_equity_company_profile("Acerinox")
         acs = find_equity_company_profile("ACS")
