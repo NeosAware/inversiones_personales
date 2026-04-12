@@ -469,6 +469,18 @@ def normalize_company_lookup(value: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def build_security_lookup_keys(ticker: str = "", company_name: str = "", quote_symbol: str = "") -> set[str]:
+    return {
+        key
+        for key in {
+            normalize_company_lookup(ticker),
+            normalize_company_lookup(company_name),
+            normalize_company_lookup(quote_symbol),
+        }
+        if key
+    }
+
+
 def get_reference_preset(reference_key: str) -> dict:
     preset = REFERENCE_PRESETS.get(reference_key)
     return dict(preset) if preset else {}
@@ -1053,18 +1065,18 @@ def build_workbook_reference_playbook(company: dict, workbook_snapshot: dict, ca
 
 
 def find_history_card_for_workbook_company(company: dict, history_cards: list[dict]) -> dict | None:
-    lookup_keys = {
-        normalize_company_lookup(company.get("ticker")),
-        normalize_company_lookup(company.get("company_name")),
-        normalize_company_lookup(company.get("quote_symbol")),
-    }
+    lookup_keys = build_security_lookup_keys(
+        ticker=company.get("ticker", ""),
+        company_name=company.get("company_name", ""),
+        quote_symbol=company.get("quote_symbol", ""),
+    )
     for card in history_cards:
         position = card["position"]
-        position_keys = {
-            normalize_company_lookup(position.ticker),
-            normalize_company_lookup(position.company_name),
-            normalize_company_lookup(position.quote_symbol),
-        }
+        position_keys = build_security_lookup_keys(
+            ticker=position.ticker,
+            company_name=position.company_name,
+            quote_symbol=position.quote_symbol,
+        )
         if lookup_keys & position_keys:
             return card
     return None
@@ -2512,6 +2524,134 @@ def build_recent_monthly_stock_returns(history, months_back: int = 6) -> list[De
     return monthly_returns
 
 
+def decimal_linear_slope(values: list[Decimal]) -> Decimal | None:
+    filtered = [value for value in values if value is not None]
+    if len(filtered) < 2:
+        return None
+
+    xs = list(range(len(filtered)))
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(float(value) for value in filtered) / len(filtered)
+    numerator = sum((x - mean_x) * (float(value) - mean_y) for x, value in zip(xs, filtered))
+    denominator = sum((x - mean_x) ** 2 for x in xs)
+    if denominator <= 0:
+        return None
+    return Decimal(str(round(numerator / denominator, 4)))
+
+
+def consecutive_tail_count(values: list[Decimal], positive: bool) -> int:
+    streak = 0
+    for value in reversed(values):
+        if value is None:
+            continue
+        if positive and value > ZERO:
+            streak += 1
+            continue
+        if not positive and value < ZERO:
+            streak += 1
+            continue
+        break
+    return streak
+
+
+def build_relative_strength_trend(
+    history,
+    position: EquityPosition,
+    coefficient: Decimal | None,
+    periods_back: int = 8,
+) -> dict:
+    if not history:
+        return {
+            "available": False,
+            "label": "Sin tendencia relativa",
+            "periods_label": "periodos",
+        }
+
+    frequency = infer_reference_frequency(position)
+    periods_label = "meses" if frequency == "monthly" else "trimestres"
+    buffer_days = 35 if frequency == "monthly" else 95
+    latest_date = history[-1].price_date
+    recent_history = filter_history_window(
+        history,
+        start_date=latest_date - timedelta(days=buffer_days * (periods_back + 2)),
+        end_date=latest_date,
+    )
+    collapsed_history = collapse_history_to_frequency(recent_history, frequency)[-(periods_back + 1) :]
+
+    rows = []
+    for previous, current in zip(collapsed_history, collapsed_history[1:]):
+        stock_return_pct = percentage_change(current.close_price, previous.close_price)
+        reference_return_pct = percentage_change(current.benchmark_close, previous.benchmark_close)
+        if stock_return_pct is None or reference_return_pct is None:
+            continue
+        expected_return_pct = reference_return_pct * coefficient if coefficient is not None else reference_return_pct
+        relative_gap_pct = stock_return_pct - expected_return_pct
+        rows.append(
+            {
+                "start_date": previous.price_date,
+                "end_date": current.price_date,
+                "stock_return_pct": stock_return_pct,
+                "reference_return_pct": reference_return_pct,
+                "expected_return_pct": expected_return_pct,
+                "relative_gap_pct": relative_gap_pct,
+            }
+        )
+
+    if len(rows) < 3:
+        return {
+            "available": False,
+            "label": "Sin tendencia relativa",
+            "periods_label": periods_label,
+            "rows": rows,
+        }
+
+    gap_values = [row["relative_gap_pct"] for row in rows]
+    positive_streak = consecutive_tail_count(gap_values, positive=True)
+    negative_streak = consecutive_tail_count(gap_values, positive=False)
+    recent_gap_avg_pct = average_decimal(gap_values[-3:])
+    overall_gap_avg_pct = average_decimal(gap_values)
+    gap_slope_pct = decimal_linear_slope(gap_values)
+    stock_slope_pct = decimal_linear_slope([row["stock_return_pct"] for row in rows])
+    threshold = 4 if len(gap_values) >= 4 else len(gap_values)
+    prolonged_positive = (
+        positive_streak >= threshold
+        and (recent_gap_avg_pct or ZERO) > Decimal("0.35")
+        and (gap_slope_pct or ZERO) >= ZERO
+    )
+    prolonged_negative = (
+        negative_streak >= threshold
+        and (recent_gap_avg_pct or ZERO) < Decimal("-0.35")
+        and (gap_slope_pct or ZERO) <= ZERO
+    )
+
+    if prolonged_positive:
+        label = "Pendiente positiva prolongada"
+    elif prolonged_negative:
+        label = "Pendiente negativa prolongada"
+    elif (recent_gap_avg_pct or ZERO) > ZERO:
+        label = "Mejora moderada"
+    elif (recent_gap_avg_pct or ZERO) < ZERO:
+        label = "Debilitamiento moderado"
+    else:
+        label = "Sin sesgo claro"
+
+    return {
+        "available": True,
+        "label": label,
+        "periods_label": periods_label,
+        "rows": rows,
+        "periods_count": len(rows),
+        "positive_streak": positive_streak,
+        "negative_streak": negative_streak,
+        "recent_gap_avg_pct": recent_gap_avg_pct,
+        "overall_gap_avg_pct": overall_gap_avg_pct,
+        "gap_slope_pct": gap_slope_pct,
+        "stock_slope_pct": stock_slope_pct,
+        "prolonged_positive": prolonged_positive,
+        "prolonged_negative": prolonged_negative,
+    }
+
+
 def build_projection_confidence(
     coefficient: Decimal | None,
     observations_count: int,
@@ -3035,6 +3175,119 @@ def build_projection_reliability(projection: dict, backtest: dict) -> dict:
     }
 
 
+def build_trade_alert(
+    position: EquityPosition,
+    projection: dict,
+    correlation: dict,
+    reliability: dict,
+    relative_trend: dict,
+    six_month_snapshot: dict,
+    one_year_snapshot: dict,
+) -> dict:
+    base_payload = {
+        "label": "Vigilar",
+        "tone": "watch",
+        "score": ZERO,
+        "note": "No hay una pendiente prolongada lo bastante clara frente a la referencia como para activar compra o venta.",
+        "trend_label": relative_trend.get("label", "Sin tendencia relativa"),
+        "periods_label": relative_trend.get("periods_label", "periodos"),
+        "gap_slope_pct": relative_trend.get("gap_slope_pct"),
+        "recent_gap_avg_pct": relative_trend.get("recent_gap_avg_pct"),
+        "positive_streak": relative_trend.get("positive_streak", 0),
+        "negative_streak": relative_trend.get("negative_streak", 0),
+        "trigger_label": "Sin confirmacion prolongada",
+    }
+    if not projection.get("available"):
+        base_payload["note"] = "Todavia no hay suficiente historico para activar una alerta operativa."
+        return base_payload
+
+    reliability_score = reliability.get("score") or Decimal("40.00")
+    safety_score = projection.get("safety_score") or Decimal("55.00")
+    projected_return_pct = projection.get("base_return_pct") or ZERO
+    one_year_alpha_pct = one_year_snapshot.get("alpha_pct") if one_year_snapshot.get("available") else None
+    six_month_alpha_pct = six_month_snapshot.get("alpha_pct") if six_month_snapshot.get("available") else None
+    trade_score = ZERO
+
+    if relative_trend.get("prolonged_positive"):
+        trade_score += Decimal("4.00")
+    elif relative_trend.get("prolonged_negative"):
+        trade_score -= Decimal("4.00")
+
+    recent_gap_avg_pct = relative_trend.get("recent_gap_avg_pct")
+    if recent_gap_avg_pct is not None:
+        trade_score += clamp_decimal(recent_gap_avg_pct * Decimal("0.40"), Decimal("-2.00"), Decimal("2.00"))
+
+    gap_slope_pct = relative_trend.get("gap_slope_pct")
+    if gap_slope_pct is not None:
+        trade_score += clamp_decimal(gap_slope_pct * Decimal("2.50"), Decimal("-1.50"), Decimal("1.50"))
+
+    alpha_signal_pct = one_year_alpha_pct if one_year_alpha_pct is not None else six_month_alpha_pct
+    if alpha_signal_pct is not None:
+        trade_score += clamp_decimal(alpha_signal_pct * Decimal("0.12"), Decimal("-1.50"), Decimal("1.50"))
+
+    trade_score += clamp_decimal((projected_return_pct - Decimal("4.00")) * Decimal("0.08"), Decimal("-1.50"), Decimal("1.50"))
+    trade_score += clamp_decimal((safety_score - Decimal("55.00")) * Decimal("0.03"), Decimal("-0.75"), Decimal("0.75"))
+
+    if reliability_score < Decimal("55.00"):
+        trade_score *= Decimal("0.78")
+
+    coefficient = correlation.get("coefficient")
+    if coefficient is not None and abs(coefficient) >= Decimal("0.35"):
+        trade_score += Decimal("0.35") if trade_score > ZERO else Decimal("-0.35") if trade_score < ZERO else ZERO
+
+    positive_streak = relative_trend.get("positive_streak", 0)
+    negative_streak = relative_trend.get("negative_streak", 0)
+    periods_label = relative_trend.get("periods_label", "periodos")
+    trend_label = relative_trend.get("label", "Sin tendencia relativa")
+
+    if trade_score >= Decimal("3.20"):
+        note = (
+            f"La accion encadena {positive_streak} {periods_label} superando su referencia ajustada por coeficiente. "
+            f"La pendiente relativa es positiva y el retorno neto 12M sigue apoyando compras."
+        )
+        if position.is_owned:
+            note += " Si ya esta en cartera, la lectura es compatible con mantener o ampliar."
+        return {
+            **base_payload,
+            "label": "Comprar",
+            "tone": "buy",
+            "score": quantize_decimal(trade_score) or ZERO,
+            "note": note,
+            "trend_label": trend_label,
+            "trigger_label": f"{positive_streak} {periods_label} con alpha positiva",
+        }
+
+    if trade_score <= Decimal("-3.20"):
+        note = (
+            f"La accion encadena {negative_streak} {periods_label} perdiendo fuerza frente a su referencia ajustada por coeficiente. "
+            f"La pendiente relativa es negativa y la proyeccion neta se deteriora."
+        )
+        if position.is_owned:
+            note += " Conviene revisar venta total o parcial."
+        return {
+            **base_payload,
+            "label": "Vender",
+            "tone": "sell",
+            "score": quantize_decimal(trade_score) or ZERO,
+            "note": note,
+            "trend_label": trend_label,
+            "trigger_label": f"{negative_streak} {periods_label} con pendiente negativa",
+        }
+
+    note = base_payload["note"]
+    if recent_gap_avg_pct is not None:
+        direction = "mejorando" if recent_gap_avg_pct > ZERO else "debilitandose" if recent_gap_avg_pct < ZERO else "sin cambio"
+        note = (
+            f"La lectura relativa esta {direction}, pero todavia no acumula suficiente persistencia para activar compra o venta."
+        )
+    return {
+        **base_payload,
+        "score": quantize_decimal(trade_score) or ZERO,
+        "note": note,
+        "trend_label": trend_label,
+    }
+
+
 def build_decision_action_label(
     position: EquityPosition,
     projected_return_pct: Decimal | None,
@@ -3055,6 +3308,7 @@ def build_decision_action_label(
 
 def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
     rows = []
+    status_order = {"owned": 0, "watchlist": 1, "ibex": 2, "guide": 3}
     for card in history_cards:
         position = card["position"]
         projection = card.get("projection", {})
@@ -3063,14 +3317,15 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
         reliability = card.get("projection_reliability", {"label": "Baja", "score": Decimal("40.00")})
         best_candidate = card.get("reference_playbook", {}).get("best_candidate")
         projected_return_pct = projection.get("base_return_pct")
+        trade_alert = card.get("trade_alert", {})
         rows.append(
             {
                 "position": position,
-                "status_key": "owned" if position.is_owned else "watchlist",
-                "status_label": position.get_position_kind_display(),
+                "status_key": card.get("status_key") or ("owned" if position.is_owned else "watchlist"),
+                "status_label": card.get("status_label") or position.get_position_kind_display(),
                 "company_name": position.company_name,
                 "ticker": position.ticker,
-                "detail_anchor": f"stock-{position.id}",
+                "detail_anchor": card.get("detail_anchor") or "",
                 "reference_label": card.get("reference_label"),
                 "best_reference_label": best_candidate.get("name") if best_candidate else card.get("reference_label"),
                 "correlation": card.get("correlation", {}).get("coefficient"),
@@ -3084,6 +3339,11 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
                 "benefit_risk_ratio": projection.get("benefit_risk_ratio"),
                 "cycle_phase": projection.get("cycle_phase"),
                 "decision_score": projection.get("decision_score"),
+                "trade_alert_label": trade_alert.get("label", "Vigilar"),
+                "trade_alert_tone": trade_alert.get("tone", "watch"),
+                "trade_alert_note": trade_alert.get("note", ""),
+                "trade_alert_score": trade_alert.get("score", ZERO),
+                "trade_alert_trigger": trade_alert.get("trigger_label", ""),
                 "action_label": build_decision_action_label(
                     position,
                     projected_return_pct,
@@ -3095,8 +3355,9 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
 
     rows.sort(
         key=lambda item: (
-            0 if item["status_key"] == "owned" else 1,
+            status_order.get(item["status_key"], 9),
             -(item["decision_score"] if item["decision_score"] is not None else Decimal("-9999")),
+            -(item["trade_alert_score"] if item["trade_alert_score"] is not None else Decimal("-9999")),
             item["company_name"],
         )
     )
@@ -3274,142 +3535,429 @@ def build_suggested_reference_cards(history, position: EquityPosition, reference
     return suggestions
 
 
+def build_equity_history_card(
+    position: EquityPosition,
+    history,
+    reference_cache: dict,
+    selected_start_date: date | None = None,
+    selected_end_date: date | None = None,
+    status_key: str | None = None,
+    status_label: str | None = None,
+    detail_anchor: str | None = None,
+) -> dict:
+    resolved_status_key = status_key or ("owned" if position.is_owned else "watchlist")
+    resolved_status_label = status_label or position.get_position_kind_display()
+    resolved_detail_anchor = detail_anchor if detail_anchor is not None else (f"stock-{position.id}" if position.id else "")
+
+    if not history:
+        return {
+            "position": position,
+            "status_key": resolved_status_key,
+            "status_label": resolved_status_label,
+            "detail_anchor": resolved_detail_anchor,
+            "has_history": False,
+            "projection": {"available": False},
+            "projection_backtest": {"available": False, "monthly_chart": {"available": False}},
+            "projection_reliability": {"label": "Baja", "score": Decimal("40.00")},
+            "trade_alert": {
+                "label": "Vigilar",
+                "tone": "watch",
+                "score": ZERO,
+                "note": "Todavia no hay historico suficiente para activar una alerta.",
+                "trend_label": "Sin tendencia relativa",
+                "trigger_label": "Sin historico suficiente",
+            },
+            "reference_playbook": {"available": False, "candidates": []},
+            "suggested_references": [],
+        }
+
+    first_price = history[0].close_price
+    first_benchmark = next((point.benchmark_close for point in history if point.benchmark_close is not None), None)
+    latest_point = history[-1]
+    if selected_start_date or selected_end_date:
+        selected_period = build_period_snapshot(
+            history,
+            "Periodo elegido",
+            start_date=selected_start_date,
+            end_date=selected_end_date,
+        )
+    else:
+        selected_period = {"available": False}
+    if not selected_period["available"] and latest_point.price_date:
+        selected_period = build_period_snapshot(
+            history,
+            "1Y",
+            start_date=latest_point.price_date - timedelta(days=365),
+            end_date=latest_point.price_date,
+        )
+
+    period_snapshots = [
+        build_period_snapshot(history, "1Y", start_date=latest_point.price_date - timedelta(days=365), end_date=latest_point.price_date),
+        build_period_snapshot(history, "3Y", start_date=latest_point.price_date - timedelta(days=365 * 3), end_date=latest_point.price_date),
+        build_period_snapshot(history, "5Y", start_date=latest_point.price_date - timedelta(days=365 * 5), end_date=latest_point.price_date),
+        build_period_snapshot(history, "10Y", start_date=latest_point.price_date - timedelta(days=LONG_ANALYSIS_DAYS), end_date=latest_point.price_date),
+    ]
+    one_year_snapshot = next((snapshot for snapshot in period_snapshots if snapshot["label"] == "1Y"), {"available": False})
+    correlation = build_reference_correlation(history, position)
+    six_month_snapshot = build_period_snapshot(
+        history,
+        "6M",
+        start_date=latest_point.price_date - timedelta(days=182),
+        end_date=latest_point.price_date,
+    )
+    cycle_metrics = build_cycle_metrics(history)
+    projection = build_one_year_projection(history, position, correlation, six_month_snapshot, cycle_metrics=cycle_metrics)
+    projection_backtest = build_projection_backtest(history, position)
+    projection_reliability = (
+        build_projection_reliability(projection, projection_backtest)
+        if projection.get("available")
+        else {"label": "Baja", "score": Decimal("40.00")}
+    )
+    relative_trend = build_relative_strength_trend(history, position, correlation.get("coefficient"))
+    trade_alert = build_trade_alert(
+        position,
+        projection,
+        correlation,
+        projection_reliability,
+        relative_trend,
+        six_month_snapshot,
+        one_year_snapshot,
+    )
+    stock_series = [{"date": point.price_date, "value": point.close_price} for point in history]
+    benchmark_series = [
+        {"date": point.price_date, "value": point.benchmark_close}
+        for point in history
+        if point.benchmark_close is not None
+    ]
+    projection_series = []
+    if projection.get("available"):
+        projection_series = [{"date": latest_point.price_date, "value": latest_point.close_price}]
+        projection_series.extend(
+            {
+                "date": step["projected_date"],
+                "value": step["projected_price"],
+            }
+            for step in projection.get("quarterly_path", [])
+            if step.get("projected_date") and step.get("projected_price") is not None
+        )
+    dual_axis_chart = build_dual_axis_chart(stock_series, benchmark_series, projection_points=projection_series)
+    maintenance_drag_pct = (
+        (position.recurring_cost_used / position.invested_amount) * Decimal("100")
+        if position.invested_amount
+        else ZERO
+    )
+    broker_costs = {
+        **position.estimated_broker_costs,
+        "annual_cost_used": position.recurring_cost_used,
+        "annual_cost_source": position.recurring_cost_source,
+        "net_dividend_income": position.net_dividend_income,
+    }
+    suggested_references = build_suggested_reference_cards(history, position, reference_cache)
+
+    card = {
+        "position": position,
+        "status_key": resolved_status_key,
+        "status_label": resolved_status_label,
+        "detail_anchor": resolved_detail_anchor,
+        "has_history": True,
+        "points_count": len(history),
+        "start_date": history[0].price_date,
+        "end_date": history[-1].price_date,
+        "reference_label": position.analysis_reference_label,
+        "reference_profile_label": position.get_reference_profile_display(),
+        "stock_return_pct": ((history[-1].close_price / first_price) - 1) * Decimal("100") if first_price else ZERO,
+        "benchmark_return_pct": (
+            ((history[-1].benchmark_close / first_benchmark) - 1) * Decimal("100")
+            if first_benchmark and history[-1].benchmark_close
+            else None
+        ),
+        "stock_line": dual_axis_chart["stock_line"],
+        "benchmark_line": dual_axis_chart["reference_line"],
+        "projection_line": dual_axis_chart["projection_line"],
+        "dual_axis_chart": dual_axis_chart,
+        "period_snapshots": period_snapshots,
+        "selected_period": selected_period,
+        "net_unrealized_gain": position.unrealized_gain_after_costs,
+        "net_unrealized_return_pct": position.unrealized_return_pct,
+        "net_annual_income": position.net_annual_income,
+        "maintenance_drag_pct": maintenance_drag_pct,
+        "price_vs_cost_pct": percentage_change(position.current_price_per_share, position.average_cost_per_share),
+        "broker_costs": broker_costs,
+        "correlation": correlation,
+        "cycle_metrics": cycle_metrics,
+        "projection": projection,
+        "projection_backtest": projection_backtest,
+        "projection_reliability": projection_reliability,
+        "relative_trend": relative_trend,
+        "trade_alert": trade_alert,
+        "suggested_references": suggested_references,
+    }
+    card["reference_playbook"] = build_reference_playbook_from_card(card)
+    return card
+
+
 def build_equity_history_cards(
     positions,
     selected_start_date: date | None = None,
     selected_end_date: date | None = None,
+    reference_cache: dict | None = None,
 ) -> list[dict]:
     cards = []
-    reference_cache: dict = {}
+    reference_cache = reference_cache if reference_cache is not None else {}
     for position in positions:
         history = list(position.price_history.order_by("price_date"))
-        if not history:
-            cards.append(
-                {
-                    "position": position,
-                    "has_history": False,
-                    "projection": {"available": False},
-                    "suggested_references": [],
-                }
-            )
-            continue
-
-        first_price = history[0].close_price
-        first_benchmark = next((point.benchmark_close for point in history if point.benchmark_close is not None), None)
-        latest_point = history[-1]
-        if selected_start_date or selected_end_date:
-            selected_period = build_period_snapshot(
-                history,
-                "Periodo elegido",
-                start_date=selected_start_date,
-                end_date=selected_end_date,
-            )
-        else:
-            selected_period = {"available": False}
-        if not selected_period["available"] and latest_point.price_date:
-            selected_period = build_period_snapshot(
-                history,
-                "1Y",
-                start_date=latest_point.price_date - timedelta(days=365),
-                end_date=latest_point.price_date,
-            )
-
-        period_snapshots = [
-            build_period_snapshot(history, "1Y", start_date=latest_point.price_date - timedelta(days=365), end_date=latest_point.price_date),
-            build_period_snapshot(history, "3Y", start_date=latest_point.price_date - timedelta(days=365 * 3), end_date=latest_point.price_date),
-            build_period_snapshot(history, "5Y", start_date=latest_point.price_date - timedelta(days=365 * 5), end_date=latest_point.price_date),
-            build_period_snapshot(history, "10Y", start_date=latest_point.price_date - timedelta(days=LONG_ANALYSIS_DAYS), end_date=latest_point.price_date),
-        ]
-        correlation = build_reference_correlation(history, position)
-        six_month_snapshot = next((snapshot for snapshot in period_snapshots if snapshot["label"] == "6M"), {"available": False})
-        if not six_month_snapshot["available"]:
-            six_month_snapshot = build_period_snapshot(
-                history,
-                "6M",
-                start_date=latest_point.price_date - timedelta(days=182),
-                end_date=latest_point.price_date,
-            )
-        cycle_metrics = build_cycle_metrics(history)
-        projection = build_one_year_projection(history, position, correlation, six_month_snapshot, cycle_metrics=cycle_metrics)
-        projection_backtest = build_projection_backtest(history, position)
-        projection_reliability = build_projection_reliability(projection, projection_backtest) if projection.get("available") else {"label": "Baja", "score": Decimal("40.00")}
-        stock_series = [{"date": point.price_date, "value": point.close_price} for point in history]
-        benchmark_series = [
-            {"date": point.price_date, "value": point.benchmark_close}
-            for point in history
-            if point.benchmark_close is not None
-        ]
-        projection_series = []
-        if projection.get("available"):
-            projection_series = [{"date": latest_point.price_date, "value": latest_point.close_price}]
-            projection_series.extend(
-                {
-                    "date": step["projected_date"],
-                    "value": step["projected_price"],
-                }
-                for step in projection.get("quarterly_path", [])
-                if step.get("projected_date") and step.get("projected_price") is not None
-            )
-        dual_axis_chart = build_dual_axis_chart(stock_series, benchmark_series, projection_points=projection_series)
-        maintenance_drag_pct = (
-            (position.recurring_cost_used / position.invested_amount) * Decimal("100")
-            if position.invested_amount
-            else ZERO
-        )
-        broker_costs = {
-            **position.estimated_broker_costs,
-            "annual_cost_used": position.recurring_cost_used,
-            "annual_cost_source": position.recurring_cost_source,
-            "net_dividend_income": position.net_dividend_income,
-        }
-
         cards.append(
-            {
-                "position": position,
-                "has_history": True,
-                "points_count": len(history),
-                "start_date": history[0].price_date,
-                "end_date": history[-1].price_date,
-                "reference_label": position.analysis_reference_label,
-                "reference_profile_label": position.get_reference_profile_display(),
-                "stock_return_pct": ((history[-1].close_price / first_price) - 1) * Decimal("100") if first_price else ZERO,
-                "benchmark_return_pct": (
-                    ((history[-1].benchmark_close / first_benchmark) - 1) * Decimal("100")
-                    if first_benchmark and history[-1].benchmark_close
-                    else None
-                ),
-                "stock_line": dual_axis_chart["stock_line"],
-                "benchmark_line": dual_axis_chart["reference_line"],
-                "projection_line": dual_axis_chart["projection_line"],
-                "dual_axis_chart": dual_axis_chart,
-                "period_snapshots": period_snapshots,
-                "selected_period": selected_period,
-                "net_unrealized_gain": position.unrealized_gain_after_costs,
-                "net_unrealized_return_pct": position.unrealized_return_pct,
-                "net_annual_income": position.net_annual_income,
-                "maintenance_drag_pct": maintenance_drag_pct,
-                "price_vs_cost_pct": percentage_change(position.current_price_per_share, position.average_cost_per_share),
-                "broker_costs": broker_costs,
-                "correlation": correlation,
-                "cycle_metrics": cycle_metrics,
-                "projection": projection,
-                "projection_backtest": projection_backtest,
-                "projection_reliability": projection_reliability,
-                "suggested_references": build_suggested_reference_cards(history, position, reference_cache),
-            }
+            build_equity_history_card(
+                position,
+                history,
+                reference_cache,
+                selected_start_date=selected_start_date,
+                selected_end_date=selected_end_date,
+            )
         )
     return cards
+
+
+def resolve_analysis_broker_profile(positions) -> dict:
+    fallback = {
+        "broker": "Interactive Brokers",
+        "trade_channel": EquityPosition.TradeChannel.APP,
+        "ownership_category": AssetOwnershipCategory.JOINT,
+    }
+    candidates = [position for position in positions if position.is_owned] or list(positions)
+    if not candidates:
+        return {
+            **fallback,
+            "trade_channel_label": dict(EquityPosition.TradeChannel.choices).get(EquityPosition.TradeChannel.APP, "App"),
+        }
+
+    grouped: dict[tuple[str, str, str], dict] = {}
+    for position in candidates:
+        key = (position.broker, position.trade_channel, position.ownership_category)
+        summary = grouped.setdefault(key, {"count": 0, "current_value": ZERO})
+        summary["count"] += 1
+        summary["current_value"] += position.current_value if position.is_owned else ZERO
+
+    selected_key, _ = max(
+        grouped.items(),
+        key=lambda item: (item[1]["count"], item[1]["current_value"]),
+    )
+    broker, trade_channel, ownership_category = selected_key
+    return {
+        "broker": broker,
+        "trade_channel": trade_channel,
+        "ownership_category": ownership_category,
+        "trade_channel_label": dict(EquityPosition.TradeChannel.choices).get(trade_channel, trade_channel),
+    }
+
+
+def build_ibex_universe_companies(workbook_snapshot: dict) -> list[dict]:
+    merged: dict[str, dict] = {}
+    catalog = get_equity_company_catalog()
+    catalog_by_ticker = {clean_ticker(entry["ticker"]): entry for entry in catalog}
+
+    for company in workbook_snapshot.get("companies", []):
+        profile = (
+            catalog_by_ticker.get(clean_ticker(company.get("ticker", "")))
+            or find_equity_company_profile(company.get("ticker", ""))
+            or find_equity_company_profile(company.get("company_name", ""))
+        )
+        ticker = clean_ticker(company.get("ticker", "")) or (profile["ticker"] if profile else "")
+        if not ticker:
+            continue
+        merged[ticker] = {
+            **company,
+            "ticker": ticker,
+            "company_name": company.get("company_name") or (profile["company_name"] if profile else ticker),
+            "quote_symbol": company.get("quote_symbol") or (profile["quote_symbol"] if profile else ""),
+            "sector": company.get("sector") or (profile["sector_label"] if profile else ""),
+            "catalog_profile": profile,
+        }
+
+    for profile in catalog:
+        ticker = clean_ticker(profile["ticker"])
+        if ticker in merged:
+            merged[ticker].setdefault("quote_symbol", profile["quote_symbol"])
+            merged[ticker].setdefault("sector", profile["sector_label"])
+            merged[ticker].setdefault("company_name", profile["company_name"])
+            merged[ticker]["catalog_profile"] = merged[ticker].get("catalog_profile") or profile
+            continue
+        merged[ticker] = {
+            "ticker": ticker,
+            "company_name": profile["company_name"],
+            "quote_symbol": profile["quote_symbol"],
+            "sector": profile["sector_label"],
+            "dividend_yield": None,
+            "catalog_profile": profile,
+        }
+
+    return sorted(merged.values(), key=lambda item: item.get("company_name") or item.get("ticker") or "")
+
+
+def resolve_ibex_reference_choice(company: dict, workbook_snapshot: dict) -> tuple[dict, dict | None]:
+    workbook_playbook = None
+    if workbook_snapshot.get("available"):
+        workbook_playbook = build_workbook_reference_playbook(company, workbook_snapshot)
+        for candidate in workbook_playbook.get("candidates", []):
+            if candidate.get("supports_chart") and candidate.get("live_reference"):
+                return dict(candidate["live_reference"]), workbook_playbook
+
+    profile = company.get("catalog_profile") or find_equity_company_profile(company.get("ticker", ""))
+    if profile and profile.get("default_reference"):
+        return dict(profile["default_reference"]), workbook_playbook
+    return get_reference_preset("ibex_35"), workbook_playbook
+
+
+def build_virtual_ibex_position(
+    company: dict,
+    reference_choice: dict,
+    broker_profile: dict,
+    latest_price: Decimal,
+) -> EquityPosition:
+    dividend_yield_pct = company.get("dividend_yield") or ZERO
+    annual_dividend_income = (latest_price * dividend_yield_pct) / ONE_HUNDRED if dividend_yield_pct else ZERO
+    return EquityPosition(
+        position_kind=EquityPosition.PositionKind.WATCHLIST,
+        ownership_category=broker_profile["ownership_category"],
+        broker=broker_profile["broker"],
+        ticker=clean_ticker(company.get("ticker", "")),
+        quote_symbol=company.get("quote_symbol", ""),
+        reference_profile=reference_choice["reference_profile"],
+        benchmark_symbol=reference_choice["benchmark_symbol"],
+        benchmark_name=reference_choice["benchmark_name"],
+        company_name=company.get("company_name") or clean_ticker(company.get("ticker", "")),
+        trade_channel=broker_profile["trade_channel"],
+        shares=Decimal("1.0000"),
+        average_cost_per_share=latest_price,
+        current_price_per_share=latest_price,
+        annual_dividend_income=quantize_decimal(annual_dividend_income, "0.01") or ZERO,
+        annual_maintenance_cost=ZERO,
+        latest_price_date=None,
+        notes="Radar IBEX automatico",
+    )
+
+
+def build_ibex_universe_analysis(
+    tracked_history_cards: list[dict],
+    positions,
+    selected_start_date: date | None = None,
+    selected_end_date: date | None = None,
+    reference_cache: dict | None = None,
+    company_limit: int | None = None,
+) -> dict:
+    reference_cache = reference_cache if reference_cache is not None else {}
+    workbook_snapshot = load_ibex_reference_workbook_snapshot()
+    companies = build_ibex_universe_companies(workbook_snapshot)
+    tracked_keys = set()
+    for card in tracked_history_cards:
+        position = card["position"]
+        tracked_keys.update(
+            build_security_lookup_keys(
+                ticker=position.ticker,
+                company_name=position.company_name,
+                quote_symbol=position.quote_symbol,
+            )
+        )
+
+    broker_profile = resolve_analysis_broker_profile(positions)
+    cards = []
+    failures = []
+    target_count = 0
+
+    for company in companies:
+        company_keys = build_security_lookup_keys(
+            ticker=company.get("ticker", ""),
+            company_name=company.get("company_name", ""),
+            quote_symbol=company.get("quote_symbol", ""),
+        )
+        if tracked_keys & company_keys:
+            continue
+        if company_limit is not None and len(cards) >= company_limit:
+            break
+        quote_symbol = company.get("quote_symbol", "")
+        if not quote_symbol:
+            failures.append(f"{company.get('company_name') or company.get('ticker')}: sin simbolo de cotizacion")
+            continue
+
+        target_count += 1
+        try:
+            stock_series = fetch_market_series(quote_symbol)
+            reference_choice, workbook_playbook = resolve_ibex_reference_choice(company, workbook_snapshot)
+            reference_series = fetch_reference_series_for_choice(
+                reference_choice["reference_profile"],
+                benchmark_symbol=reference_choice["benchmark_symbol"],
+                benchmark_name=reference_choice["benchmark_name"],
+            )
+            benchmark_map = align_reference_points(stock_series.points, reference_series.points)
+            position = build_virtual_ibex_position(company, reference_choice, broker_profile, stock_series.latest_price)
+            position.latest_price_date = stock_series.latest_date
+            position.last_synced_at = django_timezone.now()
+            history = [
+                EquityPriceHistory(
+                    position=position,
+                    price_date=point["date"],
+                    open_price=point.get("open"),
+                    high_price=point.get("high"),
+                    low_price=point.get("low"),
+                    close_price=point["close"],
+                    benchmark_close=benchmark_map.get(point["date"]),
+                )
+                for point in stock_series.points
+            ]
+            card = build_equity_history_card(
+                position,
+                history,
+                reference_cache,
+                selected_start_date=selected_start_date,
+                selected_end_date=selected_end_date,
+                status_key="ibex",
+                status_label="Radar IBEX",
+                detail_anchor="",
+            )
+            if workbook_playbook and workbook_playbook.get("available"):
+                card["reference_playbook"] = build_workbook_reference_playbook(company, workbook_snapshot, card=card)
+            cards.append(card)
+        except Exception as exc:
+            failures.append(f"{company.get('company_name') or company.get('ticker')}: {exc}")
+
+    rows = build_equity_decision_rows(cards)
+    buy_alert_count = sum(1 for card in cards if card.get("trade_alert", {}).get("label") == "Comprar")
+    sell_alert_count = sum(1 for card in cards if card.get("trade_alert", {}).get("label") == "Vender")
+
+    return {
+        "cards": cards,
+        "rows": rows,
+        "summary": {
+            "available": bool(cards),
+            "workbook_loaded": workbook_snapshot.get("available", False),
+            "source_label": Path(workbook_snapshot["path"]).name if workbook_snapshot.get("path") else "Catalogo IBEX",
+            "analyzed_count": len(cards),
+            "target_count": target_count,
+            "buy_alert_count": buy_alert_count,
+            "sell_alert_count": sell_alert_count,
+            "watch_alert_count": max(len(cards) - buy_alert_count - sell_alert_count, 0),
+            "failed_count": len(failures),
+            "failures": failures[:8],
+            "broker_assumption": broker_profile["broker"],
+            "trade_channel_label": broker_profile["trade_channel_label"],
+            "top_pick": rows[0] if rows else None,
+        },
+    }
 
 
 def build_equity_analysis_dashboard(
     positions,
     selected_start_date: date | None = None,
     selected_end_date: date | None = None,
+    include_ibex_universe: bool = False,
+    ibex_company_limit: int | None = None,
 ) -> dict:
+    reference_cache: dict = {}
     history_cards = build_equity_history_cards(
         positions,
         selected_start_date=selected_start_date,
         selected_end_date=selected_end_date,
+        reference_cache=reference_cache,
     )
     owned_positions = [position for position in positions if position.is_owned]
     watchlist_positions = [position for position in positions if not position.is_owned]
@@ -3421,7 +3969,33 @@ def build_equity_analysis_dashboard(
     purchase_cost_total = sum((position.purchase_total_cost for position in owned_positions), ZERO)
     net_annual_income_total = sum((position.net_annual_income for position in owned_positions), ZERO)
     unrealized_gain_total = sum((position.unrealized_gain_after_costs for position in owned_positions), ZERO)
+    reference_guide = build_equity_reference_guide(history_cards)
     decision_rows = build_equity_decision_rows(history_cards)
+    ibex_universe = {
+        "cards": [],
+        "rows": [],
+        "summary": {
+            "available": False,
+            "analyzed_count": 0,
+            "buy_alert_count": 0,
+            "sell_alert_count": 0,
+            "watch_alert_count": 0,
+            "failed_count": 0,
+            "failures": [],
+            "broker_assumption": "",
+            "trade_channel_label": "",
+            "top_pick": None,
+        },
+    }
+    if include_ibex_universe:
+        ibex_universe = build_ibex_universe_analysis(
+            history_cards,
+            positions,
+            selected_start_date=selected_start_date,
+            selected_end_date=selected_end_date,
+            reference_cache=reference_cache,
+            company_limit=ibex_company_limit,
+        )
 
     weighted_periods = []
     for label in ("1Y", "3Y", "5Y", "10Y"):
@@ -3473,7 +4047,6 @@ def build_equity_analysis_dashboard(
     else:
         selected_period_label = "Ultimos 90 dias"
 
-    reference_guide = build_equity_reference_guide(history_cards)
     weighted_projected_return_12m = None
     weighted_safety_score = None
     owned_projection_cards = [
@@ -3518,7 +4091,7 @@ def build_equity_analysis_dashboard(
         "weighted_safety_score": weighted_safety_score,
         "selected_period_label": selected_period_label,
         "watchlist_latest_price_count": sum(1 for position in watchlist_positions if position.current_price_per_share),
-        "best_decision": decision_rows[0] if decision_rows else None,
+        "best_decision": decision_rows[0] if decision_rows else ibex_universe["summary"].get("top_pick"),
     }
 
     return {
@@ -3529,6 +4102,10 @@ def build_equity_analysis_dashboard(
         "owned_history_cards": [card for card in history_cards if card["position"].is_owned],
         "watchlist_history_cards": [card for card in history_cards if not card["position"].is_owned],
         "decision_rows": decision_rows,
+        "ibex_universe_cards": ibex_universe["cards"],
+        "ibex_universe_rows": ibex_universe["rows"],
+        "ibex_universe_summary": ibex_universe["summary"],
+        "optimizer_cards": [*history_cards, *ibex_universe["cards"]],
         "reference_guide_rows": reference_guide["rows"],
         "tracked_reference_rows": reference_guide["tracked_rows"],
         "reference_guide_summary": reference_guide["summary"],
@@ -3576,6 +4153,13 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
     net_income_yield_pct = projection.get("net_income_yield_pct") or ZERO
     gross_dividend_yield_pct = projection.get("gross_dividend_yield_pct") or ZERO
     transaction_drag_pct = projection.get("transaction_drag_pct") or ZERO
+    trade_alert = card.get("trade_alert") or {}
+    trade_alert_label = trade_alert.get("label") or "Vigilar"
+    trade_signal_adjustment = {
+        "Comprar": Decimal("1.75"),
+        "Vigilar": ZERO,
+        "Vender": Decimal("-4.50"),
+    }.get(trade_alert_label, ZERO)
 
     downside_return_pct = ZERO
     if low_return_pct is not None and low_return_pct < ZERO:
@@ -3609,12 +4193,14 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
     income_support_bonus_pct = clamp_decimal(net_income_yield_pct * Decimal("0.30"), Decimal("-2.00"), Decimal("3.00"))
     cost_efficiency_penalty_pct = clamp_decimal(transaction_drag_pct * Decimal("0.40"), ZERO, Decimal("3.00"))
     risk_adjusted_return_pct = (base_return_pct * quality_multiplier) - risk_penalty_pct
-    optimization_score = risk_adjusted_return_pct + income_support_bonus_pct - cost_efficiency_penalty_pct
+    optimization_score = risk_adjusted_return_pct + income_support_bonus_pct - cost_efficiency_penalty_pct + trade_signal_adjustment
 
     return {
         "card": card,
         "position": card["position"],
         "projection": projection,
+        "status_key": card.get("status_key") or ("owned" if card["position"].is_owned else "watchlist"),
+        "status_label": card.get("status_label") or card["position"].get_position_kind_display(),
         "reference_label": card["reference_label"],
         "confidence_label": confidence_label,
         "reliability_label": reliability_label,
@@ -3632,6 +4218,10 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
         "cycle_phase": projection.get("cycle_phase") or "Sin ciclo",
         "max_drawdown_pct": max_drawdown_pct,
         "current_drawdown_pct": current_drawdown_pct,
+        "trade_alert_label": trade_alert_label,
+        "trade_alert_tone": trade_alert.get("tone", "watch"),
+        "trade_alert_note": trade_alert.get("note", ""),
+        "trade_signal_adjustment": trade_signal_adjustment,
     }
 
 
@@ -3803,7 +4393,13 @@ def build_equity_allocation_plan(
             "reason": "Todavia no hay suficientes proyecciones para proponer una distribucion a 12M.",
         }
 
-    positive_candidates = [item for item in candidates if item["optimization_score"] > ZERO and item["base_return_pct"] > ZERO]
+    positive_candidates = [
+        item
+        for item in candidates
+        if item["optimization_score"] > ZERO
+        and item["base_return_pct"] > ZERO
+        and item["trade_alert_label"] != "Vender"
+    ]
     if not positive_candidates:
         return {
             "available": False,
@@ -3835,6 +4431,8 @@ def build_equity_allocation_plan(
             {
                 "rank": rank,
                 "position": candidate["position"],
+                "status_key": candidate["status_key"],
+                "status_label": candidate["status_label"],
                 "reference_label": candidate["reference_label"],
                 "allocated_amount": allocated_amount,
                 "allocated_weight_pct": (allocated_amount / total_investment) * Decimal("100"),
@@ -3857,6 +4455,8 @@ def build_equity_allocation_plan(
                 "reliability_score": candidate["reliability_score"],
                 "safety_score": candidate["safety_score"],
                 "optimization_score": candidate["optimization_score"],
+                "trade_alert_label": candidate["trade_alert_label"],
+                "trade_alert_tone": candidate["trade_alert_tone"],
                 "annualized_volatility_pct": candidate["annualized_volatility_pct"],
                 "years_covered": candidate["years_covered"],
                 "cycle_phase": candidate["cycle_phase"],
@@ -3897,7 +4497,12 @@ def build_equity_allocation_plan(
     annual_cost_total = sum((item["annual_cost_used"] for item in allocations), ZERO)
     roundtrip_cost_total = sum((item["roundtrip_total_cost"] for item in allocations), ZERO)
     owned_allocations_count = sum(1 for item in allocations if item["position"].is_owned)
-    watchlist_allocations_count = sum(1 for item in allocations if not item["position"].is_owned)
+    ibex_allocations_count = sum(1 for item in allocations if item["status_key"] == "ibex")
+    watchlist_allocations_count = sum(
+        1
+        for item in allocations
+        if not item["position"].is_owned and item["status_key"] != "ibex"
+    )
 
     if remaining_amount > ZERO:
         reserve_reason = (
@@ -3927,10 +4532,11 @@ def build_equity_allocation_plan(
         "roundtrip_cost_total": roundtrip_cost_total,
         "owned_allocations_count": owned_allocations_count,
         "watchlist_allocations_count": watchlist_allocations_count,
+        "ibex_allocations_count": ibex_allocations_count,
         "reserve_reason": reserve_reason,
         "top_pick": top_pick,
         "methodology_note": (
             "La optimizacion prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
-            "seguridad, fiabilidad del modelo y riesgo historico de varios anos."
+            "seguridad, fiabilidad del modelo, alertas de tendencia y riesgo historico de varios anos."
         ),
     }

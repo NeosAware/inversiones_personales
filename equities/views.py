@@ -64,6 +64,8 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
             positions,
             selected_start_date=selected_start_date,
             selected_end_date=selected_end_date,
+            include_ibex_universe=getattr(settings, "EQUITIES_IBEX_UNIVERSE_ANALYSIS", True),
+            ibex_company_limit=(getattr(settings, "EQUITIES_IBEX_UNIVERSE_LIMIT", 0) or None),
         )
         context["page_title"] = "Acciones cotizadas"
         context["positions"] = positions
@@ -81,6 +83,8 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         context["owned_history_cards"] = dashboard["owned_history_cards"]
         context["watchlist_history_cards"] = dashboard["watchlist_history_cards"]
         context["decision_rows"] = dashboard["decision_rows"]
+        context["ibex_universe_rows"] = dashboard["ibex_universe_rows"]
+        context["ibex_universe_summary"] = dashboard["ibex_universe_summary"]
         context["tracked_reference_rows"] = dashboard["tracked_reference_rows"]
         context["reference_guide_rows"] = dashboard["reference_guide_rows"]
         context["reference_guide_summary"] = dashboard["reference_guide_summary"]
@@ -101,7 +105,7 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         optimizer_plan = None
         if optimizer_form.is_valid():
             optimizer_plan = build_equity_allocation_plan(
-                dashboard["history_cards"],
+                dashboard["optimizer_cards"],
                 optimizer_form.cleaned_data["total_investment"],
                 optimizer_form.cleaned_data["max_company_pct"],
             )

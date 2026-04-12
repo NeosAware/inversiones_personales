@@ -62,6 +62,42 @@ def build_test_reference_workbook() -> str:
     return path
 
 
+def build_compound_market_series(
+    symbol: str,
+    name: str,
+    growth: Decimal,
+    months: int = 36,
+    start_year: int = 2023,
+    start_month: int = 1,
+    start_price: Decimal = Decimal("10.0000"),
+) -> MarketSeries:
+    points = []
+    price = start_price
+    for index in range(months):
+        month_number = (start_month - 1) + index
+        year = start_year + (month_number // 12)
+        month = (month_number % 12) + 1
+        month_end = monthrange(year, month)[1]
+        price = (price * growth).quantize(Decimal("0.0001"))
+        points.append(
+            {
+                "date": date(year, month, month_end),
+                "open": price,
+                "high": (price * Decimal("1.0100")).quantize(Decimal("0.0001")),
+                "low": (price * Decimal("0.9900")).quantize(Decimal("0.0001")),
+                "close": price,
+            }
+        )
+
+    return MarketSeries(
+        symbol=symbol,
+        name=name,
+        latest_price=points[-1]["close"],
+        latest_date=points[-1]["date"],
+        points=points,
+    )
+
+
 class EquitiesServicesTests(TestCase):
     def tearDown(self):
         load_ibex_reference_workbook_snapshot.cache_clear()
@@ -388,6 +424,66 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(backtest["monthly_chart"]["forecast_line"])
         self.assertTrue(backtest["monthly_chart"]["actual_line"])
 
+    def test_history_cards_include_trade_alert_from_prolonged_relative_trend(self):
+        buy_position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IDR",
+            quote_symbol="IDR.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Indra Sistemas, S.A.",
+            shares=Decimal("25"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("15.00"),
+        )
+        sell_position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="TEF",
+            quote_symbol="TEF.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Telefonica, S.A.",
+            shares=Decimal("25"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("20.00"),
+        )
+
+        benchmark_price = Decimal("100.0000")
+        buy_price = Decimal("10.0000")
+        sell_price = Decimal("10.0000")
+        for index in range(30):
+            year = 2023 + (index // 12)
+            month = (index % 12) + 1
+            month_end = monthrange(year, month)[1]
+            benchmark_price = (benchmark_price * Decimal("1.0080")).quantize(Decimal("0.0001"))
+            buy_price = (buy_price * Decimal("1.0240")).quantize(Decimal("0.0001"))
+            sell_price = (sell_price * Decimal("0.9920")).quantize(Decimal("0.0001"))
+            buy_position.price_history.create(
+                price_date=date(year, month, month_end),
+                close_price=buy_price,
+                benchmark_close=benchmark_price,
+            )
+            sell_position.price_history.create(
+                price_date=date(year, month, month_end),
+                close_price=sell_price,
+                benchmark_close=benchmark_price,
+            )
+
+        buy_position.current_price_per_share = buy_price
+        buy_position.save(update_fields=["current_price_per_share"])
+        sell_position.current_price_per_share = sell_price
+        sell_position.save(update_fields=["current_price_per_share"])
+
+        cards = build_equity_history_cards([buy_position, sell_position])
+        cards_by_ticker = {card["position"].ticker: card for card in cards}
+
+        self.assertEqual(cards_by_ticker["IDR"]["trade_alert"]["label"], "Comprar")
+        self.assertEqual(cards_by_ticker["TEF"]["trade_alert"]["label"], "Vender")
+        self.assertGreater(cards_by_ticker["IDR"]["trade_alert"]["score"], Decimal("0"))
+        self.assertLess(cards_by_ticker["TEF"]["trade_alert"]["score"], Decimal("0"))
+
     def test_watchlist_positions_do_not_count_into_portfolio_totals(self):
         EquityPosition.objects.create(
             position_kind=EquityPosition.PositionKind.OWNED,
@@ -614,7 +710,70 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(allocation["low_return_pct"], Decimal("-3.79"))
         self.assertLess(allocation["net_projected_return_pct"], Decimal("10.50"))
 
-@override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=False)
+    def test_dashboard_can_extend_optimizer_to_full_ibex_universe(self):
+        acerinox = find_equity_company_profile("Acerinox")
+        acs = find_equity_company_profile("ACS")
+        companies = [
+            {
+                "ticker": acerinox["ticker"],
+                "company_name": acerinox["company_name"],
+                "quote_symbol": acerinox["quote_symbol"],
+                "sector": acerinox["sector_label"],
+                "dividend_yield": Decimal("4.20"),
+                "catalog_profile": acerinox,
+            },
+            {
+                "ticker": acs["ticker"],
+                "company_name": acs["company_name"],
+                "quote_symbol": acs["quote_symbol"],
+                "sector": acs["sector_label"],
+                "dividend_yield": Decimal("3.10"),
+                "catalog_profile": acs,
+            },
+        ]
+
+        def fake_market_series(symbol, range_key="10y", interval="1d"):
+            growth = Decimal("1.0210") if symbol.startswith("ACS") else Decimal("1.0170")
+            return build_compound_market_series(symbol, symbol, growth=growth, start_price=Decimal("12.0000"))
+
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+            return build_compound_market_series(
+                benchmark_symbol or "^IBEX",
+                benchmark_name or "Referencia",
+                growth=Decimal("1.0070"),
+                start_price=Decimal("100.0000"),
+            )
+
+        empty_workbook = {
+            "available": False,
+            "path": "",
+            "companies": [],
+            "companies_by_key": {},
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+        with (
+            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=empty_workbook),
+            patch("equities.services.build_ibex_universe_companies", return_value=companies),
+            patch("equities.services.fetch_market_series", side_effect=fake_market_series),
+            patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series),
+        ):
+            dashboard = build_equity_analysis_dashboard(
+                [],
+                include_ibex_universe=True,
+                ibex_company_limit=2,
+            )
+
+        self.assertEqual(len(dashboard["ibex_universe_rows"]), 2)
+        self.assertEqual(len(dashboard["optimizer_cards"]), 2)
+        self.assertTrue(all(row["status_key"] == "ibex" for row in dashboard["ibex_universe_rows"]))
+        self.assertGreaterEqual(dashboard["ibex_universe_summary"]["buy_alert_count"], 1)
+        self.assertEqual(dashboard["ibex_universe_summary"]["broker_assumption"], "Interactive Brokers")
+
+@override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=False, EQUITIES_IBEX_UNIVERSE_ANALYSIS=False)
 class EquitiesViewTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(

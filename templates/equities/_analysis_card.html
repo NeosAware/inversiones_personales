@@ -21,6 +21,11 @@
         <small>Precio {{ card.projection.price_return_pct|floatformat:1 }} % + flujo neto anual.</small>
       </div>
       <div class="equity-mini-stat">
+        <span>Alerta</span>
+        <strong class="{% if card.trade_alert.tone == 'buy' %}good{% elif card.trade_alert.tone == 'sell' %}warn{% endif %}">{{ card.trade_alert.label }}</strong>
+        <small>{{ card.trade_alert.trigger_label }}</small>
+      </div>
+      <div class="equity-mini-stat">
         <span>Seguridad</span>
         <strong>{{ card.projection.safety_score|floatformat:0 }}/100</strong>
         <small>{{ card.projection.safety_label }} segun volatilidad, drawdown y consistencia.</small>
@@ -58,6 +63,17 @@
         <strong>{% if card.projection.annualized_volatility_pct is not None %}{{ card.projection.annualized_volatility_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
         <small>Drawdown actual {% if card.projection.current_drawdown_pct is not None %}{{ card.projection.current_drawdown_pct|floatformat:1 }} %{% else %}-{% endif %}</small>
       </div>
+      <div class="equity-mini-stat">
+        <span>Pendiente relativa</span>
+        <strong class="{% if card.trade_alert.tone == 'buy' %}good{% elif card.trade_alert.tone == 'sell' %}warn{% endif %}">{{ card.trade_alert.trend_label }}</strong>
+        <small>
+          {% if card.relative_trend.available %}
+            Gap medio reciente {% if card.trade_alert.recent_gap_avg_pct is not None %}{{ card.trade_alert.recent_gap_avg_pct|floatformat:2 }} %{% else %}-{% endif %}
+          {% else %}
+            Sin suficiente base reciente
+          {% endif %}
+        </small>
+      </div>
     </div>
 
     <div class="equity-detail-grid" style="margin-top:14px;">
@@ -83,7 +99,7 @@
       </div>
     </div>
 
-    <p class="equity-detail-note" style="margin-top:14px;">{{ card.projection.explanation }} {{ card.projection.confidence_note }}</p>
+    <p class="equity-detail-note" style="margin-top:14px;">{{ card.trade_alert.note }} {{ card.projection.explanation }} {{ card.projection.confidence_note }}</p>
   {% else %}
     <div class="message info" style="margin-top:18px;">
       Todavia no hay historico suficiente para generar una proyeccion fiable.

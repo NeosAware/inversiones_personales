@@ -341,6 +341,7 @@
           <span class="equity-chip">{{ summary.owned_positions_count }} compradas</span>
           <span class="equity-chip">{{ summary.watchlist_positions_count }} en seguimiento</span>
           {% if analysis_overview.best_decision %}<span class="equity-chip">Mejor lectura {{ analysis_overview.best_decision.ticker }}</span>{% endif %}
+          {% if ibex_universe_summary.available %}<span class="equity-chip">Radar IBEX {{ ibex_universe_summary.analyzed_count }}</span>{% endif %}
           {% if reference_guide_summary.workbook_loaded %}<span class="equity-chip">{{ reference_guide_summary.source_label }}</span>{% endif %}
         </div>
       </div>
@@ -357,7 +358,7 @@
         <div>
           <p class="section-title">Mesa de decision</p>
           <h2>Que valor ofrece mejor equilibrio entre beneficio y seguridad</h2>
-          <p>Una sola tabla para decidir: referencia actual, mejor ajuste, correlacion 10A, retorno total esperado a 12 meses, seguridad y fiabilidad.</p>
+          <p>Una sola tabla para decidir: alerta de compra o venta, referencia actual, mejor ajuste, correlacion 10A, retorno neto esperado a 12 meses, seguridad y fiabilidad.</p>
         </div>
         {% if reference_guide_summary.workbook_loaded %}<span class="pill">{{ reference_guide_summary.source_label }}</span>{% endif %}
       </div>
@@ -367,6 +368,7 @@
             <thead>
               <tr>
                 <th>Valor</th>
+                <th>Alerta</th>
                 <th>Referencia</th>
                 <th>Corr 10A</th>
                 <th>Pred. 12M</th>
@@ -383,8 +385,12 @@
                   <td>
                     <div class="equity-decision-main">
                       <strong>{{ row.company_name }}</strong>
-                      <span>{{ row.ticker }} | {{ row.status_label }} | {{ row.action_label }}</span>
+                      <span>{{ row.ticker }} | {{ row.status_label }}</span>
                     </div>
+                  </td>
+                  <td>
+                    <strong class="{% if row.trade_alert_tone == 'buy' %}good{% elif row.trade_alert_tone == 'sell' %}warn{% endif %}">{{ row.trade_alert_label }}</strong>
+                    {% if row.trade_alert_trigger %}<br><span class="metric-sub">{{ row.trade_alert_trigger }}</span>{% endif %}
                   </td>
                   <td>
                     <strong>{{ row.reference_label }}</strong>
@@ -398,13 +404,14 @@
                   <td><span class="equity-score-pill{% if row.reliability_label == 'Alta' %} good{% elif row.reliability_label == 'Baja' %} warn{% endif %}">{{ row.reliability_label }}</span></td>
                   <td>{% if row.benefit_risk_ratio is not None %}{{ row.benefit_risk_ratio|floatformat:2 }}{% else %}-{% endif %}</td>
                   <td>{{ row.cycle_phase }}</td>
-                  <td><a class="button secondary" href="#{{ row.detail_anchor }}">Ver detalle</a></td>
+                  <td>{% if row.detail_anchor %}<a class="button secondary" href="#{{ row.detail_anchor }}">Ver detalle</a>{% else %}<span class="metric-sub">Sin detalle</span>{% endif %}</td>
                 </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
         <div class="equity-compact-note" style="margin-top:16px;">
+          La alerta se activa cuando la pendiente relativa frente a la referencia y su coeficiente se prolonga varios periodos.
           {% if reference_guide_summary.workbook_loaded %}
             El Excel del IBEX actua como guia adicional de referencias. Si no coincide con la serie historica de la app, prevalece la lectura de 10 anos y el backtest.
           {% else %}
@@ -413,6 +420,65 @@
         </div>
       {% else %}
         <div class="message info">Todavia no hay valores con suficiente historico para construir la mesa de decision.</div>
+      {% endif %}
+    </section>
+
+    <section class="equity-panel">
+      <div class="equity-panel-head">
+        <div>
+          <p class="section-title">Radar IBEX</p>
+          <h2>Todo el IBEX cribado para nuevas compras o ventas</h2>
+          <p>Se aplica el mismo analisis de 10 anos, dividendos, costes, riesgo y alertas de tendencia a todos los valores del IBEX, no solo a los que ya tienes dados de alta.</p>
+        </div>
+        {% if ibex_universe_summary.available %}<span class="pill">{{ ibex_universe_summary.analyzed_count }} valores analizados</span>{% endif %}
+      </div>
+      {% if ibex_universe_rows %}
+        <div class="equity-grid-4">
+          <div class="equity-box"><span>Alertas compra</span><strong class="good">{{ ibex_universe_summary.buy_alert_count }}</strong></div>
+          <div class="equity-box"><span>Alertas venta</span><strong class="warn">{{ ibex_universe_summary.sell_alert_count }}</strong></div>
+          <div class="equity-box"><span>Broker asumido</span><strong>{{ ibex_universe_summary.broker_assumption }}</strong><small>{{ ibex_universe_summary.trade_channel_label }}</small></div>
+          <div class="equity-box"><span>Mejor opcion</span><strong>{% if ibex_universe_summary.top_pick %}{{ ibex_universe_summary.top_pick.ticker }}{% else %}-{% endif %}</strong><small>{% if ibex_universe_summary.top_pick %}{{ ibex_universe_summary.top_pick.company_name }}{% endif %}</small></div>
+        </div>
+        {% if ibex_universe_summary.failed_count %}
+          <div class="message warning" style="margin-top:16px;">
+            No se han podido analizar {{ ibex_universe_summary.failed_count }} valor(es) del radar IBEX.
+            {% if ibex_universe_summary.failures %} {{ ibex_universe_summary.failures|join:", " }}.{% endif %}
+          </div>
+        {% endif %}
+        <div class="equity-table-wrap" style="margin-top:18px;">
+          <table class="equity-decision-table">
+            <thead>
+              <tr>
+                <th>Valor</th>
+                <th>Alerta</th>
+                <th>Referencia</th>
+                <th>Corr 10A</th>
+                <th>Pred. 12M</th>
+                <th>Seguridad</th>
+                <th>Fiabilidad</th>
+                <th>Benef./riesgo</th>
+                <th>Ciclo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ibex_universe_rows %}
+                <tr>
+                  <td><strong>{{ row.company_name }}</strong><br><span class="metric-sub">{{ row.ticker }} | {{ row.status_label }}</span></td>
+                  <td><strong class="{% if row.trade_alert_tone == 'buy' %}good{% elif row.trade_alert_tone == 'sell' %}warn{% endif %}">{{ row.trade_alert_label }}</strong><br><span class="metric-sub">{{ row.trade_alert_trigger }}</span></td>
+                  <td><strong>{{ row.reference_label }}</strong>{% if row.best_reference_label and row.best_reference_label != row.reference_label %}<br><span class="metric-sub">Mejor ajuste: {{ row.best_reference_label }}</span>{% endif %}</td>
+                  <td>{% if row.correlation is not None %}{{ row.correlation|floatformat:2 }}<br><span class="metric-sub">{{ row.years_covered|floatformat:1 }}A</span>{% else %}-{% endif %}</td>
+                  <td class="{% if row.projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.projected_return_pct|floatformat:1 }} %</td>
+                  <td>{{ row.safety_score|floatformat:0 }}/100</td>
+                  <td>{{ row.reliability_label }}</td>
+                  <td>{% if row.benefit_risk_ratio is not None %}{{ row.benefit_risk_ratio|floatformat:2 }}{% else %}-{% endif %}</td>
+                  <td>{{ row.cycle_phase }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="message info">Todavia no se ha podido construir el radar completo del IBEX.</div>
       {% endif %}
     </section>
 
@@ -552,7 +618,7 @@
       <summary>Optimizador 12M</summary>
       <div class="equity-fold-body">
         <div class="equity-panel" style="padding:0; border:none; box-shadow:none; background:transparent;">
-          <div class="equity-panel-head"><div><p class="section-title">Optimizador</p><h3>Distribucion neta sugerida a 12 meses</h3><p>Ahora la propuesta ya no ordena solo por retorno bruto. Recalcula para tu capital dividendos netos, compra/venta, mantenimiento y el riesgo historico de varios anos antes de repartir pesos.</p></div></div>
+          <div class="equity-panel-head"><div><p class="section-title">Optimizador</p><h3>Distribucion neta sugerida a 12 meses</h3><p>La propuesta reparte entre cartera actual, seguimiento y radar IBEX completo. Recalcula para tu capital dividendos netos, compra/venta, mantenimiento, alertas de tendencia y riesgo historico antes de asignar pesos.</p></div></div>
           <form method="get" class="equity-grid-4" style="align-items:end;">
             <div><label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>{{ optimizer_form.total_investment }}</div>
             <div><label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>{{ optimizer_form.max_company_pct }}</div>
@@ -571,22 +637,25 @@
               <div class="equity-box"><span>Costes totales</span><strong>{{ optimizer_plan.annual_cost_total|floatformat:0 }} + {{ optimizer_plan.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Mantenimiento anual + compra/venta.</small></div>
               <div class="equity-box"><span>Volatilidad media</span><strong>{% if optimizer_plan.weighted_volatility_pct is not None %}{{ optimizer_plan.weighted_volatility_pct|floatformat:1 }} %{% else %}-{% endif %}</strong></div>
               <div class="equity-box"><span>Caja en reserva</span><strong>{{ optimizer_plan.cash_reserve_amount|floatformat:0 }} EUR</strong></div>
+              <div class="equity-box"><span>Radar IBEX elegido</span><strong>{{ optimizer_plan.ibex_allocations_count }}</strong><small>Posiciones virtuales seleccionadas.</small></div>
             </div>
             <div class="equity-compact-note" style="margin-top:16px;">
               {{ optimizer_plan.methodology_note }}
+              {% if ibex_universe_summary.available %} Se han evaluado {{ ibex_universe_summary.analyzed_count }} valores adicionales del IBEX.{% endif %}
               {% if optimizer_plan.top_pick %}
                 La mejor relacion actual entre beneficio esperado y seguridad es <strong>{{ optimizer_plan.top_pick.position.company_name }}</strong>.
               {% endif %}
             </div>
             <div class="equity-table-wrap" style="margin-top:18px;">
               <table>
-                <thead><tr><th>Orden</th><th>Empresa</th><th>Estado</th><th>Referencia</th><th>Score</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th><th>Seguridad</th><th>Fiabilidad</th></tr></thead>
+                <thead><tr><th>Orden</th><th>Empresa</th><th>Estado</th><th>Alerta</th><th>Referencia</th><th>Score</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th><th>Seguridad</th><th>Fiabilidad</th></tr></thead>
                 <tbody>
                   {% for item in optimizer_plan.allocations %}
                     <tr>
                       <td>{{ item.rank }}</td>
                       <td><strong>{{ item.position.company_name }}</strong><br><span class="metric-sub">{{ item.position.ticker }} | {{ item.cycle_phase }}</span></td>
-                      <td>{{ item.position.get_position_kind_display }}</td>
+                      <td>{{ item.status_label }}</td>
+                      <td><strong class="{% if item.trade_alert_tone == 'buy' %}good{% elif item.trade_alert_tone == 'sell' %}warn{% endif %}">{{ item.trade_alert_label }}</strong></td>
                       <td>{{ item.reference_label }}</td>
                       <td>{% if item.optimization_score >= 0 %}+{% endif %}{{ item.optimization_score|floatformat:2 }}</td>
                       <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>
