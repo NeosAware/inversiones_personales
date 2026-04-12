@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block content %}
+  <style>
+    .equity-detail-page{
+      --line:#d8e3ea;
+      --accent:#0d5d78;
+      --muted:#627380;
+      display:grid;
+      gap:22px;
+      color:#102531;
+    }
+    .equity-detail-page h1, .equity-detail-page h2, .equity-detail-page h3, .equity-detail-page h4, .equity-detail-page h5{
+      margin:0;
+      font-family:"Iowan Old Style", Georgia, serif;
+      color:#132b39;
+    }
+    .equity-detail-hero{
+      padding:28px;
+      border-radius:28px;
+      border:1px solid rgba(255,255,255,.18);
+      background:
+        radial-gradient(circle at top right, rgba(225,190,154,.22), transparent 28%),
+        linear-gradient(135deg, #10212c 0%, #173748 52%, #e6dbc8 150%);
+      color:#fff;
+      box-shadow:0 24px 56px rgba(17,34,46,.18);
+    }
+    .equity-detail-hero-top, .equity-detail-head, .equity-section-head{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:16px;
+    }
+    .equity-detail-hero h1{
+      color:#fff;
+      font-size:38px;
+      line-height:1.05;
+    }
+    .equity-detail-hero p{
+      margin:10px 0 0;
+      color:rgba(255,255,255,.84);
+      max-width:900px;
+    }
+    .equity-chip-row, .equity-tag-list{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+    }
+    .equity-chip, .equity-tag{
+      display:inline-flex;
+      align-items:center;
+      padding:8px 12px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.18);
+      background:rgba(255,255,255,.10);
+      color:#fff;
+      font-size:12px;
+      font-weight:700;
+      letter-spacing:.03em;
+    }
+    .equity-summary-grid, .equity-detail-grid, .equity-chart-grid{
+      display:grid;
+      gap:16px;
+    }
+    .equity-summary-grid{
+      grid-template-columns:repeat(4, minmax(0,1fr));
+      margin-top:22px;
+    }
+    .equity-detail-grid{
+      grid-template-columns:repeat(5, minmax(0,1fr));
+      margin-top:14px;
+    }
+    .equity-chart-grid{
+      grid-template-columns:repeat(3, minmax(0,1fr));
+      margin-top:18px;
+    }
+    .equity-box, .equity-detail-card, .equity-mini-stat, .equity-chart-shell, .equity-panel{
+      padding:18px;
+      border-radius:22px;
+      border:1px solid var(--line);
+      background:linear-gradient(180deg, #ffffff 0%, #f7fafc 100%);
+      box-shadow:0 14px 30px rgba(18,37,53,.05);
+    }
+    .equity-box span, .equity-mini-stat span{
+      display:block;
+      font-size:12px;
+      text-transform:uppercase;
+      letter-spacing:.12em;
+      font-weight:700;
+      color:var(--accent);
+    }
+    .equity-box strong, .equity-mini-stat strong{
+      display:block;
+      margin-top:8px;
+      font-size:28px;
+      font-variant-numeric:tabular-nums;
+    }
+    .equity-box small, .equity-mini-stat small, .equity-detail-note{
+      display:block;
+      margin-top:8px;
+      color:var(--muted);
+      line-height:1.5;
+    }
+    .equity-detail-card p{
+      margin:6px 0 0;
+      color:var(--muted);
+    }
+    .equity-chart-shell svg{
+      display:block;
+      width:100%;
+      height:220px;
+    }
+    .equity-chart-foot{
+      margin-top:12px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:14px;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .equity-inline-fold{
+      border:1px solid var(--line);
+      border-radius:18px;
+      overflow:hidden;
+      background:#fff;
+    }
+    .equity-inline-fold summary{
+      list-style:none;
+      cursor:pointer;
+      padding:14px 16px;
+      color:#17384e;
+      background:#f7fafc;
+      font-weight:800;
+    }
+    .equity-inline-fold summary::-webkit-details-marker{
+      display:none;
+    }
+    .equity-inline-body{
+      padding:16px;
+      display:grid;
+      gap:14px;
+    }
+    .equity-candidate-section{
+      display:grid;
+      gap:14px;
+      padding:18px;
+      border-radius:22px;
+      border:1px solid #dbe6ee;
+      background:#f8fbfd;
+    }
+    .equity-candidate-grid{
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(2, minmax(0,1fr));
+    }
+    .equity-candidate-card{
+      padding:16px;
+      border-radius:18px;
+      border:1px solid #d5e3ec;
+      background:#fff;
+      display:grid;
+      gap:12px;
+    }
+    .equity-candidate-card.best{
+      border-color:#d4aa82;
+      background:#fff8f2;
+    }
+    .equity-candidate-card.active{
+      border-color:#0d5d78;
+      background:#eef7fb;
+    }
+    .equity-candidate-metrics{
+      display:grid;
+      gap:6px;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .equity-candidate-note{
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.45;
+    }
+    .equity-nav{
+      display:flex;
+      gap:12px;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:space-between;
+    }
+    @media (max-width: 1180px){
+      .equity-summary-grid, .equity-detail-grid, .equity-chart-grid, .equity-candidate-grid{
+        grid-template-columns:1fr;
+      }
+      .equity-detail-hero-top, .equity-detail-head, .equity-section-head, .equity-nav{
+        flex-direction:column;
+      }
+    }
+  </style>
+
+  <div class="equity-detail-page">
+    <section class="equity-detail-hero">
+      <div class="equity-detail-hero-top">
+        <div>
+          <p class="section-title" style="color:rgba(255,255,255,.72);">Radar IBEX</p>
+          <h1>{{ card.position.company_name }}</h1>
+          <p>Detalle completo de {{ card.position.company_name }} con historico, mejor correlacion observada, proyeccion a 12 meses y lectura de dividendos, costes y riesgo.</p>
+        </div>
+        <div class="equity-chip-row">
+          <span class="equity-chip">{{ card.position.ticker }}</span>
+          <span class="equity-chip">{{ card.sector_label }}</span>
+          <span class="equity-chip">{{ card.reference_label }}</span>
+          {% if card.position.latest_price_date %}<span class="equity-chip">Precio {{ card.position.latest_price_date|date:"Y-m-d" }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="equity-summary-grid">
+        <div class="equity-box">
+          <span>Alerta</span>
+          <strong class="{% if card.trade_alert.tone == 'buy' %}good{% elif card.trade_alert.tone == 'sell' %}warn{% endif %}">{{ card.trade_alert.label }}</strong>
+          <small>{{ card.trade_alert.trigger_label }}</small>
+        </div>
+        <div class="equity-box">
+          <span>Retorno 12M</span>
+          <strong class="{% if card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if card.projection.available %}{{ card.projection.base_return_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+          <small>{% if card.projection.available %}Precio objetivo {{ card.projection.projected_price|floatformat:4 }}{% else %}Sin proyeccion suficiente{% endif %}</small>
+        </div>
+        <div class="equity-box">
+          <span>Corr mejor ajuste</span>
+          <strong>{% if card.best_correlation_chart.coefficient is not None %}{{ card.best_correlation_chart.coefficient|floatformat:2 }}{% elif card.correlation.coefficient is not None %}{{ card.correlation.coefficient|floatformat:2 }}{% else %}-{% endif %}</strong>
+          <small>{% if card.best_correlation_chart.reference_label %}{{ card.best_correlation_chart.reference_label }}{% else %}{{ card.reference_label }}{% endif %}</small>
+        </div>
+        <div class="equity-box">
+          <span>Seguridad / fiabilidad</span>
+          <strong>{% if card.projection.safety_score is not None %}{{ card.projection.safety_score|floatformat:0 }}{% else %}-{% endif %} / {% if card.projection_reliability.score is not None %}{{ card.projection_reliability.score|floatformat:0 }}{% else %}-{% endif %}</strong>
+          <small>{{ card.projection.cycle_phase }} | {{ card.projection_reliability.label }}</small>
+        </div>
+      </div>
+    </section>
+
+    <div class="equity-nav">
+      <a class="button secondary" href="{% url 'equities:list' %}#equity-ibex">Volver a acciones</a>
+      <small class="muted">La pestana usa como titulo el nombre de la empresa para que puedas comparar varias a la vez.</small>
+    </div>
+
+    <section class="equity-panel">
+      {% include "equities/_analysis_card.html" with card=card %}
+    </section>
+  </div>
+{% endblock %}

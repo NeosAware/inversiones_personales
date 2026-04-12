@@ -1378,6 +1378,99 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Guia completa IBEX del Excel")
         self.assertContains(response, "Euribor 12m (%)")
 
+    @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_IBEX_UNIVERSE_LIMIT=1)
+    def test_ibex_rows_open_detail_in_new_tab(self):
+        acs = find_equity_company_profile("ACS")
+        company = {
+            "ticker": acs["ticker"],
+            "company_name": acs["company_name"],
+            "quote_symbol": acs["quote_symbol"],
+            "sector": acs["sector_label"],
+            "dividend_yield": Decimal("3.10"),
+            "catalog_profile": acs,
+        }
+        empty_workbook = {
+            "available": False,
+            "path": "",
+            "companies": [],
+            "companies_by_key": {},
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+        def fake_market_series(symbol, range_key="10y", interval="1d"):
+            return build_compound_market_series(symbol, symbol, growth=Decimal("1.0200"), start_price=Decimal("12.0000"))
+
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+            return build_compound_market_series(
+                benchmark_symbol or "^IBEX",
+                benchmark_name or "Referencia",
+                growth=Decimal("1.0060"),
+                start_price=Decimal("100.0000"),
+            )
+
+        with (
+            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=empty_workbook),
+            patch("equities.services.build_ibex_universe_companies", return_value=[company]),
+            patch("equities.services.fetch_market_series", side_effect=fake_market_series),
+            patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series),
+        ):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("equities:ibex_detail", kwargs={"ticker": acs["ticker"]}))
+        self.assertContains(response, 'target="_blank"', html=False)
+        self.assertContains(response, "Abrir analisis completo")
+
+    def test_can_open_ibex_detail_page_with_company_title_and_charts(self):
+        acs = find_equity_company_profile("ACS")
+        company = {
+            "ticker": acs["ticker"],
+            "company_name": acs["company_name"],
+            "quote_symbol": acs["quote_symbol"],
+            "sector": acs["sector_label"],
+            "dividend_yield": Decimal("3.10"),
+            "catalog_profile": acs,
+        }
+        empty_workbook = {
+            "available": False,
+            "path": "",
+            "companies": [],
+            "companies_by_key": {},
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+        def fake_market_series(symbol, range_key="10y", interval="1d"):
+            return build_compound_market_series(symbol, symbol, growth=Decimal("1.0200"), start_price=Decimal("12.0000"))
+
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+            return build_compound_market_series(
+                benchmark_symbol or "^IBEX",
+                benchmark_name or "Referencia",
+                growth=Decimal("1.0060"),
+                start_price=Decimal("100.0000"),
+            )
+
+        with (
+            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=empty_workbook),
+            patch("equities.services.build_ibex_universe_companies", return_value=[company]),
+            patch("equities.services.fetch_market_series", side_effect=fake_market_series),
+            patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series),
+        ):
+            response = self.client.get(reverse("equities:ibex_detail", kwargs={"ticker": acs["ticker"]}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "equities/ibex_equity_detail.html")
+        self.assertContains(response, f"<title>{acs['company_name']}</title>", html=False)
+        self.assertContains(response, "Historico")
+        self.assertContains(response, "Mejor correlacion")
+        self.assertContains(response, "Prevision 12M")
+
     def test_can_store_same_ticker_as_owned_and_watchlist_without_collision(self):
         EquityPosition.objects.create(
             position_kind=EquityPosition.PositionKind.OWNED,

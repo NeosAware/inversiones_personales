@@ -3979,6 +3979,80 @@ def build_virtual_ibex_position(
     )
 
 
+def find_ibex_universe_company(query: str, workbook_snapshot: dict | None = None) -> tuple[dict | None, dict]:
+    workbook_snapshot = workbook_snapshot or load_ibex_reference_workbook_snapshot()
+    normalized_query = normalize_company_lookup(query)
+    if not normalized_query:
+        return None, workbook_snapshot
+
+    for company in build_ibex_universe_companies(workbook_snapshot):
+        lookup_keys = build_security_lookup_keys(
+            ticker=company.get("ticker", ""),
+            company_name=company.get("company_name", ""),
+            quote_symbol=company.get("quote_symbol", ""),
+        )
+        if normalized_query in lookup_keys:
+            return company, workbook_snapshot
+    return None, workbook_snapshot
+
+
+def build_ibex_universe_card(
+    company: dict,
+    positions,
+    selected_start_date: date | None = None,
+    selected_end_date: date | None = None,
+    reference_cache: dict | None = None,
+    workbook_snapshot: dict | None = None,
+    broker_profile: dict | None = None,
+) -> dict:
+    reference_cache = reference_cache if reference_cache is not None else {}
+    workbook_snapshot = workbook_snapshot or load_ibex_reference_workbook_snapshot()
+    broker_profile = broker_profile or resolve_analysis_broker_profile(positions)
+
+    quote_symbol = company.get("quote_symbol", "")
+    if not quote_symbol:
+        raise ValueError(f"{company.get('company_name') or company.get('ticker')}: sin simbolo de cotizacion")
+
+    stock_series = fetch_market_series(quote_symbol)
+    reference_choice, workbook_playbook = resolve_ibex_reference_choice(company, workbook_snapshot)
+    reference_series = fetch_reference_series_for_choice(
+        reference_choice["reference_profile"],
+        benchmark_symbol=reference_choice["benchmark_symbol"],
+        benchmark_name=reference_choice["benchmark_name"],
+    )
+    benchmark_map = align_reference_points(stock_series.points, reference_series.points)
+    position = build_virtual_ibex_position(company, reference_choice, broker_profile, stock_series.latest_price)
+    position.latest_price_date = stock_series.latest_date
+    position.last_synced_at = django_timezone.now()
+    history = [
+        EquityPriceHistory(
+            position=position,
+            price_date=point["date"],
+            open_price=point.get("open"),
+            high_price=point.get("high"),
+            low_price=point.get("low"),
+            close_price=point["close"],
+            benchmark_close=benchmark_map.get(point["date"]),
+        )
+        for point in stock_series.points
+    ]
+    card = build_equity_history_card(
+        position,
+        history,
+        reference_cache,
+        selected_start_date=selected_start_date,
+        selected_end_date=selected_end_date,
+        status_key="ibex",
+        status_label="Radar IBEX",
+        detail_anchor="",
+        sector_label=company.get("sector", ""),
+    )
+    if workbook_playbook and workbook_playbook.get("available"):
+        card["reference_playbook"] = build_workbook_reference_playbook(company, workbook_snapshot, card=card)
+    card["ibex_company"] = company
+    return card
+
+
 def build_ibex_universe_analysis(
     tracked_history_cards: list[dict],
     positions,
@@ -4023,42 +4097,15 @@ def build_ibex_universe_analysis(
 
         target_count += 1
         try:
-            stock_series = fetch_market_series(quote_symbol)
-            reference_choice, workbook_playbook = resolve_ibex_reference_choice(company, workbook_snapshot)
-            reference_series = fetch_reference_series_for_choice(
-                reference_choice["reference_profile"],
-                benchmark_symbol=reference_choice["benchmark_symbol"],
-                benchmark_name=reference_choice["benchmark_name"],
-            )
-            benchmark_map = align_reference_points(stock_series.points, reference_series.points)
-            position = build_virtual_ibex_position(company, reference_choice, broker_profile, stock_series.latest_price)
-            position.latest_price_date = stock_series.latest_date
-            position.last_synced_at = django_timezone.now()
-            history = [
-                EquityPriceHistory(
-                    position=position,
-                    price_date=point["date"],
-                    open_price=point.get("open"),
-                    high_price=point.get("high"),
-                    low_price=point.get("low"),
-                    close_price=point["close"],
-                    benchmark_close=benchmark_map.get(point["date"]),
-                )
-                for point in stock_series.points
-            ]
-            card = build_equity_history_card(
-                position,
-                history,
-                reference_cache,
+            card = build_ibex_universe_card(
+                company,
+                positions,
                 selected_start_date=selected_start_date,
                 selected_end_date=selected_end_date,
-                status_key="ibex",
-                status_label="Radar IBEX",
-                detail_anchor="",
-                sector_label=company.get("sector", ""),
+                reference_cache=reference_cache,
+                workbook_snapshot=workbook_snapshot,
+                broker_profile=broker_profile,
             )
-            if workbook_playbook and workbook_playbook.get("available"):
-                card["reference_playbook"] = build_workbook_reference_playbook(company, workbook_snapshot, card=card)
             cards.append(card)
         except Exception as exc:
             failures.append(f"{company.get('company_name') or company.get('ticker')}: {exc}")

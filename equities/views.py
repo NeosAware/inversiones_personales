@@ -3,7 +3,9 @@ from decimal import Decimal
 from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib import messages
+from django.http import Http404
 from django.shortcuts import redirect
+from django.urls import reverse
 from django.utils.dateparse import parse_date
 from django.views.generic import TemplateView
 
@@ -20,6 +22,8 @@ from .services import (
     SPAIN_HOUSE_PRICE_SYMBOL,
     build_equity_analysis_dashboard,
     build_equity_allocation_plan,
+    build_ibex_universe_card,
+    find_ibex_universe_company,
     EquityDocumentImportError,
     build_equity_history_cards,
     extract_equity_position_prefill,
@@ -29,15 +33,17 @@ from .services import (
 )
 
 
-class EquityPositionListView(LoginRequiredMixin, TemplateView):
-    template_name = "equities/equityposition_list.html"
-
+class EquityPeriodBoundsMixin:
     def _selected_period_bounds(self):
         start_date = parse_date(self.request.GET.get("period_start", "").strip()) if self.request.GET.get("period_start") else None
         end_date = parse_date(self.request.GET.get("period_end", "").strip()) if self.request.GET.get("period_end") else None
         if start_date and end_date and end_date < start_date:
             start_date, end_date = end_date, start_date
         return start_date, end_date
+
+
+class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, TemplateView):
+    template_name = "equities/equityposition_list.html"
 
     def _auto_sync_market_data(self):
         positions = list(EquityPosition.objects.all())
@@ -83,7 +89,13 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         context["owned_history_cards"] = dashboard["owned_history_cards"]
         context["watchlist_history_cards"] = dashboard["watchlist_history_cards"]
         context["decision_rows"] = dashboard["decision_rows"]
-        context["ibex_universe_rows"] = dashboard["ibex_universe_rows"]
+        context["ibex_universe_rows"] = [
+            {
+                **row,
+                "detail_url": reverse("equities:ibex_detail", kwargs={"ticker": row["ticker"]}),
+            }
+            for row in dashboard["ibex_universe_rows"]
+        ]
         context["ibex_universe_summary"] = dashboard["ibex_universe_summary"]
         context["tracked_reference_rows"] = dashboard["tracked_reference_rows"]
         context["reference_guide_rows"] = dashboard["reference_guide_rows"]
@@ -298,3 +310,33 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
             )
 
         return redirect("equities:list")
+
+
+class IbexEquityDetailView(LoginRequiredMixin, EquityPeriodBoundsMixin, TemplateView):
+    template_name = "equities/ibex_equity_detail.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        positions = list(EquityPosition.objects.prefetch_related("price_history"))
+        selected_start_date, selected_end_date = self._selected_period_bounds()
+        company, workbook_snapshot = find_ibex_universe_company(self.kwargs.get("ticker", ""))
+        if not company:
+            raise Http404("No se ha encontrado ese valor del IBEX.")
+
+        try:
+            card = build_ibex_universe_card(
+                company,
+                positions,
+                selected_start_date=selected_start_date,
+                selected_end_date=selected_end_date,
+                workbook_snapshot=workbook_snapshot,
+            )
+        except Exception as exc:
+            raise Http404(f"No se ha podido construir el analisis de {company.get('company_name') or company.get('ticker')}: {exc}") from exc
+
+        context["page_title"] = card["position"].company_name
+        context["card"] = card
+        context["company"] = company
+        context["selected_period_start"] = selected_start_date
+        context["selected_period_end"] = selected_end_date
+        return context

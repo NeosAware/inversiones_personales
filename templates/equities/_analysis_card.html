@@ -208,7 +208,7 @@
                   <span>Sector {% if candidate.sector_score is not None %}{{ candidate.sector_score|floatformat:2 }}{% else %}sin guia{% endif %}</span>
                   <span>{{ candidate.observations_count }} observaciones</span>
                 </div>
-                {% if candidate.supports_chart and not candidate.is_active_reference %}
+                {% if candidate.supports_chart and not candidate.is_active_reference and card.position.id %}
                   <form method="post" class="equity-inline-form">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="change_reference">
@@ -219,7 +219,15 @@
                     <button class="equity-mini-button" type="submit">Usar referencia</button>
                   </form>
                 {% else %}
-                  <div class="equity-candidate-note">{% if candidate.supports_chart %}Ya esta activa en el grafico.{% else %}Solo disponible como guia por ahora.{% endif %}</div>
+                  <div class="equity-candidate-note">
+                    {% if candidate.supports_chart and candidate.is_active_reference %}
+                      Ya esta activa en el grafico.
+                    {% elif candidate.supports_chart %}
+                      Disponible en este analisis como referencia comparada.
+                    {% else %}
+                      Solo disponible como guia por ahora.
+                    {% endif %}
+                  </div>
                 {% endif %}
               </div>
             {% endfor %}

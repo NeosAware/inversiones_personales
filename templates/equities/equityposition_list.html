@@ -207,6 +207,24 @@
       border-radius:18px;
       background:#fff;
     }
+    .equity-row-link{
+      cursor:pointer;
+    }
+    .equity-row-link:hover td, .equity-row-link:focus td{
+      background:#f5fafd;
+    }
+    .equity-row-link:focus{
+      outline:2px solid rgba(13,93,120,.22);
+      outline-offset:-2px;
+    }
+    .equity-row-launch{
+      display:inline-flex;
+      align-items:center;
+      margin-top:6px;
+      font-size:12px;
+      font-weight:700;
+      color:#0d5d78;
+    }
     .equity-table-wrap table{ width:100%; min-width:760px; margin:0; }
     .equity-fold{
       overflow:hidden;
@@ -424,12 +442,12 @@
       {% endif %}
     </section>
 
-    <section class="equity-panel">
+    <section class="equity-panel" id="equity-ibex">
       <div class="equity-panel-head">
         <div>
           <p class="section-title">Radar IBEX</p>
           <h2>Todo el IBEX cribado para nuevas compras o ventas</h2>
-          <p>Se aplica el mismo analisis de 10 anos, dividendos, costes, riesgo y alertas de tendencia a todos los valores del IBEX, no solo a los que ya tienes dados de alta.</p>
+          <p>Se aplica el mismo analisis de 10 anos, dividendos, costes, riesgo y alertas de tendencia a todos los valores del IBEX, no solo a los que ya tienes dados de alta. Pulsa cualquier fila para abrir el analisis completo en otra pestana.</p>
         </div>
         {% if ibex_universe_summary.available %}<span class="pill">{{ ibex_universe_summary.analyzed_count }} valores analizados</span>{% endif %}
       </div>
@@ -463,8 +481,18 @@
             </thead>
             <tbody>
               {% for row in ibex_universe_rows %}
-                <tr>
-                  <td><strong>{{ row.company_name }}</strong><br><span class="metric-sub">{{ row.ticker }} | {{ row.status_label }}</span></td>
+                <tr{% if row.detail_url %} class="equity-row-link" data-detail-url="{{ row.detail_url }}" tabindex="0" role="link" aria-label="Abrir analisis de {{ row.company_name }} en una pestana nueva"{% endif %}>
+                  <td>
+                    {% if row.detail_url %}
+                      <a href="{{ row.detail_url }}" target="_blank" rel="noopener">
+                        <strong>{{ row.company_name }}</strong>
+                      </a>
+                      <br><span class="metric-sub">{{ row.ticker }} | {{ row.status_label }}</span>
+                      <br><span class="equity-row-launch">Abrir analisis completo</span>
+                    {% else %}
+                      <strong>{{ row.company_name }}</strong><br><span class="metric-sub">{{ row.ticker }} | {{ row.status_label }}</span>
+                    {% endif %}
+                  </td>
                   <td><strong class="{% if row.trade_alert_tone == 'buy' %}good{% elif row.trade_alert_tone == 'sell' %}warn{% endif %}">{{ row.trade_alert_label }}</strong><br><span class="metric-sub">{{ row.trade_alert_trigger }}</span></td>
                   <td><strong>{{ row.reference_label }}</strong>{% if row.best_reference_label and row.best_reference_label != row.reference_label %}<br><span class="metric-sub">Mejor ajuste: {{ row.best_reference_label }}</span>{% endif %}</td>
                   <td>{% if row.correlation is not None %}{{ row.correlation|floatformat:2 }}<br><span class="metric-sub">{{ row.years_covered|floatformat:1 }}A</span>{% else %}-{% endif %}</td>
@@ -790,6 +818,39 @@
       <option value="{{ entry.company_name }}">{{ entry.ticker }} | {{ entry.company_name }}</option>
     {% endfor %}
   </datalist>
+  <script>
+    (() => {
+      const rows = Array.from(document.querySelectorAll("[data-detail-url]"));
+      if (!rows.length) {
+        return;
+      }
+
+      const isInteractiveTarget = (target) => Boolean(target.closest("a, button, input, select, textarea, label, form, summary"));
+      const openRow = (row) => {
+        const url = row.dataset.detailUrl;
+        if (!url) {
+          return;
+        }
+        window.open(url, "_blank", "noopener");
+      };
+
+      rows.forEach((row) => {
+        row.addEventListener("click", (event) => {
+          if (isInteractiveTarget(event.target)) {
+            return;
+          }
+          openRow(row);
+        });
+        row.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") {
+            return;
+          }
+          event.preventDefault();
+          openRow(row);
+        });
+      });
+    })();
+  </script>
   <script>
     (() => {
       const catalogNode = document.getElementById("equity-company-catalog");
