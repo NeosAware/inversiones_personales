@@ -384,6 +384,9 @@ class EquitiesServicesTests(TestCase):
         self.assertLess(backtest["mean_absolute_error_pct"], Decimal("12.00"))
         self.assertGreater(backtest["direction_hit_rate_pct"], Decimal("80.00"))
         self.assertTrue(backtest["rows"])
+        self.assertTrue(backtest["monthly_chart"]["available"])
+        self.assertTrue(backtest["monthly_chart"]["forecast_line"])
+        self.assertTrue(backtest["monthly_chart"]["actual_line"])
 
     def test_watchlist_positions_do_not_count_into_portfolio_totals(self):
         EquityPosition.objects.create(
@@ -553,6 +556,63 @@ class EquitiesServicesTests(TestCase):
 
         self.assertFalse(plan["available"])
         self.assertIn("ninguna accion", plan["reason"].lower())
+
+    def test_allocation_plan_recalculates_costs_and_dividends_for_assigned_capital(self):
+        santander_card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                broker="Banco Santander",
+                trade_channel=EquityPosition.TradeChannel.OFFICE,
+                ticker="IBE",
+                quote_symbol="IBE.MC",
+                company_name="Iberdrola",
+                reference_profile=EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND,
+                benchmark_name="Demanda electrica Espana",
+                benchmark_symbol="REE:demand:es:peninsular",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("11.00"),
+                annual_maintenance_cost=Decimal("0"),
+            ),
+            "reference_label": "Demanda electrica Espana",
+            "projection_reliability": {
+                "label": "Alta",
+                "score": Decimal("80.00"),
+            },
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("8.70"),
+                "price_return_pct": Decimal("6.50"),
+                "price_low_return_pct": Decimal("-6.00"),
+                "price_high_return_pct": Decimal("16.00"),
+                "projected_price": Decimal("11.7150"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("74.00"),
+                "gross_dividend_yield_pct": Decimal("4.00"),
+                "net_income_yield_pct": Decimal("3.70"),
+                "transaction_drag_pct": Decimal("1.50"),
+                "annualized_volatility_pct": Decimal("14.00"),
+                "positive_year_ratio_pct": Decimal("72.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-4.00"),
+                "max_drawdown_pct": Decimal("-22.00"),
+            },
+        }
+
+        plan = build_equity_allocation_plan([santander_card], Decimal("10000"), Decimal("100"))
+
+        self.assertTrue(plan["available"])
+        self.assertEqual(plan["roundtrip_cost_total"], Decimal("150.00"))
+        self.assertEqual(plan["annual_cost_total"], Decimal("27.00"))
+        self.assertEqual(plan["net_dividend_income_total"], Decimal("398.00"))
+        allocation = plan["allocations"][0]
+        self.assertEqual(allocation["roundtrip_total_cost"], Decimal("150.00"))
+        self.assertEqual(allocation["annual_cost_used"], Decimal("27.00"))
+        self.assertEqual(allocation["expected_net_dividend_income"], Decimal("398.00"))
+        self.assertEqual(allocation["net_projected_return_pct"], Decimal("8.71"))
+        self.assertEqual(allocation["low_return_pct"], Decimal("-3.79"))
+        self.assertLess(allocation["net_projected_return_pct"], Decimal("10.50"))
 
 @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=False)
 class EquitiesViewTests(TestCase):

@@ -20,6 +20,7 @@ from django.utils import timezone as django_timezone
 from banking.services import load_rows_from_workbook
 from portfolio.ownership import AssetOwnershipCategory
 
+from .broker_costs import estimate_broker_costs, resolve_recurring_cost_used
 from .models import EquityPosition, EquityPriceHistory
 
 
@@ -2630,6 +2631,93 @@ def build_projection_path(current_price: Decimal | None, annual_return_pct: Deci
     return path
 
 
+def build_backtest_monthly_chart(rows: list[dict], width: int = 640, height: int = 220, padding: int = 18, max_points: int = 60) -> dict:
+    normalized_rows = []
+    for row in rows[-max_points:]:
+        forecast_date = row.get("forecast_date")
+        target_date = row.get("target_date")
+        forecast_return_pct = row.get("forecast_return_pct")
+        actual_return_pct = row.get("actual_return_pct")
+        if forecast_date is None or target_date is None or forecast_return_pct is None or actual_return_pct is None:
+            continue
+        normalized_rows.append(
+            {
+                "forecast_date": forecast_date,
+                "target_date": target_date,
+                "forecast_return_pct": Decimal(str(forecast_return_pct)),
+                "actual_return_pct": Decimal(str(actual_return_pct)),
+            }
+        )
+
+    if len(normalized_rows) < 2:
+        return {
+            "available": False,
+            "forecast_line": "",
+            "actual_line": "",
+            "forecast_points": [],
+            "actual_points": [],
+            "min_label": "-",
+            "max_label": "-",
+            "start_label": "",
+            "end_label": "",
+            "points_count": len(normalized_rows),
+        }
+
+    all_values = []
+    for row in normalized_rows:
+        all_values.append(row["forecast_return_pct"])
+        all_values.append(row["actual_return_pct"])
+    series_min = min(all_values)
+    series_max = max(all_values)
+    if series_min == series_max:
+        series_max += Decimal("1")
+
+    min_date = normalized_rows[0]["forecast_date"]
+    max_date = normalized_rows[-1]["forecast_date"]
+    total_days = max((max_date - min_date).days, 1)
+    span_x = width - (padding * 2)
+    span_y = height - (padding * 2)
+
+    def scale_point(point_date: date, value: Decimal) -> tuple[float, float]:
+        x = padding + (span_x * ((point_date - min_date).days / total_days))
+        normalized_value = (value - series_min) / (series_max - series_min)
+        y = height - padding - (normalized_value * span_y)
+        return x, y
+
+    def build_series(series_key: str) -> tuple[str, list[dict]]:
+        line_points = []
+        point_rows = []
+        for row in normalized_rows:
+            value = row[series_key]
+            x, y = scale_point(row["forecast_date"], value)
+            line_points.append(f"{x:.1f},{y:.1f}")
+            point_rows.append(
+                {
+                    "x": f"{x:.1f}",
+                    "y": f"{y:.1f}",
+                    "value_label": f"{value:.1f} %",
+                    "forecast_date_label": row["forecast_date"].isoformat(),
+                    "target_date_label": row["target_date"].isoformat(),
+                }
+            )
+        return " ".join(line_points), point_rows
+
+    forecast_line, forecast_points = build_series("forecast_return_pct")
+    actual_line, actual_points = build_series("actual_return_pct")
+    return {
+        "available": True,
+        "forecast_line": forecast_line,
+        "actual_line": actual_line,
+        "forecast_points": forecast_points,
+        "actual_points": actual_points,
+        "min_label": f"{format_axis_value(series_min)} %",
+        "max_label": f"{format_axis_value(series_max)} %",
+        "start_label": normalized_rows[0]["forecast_date"].isoformat(),
+        "end_label": normalized_rows[-1]["forecast_date"].isoformat(),
+        "points_count": len(normalized_rows),
+    }
+
+
 def build_one_year_projection(
     history,
     position: EquityPosition,
@@ -2814,6 +2902,7 @@ def build_projection_backtest(history, position: EquityPosition, max_rows: int =
             "available": False,
             "comparisons_count": 0,
             "rows": [],
+            "monthly_chart": {"available": False},
             "mean_absolute_error_pct": None,
             "direction_hit_rate_pct": None,
             "in_range_rate_pct": None,
@@ -2881,6 +2970,7 @@ def build_projection_backtest(history, position: EquityPosition, max_rows: int =
             "available": False,
             "comparisons_count": 0,
             "rows": [],
+            "monthly_chart": {"available": False},
             "mean_absolute_error_pct": None,
             "direction_hit_rate_pct": None,
             "in_range_rate_pct": None,
@@ -2889,6 +2979,7 @@ def build_projection_backtest(history, position: EquityPosition, max_rows: int =
 
     recent_rows = list(reversed(rows[-max_rows:]))
     comparisons_count = len(rows)
+    monthly_chart = build_backtest_monthly_chart(rows)
     mean_absolute_error_pct = quantize_decimal(
         sum((row["absolute_error_pct"] for row in rows), ZERO) / Decimal(comparisons_count)
     )
@@ -2910,6 +3001,7 @@ def build_projection_backtest(history, position: EquityPosition, max_rows: int =
         "available": True,
         "comparisons_count": comparisons_count,
         "rows": recent_rows,
+        "monthly_chart": monthly_chart,
         "mean_absolute_error_pct": mean_absolute_error_pct,
         "direction_hit_rate_pct": direction_hit_rate_pct,
         "in_range_rate_pct": in_range_rate_pct,
@@ -3451,6 +3543,246 @@ def projection_confidence_multiplier(confidence_label: str) -> Decimal:
     return Decimal("0.70")
 
 
+def projection_reliability_score(label: str) -> Decimal:
+    score_map = {
+        "Alta": Decimal("82.00"),
+        "Media": Decimal("64.00"),
+        "Baja": Decimal("42.00"),
+        "Sin historico suficiente": Decimal("45.00"),
+    }
+    return score_map.get(label or "Baja", Decimal("42.00"))
+
+
+def build_equity_optimizer_candidate(card: dict) -> dict | None:
+    projection = card.get("projection") or {}
+    if not projection.get("available") or projection.get("projected_price") is None:
+        return None
+
+    base_return_pct = projection.get("base_return_pct")
+    if base_return_pct is None:
+        return None
+
+    confidence_label = projection.get("confidence_label", "Baja")
+    reliability = card.get("projection_reliability") or {}
+    reliability_label = reliability.get("label") or confidence_label
+    reliability_score = reliability.get("score") or projection_reliability_score(reliability_label)
+    safety_score = projection.get("safety_score") or Decimal("60.00")
+    years_covered = projection.get("years_covered") or ZERO
+    positive_year_ratio_pct = projection.get("positive_year_ratio_pct") or Decimal("50.00")
+    annualized_volatility_pct = projection.get("annualized_volatility_pct") or Decimal("18.00")
+    low_return_pct = projection.get("low_return_pct")
+    current_drawdown_pct = projection.get("current_drawdown_pct") or ZERO
+    max_drawdown_pct = projection.get("max_drawdown_pct") or ZERO
+    net_income_yield_pct = projection.get("net_income_yield_pct") or ZERO
+    gross_dividend_yield_pct = projection.get("gross_dividend_yield_pct") or ZERO
+    transaction_drag_pct = projection.get("transaction_drag_pct") or ZERO
+
+    downside_return_pct = ZERO
+    if low_return_pct is not None and low_return_pct < ZERO:
+        downside_return_pct = abs(low_return_pct)
+
+    history_depth_multiplier = clamp_decimal(
+        (years_covered / Decimal(str(LONG_ANALYSIS_YEARS))) if years_covered else Decimal("0.55"),
+        Decimal("0.55"),
+        Decimal("1.00"),
+    )
+    consistency_multiplier = clamp_decimal(
+        Decimal("0.75") + ((positive_year_ratio_pct - Decimal("50.00")) / Decimal("100")),
+        Decimal("0.70"),
+        Decimal("1.10"),
+    )
+    confidence_multiplier = projection_confidence_multiplier(confidence_label)
+    quality_multiplier = (
+        confidence_multiplier
+        * (Decimal("0.55") + (safety_score / Decimal("200")))
+        * (Decimal("0.55") + (reliability_score / Decimal("200")))
+        * history_depth_multiplier
+        * consistency_multiplier
+    )
+
+    risk_penalty_pct = (
+        (downside_return_pct * Decimal("0.32"))
+        + (annualized_volatility_pct * Decimal("0.08"))
+        + (abs(current_drawdown_pct) * Decimal("0.05") if current_drawdown_pct < ZERO else ZERO)
+        + (abs(max_drawdown_pct) * Decimal("0.02") if max_drawdown_pct < ZERO else ZERO)
+    )
+    income_support_bonus_pct = clamp_decimal(net_income_yield_pct * Decimal("0.30"), Decimal("-2.00"), Decimal("3.00"))
+    cost_efficiency_penalty_pct = clamp_decimal(transaction_drag_pct * Decimal("0.40"), ZERO, Decimal("3.00"))
+    risk_adjusted_return_pct = (base_return_pct * quality_multiplier) - risk_penalty_pct
+    optimization_score = risk_adjusted_return_pct + income_support_bonus_pct - cost_efficiency_penalty_pct
+
+    return {
+        "card": card,
+        "position": card["position"],
+        "projection": projection,
+        "reference_label": card["reference_label"],
+        "confidence_label": confidence_label,
+        "reliability_label": reliability_label,
+        "reliability_score": reliability_score,
+        "safety_score": safety_score,
+        "base_return_pct": base_return_pct,
+        "risk_adjusted_return_pct": risk_adjusted_return_pct,
+        "optimization_score": optimization_score,
+        "downside_return_pct": downside_return_pct,
+        "annualized_volatility_pct": annualized_volatility_pct,
+        "gross_dividend_yield_pct": gross_dividend_yield_pct,
+        "net_income_yield_pct": net_income_yield_pct,
+        "transaction_drag_pct": transaction_drag_pct,
+        "years_covered": years_covered,
+        "cycle_phase": projection.get("cycle_phase") or "Sin ciclo",
+        "max_drawdown_pct": max_drawdown_pct,
+        "current_drawdown_pct": current_drawdown_pct,
+    }
+
+
+def distribute_optimizer_amounts(
+    candidates: list[dict],
+    total_investment: Decimal,
+    company_cap_amount: Decimal,
+) -> tuple[list[Decimal], Decimal]:
+    if not candidates:
+        return [], total_investment
+
+    epsilon = Decimal("0.01")
+    allocations = [ZERO for _ in candidates]
+    open_indexes = list(range(len(candidates)))
+    remaining_amount = total_investment
+
+    while remaining_amount > epsilon and open_indexes:
+        score_total = sum((candidates[index]["optimization_score"] for index in open_indexes), ZERO)
+        if score_total <= ZERO:
+            break
+
+        distributed_amount = ZERO
+        next_open_indexes = []
+        for index in open_indexes:
+            capacity = company_cap_amount - allocations[index]
+            if capacity <= epsilon:
+                continue
+            proportional_amount = remaining_amount * (candidates[index]["optimization_score"] / score_total)
+            allocated_amount = min(capacity, proportional_amount)
+            if allocated_amount <= ZERO:
+                continue
+            allocations[index] += allocated_amount
+            distributed_amount += allocated_amount
+            if company_cap_amount - allocations[index] > epsilon:
+                next_open_indexes.append(index)
+
+        if distributed_amount <= epsilon:
+            break
+        remaining_amount -= distributed_amount
+        open_indexes = next_open_indexes
+
+    quantized_allocations = [quantize_decimal(amount, "0.01") or ZERO for amount in allocations]
+    allocated_total = sum(quantized_allocations, ZERO)
+    remaining_amount = quantize_decimal(total_investment - allocated_total, "0.01") or ZERO
+
+    if remaining_amount > ZERO:
+        for index, amount in enumerate(quantized_allocations):
+            capacity = company_cap_amount - amount
+            top_up = min(capacity, remaining_amount)
+            if top_up <= ZERO:
+                continue
+            quantized_allocations[index] = amount + top_up
+            remaining_amount -= top_up
+            if remaining_amount <= ZERO:
+                break
+
+    return quantized_allocations, remaining_amount
+
+
+def build_optimizer_allocation_scenario(candidate: dict, allocated_amount: Decimal) -> dict:
+    position = candidate["position"]
+    projection = candidate["projection"]
+    if allocated_amount <= ZERO:
+        return {
+            "gross_dividend_income": ZERO,
+            "net_dividend_income": ZERO,
+            "annual_cost_used": ZERO,
+            "roundtrip_total_cost": ZERO,
+            "transaction_drag_pct": ZERO,
+            "net_income_yield_pct": ZERO,
+            "net_projected_return_pct": ZERO,
+            "low_return_pct": ZERO,
+            "high_return_pct": ZERO,
+            "projected_gain_amount": ZERO,
+            "downside_amount": ZERO,
+        }
+
+    gross_dividend_yield_pct = projection.get("gross_dividend_yield_pct") or ZERO
+    gross_dividend_income = (allocated_amount * gross_dividend_yield_pct) / ONE_HUNDRED
+    broker_costs = estimate_broker_costs(
+        broker_name=position.broker,
+        trade_channel=position.trade_channel,
+        trade_amount=allocated_amount,
+        valuation_amount=allocated_amount,
+        annual_dividend_income=gross_dividend_income,
+        quote_symbol=position.quote_symbol,
+    )
+    annual_cost_used, annual_cost_source = resolve_recurring_cost_used(
+        position.annual_maintenance_cost,
+        broker_costs.get("annual_recurring_cost", ZERO),
+    )
+    net_dividend_income = gross_dividend_income - broker_costs.get("annual_dividend_fee", ZERO)
+    net_annual_income = net_dividend_income - annual_cost_used
+    net_income_yield_pct = (net_annual_income / allocated_amount) * ONE_HUNDRED if allocated_amount else ZERO
+    transaction_drag_pct = (
+        (broker_costs.get("roundtrip_total_cost", ZERO) / allocated_amount) * ONE_HUNDRED
+        if allocated_amount
+        else ZERO
+    )
+    price_return_pct = projection.get("price_return_pct")
+    if price_return_pct is None:
+        fallback_base_return_pct = projection.get("base_return_pct") or ZERO
+        fallback_net_income_yield_pct = projection.get("net_income_yield_pct") or ZERO
+        fallback_transaction_drag_pct = projection.get("transaction_drag_pct") or ZERO
+        price_return_pct = fallback_base_return_pct - fallback_net_income_yield_pct + fallback_transaction_drag_pct
+    price_low_return_pct = projection.get("price_low_return_pct")
+    if price_low_return_pct is None:
+        price_low_return_pct = projection.get("low_return_pct")
+    if price_low_return_pct is None:
+        price_low_return_pct = price_return_pct
+    price_high_return_pct = projection.get("price_high_return_pct")
+    if price_high_return_pct is None:
+        price_high_return_pct = projection.get("high_return_pct")
+    if price_high_return_pct is None:
+        price_high_return_pct = price_return_pct
+    net_projected_return_pct = clamp_decimal(
+        price_return_pct + net_income_yield_pct - transaction_drag_pct,
+        Decimal("-45.00"),
+        Decimal("45.00"),
+    )
+    low_return_pct = clamp_decimal(
+        price_low_return_pct + net_income_yield_pct - transaction_drag_pct,
+        Decimal("-80.00"),
+        Decimal("120.00"),
+    )
+    high_return_pct = clamp_decimal(
+        price_high_return_pct + net_income_yield_pct - transaction_drag_pct,
+        Decimal("-80.00"),
+        Decimal("140.00"),
+    )
+    projected_gain_amount = (allocated_amount * net_projected_return_pct) / ONE_HUNDRED
+    downside_amount = (allocated_amount * low_return_pct) / ONE_HUNDRED
+
+    return {
+        "gross_dividend_income": quantize_decimal(gross_dividend_income, "0.01") or ZERO,
+        "net_dividend_income": quantize_decimal(net_dividend_income, "0.01") or ZERO,
+        "annual_cost_used": quantize_decimal(annual_cost_used, "0.01") or ZERO,
+        "annual_cost_source": annual_cost_source,
+        "roundtrip_total_cost": quantize_decimal(broker_costs.get("roundtrip_total_cost", ZERO), "0.01") or ZERO,
+        "purchase_total_cost": quantize_decimal(broker_costs.get("purchase_total_cost", ZERO), "0.01") or ZERO,
+        "annual_dividend_fee": quantize_decimal(broker_costs.get("annual_dividend_fee", ZERO), "0.01") or ZERO,
+        "transaction_drag_pct": quantize_decimal(transaction_drag_pct) or ZERO,
+        "net_income_yield_pct": quantize_decimal(net_income_yield_pct) or ZERO,
+        "net_projected_return_pct": quantize_decimal(net_projected_return_pct) or ZERO,
+        "low_return_pct": quantize_decimal(low_return_pct) or ZERO,
+        "high_return_pct": quantize_decimal(high_return_pct) or ZERO,
+        "projected_gain_amount": quantize_decimal(projected_gain_amount, "0.01") or ZERO,
+        "downside_amount": quantize_decimal(downside_amount, "0.01") or ZERO,
+    }
+
+
 def build_equity_allocation_plan(
     history_cards: list[dict],
     total_investment: Decimal,
@@ -3463,25 +3795,7 @@ def build_equity_allocation_plan(
         }
 
     company_cap_amount = (total_investment * max_company_pct) / Decimal("100")
-    candidates = []
-    for card in history_cards:
-        projection = card.get("projection") or {}
-        if not projection.get("available") or projection.get("projected_price") is None:
-            continue
-
-        base_return_pct = projection.get("base_return_pct")
-        if base_return_pct is None:
-            continue
-
-        adjusted_return_pct = base_return_pct * projection_confidence_multiplier(projection.get("confidence_label", "Baja"))
-        candidates.append(
-            {
-                "card": card,
-                "base_return_pct": base_return_pct,
-                "adjusted_return_pct": adjusted_return_pct,
-                "confidence_label": projection.get("confidence_label", "Baja"),
-            }
-        )
+    candidates = [candidate for candidate in (build_equity_optimizer_candidate(card) for card in history_cards) if candidate]
 
     if not candidates:
         return {
@@ -3489,47 +3803,68 @@ def build_equity_allocation_plan(
             "reason": "Todavia no hay suficientes proyecciones para proponer una distribucion a 12M.",
         }
 
-    positive_candidates = [item for item in candidates if item["adjusted_return_pct"] > ZERO]
+    positive_candidates = [item for item in candidates if item["optimization_score"] > ZERO and item["base_return_pct"] > ZERO]
     if not positive_candidates:
         return {
             "available": False,
-            "reason": "Ahora mismo ninguna accion tiene retorno esperado positivo a 12M con el ajuste de confianza activo.",
+            "reason": "Ahora mismo ninguna accion supera el filtro de retorno neto y riesgo para una optimizacion equilibrada a 12M.",
         }
 
     ranked_candidates = sorted(
         positive_candidates,
         key=lambda item: (
-            item["adjusted_return_pct"],
+            item["optimization_score"],
+            item["risk_adjusted_return_pct"],
             item["base_return_pct"],
-            item["card"]["projection"].get("coefficient") or ZERO,
+            item["safety_score"],
         ),
         reverse=True,
     )
 
+    allocated_amounts, remaining_amount = distribute_optimizer_amounts(
+        ranked_candidates,
+        total_investment,
+        company_cap_amount,
+    )
     allocations = []
-    remaining_amount = total_investment
-    for rank, candidate in enumerate(ranked_candidates, start=1):
-        if remaining_amount <= ZERO:
-            break
-        allocated_amount = min(company_cap_amount, remaining_amount)
+    for rank, (candidate, allocated_amount) in enumerate(zip(ranked_candidates, allocated_amounts), start=1):
         if allocated_amount <= ZERO:
             continue
-        projected_gain_amount = (allocated_amount * candidate["adjusted_return_pct"]) / Decimal("100")
+        scenario = build_optimizer_allocation_scenario(candidate, allocated_amount)
         allocations.append(
             {
                 "rank": rank,
-                "position": candidate["card"]["position"],
-                "reference_label": candidate["card"]["reference_label"],
+                "position": candidate["position"],
+                "reference_label": candidate["reference_label"],
                 "allocated_amount": allocated_amount,
                 "allocated_weight_pct": (allocated_amount / total_investment) * Decimal("100"),
                 "base_return_pct": candidate["base_return_pct"],
-                "adjusted_return_pct": candidate["adjusted_return_pct"],
-                "projected_gain_amount": projected_gain_amount,
+                "adjusted_return_pct": candidate["risk_adjusted_return_pct"],
+                "net_projected_return_pct": scenario["net_projected_return_pct"],
+                "low_return_pct": scenario["low_return_pct"],
+                "high_return_pct": scenario["high_return_pct"],
+                "projected_gain_amount": scenario["projected_gain_amount"],
+                "downside_amount": scenario["downside_amount"],
+                "expected_net_dividend_income": scenario["net_dividend_income"],
+                "expected_gross_dividend_income": scenario["gross_dividend_income"],
+                "annual_cost_used": scenario["annual_cost_used"],
+                "roundtrip_total_cost": scenario["roundtrip_total_cost"],
+                "purchase_total_cost": scenario["purchase_total_cost"],
+                "transaction_drag_pct": scenario["transaction_drag_pct"],
+                "net_income_yield_pct": scenario["net_income_yield_pct"],
                 "confidence_label": candidate["confidence_label"],
-                "projected_price": candidate["card"]["projection"].get("projected_price"),
+                "reliability_label": candidate["reliability_label"],
+                "reliability_score": candidate["reliability_score"],
+                "safety_score": candidate["safety_score"],
+                "optimization_score": candidate["optimization_score"],
+                "annualized_volatility_pct": candidate["annualized_volatility_pct"],
+                "years_covered": candidate["years_covered"],
+                "cycle_phase": candidate["cycle_phase"],
+                "max_drawdown_pct": candidate["max_drawdown_pct"],
+                "current_drawdown_pct": candidate["current_drawdown_pct"],
+                "projected_price": candidate["projection"].get("projected_price"),
             }
         )
-        remaining_amount -= allocated_amount
 
     allocated_amount_total = sum((item["allocated_amount"] for item in allocations), ZERO)
     projected_gain_total = sum((item["projected_gain_amount"] for item in allocations), ZERO)
@@ -3538,11 +3873,37 @@ def build_equity_allocation_plan(
         if allocated_amount_total
         else None
     )
+    weighted_low_return_pct = (
+        (sum((item["downside_amount"] for item in allocations), ZERO) / allocated_amount_total) * Decimal("100")
+        if allocated_amount_total
+        else None
+    )
+    weighted_safety_score = (
+        sum((item["safety_score"] * item["allocated_amount"] for item in allocations), ZERO) / allocated_amount_total
+        if allocated_amount_total
+        else None
+    )
+    weighted_reliability_score = (
+        sum((item["reliability_score"] * item["allocated_amount"] for item in allocations), ZERO) / allocated_amount_total
+        if allocated_amount_total
+        else None
+    )
+    weighted_volatility_pct = (
+        sum((item["annualized_volatility_pct"] * item["allocated_amount"] for item in allocations), ZERO) / allocated_amount_total
+        if allocated_amount_total
+        else None
+    )
+    net_dividend_income_total = sum((item["expected_net_dividend_income"] for item in allocations), ZERO)
+    annual_cost_total = sum((item["annual_cost_used"] for item in allocations), ZERO)
+    roundtrip_cost_total = sum((item["roundtrip_total_cost"] for item in allocations), ZERO)
     owned_allocations_count = sum(1 for item in allocations if item["position"].is_owned)
     watchlist_allocations_count = sum(1 for item in allocations if not item["position"].is_owned)
 
     if remaining_amount > ZERO:
-        reserve_reason = "Queda importe sin asignar porque has puesto un limite maximo por empresa y no habia mas ideas positivas para completarlo."
+        reserve_reason = (
+            "Queda caja en reserva porque el filtro de riesgo/rentabilidad solo deja pasar las ideas con retorno neto positivo, "
+            "riesgo asumible y suficiente calidad historica."
+        )
     else:
         reserve_reason = ""
 
@@ -3557,8 +3918,19 @@ def build_equity_allocation_plan(
         "cash_reserve_amount": remaining_amount,
         "projected_gain_total": projected_gain_total,
         "weighted_return_pct": weighted_return_pct,
+        "weighted_low_return_pct": weighted_low_return_pct,
+        "weighted_safety_score": weighted_safety_score,
+        "weighted_reliability_score": weighted_reliability_score,
+        "weighted_volatility_pct": weighted_volatility_pct,
+        "net_dividend_income_total": net_dividend_income_total,
+        "annual_cost_total": annual_cost_total,
+        "roundtrip_cost_total": roundtrip_cost_total,
         "owned_allocations_count": owned_allocations_count,
         "watchlist_allocations_count": watchlist_allocations_count,
         "reserve_reason": reserve_reason,
         "top_pick": top_pick,
+        "methodology_note": (
+            "La optimizacion prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
+            "seguridad, fiabilidad del modelo y riesgo historico de varios anos."
+        ),
     }

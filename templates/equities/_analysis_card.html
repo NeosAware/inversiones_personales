@@ -198,6 +198,33 @@
       </div>
 
       {% if card.projection_backtest.available %}
+        {% if card.projection_backtest.monthly_chart.available %}
+          <div class="equity-chart-shell">
+            <svg viewBox="0 0 640 220">
+              <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+              <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+              <polyline fill="none" stroke="#b7642d" stroke-width="3" stroke-dasharray="8 6" points="{{ card.projection_backtest.monthly_chart.forecast_line }}" />
+              <polyline fill="none" stroke="#0d5d78" stroke-width="3" points="{{ card.projection_backtest.monthly_chart.actual_line }}" />
+              {% for point in card.projection_backtest.monthly_chart.forecast_points %}
+                <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3.2" fill="#b7642d">
+                  <title>{{ point.forecast_date_label }} -> {{ point.target_date_label }} | Proyectado {{ point.value_label }}</title>
+                </circle>
+              {% endfor %}
+              {% for point in card.projection_backtest.monthly_chart.actual_points %}
+                <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3.2" fill="#0d5d78">
+                  <title>{{ point.forecast_date_label }} -> {{ point.target_date_label }} | Real {{ point.value_label }}</title>
+                </circle>
+              {% endfor %}
+              <text x="8" y="20" font-size="12" fill="#17384e">{{ card.projection_backtest.monthly_chart.max_label }}</text>
+              <text x="8" y="214" font-size="12" fill="#17384e">{{ card.projection_backtest.monthly_chart.min_label }}</text>
+            </svg>
+            <div class="equity-chart-foot">
+              <span>Linea naranja: extrapolado en cada mes</span>
+              <span>Linea azul: retorno real 12M despues</span>
+              <span>{{ card.projection_backtest.monthly_chart.points_count }} puntos mensuales | {{ card.projection_backtest.monthly_chart.start_label }} a {{ card.projection_backtest.monthly_chart.end_label }}</span>
+            </div>
+          </div>
+        {% endif %}
         <div class="equity-detail-grid">
           <div class="equity-mini-stat">
             <span>Backtest</span>
