@@ -41,6 +41,7 @@ TRACKING_FORECAST_MARKERS = (91, 182, 273, TRACKING_HORIZON_DAYS)
 OPTIMIZER_MAX_ENTRY_DRAG_PCT = Decimal("1.00")
 OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT = Decimal("2.00")
 OPTIMIZER_MIN_GAIN_TO_ROUNDTRIP_MULTIPLE = Decimal("1.80")
+DEFAULT_EQUITY_ANALYSIS_NOTIONAL = Decimal("10000.00")
 DEFAULT_BENCHMARK_SYMBOL = "^IBEX"
 DEFAULT_BENCHMARK_NAME = "IBEX 35"
 DEFAULT_MARKET_REQUEST_TIMEOUT_SECONDS = 12
@@ -3144,6 +3145,69 @@ def clamp_decimal(value: Decimal, lower: Decimal, upper: Decimal) -> Decimal:
     return max(lower, min(upper, value))
 
 
+def equity_analysis_notional() -> Decimal:
+    configured = getattr(settings, "EQUITIES_ANALYSIS_NOTIONAL", DEFAULT_EQUITY_ANALYSIS_NOTIONAL)
+    try:
+        amount = Decimal(str(configured))
+    except Exception:
+        amount = DEFAULT_EQUITY_ANALYSIS_NOTIONAL
+    return max(amount, Decimal("1000.00"))
+
+
+def resolve_projection_analysis_value(position: EquityPosition, latest_price: Decimal | None = None) -> tuple[Decimal, str]:
+    current_value = Decimal(position.current_value or 0)
+    invested_amount = Decimal(position.invested_amount or 0)
+    latest_price = Decimal(latest_price or 0)
+    shares = Decimal(position.shares or 0)
+    analysis_value = current_value or invested_amount
+    if analysis_value <= ZERO and latest_price > ZERO and shares > ZERO:
+        analysis_value = latest_price * shares
+    if position.is_owned:
+        return analysis_value, "actual"
+    normalized_floor = equity_analysis_notional()
+    if analysis_value <= ZERO or analysis_value < normalized_floor:
+        return normalized_floor, "normalized_watchlist"
+    return analysis_value, "watchlist_actual"
+
+
+def build_projection_dividend_income(position: EquityPosition, analysis_value: Decimal) -> Decimal:
+    analysis_value = Decimal(analysis_value or 0)
+    if analysis_value <= ZERO:
+        return ZERO
+    current_value = Decimal(position.current_value or 0)
+    invested_amount = Decimal(position.invested_amount or 0)
+    reference_value = current_value or invested_amount
+    annual_dividend_income = Decimal(position.annual_dividend_income or 0)
+    if reference_value > ZERO and annual_dividend_income > ZERO:
+        return quantize_decimal((annual_dividend_income / reference_value) * analysis_value, "0.01") or ZERO
+    return annual_dividend_income
+
+
+def build_analysis_broker_costs(position: EquityPosition, analysis_value: Decimal, annual_dividend_income: Decimal) -> dict:
+    analysis_value = Decimal(analysis_value or 0)
+    annual_dividend_income = Decimal(annual_dividend_income or 0)
+    broker_costs = estimate_broker_costs(
+        broker_name=position.broker,
+        trade_channel=position.trade_channel,
+        trade_amount=analysis_value,
+        valuation_amount=analysis_value,
+        annual_dividend_income=annual_dividend_income,
+        quote_symbol=position.quote_symbol,
+    )
+    annual_cost_used, annual_cost_source = resolve_recurring_cost_used(
+        position.annual_maintenance_cost,
+        broker_costs.get("annual_recurring_cost", ZERO),
+    )
+    net_dividend_income = annual_dividend_income - broker_costs.get("annual_dividend_fee", ZERO)
+    return {
+        **broker_costs,
+        "annual_cost_used": annual_cost_used,
+        "annual_cost_source": annual_cost_source,
+        "net_dividend_income": quantize_decimal(net_dividend_income, "0.01") or ZERO,
+        "gross_dividend_income": quantize_decimal(annual_dividend_income, "0.01") or ZERO,
+    }
+
+
 def annualize_return_pct(return_pct: Decimal | None, months: int) -> Decimal | None:
     if return_pct is None or months <= 0:
         return None
@@ -3611,15 +3675,19 @@ def build_one_year_projection(
         Decimal("40.00"),
     )
 
-    current_value = position.current_value if position.current_value else position.invested_amount
-    broker_costs = position.estimated_broker_costs
+    analysis_value, analysis_value_source = resolve_projection_analysis_value(position, latest_price)
+    annual_dividend_income = build_projection_dividend_income(position, analysis_value)
+    broker_costs = build_analysis_broker_costs(position, analysis_value, annual_dividend_income)
     net_income_yield_pct = None
     transaction_drag_pct = None
     gross_dividend_yield_pct = None
-    if current_value and current_value > 0:
-        gross_dividend_yield_pct = (position.annual_dividend_income / current_value) * ONE_HUNDRED
-        net_income_yield_pct = (position.net_annual_income / current_value) * ONE_HUNDRED
-        transaction_drag_pct = (broker_costs.get("roundtrip_total_cost", ZERO) / current_value) * ONE_HUNDRED
+    annual_cost_used = broker_costs.get("annual_cost_used", ZERO)
+    net_dividend_income = broker_costs.get("net_dividend_income", ZERO)
+    net_annual_income = net_dividend_income - annual_cost_used
+    if analysis_value and analysis_value > 0:
+        gross_dividend_yield_pct = (annual_dividend_income / analysis_value) * ONE_HUNDRED
+        net_income_yield_pct = (net_annual_income / analysis_value) * ONE_HUNDRED
+        transaction_drag_pct = (broker_costs.get("roundtrip_total_cost", ZERO) / analysis_value) * ONE_HUNDRED
     base_return_pct = price_return_pct
     if net_income_yield_pct is not None:
         base_return_pct += net_income_yield_pct
@@ -3656,6 +3724,11 @@ def build_one_year_projection(
             f"La proyeccion usa hasta {years_covered:.2f} anos de serie, fase {cycle_metrics.get('cycle_phase', 'sin ciclo').lower()} "
             f"y la referencia {position.analysis_reference_label} con correlacion 10A de {coefficient:.2f}. "
             f"El retorno total incluye dividendos netos y penaliza comisiones y custodia del broker."
+        )
+    if analysis_value_source == "normalized_watchlist":
+        explanation += (
+            f" Como es un valor en seguimiento, los costes y dividendos se normalizan sobre un ticket analitico de "
+            f"{analysis_value:.0f} EUR para que una sola accion de muestra no distorsione la lectura."
         )
 
     price_low_return_pct = clamp_decimal(price_return_pct - band_pct, Decimal("-80.00"), Decimal("120.00"))
@@ -3695,6 +3768,12 @@ def build_one_year_projection(
         "gross_dividend_yield_pct": gross_dividend_yield_pct,
         "net_income_yield_pct": net_income_yield_pct,
         "transaction_drag_pct": transaction_drag_pct,
+        "analysis_value_amount": quantize_decimal(analysis_value, "0.01") or ZERO,
+        "analysis_value_source": analysis_value_source,
+        "annual_dividend_income_used": annual_dividend_income,
+        "annual_cost_used": annual_cost_used,
+        "annual_cost_source": broker_costs.get("annual_cost_source", "broker"),
+        "net_dividend_income": net_dividend_income,
         "broker_costs": broker_costs,
         "reference_label": position.analysis_reference_label,
         "explanation": explanation,
@@ -3917,6 +3996,32 @@ def build_trade_alert(
     negative_streak = relative_trend.get("negative_streak", 0)
     periods_label = relative_trend.get("periods_label", "periodos")
     trend_label = relative_trend.get("label", "Sin tendencia relativa")
+
+    if trade_score >= Decimal("3.20") and projected_return_pct < ZERO:
+        note = (
+            f"La accion encadena {positive_streak} {periods_label} mejorando frente a su referencia ajustada por coeficiente, "
+            f"pero el retorno neto 12M sigue en negativo. Conviene vigilar antes de activar compra."
+        )
+        return {
+            **base_payload,
+            "score": quantize_decimal(trade_score) or ZERO,
+            "note": note,
+            "trend_label": trend_label,
+            "trigger_label": f"{positive_streak} {periods_label} con mejora relativa, pero neto 12M negativo",
+        }
+
+    if trade_score <= Decimal("-3.20") and projected_return_pct > ZERO:
+        note = (
+            f"La accion encadena {negative_streak} {periods_label} perdiendo fuerza frente a su referencia, "
+            f"pero la proyeccion neta 12M todavia es positiva. Conviene vigilar antes de activar venta."
+        )
+        return {
+            **base_payload,
+            "score": quantize_decimal(trade_score) or ZERO,
+            "note": note,
+            "trend_label": trend_label,
+            "trigger_label": f"{negative_streak} {periods_label} con deterioro relativo, pero neto 12M positivo",
+        }
 
     if trade_score >= Decimal("3.20"):
         note = (
@@ -4315,16 +4420,25 @@ def build_equity_history_card(
         six_month_snapshot,
         one_year_snapshot,
     )
+    analysis_value_amount = projection.get("analysis_value_amount") or ZERO
+    annual_cost_used = projection.get("annual_cost_used", position.recurring_cost_used) or ZERO
     maintenance_drag_pct = (
-        (position.recurring_cost_used / position.invested_amount) * Decimal("100")
-        if position.invested_amount
-        else ZERO
+        (annual_cost_used / analysis_value_amount) * Decimal("100")
+        if analysis_value_amount
+        else (
+            (position.recurring_cost_used / position.invested_amount) * Decimal("100")
+            if position.invested_amount
+            else ZERO
+        )
     )
     broker_costs = {
-        **position.estimated_broker_costs,
-        "annual_cost_used": position.recurring_cost_used,
-        "annual_cost_source": position.recurring_cost_source,
-        "net_dividend_income": position.net_dividend_income,
+        **(projection.get("broker_costs") or position.estimated_broker_costs),
+        "annual_cost_used": annual_cost_used,
+        "annual_cost_source": projection.get("annual_cost_source", position.recurring_cost_source),
+        "net_dividend_income": projection.get("net_dividend_income", position.net_dividend_income),
+        "analysis_value_amount": analysis_value_amount,
+        "analysis_value_source": projection.get("analysis_value_source", "actual"),
+        "annual_dividend_income_used": projection.get("annual_dividend_income_used", position.annual_dividend_income),
     }
     dual_axis_chart = {
         "stock_line": "",

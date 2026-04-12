@@ -29,6 +29,7 @@ from .services import (
     build_equity_analysis_dashboard,
     build_equity_history_cards,
     build_equity_ticket_tracking_context,
+    build_trade_alert,
     build_reference_suggestions_for_equity,
     clear_market_data_caches,
     capture_equity_ticket_snapshots,
@@ -403,6 +404,46 @@ class EquitiesServicesTests(TestCase):
             ).quantize(Decimal("0.01")),
         )
 
+    def test_watchlist_projection_normalizes_costs_to_analysis_ticket(self):
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            broker="Banco Sabadell",
+            trade_channel=EquityPosition.TradeChannel.APP,
+            ticker="SCYR",
+            quote_symbol="SCYR.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Sacyr, S.A.",
+            shares=Decimal("1"),
+            average_cost_per_share=Decimal("4.6500"),
+            current_price_per_share=Decimal("4.6500"),
+            annual_dividend_income=Decimal("0"),
+        )
+        for price_date, close_price, benchmark_close in (
+            (date(2025, 12, 31), Decimal("3.10"), Decimal("100.00")),
+            (date(2026, 1, 31), Decimal("3.25"), Decimal("102.00")),
+            (date(2026, 2, 28), Decimal("3.45"), Decimal("104.00")),
+            (date(2026, 3, 31), Decimal("3.70"), Decimal("106.00")),
+            (date(2026, 4, 30), Decimal("4.10"), Decimal("108.00")),
+            (date(2026, 5, 31), Decimal("4.35"), Decimal("110.00")),
+            (date(2026, 6, 30), Decimal("4.65"), Decimal("112.00")),
+        ):
+            position.price_history.create(
+                price_date=price_date,
+                close_price=close_price,
+                benchmark_close=benchmark_close,
+            )
+
+        cards = build_equity_history_cards([position])
+
+        projection = cards[0]["projection"]
+        self.assertTrue(projection["available"])
+        self.assertEqual(projection["analysis_value_source"], "normalized_watchlist")
+        self.assertEqual(projection["analysis_value_amount"], Decimal("10000.00"))
+        self.assertGreater(projection["base_return_pct"], Decimal("0"))
+        self.assertEqual(cards[0]["broker_costs"]["roundtrip_total_cost"], Decimal("32.00"))
+        self.assertEqual(cards[0]["broker_costs"]["annual_cost_used"], Decimal("25.00"))
+
     def test_history_cards_include_projection_backtest_accuracy(self):
         position = EquityPosition.objects.create(
             broker="Interactive Brokers",
@@ -501,6 +542,47 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(cards_by_ticker["TEF"]["trade_alert"]["label"], "Vender")
         self.assertGreater(cards_by_ticker["IDR"]["trade_alert"]["score"], Decimal("0"))
         self.assertLess(cards_by_ticker["TEF"]["trade_alert"]["score"], Decimal("0"))
+
+    def test_trade_alert_stays_in_watch_when_trend_and_12m_net_diverge(self):
+        position = EquityPosition(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            broker="Banco Sabadell",
+            ticker="SCYR",
+            quote_symbol="SCYR.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Sacyr, S.A.",
+            shares=Decimal("1"),
+            average_cost_per_share=Decimal("4.6500"),
+            current_price_per_share=Decimal("4.6500"),
+        )
+
+        alert = build_trade_alert(
+            position,
+            projection={
+                "available": True,
+                "safety_score": Decimal("60.00"),
+                "base_return_pct": Decimal("-8.00"),
+            },
+            correlation={"coefficient": Decimal("0.76")},
+            reliability={"score": Decimal("66.00")},
+            relative_trend={
+                "label": "Mejora moderada",
+                "periods_label": "meses",
+                "positive_streak": 3,
+                "negative_streak": 0,
+                "prolonged_positive": True,
+                "prolonged_negative": False,
+                "recent_gap_avg_pct": Decimal("5.20"),
+                "gap_slope_pct": Decimal("0.45"),
+            },
+            six_month_snapshot={"available": True, "alpha_pct": Decimal("3.50")},
+            one_year_snapshot={"available": True, "alpha_pct": Decimal("6.20")},
+        )
+
+        self.assertEqual(alert["label"], "Vigilar")
+        self.assertEqual(alert["tone"], "watch")
+        self.assertIn("neto 12M sigue en negativo", alert["note"])
 
     def test_watchlist_positions_do_not_count_into_portfolio_totals(self):
         EquityPosition.objects.create(
