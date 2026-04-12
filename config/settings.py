@@ -2,6 +2,8 @@ import os
 import socket
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -49,6 +51,72 @@ def append_unique(items, values):
             items.append(value)
             existing.add(value)
     return items
+
+
+def build_database_settings(base_dir: Path, env: dict[str, str] | None = None, debug: bool = True):
+    if env is None:
+        env = os.environ
+    db_engine = str(env.get("DB_ENGINE", "") or "").strip().lower()
+    sqlite_override = parse_bool(env.get("APP_ALLOW_SQLITE"), False)
+
+    if not db_engine:
+        if debug:
+            db_engine = "sqlite"
+        else:
+            raise ImproperlyConfigured(
+                "DB_ENGINE no esta configurado. Produccion requiere PostgreSQL y ya no puede arrancar en SQLite por defecto."
+            )
+
+    if db_engine in {"postgres", "postgresql"}:
+        required_keys = (
+            "POSTGRES_DB",
+            "POSTGRES_USER",
+            "POSTGRES_PASSWORD",
+            "POSTGRES_HOST",
+            "POSTGRES_PORT",
+        )
+        missing_keys = [key for key in required_keys if not str(env.get(key, "") or "").strip()]
+        if missing_keys:
+            missing_list = ", ".join(missing_keys)
+            raise ImproperlyConfigured(
+                f"DB_ENGINE=postgresql pero faltan variables obligatorias: {missing_list}."
+            )
+
+        return {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": str(env["POSTGRES_DB"]).strip(),
+                "USER": str(env["POSTGRES_USER"]).strip(),
+                "PASSWORD": str(env["POSTGRES_PASSWORD"]).strip(),
+                "HOST": str(env["POSTGRES_HOST"]).strip(),
+                "PORT": str(env["POSTGRES_PORT"]).strip(),
+            }
+        }
+
+    if db_engine in {"sqlite", "sqlite3"}:
+        if not debug and not sqlite_override:
+            raise ImproperlyConfigured(
+                "SQLite esta deshabilitado fuera de desarrollo. Configura PostgreSQL o usa APP_ALLOW_SQLITE=1 solo para una sesion local controlada."
+            )
+
+        sqlite_name = str(env.get("SQLITE_NAME", "") or "").strip()
+        if sqlite_name:
+            sqlite_path = Path(sqlite_name)
+            if not sqlite_path.is_absolute():
+                sqlite_path = base_dir / sqlite_path
+        else:
+            sqlite_path = base_dir / "db.sqlite3"
+
+        return {
+            "default": {
+                "ENGINE": "django.db.backends.sqlite3",
+                "NAME": sqlite_path,
+            }
+        }
+
+    raise ImproperlyConfigured(
+        f"DB_ENGINE={db_engine!r} no es valido. Usa 'postgresql' o 'sqlite'."
+    )
 
 
 def get_local_network_hosts():
@@ -138,25 +206,7 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 
 
-db_engine = os.environ.get("DB_ENGINE", "sqlite").strip().lower()
-if db_engine in {"postgres", "postgresql"}:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.environ.get("POSTGRES_DB", "inversiones_personales"),
-            "USER": os.environ.get("POSTGRES_USER", "postgres"),
-            "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
-            "HOST": os.environ.get("POSTGRES_HOST", "127.0.0.1"),
-            "PORT": os.environ.get("POSTGRES_PORT", "5432"),
-        }
-    }
-else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
-    }
+DATABASES = build_database_settings(BASE_DIR, debug=DEBUG)
 
 
 AUTH_PASSWORD_VALIDATORS = [

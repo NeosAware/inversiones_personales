@@ -71,6 +71,8 @@ APP_SECURE_HSTS_INCLUDE_SUBDOMAINS=1
 APP_SECURE_HSTS_PRELOAD=1
 ```
 
+Importante: la aplicacion ya no cae a SQLite en produccion. Si este `.env` no se carga en el servicio, Django fallara al arrancar para evitar usar una base equivocada.
+
 ## 6. Migraciones, estaticos y usuario inicial
 
 ```bash
@@ -101,6 +103,15 @@ set -a
 . ../.env
 set +a
 gunicorn config.wsgi:application --bind 127.0.0.1:8000
+```
+
+Si lo arrancas con `systemd`, el servicio debe cargar el `.env`. Ejemplo minimo:
+
+```ini
+[Service]
+WorkingDirectory=/var/www/personal.neosaware.ai/app
+EnvironmentFile=/var/www/personal.neosaware.ai/.env
+ExecStart=/var/www/personal.neosaware.ai/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8000
 ```
 
 Healthcheck publico:

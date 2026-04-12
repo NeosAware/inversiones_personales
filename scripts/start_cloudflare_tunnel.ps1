@@ -54,13 +54,7 @@ function Configure-DatabaseEnvironment {
     return
   }
 
-  Remove-Item Env:DB_ENGINE -ErrorAction SilentlyContinue
-  if ($requestedDbEngine -in @("postgres", "postgresql")) {
-    Write-Warning "DB_ENGINE=postgresql is set but POSTGRES_PASSWORD is not configured. Falling back to SQLite (db.sqlite3) to avoid Django 500 errors on startup."
-  }
-  else {
-    Write-Warning "POSTGRES_PASSWORD is not configured. Falling back to SQLite (db.sqlite3) to avoid Django 500 errors on startup."
-  }
+  throw "POSTGRES_PASSWORD is not configured and SQLite fallback is disabled. Configure PostgreSQL or set DB_ENGINE=sqlite explicitly only for a local temporary session."
 }
 
 function Get-CloudflaredPath {

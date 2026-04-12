@@ -50,7 +50,7 @@ cd C:\Users\Gerencia\Documents\inversiones_personales
 ```
 
 That script exposes the app on `0.0.0.0:8000` and prepares local-network hosts automatically.
-If `POSTGRES_PASSWORD` is not configured, it now falls back to the local SQLite database instead of forcing PostgreSQL and leaving the site returning `500`.
+If `POSTGRES_PASSWORD` is not configured, the script now stops instead of switching silently to SQLite.
 
 ### Share without touching the router
 
@@ -75,7 +75,7 @@ The script:
 2. allows the temporary `trycloudflare.com` hostname in Django
 3. opens a Cloudflare Quick Tunnel to your local server
 
-If `POSTGRES_PASSWORD` is not configured, the tunnel script also falls back to SQLite automatically.
+If `POSTGRES_PASSWORD` is not configured, the tunnel script also stops instead of changing silently to SQLite.
 
 Share the HTTPS URL printed by `cloudflared` with Monica.
 
@@ -103,6 +103,8 @@ $env:POSTGRES_HOST='127.0.0.1'
 $env:POSTGRES_PORT='5432'
 python manage.py migrate
 ```
+
+Production no longer falls back to SQLite when `DB_ENGINE` or the PostgreSQL variables are missing. If you want a one-off local SQLite session, set `DB_ENGINE=sqlite` explicitly and only in development.
 
 ### Backups
 
