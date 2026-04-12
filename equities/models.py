@@ -4,6 +4,8 @@ from decimal import Decimal
 from portfolio.metrics import build_metrics
 from portfolio.ownership import AssetOwnershipCategory
 
+from .broker_costs import estimate_broker_costs, resolve_recurring_cost_used
+
 
 class EquityPosition(models.Model):
     class PositionKind(models.TextChoices):
@@ -16,6 +18,13 @@ class EquityPosition(models.Model):
         SPAIN_HOUSE_PRICE = "spain_house_price", "Precio vivienda Espana"
         SPAIN_ELECTRICITY_DEMAND = "spain_electricity_demand", "Demanda electrica Espana"
         SPAIN_GAS_CONSUMPTION = "spain_gas_consumption", "Consumo de gas Espana"
+
+    class TradeChannel(models.TextChoices):
+        APP = "app", "App"
+        WEB = "web", "Web"
+        OFFICE = "office", "Oficina"
+        CONTACT_CENTER = "contact_center", "Contact Center"
+        OTHER = "other", "Otro"
 
     position_kind = models.CharField(
         max_length=16,
@@ -38,6 +47,11 @@ class EquityPosition(models.Model):
     benchmark_symbol = models.CharField(max_length=40, blank=True, default="^IBEX")
     benchmark_name = models.CharField(max_length=120, blank=True, default="IBEX 35")
     company_name = models.CharField(max_length=160)
+    trade_channel = models.CharField(
+        max_length=24,
+        choices=TradeChannel.choices,
+        default=TradeChannel.APP,
+    )
     shares = models.DecimalField(max_digits=14, decimal_places=4)
     average_cost_per_share = models.DecimalField(max_digits=14, decimal_places=4)
     current_price_per_share = models.DecimalField(max_digits=14, decimal_places=4)
@@ -63,8 +77,41 @@ class EquityPosition(models.Model):
         return self.shares * self.current_price_per_share
 
     @property
+    def estimated_broker_costs(self):
+        return estimate_broker_costs(
+            broker_name=self.broker,
+            trade_channel=self.trade_channel,
+            trade_amount=self.invested_amount,
+            valuation_amount=self.current_value or self.invested_amount,
+            annual_dividend_income=self.annual_dividend_income,
+            quote_symbol=self.quote_symbol,
+        )
+
+    @property
+    def recurring_cost_used(self):
+        return resolve_recurring_cost_used(
+            self.annual_maintenance_cost,
+            self.estimated_broker_costs.get("annual_recurring_cost", Decimal("0.00")),
+        )[0]
+
+    @property
+    def recurring_cost_source(self):
+        return resolve_recurring_cost_used(
+            self.annual_maintenance_cost,
+            self.estimated_broker_costs.get("annual_recurring_cost", Decimal("0.00")),
+        )[1]
+
+    @property
+    def purchase_total_cost(self):
+        return self.estimated_broker_costs.get("purchase_total_cost", Decimal("0.00"))
+
+    @property
+    def net_dividend_income(self):
+        return self.annual_dividend_income - self.estimated_broker_costs.get("annual_dividend_fee", Decimal("0.00"))
+
+    @property
     def net_annual_income(self):
-        return self.annual_dividend_income - self.annual_maintenance_cost
+        return self.net_dividend_income - self.recurring_cost_used
 
     @property
     def is_owned(self):
@@ -80,13 +127,14 @@ class EquityPosition(models.Model):
 
     @property
     def unrealized_gain_after_costs(self):
-        return self.unrealized_gain - self.annual_maintenance_cost
+        return self.unrealized_gain - self.purchase_total_cost - self.recurring_cost_used
 
     @property
     def unrealized_return_pct(self):
-        if not self.invested_amount:
+        committed_capital = self.invested_amount + self.purchase_total_cost
+        if not committed_capital:
             return 0
-        return (self.unrealized_gain_after_costs / self.invested_amount) * 100
+        return (self.unrealized_gain_after_costs / committed_capital) * 100
 
     def as_portfolio_position(self):
         invested_amount = self.invested_amount if self.is_owned else Decimal("0")

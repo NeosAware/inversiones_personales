@@ -4,6 +4,7 @@ from django import forms
 
 from portfolio.ownership import AssetOwnershipCategory
 
+from .broker_costs import BROKER_TRADE_CHANNEL_CHOICES
 from .models import EquityPosition
 from .services import apply_equity_company_defaults
 
@@ -34,6 +35,12 @@ class EquityPositionForm(forms.Form):
         label="Titular",
     )
     broker = forms.CharField(max_length=120, required=False, label="Broker o entidad")
+    trade_channel = forms.ChoiceField(
+        choices=BROKER_TRADE_CHANNEL_CHOICES,
+        initial="app",
+        required=False,
+        label="Canal de compra",
+    )
     ticker = forms.CharField(max_length=20, required=False, label="Ticker")
     company_name = forms.CharField(max_length=160, required=False, label="Empresa")
     quote_symbol = forms.CharField(max_length=40, required=False, label="Simbolo de mercado")
@@ -85,14 +92,14 @@ class EquityPositionForm(forms.Form):
         decimal_places=2,
         required=False,
         initial=0,
-        label="Dividendos anuales",
+        label="Dividendos anuales esperados",
     )
     annual_maintenance_cost = FlexibleDecimalField(
         max_digits=14,
         decimal_places=2,
         required=False,
         initial=0,
-        label="Coste anual de mantenimiento",
+        label="Coste manual anual adicional",
     )
     notes = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 3}), label="Notas")
 
@@ -104,6 +111,7 @@ class EquityPositionForm(forms.Form):
                 "placeholder": "Opcional en seguimiento",
             }
         )
+        self.fields["trade_channel"].widget.attrs.update({"data-broker-channel": "1"})
         self.fields["company_name"].widget.attrs.update(
             {
                 "list": "equity-company-options",
@@ -133,9 +141,16 @@ class EquityPositionForm(forms.Form):
                 "placeholder": "Simbolo externo o indice",
             }
         )
+        self.fields["annual_maintenance_cost"].help_text = (
+            "Si lo dejas a 0, la app aplicara la tarifa del banco cuando la conozca; usalo solo para ajustes manuales."
+        )
 
     def clean_broker(self):
         return str(self.cleaned_data.get("broker") or "").strip()
+
+    def clean_trade_channel(self):
+        value = str(self.cleaned_data.get("trade_channel") or "").strip().lower()
+        return value or EquityPosition.TradeChannel.APP
 
     def clean_ticker(self):
         return self.cleaned_data["ticker"].strip().upper()
@@ -158,6 +173,7 @@ class EquityPositionForm(forms.Form):
         cleaned_data = super().clean()
         cleaned_data["position_kind"] = cleaned_data.get("position_kind") or "owned"
         cleaned_data["reference_profile"] = cleaned_data.get("reference_profile") or "market_index"
+        cleaned_data["trade_channel"] = cleaned_data.get("trade_channel") or EquityPosition.TradeChannel.APP
         raw_reference_profile = str(self.data.get("reference_profile", "")).strip()
         raw_benchmark_symbol = str(self.data.get("benchmark_symbol", "")).strip()
         raw_benchmark_name = str(self.data.get("benchmark_name", "")).strip()
@@ -184,6 +200,8 @@ class EquityPositionForm(forms.Form):
         if cleaned_data.get("position_kind") == "watchlist":
             if not cleaned_data.get("broker"):
                 cleaned_data["broker"] = "Seguimiento"
+            if not cleaned_data.get("trade_channel"):
+                cleaned_data["trade_channel"] = EquityPosition.TradeChannel.APP
             if cleaned_data.get("shares") is None:
                 cleaned_data["shares"] = Decimal("0")
             if cleaned_data.get("average_cost_per_share") is None and cleaned_data.get("current_price_per_share") is not None:

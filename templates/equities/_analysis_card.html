@@ -2,243 +2,225 @@
   <div class="equity-detail-head">
     <div>
       <h4>{{ card.position.company_name }}</h4>
-      <p>{{ card.position.ticker }} | {{ card.position.get_position_kind_display }} | {{ card.position.get_ownership_category_display }}</p>
+      <p>{{ card.position.ticker }} | {{ card.position.get_position_kind_display }} | {{ card.position.broker }}</p>
     </div>
     <div class="equity-tag-list">
       <span class="equity-tag">{{ card.reference_label }}</span>
-      {% if card.reference_playbook.company_sector %}<span class="equity-tag">{{ card.reference_playbook.company_sector }}</span>{% endif %}
+      <span class="equity-tag">{{ card.broker_costs.trade_channel_label }}</span>
       {% if card.position.latest_price_date %}<span class="equity-tag">Precio {{ card.position.latest_price_date|date:"Y-m-d" }}</span>{% endif %}
     </div>
   </div>
 
-  <div class="equity-detail-grid">
-    <div class="equity-mini-stat">
-      <span>Referencia actual</span>
-      <strong>{{ card.reference_label }}</strong>
-      <small>
-        {% if card.correlation.coefficient is not None %}
-          Correlacion app {{ card.correlation.coefficient|floatformat:2 }}
-        {% else %}
-          Sin correlacion suficiente en la serie activa
-        {% endif %}
-      </small>
-    </div>
-    <div class="equity-mini-stat">
-      <span>Mejor ajuste</span>
-      <strong>
-        {% if card.reference_playbook.best_candidate %}
-          {{ card.reference_playbook.best_candidate.name }}
-        {% else %}
-          Sin sugerencia
-        {% endif %}
-      </strong>
-      <small>{{ card.reference_playbook.source_label }}</small>
-    </div>
-    <div class="equity-mini-stat">
-      <span>Rentabilidad neta</span>
-      <strong class="{% if card.net_unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">
-        {{ card.net_unrealized_return_pct|floatformat:2 }} %
-      </strong>
-      <small>{{ card.net_unrealized_gain|floatformat:0 }} EUR despues de costes</small>
-    </div>
-    <div class="equity-mini-stat">
-      <span>Flujo anual neto</span>
-      <strong class="{% if card.net_annual_income >= 0 %}good{% else %}warn{% endif %}">
-        {{ card.net_annual_income|floatformat:0 }} EUR
-      </strong>
-      <small>Mantenimiento {{ card.position.annual_maintenance_cost|floatformat:0 }} EUR</small>
-    </div>
-  </div>
-
-  {% if card.has_history %}
-    <div class="equity-period-strip">
-      {% for snapshot in card.period_snapshots %}
-        <div class="equity-period-pill">
-          <span>{{ snapshot.label }}</span>
-          <strong class="{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
-            {% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:1 }} %{% else %}-{% endif %}
-          </strong>
-        </div>
-      {% endfor %}
-      <div class="equity-period-pill">
-        <span>Periodo elegido</span>
-        <strong class="{% if card.selected_period.stock_return_pct or card.selected_period.stock_return_pct == 0 %}{% if card.selected_period.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
-          {% if card.selected_period.available %}{{ card.selected_period.stock_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+  {% if card.projection.available %}
+    <div class="equity-detail-grid">
+      <div class="equity-mini-stat">
+        <span>Retorno total 12M</span>
+        <strong class="{% if card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">
+          {{ card.projection.base_return_pct|floatformat:1 }} %
         </strong>
+        <small>Precio {{ card.projection.price_return_pct|floatformat:1 }} % + flujo neto anual.</small>
       </div>
-      <div class="equity-period-pill">
-        <span>Observaciones</span>
-        <strong>{{ card.correlation.observations_count }}</strong>
+      <div class="equity-mini-stat">
+        <span>Seguridad</span>
+        <strong>{{ card.projection.safety_score|floatformat:0 }}/100</strong>
+        <small>{{ card.projection.safety_label }} segun volatilidad, drawdown y consistencia.</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Fiabilidad</span>
+        <strong>{{ card.projection_reliability.label }}</strong>
+        <small>{{ card.projection.confidence_label }} en modelo{% if card.projection_backtest.available %} | Backtest {{ card.projection_backtest.precision_label }}{% endif %}</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Beneficio / riesgo</span>
+        <strong>{% if card.projection.benefit_risk_ratio is not None %}{{ card.projection.benefit_risk_ratio|floatformat:2 }}{% else %}-{% endif %}</strong>
+        <small>Retorno neto frente al rango esperado.</small>
       </div>
     </div>
 
-    <div class="equity-chart-shell">
-      <svg viewBox="0 0 640 220">
-        <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-        <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-        <line x1="622" y1="18" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-        <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.stock_line }}" />
-        {% if card.benchmark_line %}
-          <polyline fill="none" stroke="#7e8c97" stroke-width="3" points="{{ card.benchmark_line }}" />
-        {% endif %}
-        {% if card.projection_line %}
-          <polyline fill="none" stroke="#b7642d" stroke-width="4" stroke-dasharray="10 8" points="{{ card.projection_line }}" />
-        {% endif %}
-        <text x="8" y="20" font-size="12" fill="#0d5d78">{{ card.dual_axis_chart.stock_max_label }}</text>
-        <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.dual_axis_chart.stock_min_label }}</text>
-        <text x="632" y="20" font-size="12" text-anchor="end" fill="#627380">{{ card.dual_axis_chart.reference_max_label }}</text>
-        <text x="632" y="214" font-size="12" text-anchor="end" fill="#627380">{{ card.dual_axis_chart.reference_min_label }}</text>
-      </svg>
-      <div class="equity-chart-foot">
-        <span>Izquierda accion</span>
-        <span>Derecha {{ card.reference_label }}</span>
-        {% if card.projection_line %}<span>Tramo punteado 12M</span>{% endif %}
+    <div class="equity-detail-grid" style="margin-top:14px;">
+      <div class="equity-mini-stat">
+        <span>Ciclo 10A</span>
+        <strong>{{ card.projection.cycle_phase }}</strong>
+        <small>{{ card.projection.years_covered|floatformat:1 }} anos de base.</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Corr 10A</span>
+        <strong>{% if card.correlation.coefficient is not None %}{{ card.correlation.coefficient|floatformat:2 }}{% else %}-{% endif %}</strong>
+        <small>{{ card.reference_label }} | {{ card.correlation.stability_label }}</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>CAGR ciclo</span>
+        <strong>{% if card.projection.cagr_pct is not None %}{{ card.projection.cagr_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+        <small>Ritmo anual del historico util.</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Volatilidad</span>
+        <strong>{% if card.projection.annualized_volatility_pct is not None %}{{ card.projection.annualized_volatility_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+        <small>Drawdown actual {% if card.projection.current_drawdown_pct is not None %}{{ card.projection.current_drawdown_pct|floatformat:1 }} %{% else %}-{% endif %}</small>
       </div>
     </div>
+
+    <div class="equity-detail-grid" style="margin-top:14px;">
+      <div class="equity-mini-stat">
+        <span>Dividendos netos</span>
+        <strong>{{ card.broker_costs.net_dividend_income|floatformat:0 }} EUR</strong>
+        <small>Bruto {{ card.position.annual_dividend_income|floatformat:0 }} EUR{% if card.projection.gross_dividend_yield_pct is not None %} | Yield {{ card.projection.gross_dividend_yield_pct|floatformat:1 }} %{% endif %}</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Coste anual usado</span>
+        <strong>{{ card.broker_costs.annual_cost_used|floatformat:0 }} EUR</strong>
+        <small>{% if card.broker_costs.annual_cost_source == "manual" %}Coste manual{% else %}Tarifa broker{% endif %}</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Compra + venta</span>
+        <strong>{{ card.broker_costs.roundtrip_total_cost|floatformat:0 }} EUR</strong>
+        <small>{{ card.broker_costs.profile_label }} | {{ card.broker_costs.market_scope_label }}</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Precio objetivo</span>
+        <strong>{% if card.projection.projected_price is not None %}{{ card.projection.projected_price|floatformat:4 }}{% else %}-{% endif %}</strong>
+        <small>Rango {% if card.projection.low_return_pct is not None and card.projection.high_return_pct is not None %}{{ card.projection.low_return_pct|floatformat:1 }} / {{ card.projection.high_return_pct|floatformat:1 }} %{% else %}-{% endif %}</small>
+      </div>
+    </div>
+
+    <p class="equity-detail-note" style="margin-top:14px;">{{ card.projection.explanation }} {{ card.projection.confidence_note }}</p>
   {% else %}
     <div class="message info" style="margin-top:18px;">
-      Todavia no hay historico suficiente para dibujar la serie. Aun asi puedes dejar preparada la referencia.
+      Todavia no hay historico suficiente para generar una proyeccion fiable.
     </div>
   {% endif %}
 
-  {% if card.reference_playbook.available %}
-    <section class="equity-candidate-section">
-      <div class="equity-section-head">
-        <div>
-          <h5>Selector de referencias</h5>
-          <p>{{ card.reference_playbook.source_label }}. La tabla mezcla ajuste sectorial y, cuando existe, correlacion historica.</p>
-        </div>
-        {% if card.reference_playbook.return_2025 is not None or card.reference_playbook.per_2025 is not None or card.reference_playbook.dividend_yield is not None %}
-          <div class="equity-meta-stack">
-            {% if card.reference_playbook.return_2025 is not None %}<span>2025 {{ card.reference_playbook.return_2025|floatformat:1 }} %</span>{% endif %}
-            {% if card.reference_playbook.per_2025 is not None %}<span>PER {{ card.reference_playbook.per_2025|floatformat:1 }}</span>{% endif %}
-            {% if card.reference_playbook.dividend_yield is not None %}<span>Div {{ card.reference_playbook.dividend_yield|floatformat:1 }} %</span>{% endif %}
-          </div>
-        {% endif %}
-      </div>
-
-      <div class="equity-candidate-grid">
-        {% for candidate in card.reference_playbook.candidates %}
-          <div class="equity-candidate-card{% if candidate.is_active_reference %} active{% elif candidate.is_best %} best{% endif %}">
-            <div class="equity-candidate-head">
-              <strong>{{ candidate.name }}</strong>
-              {% if candidate.is_active_reference %}
-                <span class="pill">Activa</span>
-              {% elif candidate.is_best %}
-                <span class="pill">Mejor ajuste</span>
-              {% elif candidate.is_primary_reference %}
-                <span class="pill">Referencia Excel</span>
-              {% endif %}
-            </div>
-            <div class="equity-candidate-metrics">
-              <span>
-                Ajuste sector:
-                {% if candidate.sector_score is not None %}
-                  {{ candidate.sector_score|floatformat:2 }} ({{ candidate.sector_score_label }})
-                {% else %}
-                  sin dato
-                {% endif %}
-              </span>
-              <span>
-                Historico:
-                {% if candidate.historical_coefficient is not None %}
-                  {{ candidate.historical_coefficient|floatformat:2 }} ({{ candidate.historical_label }})
-                {% else %}
-                  sin serie suficiente
-                {% endif %}
-              </span>
-              <span>{{ candidate.observations_count }} observaciones</span>
-            </div>
-            {% if candidate.supports_chart and not candidate.is_active_reference %}
-              <form method="post" class="equity-inline-form">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="change_reference">
-                <input type="hidden" name="position_id" value="{{ card.position.id }}">
-                <input type="hidden" name="reference_profile" value="{{ candidate.live_reference.reference_profile }}">
-                <input type="hidden" name="benchmark_symbol" value="{{ candidate.live_reference.benchmark_symbol }}">
-                <input type="hidden" name="benchmark_name" value="{{ candidate.live_reference.benchmark_name }}">
-                <button class="equity-mini-button" type="submit">Usar en el grafico</button>
-              </form>
-            {% elif candidate.supports_chart %}
-              <div class="equity-candidate-note">Ya es la referencia activa del grafico.</div>
-            {% else %}
-              <div class="equity-candidate-note">Solo disponible como guia del Excel por ahora.</div>
+  <details class="equity-inline-fold" style="margin-top:18px;">
+    <summary>Grafico, referencias y costes</summary>
+    <div class="equity-inline-body">
+      {% if card.has_history %}
+        <div class="equity-chart-shell">
+          <svg viewBox="0 0 640 220">
+            <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <line x1="622" y1="18" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.stock_line }}" />
+            {% if card.benchmark_line %}
+              <polyline fill="none" stroke="#7e8c97" stroke-width="3" points="{{ card.benchmark_line }}" />
             {% endif %}
+            {% if card.projection_line %}
+              <polyline fill="none" stroke="#b7642d" stroke-width="4" stroke-dasharray="10 8" points="{{ card.projection_line }}" />
+            {% endif %}
+            <text x="8" y="20" font-size="12" fill="#0d5d78">{{ card.dual_axis_chart.stock_max_label }}</text>
+            <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.dual_axis_chart.stock_min_label }}</text>
+            <text x="632" y="20" font-size="12" text-anchor="end" fill="#627380">{{ card.dual_axis_chart.reference_max_label }}</text>
+            <text x="632" y="214" font-size="12" text-anchor="end" fill="#627380">{{ card.dual_axis_chart.reference_min_label }}</text>
+          </svg>
+          <div class="equity-chart-foot">
+            <span>Accion</span>
+            <span>{{ card.reference_label }}</span>
+            <span>Tramo punteado: escenario central 12M</span>
+          </div>
+        </div>
+      {% endif %}
+
+      <div class="equity-detail-grid">
+        {% for snapshot in card.period_snapshots %}
+          <div class="equity-mini-stat">
+            <span>{{ snapshot.label }}</span>
+            <strong class="{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
+              {% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+            </strong>
+            <small>Referencia {% if snapshot.benchmark_return_pct is not None %}{{ snapshot.benchmark_return_pct|floatformat:1 }} %{% else %}sin dato{% endif %}</small>
           </div>
         {% endfor %}
       </div>
 
-      {% if card.reference_playbook.notes %}
-        <p class="equity-detail-note">{{ card.reference_playbook.notes }}</p>
+      {% if card.reference_playbook.available %}
+        <section class="equity-candidate-section">
+          <div class="equity-section-head">
+            <div>
+              <h5>Referencias candidatas</h5>
+              <p>{{ card.reference_playbook.source_label }}. Se prioriza ajuste historico y guia sectorial.</p>
+            </div>
+          </div>
+          <div class="equity-candidate-grid">
+            {% for candidate in card.reference_playbook.candidates %}
+              <div class="equity-candidate-card{% if candidate.is_active_reference %} active{% elif candidate.is_best %} best{% endif %}">
+                <div class="equity-candidate-head">
+                  <strong>{{ candidate.name }}</strong>
+                  {% if candidate.is_active_reference %}
+                    <span class="pill">Activa</span>
+                  {% elif candidate.is_best %}
+                    <span class="pill">Mejor</span>
+                  {% endif %}
+                </div>
+                <div class="equity-candidate-metrics">
+                  <span>Historico {% if candidate.historical_coefficient is not None %}{{ candidate.historical_coefficient|floatformat:2 }}{% else %}sin dato{% endif %}</span>
+                  <span>Sector {% if candidate.sector_score is not None %}{{ candidate.sector_score|floatformat:2 }}{% else %}sin guia{% endif %}</span>
+                  <span>{{ candidate.observations_count }} observaciones</span>
+                </div>
+                {% if candidate.supports_chart and not candidate.is_active_reference %}
+                  <form method="post" class="equity-inline-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="change_reference">
+                    <input type="hidden" name="position_id" value="{{ card.position.id }}">
+                    <input type="hidden" name="reference_profile" value="{{ candidate.live_reference.reference_profile }}">
+                    <input type="hidden" name="benchmark_symbol" value="{{ candidate.live_reference.benchmark_symbol }}">
+                    <input type="hidden" name="benchmark_name" value="{{ candidate.live_reference.benchmark_name }}">
+                    <button class="equity-mini-button" type="submit">Usar referencia</button>
+                  </form>
+                {% else %}
+                  <div class="equity-candidate-note">{% if candidate.supports_chart %}Ya esta activa en el grafico.{% else %}Solo disponible como guia por ahora.{% endif %}</div>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+        </section>
       {% endif %}
-    </section>
-  {% endif %}
 
-  {% if card.projection.available %}
-    <details class="equity-inline-fold">
-      <summary>Proyeccion 12M</summary>
-      <div class="equity-inline-fold-body">
+      <div class="equity-detail-grid">
+        <div class="equity-mini-stat">
+          <span>Compra estimada</span>
+          <strong>{{ card.broker_costs.purchase_total_cost|floatformat:0 }} EUR</strong>
+          <small>Entrada con {{ card.broker_costs.trade_channel_label|lower }}.</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Custodia anual</span>
+          <strong>{{ card.broker_costs.annual_custody_cost|floatformat:0 }} EUR</strong>
+          <small>{% if card.broker_costs.pdf_source_label %}{{ card.broker_costs.pdf_source_label }}{% else %}Sin perfil automatico{% endif %}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Comision dividendos</span>
+          <strong>{{ card.broker_costs.annual_dividend_fee|floatformat:0 }} EUR</strong>
+          <small>Impacto anual estimado.</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Impuesto compra</span>
+          <strong>{{ card.broker_costs.transaction_tax_cost|floatformat:0 }} EUR</strong>
+          <small>{% if card.broker_costs.transaction_tax_cost %}Incluido en compra nacional{% else %}No aplicable o no estimado{% endif %}</small>
+        </div>
+      </div>
+
+      {% if card.projection_backtest.available %}
         <div class="equity-detail-grid">
           <div class="equity-mini-stat">
-            <span>Retorno base</span>
-            <strong class="{% if card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ card.projection.base_return_pct|floatformat:2 }} %</strong>
-            <small>{{ card.projection.confidence_label }}</small>
+            <span>Backtest</span>
+            <strong>{{ card.projection_backtest.precision_label }}</strong>
+            <small>{{ card.projection_backtest.comparisons_count }} comparativas a 12M.</small>
           </div>
           <div class="equity-mini-stat">
-            <span>Precio objetivo</span>
-            <strong>{% if card.projection.projected_price is not None %}{{ card.projection.projected_price|floatformat:4 }}{% else %}-{% endif %}</strong>
-            <small>Escenario central</small>
+            <span>Error medio</span>
+            <strong>{{ card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %</strong>
+            <small>Sobre tramo de precio.</small>
           </div>
           <div class="equity-mini-stat">
-            <span>Rango orientativo</span>
-            <strong>
-              {% if card.projection.low_return_pct is not None and card.projection.high_return_pct is not None %}
-                {{ card.projection.low_return_pct|floatformat:1 }} / {{ card.projection.high_return_pct|floatformat:1 }} %
-              {% else %}
-                -
-              {% endif %}
-            </strong>
-            <small>Lectura no vinculante</small>
+            <span>Acierto direccion</span>
+            <strong>{{ card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %</strong>
+            <small>Sube o baja.</small>
           </div>
           <div class="equity-mini-stat">
-            <span>Tramo 6M actual</span>
-            <strong>
-              {% if card.projection.reference_6m_return_pct is not None %}
-                {{ card.projection.reference_6m_return_pct|floatformat:1 }} %
-              {% else %}
-                -
-              {% endif %}
-            </strong>
-            <small>{{ card.reference_label }}</small>
+            <span>Dentro del rango</span>
+            <strong>{{ card.projection_backtest.in_range_rate_pct|floatformat:0 }} %</strong>
+            <small>Escenario central +/- banda.</small>
           </div>
         </div>
-        <p class="equity-detail-note">{{ card.projection.explanation }} {{ card.projection.confidence_note }}</p>
-
-        {% if card.projection_backtest.available %}
-          <div class="equity-detail-grid">
-            <div class="equity-mini-stat">
-              <span>Precision</span>
-              <strong>{{ card.projection_backtest.precision_label }}</strong>
-              <small>{{ card.projection_backtest.comparisons_count }} comparativas</small>
-            </div>
-            <div class="equity-mini-stat">
-              <span>Error medio</span>
-              <strong>{{ card.projection_backtest.mean_absolute_error_pct|floatformat:2 }} %</strong>
-              <small>Media absoluta</small>
-            </div>
-            <div class="equity-mini-stat">
-              <span>Acierto direccion</span>
-              <strong>{{ card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %</strong>
-              <small>Sube o baja</small>
-            </div>
-            <div class="equity-mini-stat">
-              <span>Dentro del rango</span>
-              <strong>{{ card.projection_backtest.in_range_rate_pct|floatformat:0 }} %</strong>
-              <small>Backtest 12M</small>
-            </div>
-          </div>
-        {% endif %}
-      </div>
-    </details>
-  {% endif %}
+      {% endif %}
+    </div>
+  </details>
 </article>

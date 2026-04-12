@@ -24,6 +24,15 @@ from .models import EquityPosition, EquityPriceHistory
 
 
 ZERO = Decimal("0.00")
+ONE_HUNDRED = Decimal("100")
+DEFAULT_MARKET_RANGE_KEY = "10y"
+LONG_ANALYSIS_YEARS = 10
+LONG_ANALYSIS_DAYS = 365 * LONG_ANALYSIS_YEARS
+LONG_MONTHLY_OBSERVATIONS = 132
+MONTHLY_CORRELATION_WINDOW = 120
+QUARTERLY_CORRELATION_WINDOW = 40
+MONTHLY_RECENT_WINDOW = 12
+QUARTERLY_RECENT_WINDOW = 4
 DEFAULT_BENCHMARK_SYMBOL = "^IBEX"
 DEFAULT_BENCHMARK_NAME = "IBEX 35"
 EURIBOR_REFERENCE_SYMBOL = "ECB:M.S0.N.C_EUR1Y.E"
@@ -595,6 +604,9 @@ def resolve_equities_reference_workbook_path() -> Path | None:
     candidates = []
     if configured_path:
         candidates.append(Path(configured_path).expanduser())
+    candidates.append(Path(settings.BASE_DIR) / IBEX_REFERENCE_WORKBOOK_FILENAME)
+    candidates.append(Path(settings.BASE_DIR).parent / IBEX_REFERENCE_WORKBOOK_FILENAME)
+    candidates.append(Path.cwd() / IBEX_REFERENCE_WORKBOOK_FILENAME)
     candidates.append(Path.home() / "Downloads" / IBEX_REFERENCE_WORKBOOK_FILENAME)
 
     for candidate in candidates:
@@ -1149,7 +1161,7 @@ def build_equity_reference_guide(history_cards: list[dict]) -> dict:
     }
 
 
-def fetch_market_series(symbol: str, range_key: str = "5y", interval: str = "1d") -> MarketSeries:
+def fetch_market_series(symbol: str, range_key: str = DEFAULT_MARKET_RANGE_KEY, interval: str = "1d") -> MarketSeries:
     params = urlencode({"range": range_key, "interval": interval, "includePrePost": "false"})
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?{params}"
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -1204,7 +1216,11 @@ def fetch_market_series(symbol: str, range_key: str = "5y", interval: str = "1d"
     )
 
 
-def fetch_ecb_reference_series(series_key: str, series_name: str, last_n_observations: int = 120) -> MarketSeries:
+def fetch_ecb_reference_series(
+    series_key: str,
+    series_name: str,
+    last_n_observations: int = LONG_MONTHLY_OBSERVATIONS,
+) -> MarketSeries:
     url = (
         "https://data-api.ecb.europa.eu/service/data/RTD/"
         f"{series_key}?format=jsondata&lastNObservations={last_n_observations}"
@@ -1303,7 +1319,7 @@ def parse_datetime_to_date(value: str) -> date:
 
 def fetch_ree_electricity_demand_series() -> MarketSeries:
     end_date = datetime.now(timezone.utc).date()
-    start_date = end_date - timedelta(days=365 * 5)
+    start_date = end_date - timedelta(days=LONG_ANALYSIS_DAYS)
     params = urlencode(
         {
             "start_date": f"{start_date.isoformat()}T00:00",
@@ -2107,6 +2123,8 @@ def infer_reference_frequency(position: EquityPosition) -> str:
 
 
 def bucket_label_for_date(value: date, frequency: str) -> str:
+    if frequency == "yearly":
+        return f"{value.year}"
     if frequency == "quarterly":
         quarter = ((value.month - 1) // 3) + 1
         return f"{value.year}-Q{quarter}"
@@ -2118,6 +2136,184 @@ def collapse_history_to_frequency(history, frequency: str) -> list:
     for point in history:
         buckets[bucket_label_for_date(point.price_date, frequency)] = point
     return [buckets[label] for label in sorted(buckets.keys())]
+
+
+def build_return_series_from_collapsed_rows(
+    collapsed_rows: list[dict],
+    primary_key: str,
+    secondary_key: str,
+) -> tuple[list[Decimal], list[Decimal]]:
+    primary_returns = []
+    secondary_returns = []
+    for previous, current in zip(collapsed_rows, collapsed_rows[1:]):
+        primary_return = percentage_change(current.get(primary_key), previous.get(primary_key))
+        secondary_return = percentage_change(current.get(secondary_key), previous.get(secondary_key))
+        if primary_return is None or secondary_return is None:
+            continue
+        primary_returns.append(primary_return)
+        secondary_returns.append(secondary_return)
+    return primary_returns, secondary_returns
+
+
+def correlation_window_size(frequency: str) -> int:
+    if frequency == "quarterly":
+        return QUARTERLY_CORRELATION_WINDOW
+    return MONTHLY_CORRELATION_WINDOW
+
+
+def recent_correlation_window_size(frequency: str) -> int:
+    if frequency == "quarterly":
+        return QUARTERLY_RECENT_WINDOW
+    return MONTHLY_RECENT_WINDOW
+
+
+def calculate_years_between(start_date: date | None, end_date: date | None) -> Decimal:
+    if not start_date or not end_date or end_date <= start_date:
+        return ZERO
+    return Decimal(str(round((end_date - start_date).days / 365.25, 2)))
+
+
+def calculate_series_cagr_pct(
+    start_value: Decimal | None,
+    end_value: Decimal | None,
+    years_covered: Decimal | None,
+) -> Decimal | None:
+    if start_value in {None, ZERO} or end_value is None or years_covered in {None, ZERO}:
+        return None
+    base = float(end_value / start_value)
+    years_float = float(years_covered)
+    if base <= 0 or years_float <= 0:
+        return None
+    annualized = (base ** (1 / years_float) - 1) * 100
+    return Decimal(str(round(annualized, 4)))
+
+
+def calculate_max_drawdown_pct(values: list[Decimal]) -> tuple[Decimal | None, Decimal | None]:
+    filtered = [value for value in values if value is not None]
+    if len(filtered) < 2:
+        return None, None
+
+    peak = filtered[0]
+    max_drawdown_pct = ZERO
+    for value in filtered:
+        if value > peak:
+            peak = value
+        drawdown_pct = percentage_change(value, peak)
+        if drawdown_pct is not None and drawdown_pct < max_drawdown_pct:
+            max_drawdown_pct = drawdown_pct
+
+    current_peak = max(filtered)
+    current_drawdown_pct = percentage_change(filtered[-1], current_peak)
+    return max_drawdown_pct, current_drawdown_pct
+
+
+def describe_cycle_phase(
+    current_drawdown_pct: Decimal | None,
+    one_year_return_pct: Decimal | None,
+    cagr_pct: Decimal | None,
+) -> str:
+    if current_drawdown_pct is None:
+        return "Sin ciclo"
+    one_year_return_pct = one_year_return_pct or ZERO
+    cagr_pct = cagr_pct or ZERO
+    if current_drawdown_pct <= Decimal("-20.00") and one_year_return_pct < 0:
+        return "Correccion"
+    if current_drawdown_pct <= Decimal("-8.00") and one_year_return_pct >= 0:
+        return "Recuperacion"
+    if current_drawdown_pct >= Decimal("-6.00") and one_year_return_pct >= 0 and cagr_pct >= 0:
+        return "Expansion"
+    return "Transicion"
+
+
+def build_cycle_metrics(history) -> dict:
+    if not history:
+        return {
+            "available": False,
+            "years_covered": ZERO,
+            "cycle_phase": "Sin ciclo",
+        }
+
+    latest_date = history[-1].price_date
+    window = filter_history_window(
+        history,
+        start_date=latest_date - timedelta(days=LONG_ANALYSIS_DAYS),
+        end_date=latest_date,
+    )
+    monthly_history = collapse_history_to_frequency(window, "monthly")
+    if len(monthly_history) < 6:
+        return {
+            "available": False,
+            "years_covered": calculate_years_between(window[0].price_date, window[-1].price_date) if len(window) >= 2 else ZERO,
+            "cycle_phase": "Sin ciclo",
+        }
+
+    monthly_returns = []
+    for previous, current in zip(monthly_history, monthly_history[1:]):
+        period_return = percentage_change(current.close_price, previous.close_price)
+        if period_return is not None:
+            monthly_returns.append(period_return)
+
+    monthly_volatility_pct = standard_deviation_decimal(monthly_returns)
+    annualized_volatility_pct = (
+        monthly_volatility_pct * Decimal(str(round(math.sqrt(12), 4)))
+        if monthly_volatility_pct is not None
+        else None
+    )
+    years_covered = calculate_years_between(monthly_history[0].price_date, monthly_history[-1].price_date)
+    cagr_pct = calculate_series_cagr_pct(
+        monthly_history[0].close_price,
+        monthly_history[-1].close_price,
+        years_covered,
+    )
+    max_drawdown_pct, current_drawdown_pct = calculate_max_drawdown_pct(
+        [point.close_price for point in monthly_history]
+    )
+    one_year_snapshot = build_period_snapshot(
+        monthly_history,
+        "1Y",
+        start_date=latest_date - timedelta(days=365),
+        end_date=latest_date,
+    )
+    three_year_snapshot = build_period_snapshot(
+        monthly_history,
+        "3Y",
+        start_date=latest_date - timedelta(days=365 * 3),
+        end_date=latest_date,
+    )
+    yearly_history = collapse_history_to_frequency(window, "yearly")
+    yearly_returns = []
+    for previous, current in zip(yearly_history, yearly_history[1:]):
+        yearly_return = percentage_change(current.close_price, previous.close_price)
+        if yearly_return is not None:
+            yearly_returns.append(yearly_return)
+    positive_year_ratio_pct = None
+    if yearly_returns:
+        positive_year_ratio_pct = Decimal(sum(1 for value in yearly_returns if value > 0)) * ONE_HUNDRED / Decimal(
+            len(yearly_returns)
+        )
+
+    return {
+        "available": True,
+        "start_date": monthly_history[0].price_date,
+        "end_date": monthly_history[-1].price_date,
+        "years_covered": years_covered,
+        "monthly_observations_count": len(monthly_history),
+        "yearly_observations_count": len(yearly_returns),
+        "monthly_volatility_pct": monthly_volatility_pct,
+        "annualized_volatility_pct": annualized_volatility_pct,
+        "cagr_pct": cagr_pct,
+        "max_drawdown_pct": max_drawdown_pct,
+        "current_drawdown_pct": current_drawdown_pct,
+        "cycle_total_return_pct": percentage_change(monthly_history[-1].close_price, monthly_history[0].close_price),
+        "one_year_return_pct": one_year_snapshot.get("stock_return_pct") if one_year_snapshot.get("available") else None,
+        "three_year_return_pct": three_year_snapshot.get("stock_return_pct") if three_year_snapshot.get("available") else None,
+        "positive_year_ratio_pct": positive_year_ratio_pct,
+        "cycle_phase": describe_cycle_phase(
+            current_drawdown_pct,
+            one_year_snapshot.get("stock_return_pct") if one_year_snapshot.get("available") else None,
+            cagr_pct,
+        ),
+    }
 
 
 def pearson_correlation(xs: list[Decimal], ys: list[Decimal]) -> Decimal | None:
@@ -2155,22 +2351,35 @@ def build_correlation_from_rows(rows: list[dict], frequency: str) -> dict:
         buckets[bucket_label_for_date(row["date"], frequency)] = row
     collapsed = [buckets[label] for label in sorted(buckets.keys())]
 
-    stock_returns = []
-    reference_returns = []
-    for previous, current in zip(collapsed, collapsed[1:]):
-        stock_return = percentage_change(current.get("stock_close"), previous.get("stock_close"))
-        reference_return = percentage_change(current.get("reference_close"), previous.get("reference_close"))
-        if stock_return is None or reference_return is None:
-            continue
-        stock_returns.append(stock_return)
-        reference_returns.append(reference_return)
-
-    coefficient = pearson_correlation(stock_returns[-12:], reference_returns[-12:])
+    stock_returns, reference_returns = build_return_series_from_collapsed_rows(
+        collapsed,
+        "stock_close",
+        "reference_close",
+    )
+    window_size = correlation_window_size(frequency)
+    recent_window = recent_correlation_window_size(frequency)
+    coefficient = pearson_correlation(stock_returns[-window_size:], reference_returns[-window_size:])
+    recent_coefficient = pearson_correlation(stock_returns[-recent_window:], reference_returns[-recent_window:])
+    stability_gap = abs(coefficient - recent_coefficient) if coefficient is not None and recent_coefficient is not None else None
+    if stability_gap is None or stability_gap <= Decimal("0.15"):
+        stability_label = "Estable"
+    elif stability_gap <= Decimal("0.35"):
+        stability_label = "Aceptable"
+    else:
+        stability_label = "Cambiante"
     return {
         "frequency": frequency,
         "coefficient": coefficient,
+        "recent_coefficient": recent_coefficient,
         "label": describe_correlation(coefficient),
         "observations_count": len(stock_returns),
+        "years_covered": calculate_years_between(
+            collapsed[0]["date"] if collapsed else None,
+            collapsed[-1]["date"] if collapsed else None,
+        ),
+        "window_observations": min(len(stock_returns), window_size),
+        "stability_gap": stability_gap,
+        "stability_label": stability_label,
     }
 
 
@@ -2306,34 +2515,91 @@ def build_projection_confidence(
     coefficient: Decimal | None,
     observations_count: int,
     monthly_returns_count: int,
+    years_covered: Decimal = ZERO,
+    positive_year_ratio_pct: Decimal | None = None,
+    stability_gap: Decimal | None = None,
 ) -> dict:
     score = 0
     absolute_coefficient = abs(coefficient) if coefficient is not None else None
     if absolute_coefficient is not None:
-        if absolute_coefficient >= Decimal("0.25"):
+        if absolute_coefficient >= Decimal("0.20"):
             score += 1
-        if absolute_coefficient >= Decimal("0.50"):
+        if absolute_coefficient >= Decimal("0.45"):
             score += 1
-    if observations_count >= 4:
+    if observations_count >= 12:
         score += 1
-    if observations_count >= 8:
+    if observations_count >= 36:
         score += 1
-    if monthly_returns_count >= 4:
+    if observations_count >= 72:
+        score += 1
+    if monthly_returns_count >= 24:
+        score += 1
+    if years_covered >= Decimal("5.00"):
+        score += 1
+    if years_covered >= Decimal("8.00"):
+        score += 1
+    if positive_year_ratio_pct is not None and positive_year_ratio_pct >= Decimal("55.00"):
+        score += 1
+    if positive_year_ratio_pct is not None and positive_year_ratio_pct >= Decimal("70.00"):
+        score += 1
+    if stability_gap is not None and stability_gap <= Decimal("0.20"):
         score += 1
 
-    if score >= 4:
+    if score >= 8:
         return {
             "label": "Alta",
-            "note": "La relacion reciente entre accion y referencia tiene bastante base para una lectura orientativa.",
+            "note": "Hay historico largo, ciclo coherente y una relacion bastante estable con la referencia elegida.",
+            "score_pct": Decimal("85.00"),
         }
-    if score >= 2:
+    if score >= 5:
         return {
             "label": "Media",
-            "note": "La lectura es util, pero conviene verla como una guia y no como una estimacion cerrada.",
+            "note": "La lectura es util, aunque la fiabilidad sigue siendo orientativa y conviene vigilar la volatilidad.",
+            "score_pct": Decimal("65.00"),
         }
     return {
         "label": "Baja",
-        "note": "Hay poca base historica o una relacion debil con la referencia, asi que la propuesta es muy tentativa.",
+        "note": "La proyeccion se apoya en una base limitada o en una relacion debil con la referencia, asi que hay que leerla con prudencia.",
+        "score_pct": Decimal("40.00"),
+    }
+
+
+def build_safety_score(cycle_metrics: dict, correlation: dict) -> dict:
+    score = Decimal("62.00")
+    annualized_volatility_pct = cycle_metrics.get("annualized_volatility_pct")
+    max_drawdown_pct = cycle_metrics.get("max_drawdown_pct")
+    current_drawdown_pct = cycle_metrics.get("current_drawdown_pct")
+    positive_year_ratio_pct = cycle_metrics.get("positive_year_ratio_pct")
+    cagr_pct = cycle_metrics.get("cagr_pct")
+    coefficient = correlation.get("coefficient")
+
+    if annualized_volatility_pct is not None:
+        score -= clamp_decimal(annualized_volatility_pct - Decimal("16.00"), ZERO, Decimal("26.00"))
+    if max_drawdown_pct is not None:
+        score -= clamp_decimal(abs(max_drawdown_pct) * Decimal("0.45"), ZERO, Decimal("18.00"))
+    if current_drawdown_pct is not None and current_drawdown_pct >= Decimal("-10.00"):
+        score += Decimal("6.00")
+    elif current_drawdown_pct is not None and current_drawdown_pct <= Decimal("-25.00"):
+        score -= Decimal("6.00")
+    if positive_year_ratio_pct is not None:
+        score += clamp_decimal((positive_year_ratio_pct - Decimal("50.00")) * Decimal("0.18"), Decimal("-8.00"), Decimal("10.00"))
+    if cagr_pct is not None and cagr_pct >= Decimal("6.00"):
+        score += Decimal("5.00")
+    if coefficient is not None and abs(coefficient) >= Decimal("0.35"):
+        score += Decimal("4.00")
+    if correlation.get("stability_label") == "Estable":
+        score += Decimal("4.00")
+    score = clamp_decimal(score, Decimal("15.00"), Decimal("92.00"))
+
+    if score >= Decimal("72.00"):
+        label = "Alta"
+    elif score >= Decimal("56.00"):
+        label = "Media"
+    else:
+        label = "Baja"
+    return {
+        "score": score,
+        "label": label,
     }
 
 
@@ -2364,83 +2630,171 @@ def build_projection_path(current_price: Decimal | None, annual_return_pct: Deci
     return path
 
 
-def build_one_year_projection(history, position: EquityPosition, correlation: dict, six_month_snapshot: dict) -> dict:
-    if not history or not six_month_snapshot.get("available") or six_month_snapshot.get("stock_return_pct") is None:
+def build_one_year_projection(
+    history,
+    position: EquityPosition,
+    correlation: dict,
+    six_month_snapshot: dict,
+    cycle_metrics: dict | None = None,
+) -> dict:
+    if not history:
         return {"available": False}
 
     latest_price = history[-1].close_price if history[-1].close_price else position.current_price_per_share
-    stock_6m_return_pct = six_month_snapshot["stock_return_pct"]
-    reference_6m_return_pct = six_month_snapshot.get("benchmark_return_pct")
+    latest_date = history[-1].price_date
+    cycle_metrics = cycle_metrics or build_cycle_metrics(history)
+    stock_6m_return_pct = six_month_snapshot.get("stock_return_pct") if six_month_snapshot.get("available") else None
+    reference_6m_return_pct = six_month_snapshot.get("benchmark_return_pct") if six_month_snapshot.get("available") else None
+    one_year_snapshot = build_period_snapshot(
+        history,
+        "1Y",
+        start_date=latest_date - timedelta(days=365),
+        end_date=latest_date,
+    )
+    three_year_snapshot = build_period_snapshot(
+        history,
+        "3Y",
+        start_date=latest_date - timedelta(days=365 * 3),
+        end_date=latest_date,
+    )
     coefficient = correlation.get("coefficient")
     observations_count = correlation.get("observations_count", 0)
+    price_return_components = []
 
-    stock_signal = build_projection_signal(stock_6m_return_pct, 6)
-    if stock_signal is None:
+    stock_6m_signal = build_projection_signal(stock_6m_return_pct, 6)
+    if stock_6m_signal is not None:
+        price_return_components.append(stock_6m_signal * Decimal("0.20"))
+    if one_year_snapshot.get("available") and one_year_snapshot.get("stock_return_pct") is not None:
+        price_return_components.append(one_year_snapshot["stock_return_pct"] * Decimal("0.30"))
+    if three_year_snapshot.get("available") and three_year_snapshot.get("stock_return_pct") is not None:
+        three_year_signal = annualize_return_pct(three_year_snapshot["stock_return_pct"], 36)
+        if three_year_signal is not None:
+            price_return_components.append(three_year_signal * Decimal("0.20"))
+    if cycle_metrics.get("cagr_pct") is not None:
+        price_return_components.append(cycle_metrics["cagr_pct"] * Decimal("0.30"))
+    if cycle_metrics.get("current_drawdown_pct") is not None:
+        current_drawdown_pct = cycle_metrics["current_drawdown_pct"]
+        mean_reversion_pct = clamp_decimal(abs(current_drawdown_pct) * Decimal("0.18"), ZERO, Decimal("10.00"))
+        if current_drawdown_pct <= Decimal("-8.00"):
+            price_return_components.append(mean_reversion_pct)
+        elif current_drawdown_pct >= Decimal("-3.00"):
+            price_return_components.append(-mean_reversion_pct * Decimal("0.40"))
+
+    reference_one_year_return_pct = one_year_snapshot.get("benchmark_return_pct") if one_year_snapshot.get("available") else None
+    if coefficient is not None and reference_one_year_return_pct is not None:
+        price_return_components.append(reference_one_year_return_pct * coefficient * Decimal("0.15"))
+
+    if not price_return_components:
         return {"available": False}
 
-    base_return_pct = stock_signal
-    reference_signal = build_projection_signal(reference_6m_return_pct, 6) if reference_6m_return_pct is not None else None
-    if coefficient is not None and reference_signal is not None:
-        reference_weight = abs(coefficient) * Decimal("0.30")
-        momentum_weight = Decimal("1") - reference_weight
-        base_return_pct = (stock_signal * momentum_weight) + (reference_signal * coefficient * Decimal("0.30"))
-
-    evidence_factor = Decimal("0.70")
-    if observations_count >= 8:
-        evidence_factor = Decimal("1.00")
-    elif observations_count >= 5:
-        evidence_factor = Decimal("0.90")
-    elif observations_count >= 3:
-        evidence_factor = Decimal("0.80")
-    base_return_pct *= evidence_factor
-    base_return_pct = clamp_decimal(base_return_pct, Decimal("-60.00"), Decimal("90.00"))
-
-    monthly_returns = build_recent_monthly_stock_returns(history, months_back=6)
-    monthly_volatility_pct = standard_deviation_decimal(monthly_returns)
-    annualized_volatility_pct = (
-        monthly_volatility_pct * Decimal(str(round(math.sqrt(12), 4)))
-        if monthly_volatility_pct is not None
-        else None
+    price_return_pct = sum(price_return_components, ZERO)
+    annualized_volatility_pct = cycle_metrics.get("annualized_volatility_pct")
+    confidence = build_projection_confidence(
+        coefficient,
+        observations_count,
+        cycle_metrics.get("monthly_observations_count", 0),
+        years_covered=cycle_metrics.get("years_covered", ZERO),
+        positive_year_ratio_pct=cycle_metrics.get("positive_year_ratio_pct"),
+        stability_gap=correlation.get("stability_gap"),
     )
-    confidence = build_projection_confidence(coefficient, observations_count, len(monthly_returns))
-    band_pct = annualized_volatility_pct * Decimal("0.70") if annualized_volatility_pct is not None else Decimal("16.00")
+    evidence_factor = Decimal("0.76")
     if confidence["label"] == "Alta":
-        band_pct -= Decimal("2.00")
+        evidence_factor = Decimal("0.98")
+    elif confidence["label"] == "Media":
+        evidence_factor = Decimal("0.88")
+    safety = build_safety_score(cycle_metrics, correlation)
+    safety_multiplier = clamp_decimal(Decimal("0.88") + (safety["score"] / Decimal("600")), Decimal("0.88"), Decimal("1.05"))
+    price_return_pct = clamp_decimal(
+        price_return_pct * evidence_factor * safety_multiplier,
+        Decimal("-35.00"),
+        Decimal("40.00"),
+    )
+
+    current_value = position.current_value if position.current_value else position.invested_amount
+    broker_costs = position.estimated_broker_costs
+    net_income_yield_pct = None
+    transaction_drag_pct = None
+    gross_dividend_yield_pct = None
+    if current_value and current_value > 0:
+        gross_dividend_yield_pct = (position.annual_dividend_income / current_value) * ONE_HUNDRED
+        net_income_yield_pct = (position.net_annual_income / current_value) * ONE_HUNDRED
+        transaction_drag_pct = (broker_costs.get("roundtrip_total_cost", ZERO) / current_value) * ONE_HUNDRED
+    base_return_pct = price_return_pct
+    if net_income_yield_pct is not None:
+        base_return_pct += net_income_yield_pct
+    if transaction_drag_pct is not None:
+        base_return_pct -= transaction_drag_pct
+    base_return_pct = clamp_decimal(base_return_pct, Decimal("-45.00"), Decimal("45.00"))
+
+    band_pct = annualized_volatility_pct * Decimal("0.65") if annualized_volatility_pct is not None else Decimal("16.00")
+    if confidence["label"] == "Alta":
+        band_pct -= Decimal("2.50")
     elif confidence["label"] == "Baja":
-        band_pct += Decimal("4.00")
-    band_pct = clamp_decimal(band_pct, Decimal("8.00"), Decimal("30.00"))
+        band_pct += Decimal("5.00")
+    if safety["label"] == "Alta":
+        band_pct -= Decimal("1.50")
+    elif safety["label"] == "Baja":
+        band_pct += Decimal("3.00")
+    band_pct = clamp_decimal(band_pct, Decimal("8.00"), Decimal("32.00"))
 
     low_return_pct = clamp_decimal(base_return_pct - band_pct, Decimal("-80.00"), Decimal("120.00"))
     high_return_pct = clamp_decimal(base_return_pct + band_pct, Decimal("-80.00"), Decimal("140.00"))
-
-    if coefficient is None or reference_6m_return_pct is None:
+    benefit_risk_ratio = None
+    if band_pct > 0:
+        benefit_risk_ratio = base_return_pct / band_pct
+    decision_score = base_return_pct * projection_confidence_multiplier(confidence["label"]) * (safety["score"] / ONE_HUNDRED)
+    years_covered = cycle_metrics.get("years_covered", ZERO)
+    if coefficient is None or reference_one_year_return_pct is None:
         explanation = (
-            f"La propuesta a 12 meses se apoya sobre todo en el tono del ultimo semestre "
-            f"({stock_6m_return_pct:.2f} %) porque la relacion con {position.analysis_reference_label} "
-            f"todavia no tiene suficiente base."
+            f"La proyeccion 12M mezcla el ciclo propio de la accion y su historico de {years_covered:.2f} anos. "
+            f"Hoy pesa mas la trayectoria del valor que la referencia porque la relacion con {position.analysis_reference_label} "
+            f"todavia no es lo bastante robusta."
         )
     else:
-        reference_direction = "acompanando" if coefficient >= 0 else "en sentido inverso a"
         explanation = (
-            f"Se prolonga de forma prudente el tono de 6M de la accion ({stock_6m_return_pct:.2f} %) y se ajusta con "
-            f"{position.analysis_reference_label} ({reference_6m_return_pct:.2f} % en 6M), "
-            f"{reference_direction} la referencia con una correlacion de {coefficient:.2f}."
+            f"La proyeccion usa hasta {years_covered:.2f} anos de serie, fase {cycle_metrics.get('cycle_phase', 'sin ciclo').lower()} "
+            f"y la referencia {position.analysis_reference_label} con correlacion 10A de {coefficient:.2f}. "
+            f"El retorno total incluye dividendos netos y penaliza comisiones y custodia del broker."
         )
+
+    price_low_return_pct = clamp_decimal(price_return_pct - band_pct, Decimal("-80.00"), Decimal("120.00"))
+    price_high_return_pct = clamp_decimal(price_return_pct + band_pct, Decimal("-80.00"), Decimal("140.00"))
 
     return {
         "available": True,
+        "price_return_pct": price_return_pct,
+        "price_low_return_pct": price_low_return_pct,
+        "price_high_return_pct": price_high_return_pct,
         "base_return_pct": base_return_pct,
         "low_return_pct": low_return_pct,
         "high_return_pct": high_return_pct,
-        "projected_price": project_price_from_return(latest_price, base_return_pct),
-        "low_price": project_price_from_return(latest_price, low_return_pct),
-        "high_price": project_price_from_return(latest_price, high_return_pct),
-        "quarterly_path": build_projection_path(latest_price, base_return_pct, anchor_date=history[-1].price_date),
+        "projected_price": project_price_from_return(latest_price, price_return_pct),
+        "low_price": project_price_from_return(latest_price, price_low_return_pct),
+        "high_price": project_price_from_return(latest_price, price_high_return_pct),
+        "quarterly_path": build_projection_path(latest_price, price_return_pct, anchor_date=history[-1].price_date),
         "confidence_label": confidence["label"],
         "confidence_note": confidence["note"],
+        "confidence_score_pct": confidence["score_pct"],
+        "safety_score": safety["score"],
+        "safety_label": safety["label"],
+        "benefit_risk_ratio": benefit_risk_ratio,
+        "decision_score": decision_score,
         "stock_6m_return_pct": stock_6m_return_pct,
         "reference_6m_return_pct": reference_6m_return_pct,
+        "stock_1y_return_pct": one_year_snapshot.get("stock_return_pct") if one_year_snapshot.get("available") else None,
+        "reference_1y_return_pct": reference_one_year_return_pct,
         "coefficient": coefficient,
+        "cycle_phase": cycle_metrics.get("cycle_phase"),
+        "years_covered": years_covered,
+        "cagr_pct": cycle_metrics.get("cagr_pct"),
+        "annualized_volatility_pct": annualized_volatility_pct,
+        "max_drawdown_pct": cycle_metrics.get("max_drawdown_pct"),
+        "current_drawdown_pct": cycle_metrics.get("current_drawdown_pct"),
+        "positive_year_ratio_pct": cycle_metrics.get("positive_year_ratio_pct"),
+        "gross_dividend_yield_pct": gross_dividend_yield_pct,
+        "net_income_yield_pct": net_income_yield_pct,
+        "transaction_drag_pct": transaction_drag_pct,
+        "broker_costs": broker_costs,
         "reference_label": position.analysis_reference_label,
         "explanation": explanation,
     }
@@ -2495,15 +2849,17 @@ def build_projection_backtest(history, position: EquityPosition, max_rows: int =
         if actual_return_pct is None:
             continue
 
-        forecast_return_pct = projection["base_return_pct"]
+        forecast_return_pct = projection.get("price_return_pct")
+        if forecast_return_pct is None:
+            continue
         absolute_error_pct = abs(forecast_return_pct - actual_return_pct)
         direction_hit = (
             (forecast_return_pct >= 0 and actual_return_pct >= 0)
             or (forecast_return_pct < 0 and actual_return_pct < 0)
         )
         in_range = False
-        if projection.get("low_return_pct") is not None and projection.get("high_return_pct") is not None:
-            in_range = projection["low_return_pct"] <= actual_return_pct <= projection["high_return_pct"]
+        if projection.get("price_low_return_pct") is not None and projection.get("price_high_return_pct") is not None:
+            in_range = projection["price_low_return_pct"] <= actual_return_pct <= projection["price_high_return_pct"]
 
         rows.append(
             {
@@ -2559,6 +2915,100 @@ def build_projection_backtest(history, position: EquityPosition, max_rows: int =
         "in_range_rate_pct": in_range_rate_pct,
         "precision_label": precision_label,
     }
+
+
+def build_projection_reliability(projection: dict, backtest: dict) -> dict:
+    projection_score = projection.get("confidence_score_pct") or Decimal("40.00")
+    backtest_score_map = {
+        "Alta": Decimal("82.00"),
+        "Media": Decimal("64.00"),
+        "Baja": Decimal("42.00"),
+        "Sin historico suficiente": Decimal("45.00"),
+    }
+    if backtest.get("available"):
+        backtest_score = backtest_score_map.get(backtest.get("precision_label"), Decimal("45.00"))
+        reliability_score = (projection_score * Decimal("0.45")) + (backtest_score * Decimal("0.55"))
+    else:
+        reliability_score = projection_score
+
+    if reliability_score >= Decimal("75.00"):
+        label = "Alta"
+    elif reliability_score >= Decimal("58.00"):
+        label = "Media"
+    else:
+        label = "Baja"
+    return {
+        "score": quantize_decimal(reliability_score),
+        "label": label,
+    }
+
+
+def build_decision_action_label(
+    position: EquityPosition,
+    projected_return_pct: Decimal | None,
+    safety_score: Decimal | None,
+    reliability_score: Decimal | None,
+) -> str:
+    projected_return_pct = projected_return_pct or ZERO
+    safety_score = safety_score or ZERO
+    reliability_score = reliability_score or ZERO
+    if projected_return_pct >= Decimal("10.00") and safety_score >= Decimal("65.00") and reliability_score >= Decimal("70.00"):
+        return "Priorizar"
+    if projected_return_pct >= Decimal("4.00") and safety_score >= Decimal("55.00"):
+        return "Mantener" if position.is_owned else "Seguir"
+    if projected_return_pct >= ZERO:
+        return "Vigilar"
+    return "Reducir riesgo" if position.is_owned else "Esperar"
+
+
+def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
+    rows = []
+    for card in history_cards:
+        position = card["position"]
+        projection = card.get("projection", {})
+        if not card.get("has_history") or not projection.get("available"):
+            continue
+        reliability = card.get("projection_reliability", {"label": "Baja", "score": Decimal("40.00")})
+        best_candidate = card.get("reference_playbook", {}).get("best_candidate")
+        projected_return_pct = projection.get("base_return_pct")
+        rows.append(
+            {
+                "position": position,
+                "status_key": "owned" if position.is_owned else "watchlist",
+                "status_label": position.get_position_kind_display(),
+                "company_name": position.company_name,
+                "ticker": position.ticker,
+                "detail_anchor": f"stock-{position.id}",
+                "reference_label": card.get("reference_label"),
+                "best_reference_label": best_candidate.get("name") if best_candidate else card.get("reference_label"),
+                "correlation": card.get("correlation", {}).get("coefficient"),
+                "years_covered": projection.get("years_covered"),
+                "projected_return_pct": projected_return_pct,
+                "projected_price": projection.get("projected_price"),
+                "safety_score": projection.get("safety_score"),
+                "safety_label": projection.get("safety_label"),
+                "reliability_score": reliability.get("score"),
+                "reliability_label": reliability.get("label"),
+                "benefit_risk_ratio": projection.get("benefit_risk_ratio"),
+                "cycle_phase": projection.get("cycle_phase"),
+                "decision_score": projection.get("decision_score"),
+                "action_label": build_decision_action_label(
+                    position,
+                    projected_return_pct,
+                    projection.get("safety_score"),
+                    reliability.get("score"),
+                ),
+            }
+        )
+
+    rows.sort(
+        key=lambda item: (
+            0 if item["status_key"] == "owned" else 1,
+            -(item["decision_score"] if item["decision_score"] is not None else Decimal("-9999")),
+            item["company_name"],
+        )
+    )
+    return rows
 
 
 def build_candlestick_svg(history, width: int = 640, height: int = 220, padding: int = 18) -> str:
@@ -2767,21 +3217,30 @@ def build_equity_history_cards(
         if not selected_period["available"] and latest_point.price_date:
             selected_period = build_period_snapshot(
                 history,
-                "3M",
-                start_date=latest_point.price_date - timedelta(days=90),
+                "1Y",
+                start_date=latest_point.price_date - timedelta(days=365),
                 end_date=latest_point.price_date,
             )
 
         period_snapshots = [
-            build_period_snapshot(history, "1M", start_date=latest_point.price_date - timedelta(days=30), end_date=latest_point.price_date),
-            build_period_snapshot(history, "3M", start_date=latest_point.price_date - timedelta(days=90), end_date=latest_point.price_date),
-            build_period_snapshot(history, "6M", start_date=latest_point.price_date - timedelta(days=182), end_date=latest_point.price_date),
             build_period_snapshot(history, "1Y", start_date=latest_point.price_date - timedelta(days=365), end_date=latest_point.price_date),
+            build_period_snapshot(history, "3Y", start_date=latest_point.price_date - timedelta(days=365 * 3), end_date=latest_point.price_date),
+            build_period_snapshot(history, "5Y", start_date=latest_point.price_date - timedelta(days=365 * 5), end_date=latest_point.price_date),
+            build_period_snapshot(history, "10Y", start_date=latest_point.price_date - timedelta(days=LONG_ANALYSIS_DAYS), end_date=latest_point.price_date),
         ]
         correlation = build_reference_correlation(history, position)
         six_month_snapshot = next((snapshot for snapshot in period_snapshots if snapshot["label"] == "6M"), {"available": False})
-        projection = build_one_year_projection(history, position, correlation, six_month_snapshot)
+        if not six_month_snapshot["available"]:
+            six_month_snapshot = build_period_snapshot(
+                history,
+                "6M",
+                start_date=latest_point.price_date - timedelta(days=182),
+                end_date=latest_point.price_date,
+            )
+        cycle_metrics = build_cycle_metrics(history)
+        projection = build_one_year_projection(history, position, correlation, six_month_snapshot, cycle_metrics=cycle_metrics)
         projection_backtest = build_projection_backtest(history, position)
+        projection_reliability = build_projection_reliability(projection, projection_backtest) if projection.get("available") else {"label": "Baja", "score": Decimal("40.00")}
         stock_series = [{"date": point.price_date, "value": point.close_price} for point in history]
         benchmark_series = [
             {"date": point.price_date, "value": point.benchmark_close}
@@ -2801,10 +3260,16 @@ def build_equity_history_cards(
             )
         dual_axis_chart = build_dual_axis_chart(stock_series, benchmark_series, projection_points=projection_series)
         maintenance_drag_pct = (
-            (position.annual_maintenance_cost / position.invested_amount) * Decimal("100")
+            (position.recurring_cost_used / position.invested_amount) * Decimal("100")
             if position.invested_amount
             else ZERO
         )
+        broker_costs = {
+            **position.estimated_broker_costs,
+            "annual_cost_used": position.recurring_cost_used,
+            "annual_cost_source": position.recurring_cost_source,
+            "net_dividend_income": position.net_dividend_income,
+        }
 
         cards.append(
             {
@@ -2832,9 +3297,12 @@ def build_equity_history_cards(
                 "net_annual_income": position.net_annual_income,
                 "maintenance_drag_pct": maintenance_drag_pct,
                 "price_vs_cost_pct": percentage_change(position.current_price_per_share, position.average_cost_per_share),
+                "broker_costs": broker_costs,
                 "correlation": correlation,
+                "cycle_metrics": cycle_metrics,
                 "projection": projection,
                 "projection_backtest": projection_backtest,
+                "projection_reliability": projection_reliability,
                 "suggested_references": build_suggested_reference_cards(history, position, reference_cache),
             }
         )
@@ -2856,12 +3324,15 @@ def build_equity_analysis_dashboard(
     current_value_total = sum((position.current_value for position in owned_positions), ZERO)
     invested_amount_total = sum((position.invested_amount for position in owned_positions), ZERO)
     annual_dividends_total = sum((position.annual_dividend_income for position in owned_positions), ZERO)
-    annual_maintenance_total = sum((position.annual_maintenance_cost for position in owned_positions), ZERO)
+    net_dividends_total = sum((position.net_dividend_income for position in owned_positions), ZERO)
+    annual_maintenance_total = sum((position.recurring_cost_used for position in owned_positions), ZERO)
+    purchase_cost_total = sum((position.purchase_total_cost for position in owned_positions), ZERO)
     net_annual_income_total = sum((position.net_annual_income for position in owned_positions), ZERO)
     unrealized_gain_total = sum((position.unrealized_gain_after_costs for position in owned_positions), ZERO)
+    decision_rows = build_equity_decision_rows(history_cards)
 
     weighted_periods = []
-    for label in ("1M", "3M", "6M", "1Y"):
+    for label in ("1Y", "3Y", "5Y", "10Y"):
         weighted_stock = ZERO
         weighted_benchmark = ZERO
         weight_total = ZERO
@@ -2911,6 +3382,24 @@ def build_equity_analysis_dashboard(
         selected_period_label = "Ultimos 90 dias"
 
     reference_guide = build_equity_reference_guide(history_cards)
+    weighted_projected_return_12m = None
+    weighted_safety_score = None
+    owned_projection_cards = [
+        card
+        for card in history_cards
+        if card["position"].is_owned and card.get("projection", {}).get("available")
+    ]
+    if owned_projection_cards:
+        projection_weight_total = sum((card["position"].current_value for card in owned_projection_cards), ZERO)
+        if projection_weight_total:
+            weighted_projected_return_12m = sum(
+                (card["projection"].get("base_return_pct") or ZERO) * card["position"].current_value
+                for card in owned_projection_cards
+            ) / projection_weight_total
+            weighted_safety_score = sum(
+                (card["projection"].get("safety_score") or ZERO) * card["position"].current_value
+                for card in owned_projection_cards
+            ) / projection_weight_total
 
     overview = {
         "positions_count": len(positions),
@@ -2919,16 +3408,25 @@ def build_equity_analysis_dashboard(
         "invested_amount": invested_amount_total,
         "current_value": current_value_total,
         "annual_dividends_total": annual_dividends_total,
+        "net_dividends_total": net_dividends_total,
         "annual_maintenance_total": annual_maintenance_total,
+        "purchase_cost_total": purchase_cost_total,
         "net_annual_income_total": net_annual_income_total,
         "unrealized_gain_total": unrealized_gain_total,
-        "unrealized_return_pct": percentage_change(current_value_total - annual_maintenance_total, invested_amount_total),
+        "unrealized_return_pct": (
+            (unrealized_gain_total / (invested_amount_total + purchase_cost_total)) * ONE_HUNDRED
+            if invested_amount_total + purchase_cost_total
+            else None
+        ),
         "latest_sync_at": latest_sync_at,
         "latest_price_date": latest_price_date,
         "weighted_selected_return": weighted_selected_return,
         "weighted_periods": weighted_periods,
+        "weighted_projected_return_12m": weighted_projected_return_12m,
+        "weighted_safety_score": weighted_safety_score,
         "selected_period_label": selected_period_label,
         "watchlist_latest_price_count": sum(1 for position in watchlist_positions if position.current_price_per_share),
+        "best_decision": decision_rows[0] if decision_rows else None,
     }
 
     return {
@@ -2938,6 +3436,7 @@ def build_equity_analysis_dashboard(
         "watchlist_positions": watchlist_positions,
         "owned_history_cards": [card for card in history_cards if card["position"].is_owned],
         "watchlist_history_cards": [card for card in history_cards if not card["position"].is_owned],
+        "decision_rows": decision_rows,
         "reference_guide_rows": reference_guide["rows"],
         "tracked_reference_rows": reference_guide["tracked_rows"],
         "reference_guide_summary": reference_guide["summary"],

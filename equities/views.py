@@ -80,6 +80,7 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         context["watchlist_positions"] = dashboard["watchlist_positions"]
         context["owned_history_cards"] = dashboard["owned_history_cards"]
         context["watchlist_history_cards"] = dashboard["watchlist_history_cards"]
+        context["decision_rows"] = dashboard["decision_rows"]
         context["tracked_reference_rows"] = dashboard["tracked_reference_rows"]
         context["reference_guide_rows"] = dashboard["reference_guide_rows"]
         context["reference_guide_summary"] = dashboard["reference_guide_summary"]
@@ -223,6 +224,7 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
             "company_name": form.cleaned_data["company_name"],
             "quote_symbol": form.cleaned_data["quote_symbol"],
             **reference_defaults,
+            "trade_channel": form.cleaned_data["trade_channel"],
             "shares": form.cleaned_data["shares"],
             "average_cost_per_share": form.cleaned_data["average_cost_per_share"],
             "current_price_per_share": form.cleaned_data["current_price_per_share"],

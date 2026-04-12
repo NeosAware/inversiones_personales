@@ -297,6 +297,32 @@
     .equity-suggestion-button.selected{ border-color:#0f5f88; background:#eef7fc; }
     .equity-suggestion-button strong{ display:block; font-size:15px; margin-bottom:4px; }
     .equity-suggestion-button span{ font-size:13px; color:var(--muted); }
+    .equity-decision-table td, .equity-decision-table th{ vertical-align:top; }
+    .equity-decision-main strong{ display:block; font-size:16px; }
+    .equity-decision-main span{ color:var(--muted); font-size:13px; }
+    .equity-score-pill{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-width:76px;
+      padding:8px 12px;
+      border-radius:999px;
+      border:1px solid #d7e4ec;
+      background:#f8fbfd;
+      color:#17384e;
+      font-weight:800;
+      font-size:13px;
+    }
+    .equity-score-pill.good{ background:#edf8f2; border-color:#bfdfcb; color:#0d6840; }
+    .equity-score-pill.warn{ background:#fff4ea; border-color:#ebcfb0; color:#9a5500; }
+    .equity-compact-note{
+      padding:16px 18px;
+      border-radius:18px;
+      border:1px solid #d9e7f0;
+      background:#f8fbfe;
+      color:var(--muted);
+      line-height:1.55;
+    }
     @media (max-width: 1180px){
       .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-candidate-grid{ grid-template-columns:1fr; }
       .equity-hero-top, .equity-panel-head, .equity-toolbar, .equity-stock-summary, .equity-detail-head, .equity-section-head{ flex-direction:column; }
@@ -308,83 +334,97 @@
       <div class="equity-hero-top">
         <div>
           <p class="section-title" style="color:rgba(255,255,255,.74); margin-bottom:12px;">Cockpit de acciones</p>
-          <h1>Decidir mejor la referencia de cada valor</h1>
-          <p>La pagina ahora separa la decision de la operativa. Arriba ves que indicador encaja mejor con cada valor, usando tu Excel del IBEX como guia y la correlacion historica de la app como contraste.</p>
+          <h1>Decision 12M mas clara y mas util</h1>
+          <p>La vista principal prioriza retorno total esperado, seguridad, fiabilidad y referencia de cada valor. Los calculos usan hasta 10 anos de historico, incorporan dividendos y descuentan las condiciones del broker cuando la app conoce su tarifa.</p>
         </div>
         <div class="equity-chip-row">
           <span class="equity-chip">{{ summary.owned_positions_count }} compradas</span>
           <span class="equity-chip">{{ summary.watchlist_positions_count }} en seguimiento</span>
-          <span class="equity-chip">Periodo {{ analysis_overview.selected_period_label }}</span>
-          <span class="equity-chip">{% if reference_guide_summary.workbook_loaded %}Guia Excel activa{% else %}Guia Excel no encontrada{% endif %}</span>
+          {% if analysis_overview.best_decision %}<span class="equity-chip">Mejor lectura {{ analysis_overview.best_decision.ticker }}</span>{% endif %}
+          {% if reference_guide_summary.workbook_loaded %}<span class="equity-chip">{{ reference_guide_summary.source_label }}</span>{% endif %}
         </div>
       </div>
       <div class="equity-kpis">
         <div class="equity-kpi"><span>Valor cartera</span><strong>{{ analysis_overview.current_value|floatformat:0 }} EUR</strong><small>Capital ya invertido.</small></div>
-        <div class="equity-kpi"><span>Rentabilidad neta</span><strong class="{% if analysis_overview.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.unrealized_return_pct|floatformat:1 }} %</strong><small>{{ analysis_overview.unrealized_gain_total|floatformat:0 }} EUR despues de costes.</small></div>
-        <div class="equity-kpi"><span>Flujo anual neto</span><strong class="{% if analysis_overview.net_annual_income_total >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.net_annual_income_total|floatformat:0 }} EUR</strong><small>Dividendos menos mantenimiento.</small></div>
-        <div class="equity-kpi"><span>Ultimo precio</span><strong>{% if analysis_overview.latest_price_date %}{{ analysis_overview.latest_price_date|date:"Y-m-d" }}{% else %}-{% endif %}</strong><small>{% if auto_sync.attempted %}Auto-sync {{ auto_sync.updated_count }} OK{% else %}Auto-sync inactivo{% endif %}</small></div>
+        <div class="equity-kpi"><span>Rentabilidad neta</span><strong class="{% if analysis_overview.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.unrealized_return_pct|floatformat:1 }} %</strong><small>{{ analysis_overview.unrealized_gain_total|floatformat:0 }} EUR tras compra y costes anuales.</small></div>
+        <div class="equity-kpi"><span>Proyeccion cartera 12M</span><strong class="{% if analysis_overview.weighted_projected_return_12m >= 0 %}good{% else %}warn{% endif %}">{% if analysis_overview.weighted_projected_return_12m is not None %}{{ analysis_overview.weighted_projected_return_12m|floatformat:1 }} %{% else %}-{% endif %}</strong><small>Incluye dividendos netos y comisiones estimadas.</small></div>
+        <div class="equity-kpi"><span>Seguridad media</span><strong>{% if analysis_overview.weighted_safety_score is not None %}{{ analysis_overview.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong><small>{% if auto_sync.attempted %}Auto-sync {{ auto_sync.updated_count }} OK{% else %}Auto-sync inactivo{% endif %}</small></div>
       </div>
     </section>
 
     <section class="equity-panel">
       <div class="equity-panel-head">
         <div>
-          <p class="section-title">Decision rapida</p>
-          <h2>Que referencia elegir ahora</h2>
-          <p>Estas tarjetas condensan lo importante por valor: que tienes activo, cual es la mejor alternativa y si esa alternativa sirve ya para el grafico o de momento solo como guia del Excel.</p>
+          <p class="section-title">Mesa de decision</p>
+          <h2>Que valor ofrece mejor equilibrio entre beneficio y seguridad</h2>
+          <p>Una sola tabla para decidir: referencia actual, mejor ajuste, correlacion 10A, retorno total esperado a 12 meses, seguridad y fiabilidad.</p>
         </div>
         {% if reference_guide_summary.workbook_loaded %}<span class="pill">{{ reference_guide_summary.source_label }}</span>{% endif %}
       </div>
-      {% if tracked_reference_rows %}
-        <div class="equity-board">
-          {% for row in tracked_reference_rows %}
-            <article class="equity-board-card">
-              <div class="equity-panel-head" style="margin-bottom:0;">
-                <div>
-                  <h3>{{ row.company_name }}</h3>
-                  <p>{{ row.ticker }}{% if row.sector %} | {{ row.sector }}{% endif %}</p>
-                </div>
-                <div class="equity-chip-row">
-                  <span class="equity-summary-tag" style="border-color:#d8e3ea; background:#eef4f7; color:#244355;">{{ row.status_label }}</span>
-                  {% if row.detail_anchor %}<a class="button secondary" href="#{{ row.detail_anchor }}">Ver detalle</a>{% endif %}
-                </div>
-              </div>
-              <div class="equity-grid-2">
-                <div class="equity-box">
-                  <span>Referencia actual</span>
-                  <strong>{{ row.current_reference_label|default:"Sin definir" }}</strong>
-                  <small>{% if row.current_live_correlation is not None %}Correlacion app {{ row.current_live_correlation|floatformat:2 }}{% elif row.current_candidate and row.current_candidate.historical_coefficient is not None %}Correlacion Excel {{ row.current_candidate.historical_coefficient|floatformat:2 }}{% else %}Sin lectura historica suficiente{% endif %}</small>
-                </div>
-                <div class="equity-box">
-                  <span>Mejor ajuste</span>
-                  <strong>{% if row.best_candidate %}{{ row.best_candidate.name }}{% else %}Sin sugerencia{% endif %}</strong>
-                  <small>{% if row.best_candidate and row.best_candidate.supports_chart %}Disponible para el grafico.{% elif row.best_candidate %}De momento funciona como guia.{% else %}La app mantiene tu referencia actual.{% endif %}</small>
-                </div>
-              </div>
-              <div class="equity-candidate-list">
-                {% for candidate in row.top_candidates %}
-                  <span class="equity-candidate{% if candidate.is_active_reference %} active{% elif candidate.is_best %} best{% endif %}">{{ candidate.short_name }} {% if candidate.sector_score is not None %}{{ candidate.sector_score|floatformat:2 }}{% elif candidate.historical_coefficient is not None %}{{ candidate.historical_coefficient|floatformat:2 }}{% endif %}</span>
-                {% endfor %}
-              </div>
-              {% if row.return_2025 is not None or row.per_2025 is not None or row.dividend_yield is not None %}
-                <small class="equity-note">{% if row.return_2025 is not None %}2025 {{ row.return_2025|floatformat:1 }} %{% endif %}{% if row.per_2025 is not None %} | PER {{ row.per_2025|floatformat:1 }}{% endif %}{% if row.dividend_yield is not None %} | Div {{ row.dividend_yield|floatformat:1 }} %{% endif %}{% if row.one_year_return is not None %} | App 1Y {{ row.one_year_return|floatformat:1 }} %{% endif %}</small>
-              {% endif %}
-              {% if row.notes %}<small class="equity-note">{{ row.notes }}</small>{% endif %}
-            </article>
-          {% endfor %}
+      {% if decision_rows %}
+        <div class="equity-table-wrap">
+          <table class="equity-decision-table">
+            <thead>
+              <tr>
+                <th>Valor</th>
+                <th>Referencia</th>
+                <th>Corr 10A</th>
+                <th>Pred. 12M</th>
+                <th>Seguridad</th>
+                <th>Fiabilidad</th>
+                <th>Benef./riesgo</th>
+                <th>Ciclo</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in decision_rows %}
+                <tr>
+                  <td>
+                    <div class="equity-decision-main">
+                      <strong>{{ row.company_name }}</strong>
+                      <span>{{ row.ticker }} | {{ row.status_label }} | {{ row.action_label }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <strong>{{ row.reference_label }}</strong>
+                    {% if row.best_reference_label and row.best_reference_label != row.reference_label %}
+                      <br><span class="metric-sub">Mejor ajuste: {{ row.best_reference_label }}</span>
+                    {% endif %}
+                  </td>
+                  <td>{% if row.correlation is not None %}{{ row.correlation|floatformat:2 }}<br><span class="metric-sub">{{ row.years_covered|floatformat:1 }}A</span>{% else %}-{% endif %}</td>
+                  <td class="{% if row.projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.projected_return_pct|floatformat:1 }} %</td>
+                  <td><span class="equity-score-pill{% if row.safety_score >= 70 %} good{% elif row.safety_score < 55 %} warn{% endif %}">{{ row.safety_score|floatformat:0 }}/100</span></td>
+                  <td><span class="equity-score-pill{% if row.reliability_label == 'Alta' %} good{% elif row.reliability_label == 'Baja' %} warn{% endif %}">{{ row.reliability_label }}</span></td>
+                  <td>{% if row.benefit_risk_ratio is not None %}{{ row.benefit_risk_ratio|floatformat:2 }}{% else %}-{% endif %}</td>
+                  <td>{{ row.cycle_phase }}</td>
+                  <td><a class="button secondary" href="#{{ row.detail_anchor }}">Ver detalle</a></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="equity-compact-note" style="margin-top:16px;">
+          {% if reference_guide_summary.workbook_loaded %}
+            El Excel del IBEX actua como guia adicional de referencias. Si no coincide con la serie historica de la app, prevalece la lectura de 10 anos y el backtest.
+          {% else %}
+            Sin Excel cargado, la decision se basa solo en historico propio, dividendos y condiciones estimadas del broker.
+          {% endif %}
         </div>
       {% else %}
-        <div class="message info">Todavia no hay valores con informacion suficiente para construir el tablero de decision.</div>
+        <div class="message info">Todavia no hay valores con suficiente historico para construir la mesa de decision.</div>
       {% endif %}
     </section>
 
-    <section class="equity-grid-2">
-      <section class="equity-panel">
+    <details class="equity-fold">
+      <summary>Resumen cartera y tablas</summary>
+      <div class="equity-fold-body">
+        <section class="equity-panel">
         <div class="equity-panel-head">
           <div>
             <p class="section-title">Rentabilidad</p>
-            <h3>Cartera comprada por periodos</h3>
-            <p>Solo la cartera real entra en este bloque. Asi no se mezclan posiciones patrimoniales con ideas en observacion.</p>
+            <h3>Cartera comprada por ciclos largos</h3>
+            <p>Resumen de rentabilidad por ventanas amplias, mas alineadas con decisiones a 12 meses.</p>
           </div>
         </div>
         <div class="equity-grid-4">
@@ -402,52 +442,51 @@
           <button class="button" type="submit">Analizar rango</button>
           <a class="button secondary" href="{% url 'equities:list' %}">Limpiar filtro</a>
         </form>
-      </section>
+        </section>
 
-      <section class="equity-panel">
+        <section class="equity-panel">
         <div class="equity-panel-head">
           <div>
-            <p class="section-title">Lectura economica</p>
-            <h3>Flujo, costes y cobertura</h3>
-            <p>Una vista corta para saber como va la cartera sin entrar todavia al detalle por valor.</p>
+            <p class="section-title">Flujo economico</p>
+            <h3>Dividendos y costes</h3>
+            <p>Los dividendos ya se leen en neto y el coste anual puede salir del broker o de tu ajuste manual.</p>
           </div>
         </div>
         <div class="equity-grid-4">
-          <div class="equity-box"><span>Dividendos</span><strong>{{ analysis_overview.annual_dividends_total|floatformat:0 }} EUR</strong></div>
-          <div class="equity-box"><span>Costes</span><strong>{{ analysis_overview.annual_maintenance_total|floatformat:0 }} EUR</strong></div>
-          <div class="equity-box"><span>Sincronizadas</span><strong>{{ summary.synced_positions }}</strong></div>
-          <div class="equity-box"><span>Seguimiento</span><strong>{{ analysis_overview.watchlist_latest_price_count }}</strong></div>
+          <div class="equity-box"><span>Dividendos brutos</span><strong>{{ analysis_overview.annual_dividends_total|floatformat:0 }} EUR</strong></div>
+          <div class="equity-box"><span>Dividendos netos</span><strong>{{ analysis_overview.net_dividends_total|floatformat:0 }} EUR</strong></div>
+          <div class="equity-box"><span>Coste anual</span><strong>{{ analysis_overview.annual_maintenance_total|floatformat:0 }} EUR</strong></div>
+          <div class="equity-box"><span>Coste compra</span><strong>{{ analysis_overview.purchase_cost_total|floatformat:0 }} EUR</strong></div>
         </div>
         {% if auto_sync.failed %}
           <div class="message warning" style="margin-top:16px;">No se pudieron actualizar {{ auto_sync.failed|length }} posicion(es): {{ auto_sync.failed|join:", " }}.</div>
         {% endif %}
-      </section>
-    </section>
+        </section>
 
-    <section class="equity-grid-2">
-      <section class="equity-panel table-card">
+        <section class="equity-grid-2">
+          <section class="equity-panel table-card">
         <div class="equity-panel-head">
           <div>
             <p class="section-title">Cartera real</p>
             <h3>Acciones compradas</h3>
-            <p>La tabla patrimonial queda reducida a lo que realmente tienes comprado.</p>
+            <p>Vista patrimonial con el broker y la proyeccion neta.</p>
           </div>
         </div>
         <div class="equity-table-wrap">
           <table>
-            <thead><tr><th>Ticker</th><th>Empresa</th><th>Invertido</th><th>Valor actual</th><th>Rent. neta</th><th>Referencia</th><th>Precio</th></tr></thead>
+            <thead><tr><th>Ticker</th><th>Empresa</th><th>Broker</th><th>Invertido</th><th>Valor actual</th><th>Rent. neta</th><th>Pred. 12M</th></tr></thead>
             <tbody>
-              {% for position in owned_positions %}
-                <tr><td><strong>{{ position.ticker }}</strong></td><td>{{ position.company_name }}</td><td>{{ position.invested_amount|floatformat:2 }} EUR</td><td>{{ position.current_value|floatformat:2 }} EUR</td><td class="{% if position.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ position.unrealized_return_pct|floatformat:2 }} %</td><td>{{ position.analysis_reference_label }}</td><td>{{ position.current_price_per_share|floatformat:4 }}</td></tr>
+              {% for card in owned_history_cards %}
+                <tr><td><strong>{{ card.position.ticker }}</strong></td><td>{{ card.position.company_name }}</td><td>{{ card.position.broker }}</td><td>{{ card.position.invested_amount|floatformat:2 }} EUR</td><td>{{ card.position.current_value|floatformat:2 }} EUR</td><td class="{% if card.position.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ card.position.unrealized_return_pct|floatformat:2 }} %</td><td class="{% if card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if card.projection.available %}{{ card.projection.base_return_pct|floatformat:1 }} %{% else %}-{% endif %}</td></tr>
               {% empty %}
                 <tr><td colspan="7" class="muted">Todavia no hay acciones compradas.</td></tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
-      </section>
+          </section>
 
-      <section class="equity-panel table-card">
+          <section class="equity-panel table-card">
         <div class="equity-panel-head">
           <div>
             <p class="section-title">Radar</p>
@@ -457,7 +496,7 @@
         </div>
         <div class="equity-table-wrap">
           <table>
-            <thead><tr><th>Ticker</th><th>Empresa</th><th>Precio actual</th><th>1M</th><th>3M</th><th>6M</th><th>1Y</th><th>Referencia</th></tr></thead>
+            <thead><tr><th>Ticker</th><th>Empresa</th><th>Precio actual</th><th>1Y</th><th>3Y</th><th>5Y</th><th>10Y</th><th>Referencia</th></tr></thead>
             <tbody>
               {% for card in watchlist_history_cards %}
                 <tr>
@@ -475,8 +514,10 @@
             </tbody>
           </table>
         </div>
-      </section>
-    </section>
+          </section>
+        </section>
+      </div>
+    </details>
 
     <details class="equity-fold" open>
       <summary>Analisis por valor</summary>
@@ -543,11 +584,11 @@
       </div>
     </details>
 
-    <details class="equity-fold">
-      <summary>Guia completa IBEX del Excel</summary>
-      <div class="equity-fold-body">
-        <p class="equity-note">Esta tabla te deja revisar toda la guia cargada desde el Excel, aunque el valor no este todavia en cartera ni en seguimiento.</p>
-        {% if reference_guide_rows %}
+    {% if reference_guide_summary.workbook_loaded and reference_guide_rows %}
+      <details class="equity-fold">
+        <summary>Guia completa IBEX del Excel</summary>
+        <div class="equity-fold-body">
+          <p class="equity-note">Esta tabla te deja revisar toda la guia cargada desde el Excel, aunque el valor no este todavia en cartera ni en seguimiento.</p>
           <div class="equity-toolbar">
             <div style="width:100%;">
               <label for="equity-guide-search">Buscar valor o indicador</label>
@@ -577,11 +618,9 @@
               </tbody>
             </table>
           </div>
-        {% else %}
-          <div class="message info">No se ha podido cargar la guia del Excel ni hay suficiente informacion para montar la tabla.</div>
-        {% endif %}
-      </div>
-    </details>
+        </div>
+      </details>
+    {% endif %}
 
     <details class="equity-fold" id="equity-ops">
       <summary>Operativa de acciones</summary>
@@ -614,11 +653,12 @@
           <form method="post" class="stack" style="margin-top:18px;" novalidate>
             {% csrf_token %}
             <input type="hidden" name="action" value="create_position">
-            <div class="equity-form-hint">Escribe una empresa del IBEX, por ejemplo <strong>Indra</strong>, y la app te rellenara ticker, simbolo cotizado y una referencia inicial. Luego podras revisarla con calma en el tablero superior.</div>
+            <div class="equity-form-hint">Escribe una empresa del IBEX, por ejemplo <strong>Indra</strong>, indica el banco y el canal de compra, y la app estimara costes de entrada, custodia y dividendos cuando tenga la tarifa cargada.</div>
             <div class="grid cols-2">
               <div><label for="{{ position_form.position_kind.id_for_label }}">{{ position_form.position_kind.label }}</label>{{ position_form.position_kind }}</div>
               <div><label for="{{ position_form.ownership_category.id_for_label }}">{{ position_form.ownership_category.label }}</label>{{ position_form.ownership_category }}</div>
               <div><label for="{{ position_form.broker.id_for_label }}">{{ position_form.broker.label }}</label>{{ position_form.broker }}</div>
+              <div><label for="{{ position_form.trade_channel.id_for_label }}">{{ position_form.trade_channel.label }}</label>{{ position_form.trade_channel }}</div>
               <div><label for="{{ position_form.ticker.id_for_label }}">{{ position_form.ticker.label }}</label>{{ position_form.ticker }}</div>
               <div><label for="{{ position_form.company_name.id_for_label }}">{{ position_form.company_name.label }}</label>{{ position_form.company_name }}</div>
               <div><label for="{{ position_form.quote_symbol.id_for_label }}">{{ position_form.quote_symbol.label }}</label>{{ position_form.quote_symbol }}</div>
@@ -629,7 +669,7 @@
               <div><label for="{{ position_form.average_cost_per_share.id_for_label }}">{{ position_form.average_cost_per_share.label }}</label>{{ position_form.average_cost_per_share }}</div>
               <div><label for="{{ position_form.current_price_per_share.id_for_label }}">{{ position_form.current_price_per_share.label }}</label>{{ position_form.current_price_per_share }}</div>
               <div><label for="{{ position_form.annual_dividend_income.id_for_label }}">{{ position_form.annual_dividend_income.label }}</label>{{ position_form.annual_dividend_income }}</div>
-              <div><label for="{{ position_form.annual_maintenance_cost.id_for_label }}">{{ position_form.annual_maintenance_cost.label }}</label>{{ position_form.annual_maintenance_cost }}</div>
+              <div><label for="{{ position_form.annual_maintenance_cost.id_for_label }}">{{ position_form.annual_maintenance_cost.label }}</label>{{ position_form.annual_maintenance_cost }}{% if position_form.annual_maintenance_cost.help_text %}<div class="metric-sub">{{ position_form.annual_maintenance_cost.help_text }}</div>{% endif %}</div>
             </div>
             <div class="equity-autofill-shell">
               <div class="equity-autofill-card" id="equity-company-match" hidden></div>

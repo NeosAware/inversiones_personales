@@ -178,7 +178,29 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(cards[0]["stock_return_pct"], Decimal("20.00"))
         self.assertEqual(cards[0]["benchmark_return_pct"], Decimal("10.00"))
         self.assertTrue(cards[0]["stock_line"])
-        self.assertEqual(cards[0]["selected_period"]["label"], "3M")
+        self.assertEqual(cards[0]["selected_period"]["label"], "1Y")
+
+    def test_santander_broker_costs_reduce_net_annual_income(self):
+        position = EquityPosition.objects.create(
+            broker="Banco Santander",
+            trade_channel=EquityPosition.TradeChannel.APP,
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola S.A.",
+            shares=Decimal("100"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+            annual_dividend_income=Decimal("40.00"),
+            annual_maintenance_cost=Decimal("0.00"),
+        )
+
+        self.assertEqual(position.purchase_total_cost, Decimal("5.00"))
+        self.assertEqual(position.estimated_broker_costs["annual_custody_cost"], Decimal("20.00"))
+        self.assertEqual(position.estimated_broker_costs["annual_dividend_fee"], Decimal("2.00"))
+        self.assertEqual(position.net_dividend_income, Decimal("38.00"))
+        self.assertEqual(position.net_annual_income, Decimal("16.00"))
 
     def test_history_cards_include_suggested_reference_correlations(self):
         position = EquityPosition.objects.create(
@@ -281,6 +303,51 @@ class EquitiesServicesTests(TestCase):
         self.assertIsNotNone(projection["quarterly_path"][0]["projected_date"])
         self.assertIn("IBEX 35", projection["explanation"])
         self.assertTrue(cards[0]["projection_line"])
+
+    def test_projection_includes_dividends_and_broker_drag(self):
+        position = EquityPosition.objects.create(
+            broker="Banco Santander",
+            trade_channel=EquityPosition.TradeChannel.APP,
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola S.A.",
+            shares=Decimal("80"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("13.0000"),
+            annual_dividend_income=Decimal("55.00"),
+        )
+        for price_date, close_price, benchmark_close in (
+            (date(2024, 12, 31), Decimal("9.60"), Decimal("100.00")),
+            (date(2025, 3, 31), Decimal("10.10"), Decimal("102.00")),
+            (date(2025, 6, 30), Decimal("10.70"), Decimal("104.00")),
+            (date(2025, 9, 30), Decimal("11.20"), Decimal("105.50")),
+            (date(2025, 12, 31), Decimal("11.70"), Decimal("107.20")),
+            (date(2026, 3, 31), Decimal("12.20"), Decimal("109.80")),
+            (date(2026, 6, 30), Decimal("13.00"), Decimal("112.40")),
+        ):
+            position.price_history.create(
+                price_date=price_date,
+                close_price=close_price,
+                benchmark_close=benchmark_close,
+            )
+
+        cards = build_equity_history_cards([position])
+
+        projection = cards[0]["projection"]
+        self.assertTrue(projection["available"])
+        self.assertGreater(projection["gross_dividend_yield_pct"], Decimal("0"))
+        self.assertGreater(projection["net_income_yield_pct"], Decimal("0"))
+        self.assertGreater(projection["transaction_drag_pct"], Decimal("0"))
+        self.assertEqual(
+            projection["base_return_pct"].quantize(Decimal("0.01")),
+            (
+                projection["price_return_pct"]
+                + projection["net_income_yield_pct"]
+                - projection["transaction_drag_pct"]
+            ).quantize(Decimal("0.01")),
+        )
 
     def test_history_cards_include_projection_backtest_accuracy(self):
         position = EquityPosition.objects.create(
@@ -530,6 +597,7 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(position.benchmark_symbol, "^IBEX")
         self.assertEqual(position.ownership_category, AssetOwnershipCategory.XIMO)
         self.assertEqual(position.position_kind, EquityPosition.PositionKind.OWNED)
+        self.assertEqual(position.trade_channel, EquityPosition.TradeChannel.APP)
         self.assertEqual(position.shares, Decimal("125.5000"))
         self.assertEqual(position.average_cost_per_share, Decimal("10.2500"))
         self.assertEqual(position.current_price_per_share, Decimal("10.2500"))
@@ -885,7 +953,7 @@ class EquitiesViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Cockpit de acciones")
-        self.assertContains(response, "Coste anual de mantenimiento")
+        self.assertContains(response, "Canal de compra")
         self.assertContains(response, "Indra Sistemas, S.A.")
 
     @override_settings(EQUITIES_REFERENCE_WORKBOOK="")
