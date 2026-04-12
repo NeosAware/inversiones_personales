@@ -1049,6 +1049,12 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(run.report_html, "<html>informe</html>")
         self.assertTrue(run.summary_data["available"])
         self.assertEqual(run.summary_data["top_pick_name"], "Iberdrola")
+        self.assertEqual(run.progress_data["percent"], 100)
+        self.assertEqual(run.progress_data["note"], "Optimizacion completada")
+        self.assertEqual(run.progress_data["stage_key"], "report")
+        self.assertTrue(run.progress_data["preview_candidates"])
+        self.assertTrue(run.progress_data["preview_allocations"])
+        self.assertTrue(all(stage["status"] == "completed" for stage in run.progress_data["stages"]))
 
     def test_dashboard_can_extend_optimizer_to_full_ibex_universe(self):
         acerinox = find_equity_company_profile("Acerinox")
@@ -1697,6 +1703,57 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(download_response.status_code, 200)
         self.assertIn("attachment;", download_response.headers["Content-Disposition"])
         self.assertIn("opt-test-report.html", download_response.headers["Content-Disposition"])
+
+    def test_progress_endpoint_returns_live_payload(self):
+        run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-TEST-PROGRESS",
+            label="Seguimiento visible",
+            total_investment=Decimal("50000"),
+            max_company_pct=Decimal("20"),
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.RUNNING,
+            status_note="Analizando el IBEX",
+            progress_data={
+                "percent": 47,
+                "stage_key": "ibex",
+                "stage_label": "Analizando IBEX",
+                "note": "Analizando el IBEX: 18/35",
+                "current_step": 18,
+                "total_steps": 35,
+                "current_label": "Iberdrola",
+                "stages": [
+                    {"key": "sync", "label": "Sincronizando cartera", "status": "completed"},
+                    {"key": "dashboard", "label": "Construyendo base de mercado", "status": "completed"},
+                    {"key": "ibex", "label": "Analizando IBEX", "status": "active"},
+                ],
+                "preview_candidates": [
+                    {
+                        "ticker": "IBE",
+                        "company_name": "Iberdrola",
+                        "sector_label": "Energia",
+                        "trade_alert_label": "Comprar",
+                        "net_return_pct": 8.5,
+                        "safety_score": 74,
+                    }
+                ],
+                "preview_allocations": [],
+                "events": [
+                    {"label": "Analizando el IBEX: 18/35", "detail": "Iberdrola", "recorded_at": "16:22:10"}
+                ],
+                "updated_at_label": "2026-04-12 16:22:10",
+            },
+        )
+
+        response = self.client.get(reverse("equities:optimization_progress", args=[run.id]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["reference_code"], "OPT-TEST-PROGRESS")
+        self.assertEqual(payload["status"], EquityOptimizationRun.Status.RUNNING)
+        self.assertFalse(payload["finished"])
+        self.assertEqual(payload["progress"]["percent"], 47)
+        self.assertEqual(payload["progress"]["current_label"], "Iberdrola")
+        self.assertEqual(payload["progress"]["events"][0]["detail"], "Iberdrola")
 
     def test_equities_page_renders_ticket_tracking_section(self):
         for ticker, company_name, average_cost, current_price in (

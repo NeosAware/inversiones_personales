@@ -210,6 +210,7 @@ class EquityOptimizationRun(models.Model):
     max_company_pct = models.DecimalField(max_digits=5, decimal_places=2)
     max_sector_positions = models.PositiveIntegerField(default=0)
     restrictions_note = models.TextField(blank=True)
+    progress_data = models.JSONField(default=dict, blank=True)
     summary_data = models.JSONField(default=dict, blank=True)
     allocations_data = models.JSONField(default=list, blank=True)
     report_html = models.TextField(blank=True)

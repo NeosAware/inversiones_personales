@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib import messages
-from django.http import Http404, HttpResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.dateparse import parse_date
@@ -423,3 +423,26 @@ class EquityOptimizationDownloadView(LoginRequiredMixin, View):
         response = HttpResponse(run.report_html, content_type="text/html; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="{run.reference_code.lower()}.html"'
         return response
+
+
+class EquityOptimizationProgressView(LoginRequiredMixin, View):
+    def get(self, request, pk, *args, **kwargs):
+        resume_equity_optimization_runs()
+        run = get_object_or_404(EquityOptimizationRun, pk=pk)
+        payload = {
+            "id": run.id,
+            "reference_code": run.reference_code,
+            "label": run.display_label,
+            "status": run.status,
+            "status_label": run.get_status_display(),
+            "finished": run.status in {EquityOptimizationRun.Status.COMPLETED, EquityOptimizationRun.Status.FAILED},
+            "status_note": run.status_note,
+            "created_at_label": run.created_at.strftime("%Y-%m-%d %H:%M"),
+            "completed_at_label": run.completed_at.strftime("%Y-%m-%d %H:%M") if run.completed_at else "",
+            "progress": run.progress_data or {},
+            "summary": run.summary_data or {},
+            "error_message": run.error_message,
+            "report_url": reverse("equities:optimization_report", args=[run.id]) if run.report_html else "",
+            "download_url": reverse("equities:optimization_download", args=[run.id]) if run.report_html else "",
+        }
+        return JsonResponse(payload)

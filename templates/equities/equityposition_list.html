@@ -201,6 +201,65 @@
     }
     .equity-candidate.best{ border-color:#d4aa82; background:#fff8f2; }
     .equity-candidate.active{ border-color:#0d5d78; background:#eef7fb; }
+    .equity-progress-track{
+      height:12px;
+      border-radius:999px;
+      background:#e6eef5;
+      overflow:hidden;
+      margin-top:10px;
+    }
+    .equity-progress-bar{
+      display:block;
+      height:100%;
+      width:0;
+      background:linear-gradient(90deg,#0f5f88,#4fa9dc);
+      transition:width .35s ease;
+    }
+    .equity-progress-events{
+      display:grid;
+      gap:10px;
+      grid-template-columns:repeat(4, minmax(0,1fr));
+      margin-top:14px;
+    }
+    .equity-progress-event{
+      padding:12px 14px;
+      border-radius:16px;
+      border:1px solid #d7e3ea;
+      background:#fff;
+      display:grid;
+      gap:6px;
+    }
+    .equity-progress-event strong{
+      font-size:13px;
+      color:#17384e;
+    }
+    .equity-progress-event span{
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.45;
+    }
+    .equity-preview-columns{
+      display:grid;
+      gap:16px;
+      grid-template-columns:repeat(2, minmax(0,1fr));
+      margin-top:16px;
+    }
+    .equity-preview-card{
+      padding:16px;
+      border-radius:18px;
+      border:1px solid #d7e4ec;
+      background:#fff;
+      display:grid;
+      gap:12px;
+    }
+    .equity-preview-card h4{
+      margin:0;
+      font-size:20px;
+    }
+    .equity-preview-card p{
+      margin:0;
+      color:var(--muted);
+    }
     .equity-table-wrap{
       overflow:auto;
       border:1px solid #dbe5ec;
@@ -343,7 +402,7 @@
       line-height:1.55;
     }
     @media (max-width: 1180px){
-      .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-candidate-grid, .equity-chart-grid{ grid-template-columns:1fr; }
+      .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-candidate-grid, .equity-chart-grid, .equity-progress-events, .equity-preview-columns{ grid-template-columns:1fr; }
       .equity-hero-top, .equity-panel-head, .equity-toolbar, .equity-stock-summary, .equity-detail-head, .equity-section-head{ flex-direction:column; }
     }
   </style>
@@ -773,7 +832,7 @@
       </div>
     </details>
 
-    <details class="equity-fold" id="equity-optimizer">
+    <details class="equity-fold" id="equity-optimizer" open>
       <summary>Optimizador 12M</summary>
       <div class="equity-fold-body">
         <div class="equity-panel" style="padding:0; border:none; box-shadow:none; background:transparent;">
@@ -803,6 +862,131 @@
               <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Restablecer formulario</a>
             </div>
           </form>
+
+          {% if active_optimization_runs %}
+            <div class="equity-panel" style="margin-top:18px;">
+              <div class="equity-panel-head">
+                <div>
+                  <p class="section-title">Seguimiento en vivo</p>
+                  <h3>Evolucion de las optimizaciones activas</h3>
+                  <p>La tarjeta se refresca sola y te deja ver si el proceso avanza bien: fase, porcentaje, bloque actual, empresas ya cribadas y una cartera provisional antes del cierre final.</p>
+                </div>
+              </div>
+              <div class="stack" style="margin-top:18px;">
+                {% for run in active_optimization_runs %}
+                  <section
+                    class="equity-panel"
+                    data-optimizer-live-card
+                    data-progress-url="{% url 'equities:optimization_progress' run.id %}"
+                    data-run-id="{{ run.id }}"
+                    style="margin:0;"
+                  >
+                    <div class="equity-panel-head">
+                      <div>
+                        <p class="section-title">Optimizacion activa</p>
+                        <h3 data-progress-title>{{ run.display_label }}</h3>
+                        <p data-progress-subtitle>{{ run.reference_code }} | Lanzada {{ run.created_at|date:"Y-m-d H:i" }}</p>
+                      </div>
+                      <div class="equity-chip-row">
+                        <span class="pill" data-progress-status>{{ run.get_status_display }}</span>
+                        <span class="pill" data-progress-percent>{{ run.progress_data.percent|default:0 }} %</span>
+                      </div>
+                    </div>
+                    <div class="equity-progress-track">
+                      <span class="equity-progress-bar" data-progress-bar style="width:{{ run.progress_data.percent|default:0 }}%;"></span>
+                    </div>
+                    <div class="equity-grid-4" style="margin-top:16px;">
+                      <div class="equity-box"><span>Fase actual</span><strong data-progress-stage>{{ run.progress_data.stage_label|default:run.status_note|default:"Pendiente" }}</strong></div>
+                      <div class="equity-box"><span>Avance</span><strong data-progress-counter>{% if run.progress_data.current_step and run.progress_data.total_steps %}{{ run.progress_data.current_step }}/{{ run.progress_data.total_steps }}{% else %}-{% endif %}</strong><small>Bloques completados dentro de la fase actual.</small></div>
+                      <div class="equity-box"><span>Empresa o bloque</span><strong data-progress-current>{% if run.progress_data.current_label %}{{ run.progress_data.current_label }}{% else %}-{% endif %}</strong><small data-progress-updated>Actualizado {{ run.progress_data.updated_at_label|default:run.updated_at|date:"Y-m-d H:i:s" }}</small></div>
+                      <div class="equity-box"><span>Lectura actual</span><strong data-progress-note>{{ run.progress_data.note|default:run.status_note|default:"Pendiente de analisis" }}</strong></div>
+                    </div>
+                    <div class="equity-compact-note" style="margin-top:14px;">
+                      <strong>Etapas:</strong>
+                      <span data-progress-stages>
+                        {% for stage in run.progress_data.stages %}
+                          <span class="equity-candidate{% if stage.status == 'active' %} active{% elif stage.status == 'completed' %} best{% endif %}" style="display:inline-flex; margin:0 8px 8px 0;">{{ stage.label }}</span>
+                        {% endfor %}
+                      </span>
+                    </div>
+                    <div class="equity-progress-events" data-progress-events>
+                      {% for event in run.progress_data.events %}
+                        <article class="equity-progress-event">
+                          <strong>{{ event.label }}</strong>
+                          <span>{% if event.detail %}{{ event.detail }} | {% endif %}{{ event.recorded_at }}</span>
+                        </article>
+                      {% empty %}
+                        <article class="equity-progress-event">
+                          <strong>Esperando primer avance</strong>
+                          <span>Cuando el motor empiece a procesar mercado, IBEX y prensa veras aqui los hitos intermedios.</span>
+                        </article>
+                      {% endfor %}
+                    </div>
+                    <div class="equity-preview-columns">
+                      <section class="equity-preview-card">
+                        <div>
+                          <p class="section-title">Ranking provisional</p>
+                          <h4>Candidatos mas fuertes</h4>
+                          <p>Valores que ya destacan antes de cerrar la optimizacion final.</p>
+                        </div>
+                        <div class="equity-table-wrap">
+                          <table>
+                            <thead><tr><th>Empresa</th><th>Sector</th><th>Alerta</th><th>Retorno</th><th>Seguridad</th></tr></thead>
+                            <tbody data-progress-candidates-body>
+                              {% for item in run.progress_data.preview_candidates %}
+                                <tr>
+                                  <td><strong>{{ item.company_name }}</strong><br><span class="metric-sub">{{ item.ticker }}</span></td>
+                                  <td>{{ item.sector_label|default:"-" }}</td>
+                                  <td>{{ item.trade_alert_label|default:"-" }}</td>
+                                  <td>{% if item.net_return_pct is not None %}{{ item.net_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+                                  <td>{% if item.safety_score is not None %}{{ item.safety_score|floatformat:0 }}/100{% else %}-{% endif %}</td>
+                                </tr>
+                              {% empty %}
+                                <tr><td colspan="5" class="muted">Todavia no hay candidatos provisionales.</td></tr>
+                              {% endfor %}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+                      <section class="equity-preview-card">
+                        <div>
+                          <p class="section-title">Cartera provisional</p>
+                          <h4>Distribucion que va saliendo</h4>
+                          <p>En cuanto el reparto arranque, veras peso, importe y retorno neto provisional.</p>
+                        </div>
+                        <div class="equity-table-wrap">
+                          <table>
+                            <thead><tr><th>Empresa</th><th>Sector</th><th>Peso</th><th>Importe</th><th>Retorno</th></tr></thead>
+                            <tbody data-progress-allocations-body>
+                              {% for item in run.progress_data.preview_allocations %}
+                                <tr>
+                                  <td><strong>{{ item.company_name }}</strong><br><span class="metric-sub">{{ item.ticker }}</span></td>
+                                  <td>{{ item.sector_label|default:"-" }}</td>
+                                  <td>{% if item.weight_pct is not None %}{{ item.weight_pct|floatformat:1 }} %{% else %}-{% endif %}</td>
+                                  <td>{% if item.amount is not None %}{{ item.amount|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+                                  <td>{% if item.net_return_pct is not None %}{{ item.net_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+                                </tr>
+                              {% empty %}
+                                <tr><td colspan="5" class="muted">Aun no hay cartera provisional.</td></tr>
+                              {% endfor %}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+                    </div>
+                    <div class="equity-chip-row" style="margin-top:14px;" data-progress-actions>
+                      {% if run.status == 'completed' and run.report_html %}
+                        <a class="button secondary" href="{% url 'equities:optimization_report' run.id %}" target="_blank" rel="noopener">Ver informe</a>
+                        <a class="button secondary" href="{% url 'equities:optimization_download' run.id %}">Descargar</a>
+                      {% else %}
+                        <span class="metric-sub">Seguimiento en vivo activo. Esta tarjeta se refresca sola cada pocos segundos sin cortar el analisis.</span>
+                      {% endif %}
+                    </div>
+                  </section>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
 
           {% if optimization_runs %}
             <div class="equity-table-wrap" style="margin-top:18px;">
@@ -907,36 +1091,39 @@
             </div>
           {% endif %}
 
-          <div class="equity-panel" style="margin-top:18px;">
-            <div class="equity-panel-head"><div><p class="section-title">Estimacion rapida</p><h3>Distribucion neta orientativa a 12 meses</h3><p>Esta vista rapida sigue disponible para hacer pruebas inmediatas. Para un analisis serio y guardado, usa el lanzador superior.</p></div></div>
-            <form method="get" class="equity-grid-4" style="align-items:end;">
-              <div><label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>{{ optimizer_form.total_investment }}</div>
-              <div><label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>{{ optimizer_form.max_company_pct }}</div>
-              <div><label for="{{ optimizer_form.max_sector_positions.id_for_label }}">{{ optimizer_form.max_sector_positions.label }}</label>{{ optimizer_form.max_sector_positions }}</div>
-              <button class="button" type="submit">Calcular propuesta</button>
-              <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
-            </form>
-            {% if optimizer_plan and optimizer_plan.available %}
-              <div class="equity-grid-4" style="margin-top:18px;">
-                <div class="equity-box"><span>Capital</span><strong>{{ optimizer_plan.total_investment|floatformat:0 }} EUR</strong></div>
-                <div class="equity-box"><span>Ganancia 12M</span><strong class="{% if optimizer_plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ optimizer_plan.projected_gain_total|floatformat:0 }} EUR</strong></div>
-                <div class="equity-box"><span>Rentabilidad neta</span><strong>{% if optimizer_plan.weighted_return_pct is not None %}{{ optimizer_plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
-                <div class="equity-box"><span>Peor escenario</span><strong class="{% if optimizer_plan.weighted_low_return_pct is not None and optimizer_plan.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if optimizer_plan.weighted_low_return_pct is not None %}{{ optimizer_plan.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
-                <div class="equity-box"><span>Seguridad media</span><strong>{% if optimizer_plan.weighted_safety_score is not None %}{{ optimizer_plan.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
-                <div class="equity-box"><span>Fiabilidad media</span><strong>{% if optimizer_plan.weighted_reliability_score is not None %}{{ optimizer_plan.weighted_reliability_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
-                <div class="equity-box"><span>Dividendos netos</span><strong>{{ optimizer_plan.net_dividend_income_total|floatformat:0 }} EUR</strong></div>
-                <div class="equity-box"><span>Costes totales</span><strong>{{ optimizer_plan.annual_cost_total|floatformat:0 }} + {{ optimizer_plan.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Mantenimiento anual + compra/venta.</small></div>
-              </div>
-              <div class="equity-compact-note" style="margin-top:16px;">
-                {{ optimizer_plan.methodology_note }}
-                {% if optimizer_plan.sector_filter_note %} {{ optimizer_plan.sector_filter_note }}{% endif %}
-                {% if optimizer_plan.ticket_filter_note %} {{ optimizer_plan.ticket_filter_note }}{% endif %}
-                {% if optimizer_plan.external_signal_used_count %} La version rapida ya integra {{ optimizer_plan.external_signal_used_count }} senales externas recientes.{% endif %}
-              </div>
-            {% elif optimizer_plan %}
-              <div class="message info" style="margin-top:16px;">{{ optimizer_plan.reason }}</div>
-            {% endif %}
-          </div>
+          <details class="equity-inline-fold" style="margin-top:18px;">
+            <summary>Simulacion inmediata</summary>
+            <div class="equity-inline-body">
+              <div class="equity-panel-head"><div><p class="section-title">Simulacion rapida</p><h3>Distribucion neta orientativa a 12 meses</h3><p>Esta vista sirve para pruebas instantaneas. No guarda historico, no deja seguimiento del progreso y no sustituye a la optimizacion robusta.</p></div></div>
+              <form method="get" class="equity-grid-4" style="align-items:end;">
+                <div><label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>{{ optimizer_form.total_investment }}</div>
+                <div><label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>{{ optimizer_form.max_company_pct }}</div>
+                <div><label for="{{ optimizer_form.max_sector_positions.id_for_label }}">{{ optimizer_form.max_sector_positions.label }}</label>{{ optimizer_form.max_sector_positions }}</div>
+                <button class="button" type="submit">Calcular propuesta</button>
+                <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
+              </form>
+              {% if optimizer_plan and optimizer_plan.available %}
+                <div class="equity-grid-4" style="margin-top:18px;">
+                  <div class="equity-box"><span>Capital</span><strong>{{ optimizer_plan.total_investment|floatformat:0 }} EUR</strong></div>
+                  <div class="equity-box"><span>Ganancia 12M</span><strong class="{% if optimizer_plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ optimizer_plan.projected_gain_total|floatformat:0 }} EUR</strong></div>
+                  <div class="equity-box"><span>Rentabilidad neta</span><strong>{% if optimizer_plan.weighted_return_pct is not None %}{{ optimizer_plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
+                  <div class="equity-box"><span>Peor escenario</span><strong class="{% if optimizer_plan.weighted_low_return_pct is not None and optimizer_plan.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if optimizer_plan.weighted_low_return_pct is not None %}{{ optimizer_plan.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
+                  <div class="equity-box"><span>Seguridad media</span><strong>{% if optimizer_plan.weighted_safety_score is not None %}{{ optimizer_plan.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
+                  <div class="equity-box"><span>Fiabilidad media</span><strong>{% if optimizer_plan.weighted_reliability_score is not None %}{{ optimizer_plan.weighted_reliability_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
+                  <div class="equity-box"><span>Dividendos netos</span><strong>{{ optimizer_plan.net_dividend_income_total|floatformat:0 }} EUR</strong></div>
+                  <div class="equity-box"><span>Costes totales</span><strong>{{ optimizer_plan.annual_cost_total|floatformat:0 }} + {{ optimizer_plan.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Mantenimiento anual + compra/venta.</small></div>
+                </div>
+                <div class="equity-compact-note" style="margin-top:16px;">
+                  {{ optimizer_plan.methodology_note }}
+                  {% if optimizer_plan.sector_filter_note %} {{ optimizer_plan.sector_filter_note }}{% endif %}
+                  {% if optimizer_plan.ticket_filter_note %} {{ optimizer_plan.ticket_filter_note }}{% endif %}
+                  {% if optimizer_plan.external_signal_used_count %} La version rapida ya integra {{ optimizer_plan.external_signal_used_count }} senales externas recientes.{% endif %}
+                </div>
+              {% elif optimizer_plan %}
+                <div class="message info" style="margin-top:16px;">{{ optimizer_plan.reason }}</div>
+              {% endif %}
+            </div>
+          </details>
         </div>
       </div>
     </details>
@@ -1320,10 +1507,211 @@
   </script>
   {% if active_optimization_runs %}
     <script>
-      setTimeout(() => {
-        window.location.hash = "equity-optimizer";
-        window.location.reload();
-      }, 15000);
+      (() => {
+        const cards = Array.from(document.querySelectorAll("[data-optimizer-live-card]"));
+        if (!cards.length) {
+          return;
+        }
+
+        let reloadScheduled = false;
+        let pollingHandle = null;
+
+        const escapeHtml = (value) => String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+
+        const setText = (card, selector, value) => {
+          const node = card.querySelector(selector);
+          if (node) {
+            node.textContent = value;
+          }
+        };
+
+        const formatNumber = (value, decimals = 0) => {
+          if (value === null || value === undefined || Number.isNaN(Number(value))) {
+            return "-";
+          }
+          return Number(value).toLocaleString("es-ES", {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals,
+          });
+        };
+
+        const renderStages = (stages) => {
+          if (!Array.isArray(stages) || !stages.length) {
+            return '<span class="metric-sub">Sin etapas registradas todavia.</span>';
+          }
+          return stages.map((stage) => {
+            const tone = stage.status === "active" ? " active" : stage.status === "completed" ? " best" : "";
+            return `<span class="equity-candidate${tone}" style="display:inline-flex; margin:0 8px 8px 0;">${escapeHtml(stage.label || "")}</span>`;
+          }).join("");
+        };
+
+        const renderEvents = (events) => {
+          if (!Array.isArray(events) || !events.length) {
+            return `
+              <article class="equity-progress-event">
+                <strong>Esperando primer avance</strong>
+                <span>Cuando el motor empiece a procesar mercado, IBEX y prensa veras aqui los hitos intermedios.</span>
+              </article>
+            `;
+          }
+          return events.map((event) => {
+            const detail = event.detail ? `${escapeHtml(event.detail)} | ` : "";
+            return `
+              <article class="equity-progress-event">
+                <strong>${escapeHtml(event.label || "")}</strong>
+                <span>${detail}${escapeHtml(event.recorded_at || "")}</span>
+              </article>
+            `;
+          }).join("");
+        };
+
+        const renderCandidateRows = (items) => {
+          if (!Array.isArray(items) || !items.length) {
+            return '<tr><td colspan="5" class="muted">Todavia no hay candidatos provisionales.</td></tr>';
+          }
+          return items.map((item) => `
+            <tr>
+              <td><strong>${escapeHtml(item.company_name || "")}</strong><br><span class="metric-sub">${escapeHtml(item.ticker || "")}</span></td>
+              <td>${escapeHtml(item.sector_label || "-")}</td>
+              <td>${escapeHtml(item.trade_alert_label || "-")}</td>
+              <td>${item.net_return_pct === null || item.net_return_pct === undefined ? "-" : `${formatNumber(item.net_return_pct, 2)} %`}</td>
+              <td>${item.safety_score === null || item.safety_score === undefined ? "-" : `${formatNumber(item.safety_score, 0)}/100`}</td>
+            </tr>
+          `).join("");
+        };
+
+        const renderAllocationRows = (items) => {
+          if (!Array.isArray(items) || !items.length) {
+            return '<tr><td colspan="5" class="muted">Aun no hay cartera provisional.</td></tr>';
+          }
+          return items.map((item) => `
+            <tr>
+              <td><strong>${escapeHtml(item.company_name || "")}</strong><br><span class="metric-sub">${escapeHtml(item.ticker || "")}</span></td>
+              <td>${escapeHtml(item.sector_label || "-")}</td>
+              <td>${item.weight_pct === null || item.weight_pct === undefined ? "-" : `${formatNumber(item.weight_pct, 1)} %`}</td>
+              <td>${item.amount === null || item.amount === undefined ? "-" : `${formatNumber(item.amount, 0)} EUR`}</td>
+              <td>${item.net_return_pct === null || item.net_return_pct === undefined ? "-" : `${formatNumber(item.net_return_pct, 2)} %`}</td>
+            </tr>
+          `).join("");
+        };
+
+        const renderActions = (payload) => {
+          if (payload.status === "completed" && payload.report_url && payload.download_url) {
+            return `
+              <a class="button secondary" href="${escapeHtml(payload.report_url)}" target="_blank" rel="noopener">Ver informe</a>
+              <a class="button secondary" href="${escapeHtml(payload.download_url)}">Descargar</a>
+            `;
+          }
+          if (payload.status === "failed") {
+            return `<span class="metric-sub">La optimizacion ha fallado. ${escapeHtml(payload.error_message || payload.status_note || "Revisa el historial y vuelve a lanzarla.")}</span>`;
+          }
+          return '<span class="metric-sub">Seguimiento en vivo activo. Esta tarjeta se refresca sola cada pocos segundos sin cortar el analisis.</span>';
+        };
+
+        const applyStatusTone = (node, status) => {
+          if (!node) {
+            return;
+          }
+          node.classList.remove("good", "warn");
+          if (status === "completed") {
+            node.classList.add("good");
+          } else if (status === "failed") {
+            node.classList.add("warn");
+          }
+        };
+
+        const updateCard = async (card) => {
+          const progressUrl = card.dataset.progressUrl;
+          if (!progressUrl) {
+            return;
+          }
+          try {
+            const response = await fetch(progressUrl, {
+              headers: { Accept: "application/json" },
+              credentials: "same-origin",
+            });
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+            const payload = await response.json();
+            const progress = payload.progress || {};
+            const percent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+            const subtitleBits = [`${payload.reference_code || ""}`.trim(), payload.created_at_label ? `Lanzada ${payload.created_at_label}` : ""];
+            if (payload.completed_at_label) {
+              subtitleBits.push(`Cerrada ${payload.completed_at_label}`);
+            }
+
+            card.dataset.finished = payload.finished ? "true" : "false";
+            setText(card, "[data-progress-title]", payload.label || payload.reference_code || "Optimizacion");
+            setText(card, "[data-progress-subtitle]", subtitleBits.filter(Boolean).join(" | "));
+            setText(card, "[data-progress-status]", payload.status_label || payload.status || "Pendiente");
+            setText(card, "[data-progress-percent]", `${formatNumber(percent, 0)} %`);
+            setText(card, "[data-progress-stage]", progress.stage_label || payload.status_note || "Pendiente");
+            setText(card, "[data-progress-counter]", progress.current_step && progress.total_steps ? `${progress.current_step}/${progress.total_steps}` : "-");
+            setText(card, "[data-progress-current]", progress.current_label || "-");
+            setText(card, "[data-progress-note]", progress.note || payload.status_note || "Pendiente de analisis");
+            setText(card, "[data-progress-updated]", `Actualizado ${progress.updated_at_label || payload.completed_at_label || payload.created_at_label || ""}`.trim());
+            applyStatusTone(card.querySelector("[data-progress-status]"), payload.status);
+
+            const bar = card.querySelector("[data-progress-bar]");
+            if (bar) {
+              bar.style.width = `${percent}%`;
+            }
+
+            const stagesNode = card.querySelector("[data-progress-stages]");
+            if (stagesNode) {
+              stagesNode.innerHTML = renderStages(progress.stages || []);
+            }
+
+            const eventsNode = card.querySelector("[data-progress-events]");
+            if (eventsNode) {
+              eventsNode.innerHTML = renderEvents(progress.events || []);
+            }
+
+            const candidatesBody = card.querySelector("[data-progress-candidates-body]");
+            if (candidatesBody) {
+              candidatesBody.innerHTML = renderCandidateRows(progress.preview_candidates || []);
+            }
+
+            const allocationsBody = card.querySelector("[data-progress-allocations-body]");
+            if (allocationsBody) {
+              allocationsBody.innerHTML = renderAllocationRows(progress.preview_allocations || []);
+            }
+
+            const actionsNode = card.querySelector("[data-progress-actions]");
+            if (actionsNode) {
+              actionsNode.innerHTML = renderActions(payload);
+            }
+          } catch (error) {
+            setText(card, "[data-progress-note]", "No se ha podido refrescar el progreso. Reintentando...");
+          }
+        };
+
+        const refreshAll = async () => {
+          await Promise.all(cards.map((card) => updateCard(card)));
+          const finishedCards = cards.filter((card) => card.dataset.finished === "true");
+          if (!reloadScheduled && finishedCards.length === cards.length) {
+            reloadScheduled = true;
+            window.setTimeout(() => {
+              window.location.hash = "equity-optimizer";
+              window.location.reload();
+            }, 1200);
+          }
+        };
+
+        refreshAll();
+        pollingHandle = window.setInterval(refreshAll, 5000);
+        window.addEventListener("beforeunload", () => {
+          if (pollingHandle) {
+            window.clearInterval(pollingHandle);
+          }
+        });
+      })();
     </script>
   {% endif %}
   {% endblock %}

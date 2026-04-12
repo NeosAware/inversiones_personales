@@ -4678,6 +4678,7 @@ def build_ibex_universe_analysis(
     selected_end_date: date | None = None,
     reference_cache: dict | None = None,
     company_limit: int | None = None,
+    progress_callback=None,
 ) -> dict:
     reference_cache = reference_cache if reference_cache is not None else {}
     workbook_snapshot = load_ibex_reference_workbook_snapshot()
@@ -4732,6 +4733,14 @@ def build_ibex_universe_analysis(
                     )
                 except Exception as exc:
                     failures.append(f"{company.get('company_name') or company.get('ticker')}: {exc}")
+                if progress_callback:
+                    progress_callback(
+                        completed_count=index + 1,
+                        total_count=len(candidate_companies),
+                        company=company,
+                        completed_cards=len([card for card in cards if card is not None]),
+                        failures_count=len(failures),
+                    )
         else:
             with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ibex-analysis") as executor:
                 future_map = {
@@ -4749,12 +4758,22 @@ def build_ibex_universe_analysis(
                     ): (index, company)
                     for index, company in enumerate(candidate_companies)
                 }
+                completed_count = 0
                 for future in as_completed(future_map):
                     index, company = future_map[future]
                     try:
                         cards[index] = future.result()
                     except Exception as exc:
                         failures.append(f"{company.get('company_name') or company.get('ticker')}: {exc}")
+                    completed_count += 1
+                    if progress_callback:
+                        progress_callback(
+                            completed_count=completed_count,
+                            total_count=len(candidate_companies),
+                            company=company,
+                            completed_cards=len([card for card in cards if card is not None]),
+                            failures_count=len(failures),
+                        )
 
     cards = [card for card in cards if card is not None]
     target_count = len(candidate_companies)
@@ -4790,6 +4809,7 @@ def build_equity_analysis_dashboard(
     selected_end_date: date | None = None,
     include_ibex_universe: bool = False,
     ibex_company_limit: int | None = None,
+    ibex_progress_callback=None,
 ) -> dict:
     reference_cache: dict = {}
     history_cards = build_equity_history_cards(
@@ -4834,6 +4854,7 @@ def build_equity_analysis_dashboard(
             selected_end_date=selected_end_date,
             reference_cache=reference_cache,
             company_limit=ibex_company_limit,
+            progress_callback=ibex_progress_callback,
         )
 
     weighted_periods = []

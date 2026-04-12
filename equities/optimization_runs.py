@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
@@ -19,6 +19,7 @@ from .models import EquityOptimizationRun, EquityPosition
 from .services import (
     build_equity_allocation_plan,
     build_equity_analysis_dashboard,
+    build_equity_optimizer_candidate,
     build_ibex_universe_card,
     clear_market_data_caches,
     find_ibex_universe_company,
@@ -32,6 +33,14 @@ NEWS_MAX_ITEMS = 6
 NEWS_REQUEST_TIMEOUT_SECONDS = 10
 RUN_STALE_MINUTES = 30
 RUN_WORKER_MAX_WORKERS = 1
+PROGRESS_STAGE_ORDER = [
+    ("sync", "Sincronizando cartera"),
+    ("dashboard", "Construyendo base de mercado"),
+    ("ibex", "Analizando IBEX"),
+    ("news", "Leyendo prensa reciente"),
+    ("optimize", "Calculando cartera"),
+    ("report", "Generando informe"),
+]
 POSITIVE_NEWS_TOKENS = {
     "sube": Decimal("1.0"),
     "subida": Decimal("1.0"),
@@ -246,7 +255,7 @@ def fetch_company_news_signal(company_name: str, ticker: str, sector_label: str 
     return summarize_news_signal(items)
 
 
-def build_news_signal_map(cards: list[dict]) -> dict[str, dict]:
+def build_news_signal_map(cards: list[dict], progress_callback=None) -> dict[str, dict]:
     cards_to_analyze = []
     seen_tickers = set()
     for card in cards:
@@ -269,10 +278,13 @@ def build_news_signal_map(cards: list[dict]) -> dict[str, dict]:
                 card["position"].company_name,
                 card["position"].ticker,
                 card.get("sector_label", ""),
-            ): card["position"].ticker
+            ): card
             for card in cards_to_analyze
         }
-        for future, ticker in list(future_map.items()):
+        completed_count = 0
+        for future in as_completed(future_map):
+            card = future_map[future]
+            ticker = card["position"].ticker
             try:
                 results[ticker] = future.result()
             except Exception as exc:
@@ -287,6 +299,14 @@ def build_news_signal_map(cards: list[dict]) -> dict[str, dict]:
                     "items": [],
                     "note": f"No se ha podido leer la prensa reciente: {exc}",
                 }
+            completed_count += 1
+            if progress_callback:
+                progress_callback(
+                    completed_count=completed_count,
+                    total_count=len(cards_to_analyze),
+                    card=card,
+                    signal=results[ticker],
+                )
     return results
 
 
@@ -394,6 +414,143 @@ def build_news_overview(signals: dict[str, dict]) -> dict:
         "neutral_count": neutral_count,
         "items_count": items_count,
     }
+
+
+def build_progress_stages(active_key: str | None, *, finalized: bool = False) -> list[dict]:
+    active_index = next((index for index, stage in enumerate(PROGRESS_STAGE_ORDER) if stage[0] == active_key), -1)
+    stages = []
+    for index, (stage_key, stage_label) in enumerate(PROGRESS_STAGE_ORDER):
+        if active_index == -1:
+            status = "pending"
+        elif finalized and index <= active_index:
+            status = "completed"
+        elif index < active_index:
+            status = "completed"
+        elif index == active_index:
+            status = "active"
+        else:
+            status = "pending"
+        stages.append(
+            {
+                "key": stage_key,
+                "label": stage_label,
+                "status": status,
+            }
+        )
+    return stages
+
+
+def serialize_candidate_preview(card: dict) -> dict:
+    position = card["position"]
+    projection = card.get("projection") or {}
+    return {
+        "ticker": position.ticker,
+        "company_name": position.company_name,
+        "sector_label": card.get("sector_label", ""),
+        "status_label": card.get("status_label", ""),
+        "reference_label": card.get("reference_label", ""),
+        "trade_alert_label": (card.get("trade_alert") or {}).get("label", "Vigilar"),
+        "base_return_pct": float(projection.get("base_return_pct", 0) or 0) if projection.get("base_return_pct") is not None else None,
+        "safety_score": float(projection.get("safety_score", 0) or 0) if projection.get("safety_score") is not None else None,
+    }
+
+
+def build_optimizer_candidate_preview(cards: list[dict], limit: int = 5) -> list[dict]:
+    candidates = [
+        candidate
+        for candidate in (build_equity_optimizer_candidate(card) for card in cards)
+        if candidate and candidate.get("optimization_score") is not None
+    ]
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            item["optimization_score"],
+            item["risk_adjusted_return_pct"],
+            item["base_return_pct"],
+        ),
+        reverse=True,
+    )[:limit]
+    preview = []
+    for item in ranked:
+        position = item["position"]
+        preview.append(
+            {
+                "ticker": position.ticker,
+                "company_name": position.company_name,
+                "sector_label": item["sector_label"],
+                "status_label": item["status_label"],
+                "trade_alert_label": item["trade_alert_label"],
+                "reference_label": item["reference_label"],
+                "optimization_score": float(item["optimization_score"]),
+                "net_return_pct": float(item["base_return_pct"]),
+                "safety_score": float(item["safety_score"]),
+                "external_signal_label": item.get("external_signal_label", ""),
+            }
+        )
+    return preview
+
+
+def build_allocation_preview(plan: dict, limit: int = 5) -> list[dict]:
+    preview = []
+    for item in plan.get("allocations", [])[:limit]:
+        preview.append(
+            {
+                "ticker": item["position"].ticker,
+                "company_name": item["position"].company_name,
+                "sector_label": item["sector_label"],
+                "status_label": item["status_label"],
+                "weight_pct": float(item["allocated_weight_pct"]),
+                "amount": float(item["allocated_amount"]),
+                "net_return_pct": float(item["net_projected_return_pct"]),
+                "trade_alert_label": item["trade_alert_label"],
+                "external_signal_label": item.get("external_signal_label", ""),
+            }
+        )
+    return preview
+
+
+def update_run_progress(
+    run_id: int,
+    *,
+    percent: int,
+    stage_key: str,
+    note: str,
+    current_step: int | None = None,
+    total_steps: int | None = None,
+    current_label: str = "",
+    preview_candidates: list[dict] | None = None,
+    preview_allocations: list[dict] | None = None,
+) -> None:
+    run = EquityOptimizationRun.objects.get(pk=run_id)
+    progress_data = dict(run.progress_data or {})
+    previous_stage = progress_data.get("stage_key")
+    previous_note = progress_data.get("note")
+    events = list(progress_data.get("events") or [])
+    if previous_stage != stage_key or previous_note != note or current_label:
+        events.append(
+            {
+                "label": note,
+                "detail": current_label,
+                "stage_key": stage_key,
+                "recorded_at": timezone.localtime().strftime("%H:%M:%S"),
+            }
+        )
+    run.progress_data = {
+        "percent": max(min(int(percent), 100), 0),
+        "stage_key": stage_key,
+        "stage_label": dict(PROGRESS_STAGE_ORDER).get(stage_key, stage_key),
+        "note": note,
+        "current_step": current_step,
+        "total_steps": total_steps,
+        "current_label": current_label,
+        "stages": build_progress_stages(stage_key),
+        "preview_candidates": preview_candidates or progress_data.get("preview_candidates", []),
+        "preview_allocations": preview_allocations or progress_data.get("preview_allocations", []),
+        "events": events[-8:],
+        "updated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    run.status_note = note
+    run.save(update_fields=["progress_data", "status_note", "updated_at"])
 
 
 def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: dict, news_overview: dict) -> dict:
@@ -523,10 +680,6 @@ def build_sector_weight_chart(allocations: list[dict]) -> str:
     return build_svg_bar_chart(chart_rows, "value")
 
 
-def update_run_progress(run_id: int, note: str) -> None:
-    EquityOptimizationRun.objects.filter(pk=run_id).update(status_note=note, updated_at=timezone.now())
-
-
 def build_report_html(run: EquityOptimizationRun, dashboard: dict, plan: dict, report_entries: list[dict], news_overview: dict) -> str:
     context = {
         "run": run,
@@ -543,13 +696,29 @@ def build_report_html(run: EquityOptimizationRun, dashboard: dict, plan: dict, r
 
 
 def mark_run_failed(run_id: int, exc: Exception) -> None:
-    EquityOptimizationRun.objects.filter(pk=run_id).update(
-        status=EquityOptimizationRun.Status.FAILED,
-        status_note="La optimizacion ha fallado.",
-        error_message=str(exc),
-        completed_at=timezone.now(),
-        updated_at=timezone.now(),
+    run = EquityOptimizationRun.objects.get(pk=run_id)
+    progress_data = dict(run.progress_data or {})
+    events = list(progress_data.get("events") or [])
+    events.append(
+        {
+            "label": "La optimizacion ha fallado.",
+            "detail": str(exc)[:180],
+            "stage_key": progress_data.get("stage_key") or "report",
+            "recorded_at": timezone.localtime().strftime("%H:%M:%S"),
+        }
     )
+    progress_data["note"] = "La optimizacion ha fallado."
+    progress_data["stage_key"] = progress_data.get("stage_key") or "report"
+    progress_data["stage_label"] = dict(PROGRESS_STAGE_ORDER).get(progress_data["stage_key"], "Error")
+    progress_data["stages"] = progress_data.get("stages") or build_progress_stages(progress_data["stage_key"])
+    progress_data["events"] = events[-8:]
+    progress_data["updated_at_label"] = timezone.localtime().strftime("%Y-%m-%d %H:%M:%S")
+    run.status = EquityOptimizationRun.Status.FAILED
+    run.status_note = "La optimizacion ha fallado."
+    run.error_message = str(exc)
+    run.completed_at = timezone.now()
+    run.progress_data = progress_data
+    run.save(update_fields=["status", "status_note", "error_message", "completed_at", "progress_data", "updated_at"])
 
 
 def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
@@ -560,6 +729,20 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
     EquityOptimizationRun.objects.filter(pk=run_id).update(
         status=EquityOptimizationRun.Status.RUNNING,
         status_note="Preparando analisis",
+        progress_data={
+            "percent": 1,
+            "stage_key": "sync",
+            "stage_label": dict(PROGRESS_STAGE_ORDER)["sync"],
+            "note": "Preparando analisis",
+            "current_step": None,
+            "total_steps": None,
+            "current_label": "",
+            "stages": build_progress_stages("sync"),
+            "preview_candidates": [],
+            "preview_allocations": [],
+            "events": [{"label": "Preparando analisis", "stage_key": "sync", "recorded_at": timezone.localtime().strftime("%H:%M:%S")}],
+            "updated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+        },
         started_at=timezone.now(),
         completed_at=None,
         error_message="",
@@ -569,34 +752,102 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
 
     try:
         clear_market_data_caches()
-        update_run_progress(run_id, "Sincronizando posiciones guardadas")
+        update_run_progress(
+            run_id,
+            percent=6,
+            stage_key="sync",
+            note="Sincronizando posiciones guardadas",
+        )
         positions = list(EquityPosition.objects.all())
         if positions:
             sync_all_equities_market_data(positions)
         positions = list(EquityPosition.objects.prefetch_related("price_history"))
 
-        update_run_progress(run_id, "Analizando mercado y universo IBEX")
+        update_run_progress(
+            run_id,
+            percent=16,
+            stage_key="dashboard",
+            note="Construyendo base de mercado y cartera actual",
+        )
+        preview_candidates: list[dict] = []
+
+        def ibex_progress_callback(completed_count, total_count, company, completed_cards, failures_count):
+            percent = 22 + int((completed_count / max(total_count, 1)) * 34)
+            update_run_progress(
+                run_id,
+                percent=percent,
+                stage_key="ibex",
+                note=f"Analizando el IBEX: {completed_count}/{total_count}",
+                current_step=completed_count,
+                total_steps=total_count,
+                current_label=company.get("company_name") or company.get("ticker", ""),
+                preview_candidates=preview_candidates,
+            )
+
         dashboard = build_equity_analysis_dashboard(
             positions,
             include_ibex_universe=True,
             ibex_company_limit=(getattr(settings, "EQUITIES_IBEX_UNIVERSE_LIMIT", 0) or None),
+            ibex_progress_callback=ibex_progress_callback,
         )
 
         optimizer_cards = list(dashboard["optimizer_cards"])
-        update_run_progress(run_id, "Leyendo prensa reciente y contexto externo")
-        news_signals = build_news_signal_map(optimizer_cards)
+        preview_candidates = build_optimizer_candidate_preview(optimizer_cards)
+        update_run_progress(
+            run_id,
+            percent=58,
+            stage_key="dashboard",
+            note="Base de mercado completada",
+            preview_candidates=preview_candidates,
+        )
+
+        def news_progress_callback(completed_count, total_count, card, signal):
+            percent = 62 + int((completed_count / max(total_count, 1)) * 18)
+            update_run_progress(
+                run_id,
+                percent=percent,
+                stage_key="news",
+                note=f"Leyendo prensa reciente: {completed_count}/{total_count}",
+                current_step=completed_count,
+                total_steps=total_count,
+                current_label=card["position"].company_name,
+                preview_candidates=preview_candidates,
+            )
+
+        update_run_progress(
+            run_id,
+            percent=62,
+            stage_key="news",
+            note="Iniciando lectura de prensa reciente",
+            preview_candidates=preview_candidates,
+        )
+        news_signals = build_news_signal_map(optimizer_cards, progress_callback=news_progress_callback)
         for card in optimizer_cards:
             card["external_signal"] = news_signals.get(card["position"].ticker, {})
 
-        update_run_progress(run_id, "Calculando distribucion optima")
+        update_run_progress(
+            run_id,
+            percent=84,
+            stage_key="optimize",
+            note="Calculando la cartera optima",
+            preview_candidates=build_optimizer_candidate_preview(optimizer_cards),
+        )
         plan = build_equity_allocation_plan(
             optimizer_cards,
             run.total_investment,
             run.max_company_pct,
             run.max_sector_positions,
         )
+        preview_allocations = build_allocation_preview(plan)
+        update_run_progress(
+            run_id,
+            percent=92,
+            stage_key="report",
+            note="Generando informe descargable",
+            preview_candidates=build_optimizer_candidate_preview(optimizer_cards),
+            preview_allocations=preview_allocations,
+        )
 
-        update_run_progress(run_id, "Generando informe descargable")
         news_overview = build_news_overview(news_signals)
         report_entries = build_report_entries(plan, dashboard["history_cards"], positions, news_signals)
         run.refresh_from_db()
@@ -606,9 +857,24 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
         run.status_note = "Optimizacion completada"
         run.completed_at = timezone.now()
         run.error_message = ""
+        run.progress_data = {
+            **dict(run.progress_data or {}),
+            "percent": 100,
+            "stage_key": "report",
+            "stage_label": dict(PROGRESS_STAGE_ORDER)["report"],
+            "note": "Optimizacion completada",
+            "stages": build_progress_stages("report", finalized=True),
+            "preview_candidates": build_optimizer_candidate_preview(optimizer_cards),
+            "preview_allocations": preview_allocations,
+            "updated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+            "current_step": None,
+            "total_steps": None,
+            "current_label": "",
+        }
         run.report_html = build_report_html(run, dashboard, plan, report_entries, news_overview)
         run.save(
             update_fields=[
+                "progress_data",
                 "summary_data",
                 "allocations_data",
                 "status",
@@ -660,6 +926,20 @@ def launch_equity_optimization_run(
         max_company_pct=max_company_pct,
         max_sector_positions=max_sector_positions,
         restrictions_note=restrictions_note,
+        progress_data={
+            "percent": 0,
+            "stage_key": "sync",
+            "stage_label": dict(PROGRESS_STAGE_ORDER)["sync"],
+            "note": "Pendiente de analisis",
+            "current_step": None,
+            "total_steps": None,
+            "current_label": "",
+            "stages": build_progress_stages(None),
+            "preview_candidates": [],
+            "preview_allocations": [],
+            "events": [],
+            "updated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+        },
     )
     if optimization_async_enabled():
         enqueue_equity_optimization_run(run.id)
