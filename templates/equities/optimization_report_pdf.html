@@ -52,6 +52,12 @@
         <td><strong>Compra + venta</strong><br>{{ plan.roundtrip_cost_total|floatformat:0 }} EUR</td>
         <td><strong>IBEX analizado</strong><br>{{ dashboard.ibex_universe_summary.analyzed_count }}</td>
       </tr>
+      <tr>
+        <td><strong>Max peso por empresa</strong><br>{{ plan.max_company_pct|floatformat:1 }} %</td>
+        <td><strong>Max total de empresas</strong><br>{% if plan.max_total_positions %}{{ plan.max_total_positions }}{% else %}Sin limite{% endif %}</td>
+        <td><strong>Max por sector</strong><br>{% if plan.max_sector_positions %}{{ plan.max_sector_positions }}{% else %}Sin limite{% endif %}</td>
+        <td><strong>Valores elegidos</strong><br>{{ plan.allocations|length }}</td>
+      </tr>
     </table>
   {% else %}
     <div class="note">{{ plan.reason }}</div>
@@ -61,6 +67,7 @@
   <div class="note">
     {{ plan.methodology_note }}
     {% if run.restrictions_note %} Restricciones anotadas: <strong>{{ run.restrictions_note }}</strong>.{% endif %}
+    {% if plan.position_cap_note %} {{ plan.position_cap_note }}{% endif %}
     {% if plan.sector_filter_note %} {{ plan.sector_filter_note }}{% endif %}
     {% if plan.ticket_filter_note %} {{ plan.ticket_filter_note }}{% endif %}
     {% if plan.reserve_reason %} {{ plan.reserve_reason }}{% endif %}

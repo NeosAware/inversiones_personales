@@ -6145,6 +6145,7 @@ def build_equity_allocation_plan(
     history_cards: list[dict],
     total_investment: Decimal,
     max_company_pct: Decimal,
+    max_total_positions: int = 0,
     max_sector_positions: int = 0,
 ) -> dict:
     if total_investment <= 0 or max_company_pct <= 0:
@@ -6198,13 +6199,22 @@ def build_equity_allocation_plan(
             "reason": "Con el limite por sector indicado no quedan suficientes candidatos validos para construir la propuesta.",
         }
 
+    candidate_pool = ranked_candidates
+    position_cap_overflow_count = 0
+    if max_total_positions > 0:
+        position_cap_overflow_count = max(len(candidate_pool) - max_total_positions, 0)
+        iteration_candidates = candidate_pool[:max_total_positions]
+        next_candidate_index = len(iteration_candidates)
+    else:
+        iteration_candidates = candidate_pool
+        next_candidate_index = len(candidate_pool)
+
     ticket_filtered_count = 0
     ticket_filter_reasons = {"entry_drag": 0, "roundtrip_drag": 0, "gain_vs_cost": 0}
-    iteration_candidates = ranked_candidates
     remaining_amount = total_investment
     allocated_amounts = []
     kept_scenarios = []
-    max_iterations = len(ranked_candidates) + 1
+    max_iterations = len(candidate_pool) + 1
 
     for _ in range(max_iterations):
         allocated_amounts, remaining_amount = distribute_optimizer_amounts(
@@ -6254,11 +6264,16 @@ def build_equity_allocation_plan(
         ticket_filtered_count += 1
         if rejected_reason in ticket_filter_reasons:
             ticket_filter_reasons[rejected_reason] += 1
-        iteration_candidates = [
+        next_iteration_candidates = [
             candidate
             for index, candidate in enumerate(iteration_candidates)
             if index != rejected_index
         ]
+        if max_total_positions > 0:
+            while len(next_iteration_candidates) < max_total_positions and next_candidate_index < len(candidate_pool):
+                next_iteration_candidates.append(candidate_pool[next_candidate_index])
+                next_candidate_index += 1
+        iteration_candidates = next_iteration_candidates
         if not iteration_candidates:
             break
 
@@ -6361,6 +6376,10 @@ def build_equity_allocation_plan(
             "Queda caja en reserva porque el filtro de riesgo/rentabilidad solo deja pasar las ideas con retorno neto positivo, "
             "riesgo asumible y suficiente calidad historica."
         )
+        if max_total_positions > 0 and (company_cap_amount * Decimal(str(max_total_positions))) < total_investment:
+            reserve_reason += (
+                " Ademas, el maximo total de empresas combinado con el peso maximo por empresa impide asignar todo el capital sin saltarse tus propios limites."
+            )
     else:
         reserve_reason = ""
     if ticket_filtered_count:
@@ -6370,6 +6389,14 @@ def build_equity_allocation_plan(
         )
     else:
         ticket_filter_note = ""
+    if max_total_positions > 0:
+        position_limit_note = f"Se aplica un maximo total de {max_total_positions} empresa(s) en la cartera propuesta."
+        if position_cap_overflow_count:
+            position_limit_note += (
+                f" En el ranking inicial habia {position_cap_overflow_count} candidata(s) adicionales fuera del corte por capacidad."
+            )
+    else:
+        position_limit_note = ""
     if max_sector_positions > 0:
         sector_limit_note = (
             f"Se aplica un maximo de {max_sector_positions} empresa(s) por sector."
@@ -6382,6 +6409,7 @@ def build_equity_allocation_plan(
     if not allocations:
         reason = (
             ticket_filter_note
+            or position_limit_note
             or sector_limit_note
             or "Con las tarifas actuales del broker, las compras que caben por peso maximo no compensan el coste fijo+variable por operacion."
         )
@@ -6393,6 +6421,7 @@ def build_equity_allocation_plan(
         "allocations": allocations,
         "total_investment": total_investment,
         "max_company_pct": max_company_pct,
+        "max_total_positions": max_total_positions,
         "company_cap_amount": company_cap_amount,
         "allocated_amount_total": allocated_amount_total,
         "cash_reserve_amount": remaining_amount,
@@ -6409,6 +6438,8 @@ def build_equity_allocation_plan(
         "watchlist_allocations_count": watchlist_allocations_count,
         "ibex_allocations_count": ibex_allocations_count,
         "max_sector_positions": max_sector_positions,
+        "position_cap_filtered_count": position_cap_overflow_count,
+        "position_cap_note": position_limit_note,
         "sectors_used": sectors_used,
         "sectors_used_count": len(sectors_used),
         "external_signal_used_count": external_signal_used_count,
@@ -6422,7 +6453,7 @@ def build_equity_allocation_plan(
         "methodology_note": (
             "La optimizacion prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
             "seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa, riesgo historico, "
-            "eficiencia real del ticket de compra y, si lo marcas, diversificacion maxima por sector. En la version robusta se "
+            "eficiencia real del ticket de compra y, si lo marcas, un maximo total de empresas y diversificacion maxima por sector. En la version robusta se "
             "analiza siempre todo el IBEX, no solo los valores que ya tienes en seguimiento."
         ),
     }

@@ -1071,6 +1071,7 @@
               <div><label for="{{ optimizer_run_form.reference_label.id_for_label }}">{{ optimizer_run_form.reference_label.label }}</label>{{ optimizer_run_form.reference_label }}{% if optimizer_run_form.reference_label.help_text %}<div class="metric-sub">{{ optimizer_run_form.reference_label.help_text }}</div>{% endif %}</div>
               <div><label for="{{ optimizer_run_form.total_investment.id_for_label }}">{{ optimizer_run_form.total_investment.label }}</label>{{ optimizer_run_form.total_investment }}</div>
               <div><label for="{{ optimizer_run_form.max_company_pct.id_for_label }}">{{ optimizer_run_form.max_company_pct.label }}</label>{{ optimizer_run_form.max_company_pct }}</div>
+              <div><label for="{{ optimizer_run_form.max_total_positions.id_for_label }}">{{ optimizer_run_form.max_total_positions.label }}</label>{{ optimizer_run_form.max_total_positions }}{% if optimizer_run_form.max_total_positions.help_text %}<div class="metric-sub">{{ optimizer_run_form.max_total_positions.help_text }}</div>{% endif %}</div>
               <div><label for="{{ optimizer_run_form.max_sector_positions.id_for_label }}">{{ optimizer_run_form.max_sector_positions.label }}</label>{{ optimizer_run_form.max_sector_positions }}</div>
             </div>
             <div>
@@ -1227,7 +1228,7 @@
                       <td>
                         {% if run.summary_data.available %}
                           {{ run.summary_data.projected_gain_total|floatformat:0 }} EUR
-                          <br><span class="metric-sub">Retorno {% if run.summary_data.weighted_return_pct is not None %}{{ run.summary_data.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %} | {{ run.summary_data.allocations_count }} valores</span>
+                          <br><span class="metric-sub">Retorno {% if run.summary_data.weighted_return_pct is not None %}{{ run.summary_data.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %} | {{ run.summary_data.allocations_count }} valores{% if run.summary_data.max_total_positions %} | max {{ run.summary_data.max_total_positions }}{% endif %}</span>
                         {% elif run.summary_data.reason %}
                           <span class="metric-sub">{{ run.summary_data.reason }}</span>
                         {% elif run.error_message %}
@@ -1277,6 +1278,7 @@
                 <div class="equity-box"><span>Costes totales</span><strong>{{ latest_completed_optimization.summary_data.annual_cost_total|floatformat:0 }} + {{ latest_completed_optimization.summary_data.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Mantenimiento anual + compra/venta.</small></div>
                 <div class="equity-box"><span>Caja en reserva</span><strong>{{ latest_completed_optimization.summary_data.cash_reserve_amount|floatformat:0 }} EUR</strong></div>
                 <div class="equity-box"><span>Valores elegidos</span><strong>{{ latest_completed_optimization.summary_data.allocations_count }}</strong></div>
+                <div class="equity-box"><span>Max empresas</span><strong>{% if latest_completed_optimization.max_total_positions %}{{ latest_completed_optimization.max_total_positions }}{% else %}Sin limite{% endif %}</strong></div>
                 <div class="equity-box"><span>IBEX analizado</span><strong>{{ latest_completed_optimization.summary_data.ibex_analyzed_count }}</strong></div>
                 <div class="equity-box"><span>Prensa integrada</span><strong>{{ latest_completed_optimization.summary_data.news_items_count }}</strong><small>{{ latest_completed_optimization.summary_data.news_signals_count }} senales recientes.</small></div>
               </div>
@@ -1322,6 +1324,7 @@
               <form method="get" class="equity-grid-4" style="align-items:end;">
                 <div><label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>{{ optimizer_form.total_investment }}</div>
                 <div><label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>{{ optimizer_form.max_company_pct }}</div>
+                <div><label for="{{ optimizer_form.max_total_positions.id_for_label }}">{{ optimizer_form.max_total_positions.label }}</label>{{ optimizer_form.max_total_positions }}{% if optimizer_form.max_total_positions.help_text %}<div class="metric-sub">{{ optimizer_form.max_total_positions.help_text }}</div>{% endif %}</div>
                 <div><label for="{{ optimizer_form.max_sector_positions.id_for_label }}">{{ optimizer_form.max_sector_positions.label }}</label>{{ optimizer_form.max_sector_positions }}</div>
                 <button class="button" type="submit">Calcular propuesta</button>
                 <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
@@ -1339,6 +1342,7 @@
                 </div>
                 <div class="equity-compact-note" style="margin-top:16px;">
                   {{ optimizer_plan.methodology_note }}
+                  {% if optimizer_plan.position_cap_note %} {{ optimizer_plan.position_cap_note }}{% endif %}
                   {% if optimizer_plan.sector_filter_note %} {{ optimizer_plan.sector_filter_note }}{% endif %}
                   {% if optimizer_plan.ticket_filter_note %} {{ optimizer_plan.ticket_filter_note }}{% endif %}
                   {% if optimizer_plan.external_signal_used_count %} La version rapida ya integra {{ optimizer_plan.external_signal_used_count }} senales externas recientes.{% endif %}

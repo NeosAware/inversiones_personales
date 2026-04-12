@@ -113,6 +113,7 @@
         <span class="pill">{{ run.reference_code }}</span>
         <span class="pill">Capital {{ plan.total_investment|floatformat:0 }} EUR</span>
         <span class="pill">Max empresa {{ plan.max_company_pct|floatformat:1 }} %</span>
+        <span class="pill">{% if plan.max_total_positions %}Max total {{ plan.max_total_positions }} empresas{% else %}Sin tope total de empresas{% endif %}</span>
         <span class="pill">{% if plan.max_sector_positions %}Max {{ plan.max_sector_positions }} por sector{% else %}Sin limite sectorial{% endif %}</span>
         <span class="pill">{{ dashboard.ibex_universe_summary.analyzed_count }} valores IBEX analizados</span>
       </div>
@@ -141,6 +142,7 @@
       <div class="note">
         {{ plan.methodology_note }}
         {% if run.restrictions_note %} Restricciones anotadas: <strong>{{ run.restrictions_note }}</strong>.{% endif %}
+        {% if plan.position_cap_note %} {{ plan.position_cap_note }}{% endif %}
         {% if plan.sector_filter_note %} {{ plan.sector_filter_note }}{% endif %}
         {% if plan.ticket_filter_note %} {{ plan.ticket_filter_note }}{% endif %}
         {% if plan.reserve_reason %} {{ plan.reserve_reason }}{% endif %}

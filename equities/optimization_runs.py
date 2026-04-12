@@ -574,6 +574,7 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "available": bool(plan.get("available")),
         "reason": plan.get("reason", ""),
         "total_investment": float(plan.get("total_investment", 0) or 0),
+        "max_total_positions": int(plan.get("max_total_positions", 0) or 0),
         "projected_gain_total": float(plan.get("projected_gain_total", 0) or 0),
         "weighted_return_pct": float(plan.get("weighted_return_pct", 0) or 0) if plan.get("weighted_return_pct") is not None else None,
         "weighted_low_return_pct": float(plan.get("weighted_low_return_pct", 0) or 0) if plan.get("weighted_low_return_pct") is not None else None,
@@ -586,6 +587,8 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "allocations_count": len(plan.get("allocations", [])),
         "ibex_analyzed_count": dashboard.get("ibex_universe_summary", {}).get("analyzed_count", 0),
         "external_signal_used_count": plan.get("external_signal_used_count", 0),
+        "max_company_pct": float(plan.get("max_company_pct", 0) or 0),
+        "max_sector_positions": int(plan.get("max_sector_positions", 0) or 0),
         "top_pick_name": top_pick_name,
         "news_signals_count": news_overview["signals_count"],
         "news_items_count": news_overview["items_count"],
@@ -881,6 +884,7 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
             optimizer_cards,
             run.total_investment,
             run.max_company_pct,
+            run.max_total_positions,
             run.max_sector_positions,
         )
         preview_allocations = build_allocation_preview(plan)
@@ -958,6 +962,7 @@ def launch_equity_optimization_run(
     *,
     total_investment: Decimal,
     max_company_pct: Decimal,
+    max_total_positions: int,
     max_sector_positions: int,
     requested_by=None,
     reference_label: str = "",
@@ -971,6 +976,7 @@ def launch_equity_optimization_run(
         status_note="Pendiente de analisis",
         total_investment=total_investment,
         max_company_pct=max_company_pct,
+        max_total_positions=max_total_positions,
         max_sector_positions=max_sector_positions,
         restrictions_note=restrictions_note,
         progress_data={

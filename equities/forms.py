@@ -275,6 +275,13 @@ class EquityAllocationOptimizerForm(forms.Form):
         max_value=Decimal("100"),
         label="Peso maximo por empresa (%)",
     )
+    max_total_positions = forms.IntegerField(
+        required=False,
+        min_value=0,
+        max_value=35,
+        label="Maximo total de empresas",
+        help_text="Pon 0 para no limitar. Si pones 8, la propuesta no elegira mas de 8 valores distintos.",
+    )
     max_sector_positions = forms.IntegerField(
         required=False,
         min_value=0,
@@ -288,6 +295,7 @@ class EquityAllocationOptimizerForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.fields["total_investment"].initial = default_total_investment
         self.fields["max_company_pct"].initial = Decimal("20")
+        self.fields["max_total_positions"].initial = 0
         self.fields["max_sector_positions"].initial = 0
         self.fields["total_investment"].widget.attrs.update(
             {
@@ -297,6 +305,11 @@ class EquityAllocationOptimizerForm(forms.Form):
         self.fields["max_company_pct"].widget.attrs.update(
             {
                 "placeholder": "Ejemplo: 20",
+            }
+        )
+        self.fields["max_total_positions"].widget.attrs.update(
+            {
+                "placeholder": "0 sin limite, 8 maximo",
             }
         )
         self.fields["max_sector_positions"].widget.attrs.update(
@@ -311,6 +324,8 @@ class EquityAllocationOptimizerForm(forms.Form):
             cleaned_data["total_investment"] = self.fields["total_investment"].initial or Decimal("100000")
         if cleaned_data.get("max_company_pct") is None:
             cleaned_data["max_company_pct"] = self.fields["max_company_pct"].initial or Decimal("20")
+        if cleaned_data.get("max_total_positions") is None:
+            cleaned_data["max_total_positions"] = self.fields["max_total_positions"].initial or 0
         if cleaned_data.get("max_sector_positions") is None:
             cleaned_data["max_sector_positions"] = self.fields["max_sector_positions"].initial or 0
         return cleaned_data

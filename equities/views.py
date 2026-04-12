@@ -60,7 +60,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
     def _optimizer_requested(self) -> bool:
         return any(
             self.request.GET.get(key)
-            for key in ("total_investment", "max_company_pct", "max_sector_positions")
+            for key in ("total_investment", "max_company_pct", "max_total_positions", "max_sector_positions")
         )
 
     def _auto_sync_market_data(self):
@@ -154,6 +154,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 dashboard["optimizer_cards"],
                 optimizer_form.cleaned_data["total_investment"],
                 optimizer_form.cleaned_data["max_company_pct"],
+                optimizer_form.cleaned_data["max_total_positions"],
                 optimizer_form.cleaned_data["max_sector_positions"],
             )
         context["optimizer_form"] = optimizer_form
@@ -444,6 +445,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         run = launch_equity_optimization_run(
             total_investment=form.cleaned_data["total_investment"],
             max_company_pct=form.cleaned_data["max_company_pct"],
+            max_total_positions=form.cleaned_data["max_total_positions"],
             max_sector_positions=form.cleaned_data["max_sector_positions"],
             requested_by=request.user if request.user.is_authenticated else None,
             reference_label=form.cleaned_data["reference_label"],

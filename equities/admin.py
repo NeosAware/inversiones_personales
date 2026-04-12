@@ -57,6 +57,7 @@ class EquityOptimizationRunAdmin(admin.ModelAdmin):
         "completed_at",
         "total_investment",
         "max_company_pct",
+        "max_total_positions",
         "max_sector_positions",
     )
     search_fields = ("reference_code", "label", "requested_by__username")

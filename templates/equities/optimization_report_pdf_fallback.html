@@ -34,6 +34,11 @@
       <td><strong>Compra + venta</strong><br>{{ summary.roundtrip_cost_total|floatformat:0 }} EUR</td>
       <td><strong>IBEX analizado</strong><br>{{ summary.ibex_analyzed_count }}</td>
     </tr>
+    <tr>
+      <td><strong>Max total de empresas</strong><br>{% if summary.max_total_positions %}{{ summary.max_total_positions }}{% else %}Sin limite{% endif %}</td>
+      <td><strong>Valores elegidos</strong><br>{{ summary.allocations_count }}</td>
+      <td colspan="2"><strong>Metodo</strong><br>{{ summary.methodology_note }}</td>
+    </tr>
   </table>
 
   {% if allocations %}
