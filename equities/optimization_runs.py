@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from io import BytesIO
 from datetime import datetime, timedelta
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
@@ -14,6 +15,11 @@ import xml.etree.ElementTree as ET
 from django.conf import settings
 from django.template.loader import render_to_string
 from django.utils import timezone
+
+try:
+    from xhtml2pdf import pisa
+except Exception:  # pragma: no cover - dependencia opcional en runtime
+    pisa = None
 
 from .models import EquityOptimizationRun, EquityPosition
 from .services import (
@@ -695,6 +701,45 @@ def build_report_html(run: EquityOptimizationRun, dashboard: dict, plan: dict, r
     return render_to_string("equities/optimization_report.html", context)
 
 
+def build_report_pdf_html(run: EquityOptimizationRun, dashboard: dict, plan: dict, report_entries: list[dict], news_overview: dict) -> str:
+    context = {
+        "run": run,
+        "dashboard": dashboard,
+        "plan": plan,
+        "report_entries": report_entries,
+        "news_overview": news_overview,
+        "weight_chart_svg": build_allocation_weight_chart(plan.get("allocations", [])),
+        "sector_chart_svg": build_sector_weight_chart(plan.get("allocations", [])),
+        "risk_return_chart_svg": build_svg_scatter_chart(plan.get("allocations", [])),
+        "generated_at": timezone.localtime(run.completed_at or timezone.now()),
+    }
+    return render_to_string("equities/optimization_report_pdf.html", context)
+
+
+def build_fallback_report_pdf_html(run: EquityOptimizationRun) -> str:
+    return render_to_string(
+        "equities/optimization_report_pdf_fallback.html",
+        {
+            "run": run,
+            "summary": run.summary_data or {},
+            "allocations": run.allocations_data or [],
+            "generated_at": timezone.localtime(run.completed_at or run.created_at or timezone.now()),
+        },
+    )
+
+
+def render_report_pdf(report_html: str) -> bytes:
+    if pisa is None:
+        raise RuntimeError(
+            "La exportacion PDF necesita xhtml2pdf. Instala requirements.txt o requirements-prod.txt antes de descargar."
+        )
+    output = BytesIO()
+    result = pisa.CreatePDF(report_html, dest=output, encoding="utf-8")
+    if result.err:
+        raise ValueError("No se ha podido convertir el informe HTML a PDF.")
+    return output.getvalue()
+
+
 def mark_run_failed(run_id: int, exc: Exception) -> None:
     run = EquityOptimizationRun.objects.get(pk=run_id)
     progress_data = dict(run.progress_data or {})
@@ -787,7 +832,7 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
         dashboard = build_equity_analysis_dashboard(
             positions,
             include_ibex_universe=True,
-            ibex_company_limit=(getattr(settings, "EQUITIES_IBEX_UNIVERSE_LIMIT", 0) or None),
+            ibex_company_limit=None,
             ibex_progress_callback=ibex_progress_callback,
         )
 
@@ -872,6 +917,7 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
             "current_label": "",
         }
         run.report_html = build_report_html(run, dashboard, plan, report_entries, news_overview)
+        run.report_pdf_html = build_report_pdf_html(run, dashboard, plan, report_entries, news_overview)
         run.save(
             update_fields=[
                 "progress_data",
@@ -882,6 +928,7 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
                 "completed_at",
                 "error_message",
                 "report_html",
+                "report_pdf_html",
                 "updated_at",
             ]
         )

@@ -108,7 +108,7 @@
   <div class="shell">
     <section class="hero">
       <h1>{{ run.display_label }}</h1>
-      <p>Informe completo de optimizacion de cartera a 12 meses. Referencia {{ run.reference_code }} generada el {{ generated_at|date:"Y-m-d H:i" }}.</p>
+      <p>Informe completo de optimizacion de cartera a 12 meses. Referencia {{ run.reference_code }} generada el {{ generated_at|date:"Y-m-d H:i" }}. Esta version robusta analiza todo el IBEX y no se limita a los valores que ya tenias en seguimiento.</p>
       <div class="meta">
         <span class="pill">{{ run.reference_code }}</span>
         <span class="pill">Capital {{ plan.total_investment|floatformat:0 }} EUR</span>
@@ -144,6 +144,7 @@
         {% if plan.sector_filter_note %} {{ plan.sector_filter_note }}{% endif %}
         {% if plan.ticket_filter_note %} {{ plan.ticket_filter_note }}{% endif %}
         {% if plan.reserve_reason %} {{ plan.reserve_reason }}{% endif %}
+        El objetivo es que la lectura sea clara: rentabilidad neta significa beneficio esperado despues de dividendos, compra, venta y mantenimiento; peor escenario es una lectura prudente; y la comprobacion historica ayuda a ver si el modelo habria sido razonable en el pasado.
       </div>
     </section>
 
@@ -289,7 +290,7 @@
 
           {% if entry.card.projection_backtest.available and entry.card.projection_backtest.monthly_chart.available %}
             <div class="chart-shell" style="margin-top:14px;">
-              <strong>Backtest mensual</strong>
+              <strong>Comprobacion historica mes a mes</strong>
               <svg viewBox="0 0 640 220">
                 <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
                 <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
@@ -303,10 +304,17 @@
                 <text x="8" y="214" font-size="12" fill="#17384e">{{ entry.card.projection_backtest.monthly_chart.min_label }}</text>
               </svg>
               <div class="chart-foot">
-                <span>Error medio {{ entry.card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %</span>
-                <span>Acierto direccion {{ entry.card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %</span>
-                <span>Precision {{ entry.card.projection_backtest.precision_label }}</span>
+                <span>Linea naranja: lo que el modelo habria dicho en cada mes</span>
+                <span>Linea azul: lo que paso realmente 12 meses despues</span>
+                <span>{{ entry.card.projection_backtest.monthly_chart.points_count }} puntos mensuales</span>
               </div>
+            </div>
+            <div class="note" style="margin-top:12px;">
+              {{ entry.card.projection_backtest.plain_explanation }}
+              Error medio {{ entry.card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %.
+              Acierto al subir o bajar {{ entry.card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %.
+              Dentro del rango previsto {{ entry.card.projection_backtest.in_range_rate_pct|floatformat:0 }} %.
+              Precision historica {{ entry.card.projection_backtest.precision_label }}.
             </div>
           {% endif %}
 

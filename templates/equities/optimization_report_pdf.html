@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>{{ run.display_label }} | Informe PDF</title>
+  <style>
+    @page { size: A4 portrait; margin: 24pt; }
+    body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #132535; }
+    h1, h2, h3 { color: #10344d; margin: 0 0 8pt 0; }
+    h1 { font-size: 20pt; }
+    h2 { font-size: 14pt; margin-top: 18pt; }
+    h3 { font-size: 12pt; margin-top: 12pt; }
+    p { margin: 0 0 8pt 0; line-height: 1.45; }
+    .hero { border: 1pt solid #b8cfde; background-color: #eaf4fb; padding: 14pt; margin-bottom: 14pt; }
+    .note { border: 1pt solid #dbe6ef; background-color: #f6fafc; padding: 10pt; margin-top: 8pt; }
+    .summary-table, .alloc-table { width: 100%; border-collapse: collapse; margin-top: 8pt; }
+    .summary-table td, .alloc-table td, .alloc-table th { border: 1pt solid #dbe6ef; padding: 6pt; vertical-align: top; }
+    .alloc-table th { background-color: #eef5f9; font-size: 8pt; text-transform: uppercase; }
+    .good { color: #177245; }
+    .warn { color: #a85f00; }
+    .muted { color: #5d7286; }
+    .chart-block { margin-top: 10pt; border: 1pt solid #dbe6ef; padding: 8pt; }
+    .chart-title { font-weight: bold; margin-bottom: 4pt; color: #17384e; }
+    .metric-grid { width: 100%; border-collapse: collapse; margin-top: 8pt; }
+    .metric-grid td { width: 25%; border: 1pt solid #dbe6ef; padding: 6pt; vertical-align: top; }
+    .metric-label { display: block; font-size: 8pt; text-transform: uppercase; color: #5d7286; }
+    .metric-value { display: block; margin-top: 4pt; font-size: 14pt; font-weight: bold; }
+    .entry { margin-top: 18pt; page-break-inside: avoid; }
+    .entry-header { border-bottom: 1pt solid #dbe6ef; padding-bottom: 6pt; margin-bottom: 8pt; }
+    .small { font-size: 8.5pt; }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <h1>{{ run.display_label }}</h1>
+    <p>Informe robusto de optimizacion a 12 meses. Referencia {{ run.reference_code }} generada el {{ generated_at|date:"Y-m-d H:i" }}.</p>
+    <p class="small">Esta version analiza siempre todo el IBEX, no solo los valores que ya estaban en seguimiento.</p>
+  </div>
+
+  <h2>Resumen ejecutivo</h2>
+  {% if plan.available %}
+    <table class="summary-table">
+      <tr>
+        <td><strong>Capital a invertir</strong><br>{{ plan.total_investment|floatformat:0 }} EUR</td>
+        <td><strong>Ganancia 12M</strong><br><span class="{% if plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ plan.projected_gain_total|floatformat:0 }} EUR</span></td>
+        <td><strong>Rentabilidad neta</strong><br>{% if plan.weighted_return_pct is not None %}{{ plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+        <td><strong>Peor escenario</strong><br>{% if plan.weighted_low_return_pct is not None %}{{ plan.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+      </tr>
+      <tr>
+        <td><strong>Dividendos netos</strong><br>{{ plan.net_dividend_income_total|floatformat:0 }} EUR</td>
+        <td><strong>Coste anual</strong><br>{{ plan.annual_cost_total|floatformat:0 }} EUR</td>
+        <td><strong>Compra + venta</strong><br>{{ plan.roundtrip_cost_total|floatformat:0 }} EUR</td>
+        <td><strong>IBEX analizado</strong><br>{{ dashboard.ibex_universe_summary.analyzed_count }}</td>
+      </tr>
+    </table>
+  {% else %}
+    <div class="note">{{ plan.reason }}</div>
+  {% endif %}
+
+  <h2>Metodologia</h2>
+  <div class="note">
+    {{ plan.methodology_note }}
+    {% if run.restrictions_note %} Restricciones anotadas: <strong>{{ run.restrictions_note }}</strong>.{% endif %}
+    {% if plan.sector_filter_note %} {{ plan.sector_filter_note }}{% endif %}
+    {% if plan.ticket_filter_note %} {{ plan.ticket_filter_note }}{% endif %}
+    {% if plan.reserve_reason %} {{ plan.reserve_reason }}{% endif %}
+    Rentabilidad neta significa beneficio esperado despues de dividendos, compra, venta y mantenimiento. Peor escenario es una lectura prudente. La comprobacion historica muestra si el modelo habria sido util en el pasado.
+  </div>
+
+  {% if plan.available %}
+    {% if weight_chart_svg %}
+      <div class="chart-block">
+        <div class="chart-title">Peso por valor (%)</div>
+        {{ weight_chart_svg|safe }}
+      </div>
+    {% endif %}
+    {% if sector_chart_svg %}
+      <div class="chart-block">
+        <div class="chart-title">Peso por sector (%)</div>
+        {{ sector_chart_svg|safe }}
+      </div>
+    {% endif %}
+    {% if risk_return_chart_svg %}
+      <div class="chart-block">
+        <div class="chart-title">Riesgo frente a retorno</div>
+        {{ risk_return_chart_svg|safe }}
+      </div>
+    {% endif %}
+
+    <h2>Asignacion propuesta</h2>
+    <table class="alloc-table">
+      <thead>
+        <tr>
+          <th>Orden</th>
+          <th>Empresa</th>
+          <th>Sector</th>
+          <th>Peso</th>
+          <th>Importe</th>
+          <th>Retorno neto</th>
+          <th>Peor escenario</th>
+          <th>Costes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in plan.allocations %}
+          <tr>
+            <td>{{ item.rank }}</td>
+            <td><strong>{{ item.position.company_name }}</strong><br><span class="muted">{{ item.position.ticker }} | {{ item.trade_alert_label }}</span></td>
+            <td>{{ item.sector_label }}</td>
+            <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>
+            <td>{{ item.allocated_amount|floatformat:0 }} EUR</td>
+            <td class="{% if item.net_projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.net_projected_return_pct|floatformat:2 }} %</td>
+            <td>{{ item.low_return_pct|floatformat:2 }} %</td>
+            <td>{{ item.annual_cost_used|floatformat:0 }} + {{ item.roundtrip_total_cost|floatformat:0 }} EUR</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% for entry in report_entries %}
+      <div class="entry">
+        <div class="entry-header">
+          <h2 style="margin:0;">{{ entry.card.position.company_name }}</h2>
+          <p class="small">{{ entry.card.position.ticker }} | {{ entry.allocation.sector_label }} | {{ entry.allocation.reference_label }} | {{ entry.allocation.trade_alert_label }}</p>
+        </div>
+
+        <table class="metric-grid">
+          <tr>
+            <td><span class="metric-label">Peso sugerido</span><span class="metric-value">{{ entry.allocation.allocated_weight_pct|floatformat:1 }} %</span><span class="small">{{ entry.allocation.allocated_amount|floatformat:0 }} EUR</span></td>
+            <td><span class="metric-label">Retorno neto 12M</span><span class="metric-value {% if entry.allocation.net_projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ entry.allocation.net_projected_return_pct|floatformat:2 }} %</span><span class="small">Peor escenario {{ entry.allocation.low_return_pct|floatformat:2 }} %</span></td>
+            <td><span class="metric-label">Dividendos netos</span><span class="metric-value">{{ entry.allocation.expected_net_dividend_income|floatformat:0 }} EUR</span><span class="small">Coste anual {{ entry.allocation.annual_cost_used|floatformat:0 }} EUR</span></td>
+            <td><span class="metric-label">Seguridad / fiabilidad</span><span class="metric-value">{{ entry.allocation.safety_score|floatformat:0 }}/100</span><span class="small">{{ entry.allocation.reliability_label }}</span></td>
+          </tr>
+        </table>
+
+        {% if entry.card.historical_chart.available %}
+          <div class="chart-block">
+            <div class="chart-title">Historico</div>
+            <p class="small">Evolucion del precio a lo largo del tiempo.</p>
+            <svg viewBox="0 0 640 220">
+              <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+              <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+              <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ entry.card.historical_chart.stock_line }}" />
+              {% for marker in entry.card.historical_chart.x_markers %}
+                <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+              {% endfor %}
+            </svg>
+          </div>
+        {% endif %}
+
+        {% if entry.card.best_correlation_chart.available %}
+          <div class="chart-block">
+            <div class="chart-title">Comparacion con su mejor referencia</div>
+            <p class="small">Sirve para ver si la accion se mueve de forma parecida a la referencia elegida.</p>
+            <svg viewBox="0 0 640 220">
+              <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+              <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+              <line x1="622" y1="18" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+              <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ entry.card.best_correlation_chart.stock_line }}" />
+              <polyline fill="none" stroke="#7e8c97" stroke-width="3" points="{{ entry.card.best_correlation_chart.reference_line }}" />
+              {% for marker in entry.card.best_correlation_chart.x_markers %}
+                <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+              {% endfor %}
+            </svg>
+          </div>
+        {% endif %}
+
+        {% if entry.card.projection_12m_chart.available %}
+          <div class="chart-block">
+            <div class="chart-title">Prevision central a 12 meses</div>
+            <p class="small">Azul: tramo historico reciente. Naranja: escenario central del modelo.</p>
+            <svg viewBox="0 0 640 220">
+              <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+              <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+              <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ entry.card.projection_12m_chart.stock_line }}" />
+              <polyline fill="none" stroke="#b7642d" stroke-width="4" stroke-dasharray="10 8" points="{{ entry.card.projection_12m_chart.projection_line }}" />
+              {% for marker in entry.card.projection_12m_chart.x_markers %}
+                <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+              {% endfor %}
+            </svg>
+          </div>
+        {% endif %}
+
+        {% if entry.card.projection_backtest.available and entry.card.projection_backtest.monthly_chart.available %}
+          <div class="chart-block">
+            <div class="chart-title">Comprobacion historica mes a mes</div>
+            <p class="small">{{ entry.card.projection_backtest.plain_explanation }}</p>
+            <svg viewBox="0 0 640 220">
+              <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+              <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+              <polyline fill="none" stroke="#b7642d" stroke-width="3" stroke-dasharray="8 6" points="{{ entry.card.projection_backtest.monthly_chart.forecast_line }}" />
+              <polyline fill="none" stroke="#0d5d78" stroke-width="3" points="{{ entry.card.projection_backtest.monthly_chart.actual_line }}" />
+              {% for marker in entry.card.projection_backtest.monthly_chart.x_markers %}
+                <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+              {% endfor %}
+            </svg>
+            <p class="small">Error medio {{ entry.card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %. Acierto al subir o bajar {{ entry.card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %. Dentro del rango previsto {{ entry.card.projection_backtest.in_range_rate_pct|floatformat:0 }} %. Precision {{ entry.card.projection_backtest.precision_label }}.</p>
+          </div>
+        {% endif %}
+
+        <div class="note">
+          {{ entry.card.trade_alert.note }}
+          {% if entry.external_signal.note %} {{ entry.external_signal.note }}{% endif %}
+          {% if entry.card.projection.explanation %} {{ entry.card.projection.explanation }}{% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  {% endif %}
+</body>
+</html>

@@ -116,7 +116,7 @@
       <div class="equity-mini-stat">
         <span>Fiabilidad</span>
         <strong>{{ card.projection_reliability.label }}</strong>
-        <small>{{ card.projection.confidence_label }} en modelo{% if card.projection_backtest.available %} | Backtest {{ card.projection_backtest.precision_label }}{% endif %}</small>
+        <small>{{ card.projection.confidence_label }} en modelo{% if card.projection_backtest.available %} | Comprobacion historica {{ card.projection_backtest.precision_label }}{% endif %}</small>
       </div>
       <div class="equity-mini-stat">
         <span>Beneficio / riesgo</span>
@@ -284,6 +284,7 @@
       {% if card.projection_backtest.available %}
         {% if card.projection_backtest.monthly_chart.available %}
           <div class="equity-chart-shell">
+            <strong style="display:block; color:#17384e; margin-bottom:8px;">Comprobacion historica mes a mes</strong>
             <svg viewBox="0 0 640 220">
               <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
               <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
@@ -307,32 +308,35 @@
               <text x="8" y="214" font-size="12" fill="#17384e">{{ card.projection_backtest.monthly_chart.min_label }}</text>
             </svg>
             <div class="equity-chart-foot">
-              <span>Linea naranja: extrapolado en cada mes</span>
-              <span>Linea azul: retorno real 12M despues</span>
+              <span>Linea naranja: lo que el modelo habria proyectado en cada mes</span>
+              <span>Linea azul: lo que ocurrio realmente 12 meses despues</span>
               <span>{{ card.projection_backtest.monthly_chart.points_count }} puntos mensuales | {{ card.projection_backtest.monthly_chart.start_label }} a {{ card.projection_backtest.monthly_chart.end_label }}</span>
             </div>
           </div>
         {% endif %}
+        <div class="equity-compact-note" style="margin-top:14px;">
+          {{ card.projection_backtest.plain_explanation }}
+        </div>
         <div class="equity-detail-grid">
           <div class="equity-mini-stat">
-            <span>Backtest</span>
+            <span>Comprobacion historica</span>
             <strong>{{ card.projection_backtest.precision_label }}</strong>
-            <small>{{ card.projection_backtest.comparisons_count }} comparativas a 12M.</small>
+            <small>{{ card.projection_backtest.comparisons_count }} comparativas a 12M. Sirve para medir si el modelo habria sido util antes, no para garantizar el futuro.</small>
           </div>
           <div class="equity-mini-stat">
             <span>Error medio</span>
             <strong>{{ card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %</strong>
-            <small>Sobre tramo de precio.</small>
+            <small>{{ card.projection_backtest.error_explanation }}</small>
           </div>
           <div class="equity-mini-stat">
-            <span>Acierto direccion</span>
+            <span>Acierto al subir o bajar</span>
             <strong>{{ card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %</strong>
-            <small>Sube o baja.</small>
+            <small>{{ card.projection_backtest.direction_explanation }}</small>
           </div>
           <div class="equity-mini-stat">
-            <span>Dentro del rango</span>
+            <span>Dentro del rango previsto</span>
             <strong>{{ card.projection_backtest.in_range_rate_pct|floatformat:0 }} %</strong>
-            <small>Escenario central +/- banda.</small>
+            <small>{{ card.projection_backtest.range_explanation }}</small>
           </div>
         </div>
       {% endif %}

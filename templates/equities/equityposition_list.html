@@ -491,7 +491,7 @@
         <div class="equity-compact-note" style="margin-top:16px;">
           La alerta se activa cuando la pendiente relativa frente a la referencia y su coeficiente se prolonga varios periodos.
           {% if reference_guide_summary.workbook_loaded %}
-            El Excel del IBEX actua como guia adicional de referencias. Si no coincide con la serie historica de la app, prevalece la lectura de 10 anos y el backtest.
+            El Excel del IBEX actua como guia adicional de referencias. Si no coincide con la serie historica de la app, prevalece la lectura de 10 anos y la comprobacion historica mes a mes.
           {% else %}
             Sin Excel cargado, la decision se basa solo en historico propio, dividendos y condiciones estimadas del broker.
           {% endif %}
@@ -840,7 +840,7 @@
             <div>
               <p class="section-title">Optimizador robusto</p>
               <h3>Proceso completo en segundo plano</h3>
-              <p>Lanza una optimizacion persistente con referencia propia, fecha de ejecucion, costes de compra y mantenimiento, dividendos, riesgo historico, universo completo del IBEX y senal externa reciente de prensa. El resultado se guarda para consultarlo, compararlo y descargar el informe completo en local.</p>
+              <p>Lanza una optimizacion persistente con referencia propia, fecha de ejecucion, costes de compra y mantenimiento, dividendos, riesgo historico, senal externa reciente de prensa y todo el universo del IBEX, no solo los valores que ya tienes en seguimiento. El resultado se guarda para consultarlo, compararlo y descargar el informe completo en HTML o PDF.</p>
             </div>
           </div>
           <form method="post" class="stack" style="margin-top:18px;">
@@ -977,7 +977,8 @@
                     <div class="equity-chip-row" style="margin-top:14px;" data-progress-actions>
                       {% if run.status == 'completed' and run.report_html %}
                         <a class="button secondary" href="{% url 'equities:optimization_report' run.id %}" target="_blank" rel="noopener">Ver informe</a>
-                        <a class="button secondary" href="{% url 'equities:optimization_download' run.id %}">Descargar</a>
+                        <a class="button secondary" href="{% url 'equities:optimization_download' run.id %}">Descargar PDF</a>
+                        <a class="button secondary" href="{% url 'equities:optimization_download_html' run.id %}">Descargar HTML</a>
                       {% else %}
                         <span class="metric-sub">Seguimiento en vivo activo. Esta tarjeta se refresca sola cada pocos segundos sin cortar el analisis.</span>
                       {% endif %}
@@ -1017,7 +1018,8 @@
                       <td>
                         {% if run.status == 'completed' and run.report_html %}
                           <a class="button secondary" href="{% url 'equities:optimization_report' run.id %}" target="_blank" rel="noopener">Ver informe</a>
-                          <a class="button secondary" href="{% url 'equities:optimization_download' run.id %}">Descargar</a>
+                          <a class="button secondary" href="{% url 'equities:optimization_download' run.id %}">PDF</a>
+                          <a class="button secondary" href="{% url 'equities:optimization_download_html' run.id %}">HTML</a>
                         {% else %}
                           <span class="metric-sub">Se actualiza al terminar.</span>
                         {% endif %}
@@ -1039,7 +1041,8 @@
                 </div>
                 <div class="equity-chip-row">
                   <a class="button secondary" href="{% url 'equities:optimization_report' latest_completed_optimization.id %}" target="_blank" rel="noopener">Abrir informe</a>
-                  <a class="button secondary" href="{% url 'equities:optimization_download' latest_completed_optimization.id %}">Descargar HTML</a>
+                  <a class="button secondary" href="{% url 'equities:optimization_download' latest_completed_optimization.id %}">Descargar PDF</a>
+                  <a class="button secondary" href="{% url 'equities:optimization_download_html' latest_completed_optimization.id %}">Descargar HTML</a>
                 </div>
               </div>
               <div class="equity-grid-4" style="margin-top:18px;">
@@ -1094,7 +1097,7 @@
           <details class="equity-inline-fold" style="margin-top:18px;">
             <summary>Simulacion inmediata</summary>
             <div class="equity-inline-body">
-              <div class="equity-panel-head"><div><p class="section-title">Simulacion rapida</p><h3>Distribucion neta orientativa a 12 meses</h3><p>Esta vista sirve para pruebas instantaneas. No guarda historico, no deja seguimiento del progreso y no sustituye a la optimizacion robusta.</p></div></div>
+              <div class="equity-panel-head"><div><p class="section-title">Simulacion rapida</p><h3>Distribucion neta orientativa a 12 meses</h3><p>Esta vista sirve para pruebas instantaneas y tambien utiliza todo el IBEX disponible. La diferencia es que no guarda historico ni seguimiento del progreso. Para eso usa la optimizacion robusta, que ademas deja informe descargable en PDF y HTML.</p></div></div>
               <form method="get" class="equity-grid-4" style="align-items:end;">
                 <div><label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>{{ optimizer_form.total_investment }}</div>
                 <div><label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>{{ optimizer_form.max_company_pct }}</div>
@@ -1604,7 +1607,8 @@
           if (payload.status === "completed" && payload.report_url && payload.download_url) {
             return `
               <a class="button secondary" href="${escapeHtml(payload.report_url)}" target="_blank" rel="noopener">Ver informe</a>
-              <a class="button secondary" href="${escapeHtml(payload.download_url)}">Descargar</a>
+              <a class="button secondary" href="${escapeHtml(payload.download_url)}">Descargar PDF</a>
+              ${payload.download_html_url ? `<a class="button secondary" href="${escapeHtml(payload.download_html_url)}">Descargar HTML</a>` : ""}
             `;
           }
           if (payload.status === "failed") {

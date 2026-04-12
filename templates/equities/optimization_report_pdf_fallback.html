@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>{{ run.display_label }} | Informe PDF resumido</title>
+  <style>
+    @page { size: A4 portrait; margin: 24pt; }
+    body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #132535; }
+    h1, h2 { color: #10344d; margin: 0 0 8pt 0; }
+    .box { border: 1pt solid #dbe6ef; background-color: #f6fafc; padding: 10pt; margin-bottom: 10pt; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8pt; }
+    th, td { border: 1pt solid #dbe6ef; padding: 6pt; vertical-align: top; }
+    th { background-color: #eef5f9; font-size: 8pt; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>{{ run.display_label }}</h1>
+    <p>Referencia {{ run.reference_code }}. PDF resumido generado el {{ generated_at|date:"Y-m-d H:i" }}.</p>
+    <p>Este PDF resumido se usa cuando la optimizacion se hizo antes de guardar la version completa preparada para PDF. El informe HTML sigue disponible con mas detalle.</p>
+  </div>
+
+  <h2>Resumen</h2>
+  <table>
+    <tr>
+      <td><strong>Capital</strong><br>{{ summary.total_investment|floatformat:0 }} EUR</td>
+      <td><strong>Ganancia 12M</strong><br>{{ summary.projected_gain_total|floatformat:0 }} EUR</td>
+      <td><strong>Rentabilidad neta</strong><br>{% if summary.weighted_return_pct is not None %}{{ summary.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+      <td><strong>Peor escenario</strong><br>{% if summary.weighted_low_return_pct is not None %}{{ summary.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+    </tr>
+    <tr>
+      <td><strong>Dividendos netos</strong><br>{{ summary.net_dividend_income_total|floatformat:0 }} EUR</td>
+      <td><strong>Coste anual</strong><br>{{ summary.annual_cost_total|floatformat:0 }} EUR</td>
+      <td><strong>Compra + venta</strong><br>{{ summary.roundtrip_cost_total|floatformat:0 }} EUR</td>
+      <td><strong>IBEX analizado</strong><br>{{ summary.ibex_analyzed_count }}</td>
+    </tr>
+  </table>
+
+  {% if allocations %}
+    <h2>Asignacion</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Orden</th>
+          <th>Empresa</th>
+          <th>Sector</th>
+          <th>Peso</th>
+          <th>Importe</th>
+          <th>Retorno</th>
+          <th>Peor escenario</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in allocations %}
+          <tr>
+            <td>{{ item.rank }}</td>
+            <td><strong>{{ item.company_name }}</strong><br>{{ item.ticker }}</td>
+            <td>{{ item.sector_label }}</td>
+            <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>
+            <td>{{ item.allocated_amount|floatformat:0 }} EUR</td>
+            <td>{{ item.net_projected_return_pct|floatformat:2 }} %</td>
+            <td>{{ item.low_return_pct|floatformat:2 }} %</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</body>
+</html>

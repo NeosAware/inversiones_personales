@@ -214,6 +214,7 @@ class EquityOptimizationRun(models.Model):
     summary_data = models.JSONField(default=dict, blank=True)
     allocations_data = models.JSONField(default=list, blank=True)
     report_html = models.TextField(blank=True)
+    report_pdf_html = models.TextField(blank=True)
     error_message = models.TextField(blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

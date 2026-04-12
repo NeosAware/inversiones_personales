@@ -3804,6 +3804,10 @@ def build_projection_backtest(
             "direction_hit_rate_pct": None,
             "in_range_rate_pct": None,
             "precision_label": "Sin historico suficiente",
+            "plain_explanation": "Todavia no hay suficiente historico mensual para comprobar como habria funcionado el modelo en el pasado.",
+            "error_explanation": "Error medio: diferencia media entre lo que proyecto el modelo y lo que ocurrio realmente 12 meses despues.",
+            "direction_explanation": "Acierto de direccion: porcentaje de veces que el modelo acerto si la accion subia o bajaba.",
+            "range_explanation": "Dentro del rango: porcentaje de veces que el resultado real quedo dentro del escenario previsto.",
         }
 
     rows = []
@@ -3872,6 +3876,10 @@ def build_projection_backtest(
             "direction_hit_rate_pct": None,
             "in_range_rate_pct": None,
             "precision_label": "Sin historico suficiente",
+            "plain_explanation": "Todavia no hay suficiente historico mensual para comprobar como habria funcionado el modelo en el pasado.",
+            "error_explanation": "Error medio: diferencia media entre lo que proyecto el modelo y lo que ocurrio realmente 12 meses despues.",
+            "direction_explanation": "Acierto de direccion: porcentaje de veces que el modelo acerto si la accion subia o bajaba.",
+            "range_explanation": "Dentro del rango: porcentaje de veces que el resultado real quedo dentro del escenario previsto.",
         }
 
     recent_rows = list(reversed(rows[-max_rows:]))
@@ -3903,6 +3911,13 @@ def build_projection_backtest(
         "direction_hit_rate_pct": direction_hit_rate_pct,
         "in_range_rate_pct": in_range_rate_pct,
         "precision_label": precision_label,
+        "plain_explanation": (
+            "Cada punto mensual responde a una pregunta sencilla: si ese mes hubieramos lanzado la proyeccion a 12 meses, "
+            "que habria dicho el modelo y que paso realmente un ano despues."
+        ),
+        "error_explanation": "Error medio: diferencia media entre la prediccion y el resultado real 12 meses despues.",
+        "direction_explanation": "Acierto de direccion: veces que el modelo acerto si la accion terminaria subiendo o bajando.",
+        "range_explanation": "Dentro del rango: veces que el resultado real quedo dentro del escenario previsto por el modelo.",
     }
 
 
@@ -5755,6 +5770,7 @@ def build_equity_allocation_plan(
         "methodology_note": (
             "La optimizacion prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
             "seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa, riesgo historico, "
-            "eficiencia real del ticket de compra y, si lo marcas, diversificacion maxima por sector."
+            "eficiencia real del ticket de compra y, si lo marcas, diversificacion maxima por sector. En la version robusta se "
+            "analiza siempre todo el IBEX, no solo los valores que ya tienes en seguimiento."
         ),
     }

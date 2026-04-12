@@ -1063,6 +1063,7 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(costs["annual_custody_cost"], Decimal("25.00"))
         self.assertIn("Santander", costs["pdf_source_label"])
 
+    @override_settings(EQUITIES_IBEX_UNIVERSE_LIMIT=1)
     def test_process_equity_optimization_run_persists_summary_and_report(self):
         run = EquityOptimizationRun.objects.create(
             reference_code="OPT-TEST-001",
@@ -1119,16 +1120,19 @@ class EquitiesServicesTests(TestCase):
 
         with (
             patch("equities.optimization_runs.sync_all_equities_market_data", return_value=[]),
-            patch("equities.optimization_runs.build_equity_analysis_dashboard", return_value=dashboard),
+            patch("equities.optimization_runs.build_equity_analysis_dashboard", return_value=dashboard) as mocked_dashboard,
             patch("equities.optimization_runs.build_news_signal_map", return_value={"IBE": {"label": "Prensa favorable", "score": Decimal("2.10"), "items_count": 2, "items": [], "note": "Buen tono", "available": True, "positive_count": 2, "negative_count": 0, "neutral_count": 0}}),
             patch("equities.optimization_runs.build_report_entries", return_value=[]),
             patch("equities.optimization_runs.build_report_html", return_value="<html>informe</html>"),
+            patch("equities.optimization_runs.build_report_pdf_html", return_value="<html>pdf</html>"),
         ):
             process_equity_optimization_run(run.id)
 
         run.refresh_from_db()
+        self.assertIsNone(mocked_dashboard.call_args.kwargs["ibex_company_limit"])
         self.assertEqual(run.status, EquityOptimizationRun.Status.COMPLETED)
         self.assertEqual(run.report_html, "<html>informe</html>")
+        self.assertEqual(run.report_pdf_html, "<html>pdf</html>")
         self.assertTrue(run.summary_data["available"])
         self.assertEqual(run.summary_data["top_pick_name"], "Iberdrola")
         self.assertEqual(run.progress_data["percent"], 100)
@@ -1740,6 +1744,69 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         mocked_sync.assert_not_called()
 
+    @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=False, EQUITIES_IBEX_UNIVERSE_LIMIT=3)
+    def test_optimizer_request_forces_full_ibex_analysis_even_if_page_limit_is_disabled(self):
+        EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+
+        with patch("equities.views.build_equity_analysis_dashboard") as mocked_dashboard:
+            mocked_dashboard.return_value = {
+                "overview": {
+                    "owned_positions_count": 0,
+                    "watchlist_positions_count": 0,
+                    "invested_amount": Decimal("0"),
+                    "current_value": Decimal("0"),
+                    "net_annual_income_total": Decimal("0"),
+                },
+                "history_cards": [],
+                "owned_positions": [],
+                "watchlist_positions": [],
+                "owned_history_cards": [],
+                "watchlist_history_cards": [],
+                "decision_rows": [],
+                "ibex_universe_rows": [],
+                "ibex_universe_summary": {
+                    "available": False,
+                    "analyzed_count": 0,
+                    "buy_alert_count": 0,
+                    "sell_alert_count": 0,
+                    "watch_alert_count": 0,
+                    "failed_count": 0,
+                    "failures": [],
+                    "broker_assumption": "",
+                    "trade_channel_label": "",
+                    "top_pick": None,
+                },
+                "tracked_reference_rows": [],
+                "reference_guide_rows": [],
+                "reference_guide_summary": {"workbook_loaded": False},
+                "optimizer_cards": [],
+            }
+
+            response = self.client.get(
+                reverse("equities:list"),
+                {
+                    "total_investment": "400000",
+                    "max_company_pct": "20",
+                    "max_sector_positions": "1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mocked_dashboard.assert_called_once()
+        self.assertTrue(mocked_dashboard.call_args.kwargs["include_ibex_universe"])
+        self.assertIsNone(mocked_dashboard.call_args.kwargs["ibex_company_limit"])
+
     def test_can_launch_background_optimizer_run_from_page(self):
         run = EquityOptimizationRun.objects.create(
             reference_code="OPT-TEST-LAUNCH",
@@ -1779,12 +1846,18 @@ class EquitiesViewTests(TestCase):
 
         report_response = self.client.get(reverse("equities:optimization_report", args=[run.id]))
         download_response = self.client.get(reverse("equities:optimization_download", args=[run.id]))
+        download_html_response = self.client.get(reverse("equities:optimization_download_html", args=[run.id]))
 
         self.assertEqual(report_response.status_code, 200)
         self.assertContains(report_response, "Informe optimizado")
         self.assertEqual(download_response.status_code, 200)
+        self.assertEqual(download_response["Content-Type"], "application/pdf")
         self.assertIn("attachment;", download_response.headers["Content-Disposition"])
-        self.assertIn("opt-test-report.html", download_response.headers["Content-Disposition"])
+        self.assertIn("opt-test-report.pdf", download_response.headers["Content-Disposition"])
+        self.assertTrue(download_response.content.startswith(b"%PDF"))
+        self.assertEqual(download_html_response.status_code, 200)
+        self.assertIn("attachment;", download_html_response.headers["Content-Disposition"])
+        self.assertIn("opt-test-report.html", download_html_response.headers["Content-Disposition"])
 
     def test_progress_endpoint_returns_live_payload(self):
         run = EquityOptimizationRun.objects.create(

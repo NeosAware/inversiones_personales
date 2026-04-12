@@ -11,7 +11,12 @@ from django.views.generic import TemplateView, View
 
 from .forms import EquityAllocationOptimizerForm, EquityDocumentImportForm, EquityOptimizationRunForm, EquityPositionForm
 from .models import EquityOptimizationRun, EquityPosition
-from .optimization_runs import launch_equity_optimization_run, resume_equity_optimization_runs
+from .optimization_runs import (
+    build_fallback_report_pdf_html,
+    launch_equity_optimization_run,
+    render_report_pdf,
+    resume_equity_optimization_runs,
+)
 from .services import (
     EURIBOR_REFERENCE_NAME,
     EURIBOR_REFERENCE_SYMBOL,
@@ -80,12 +85,13 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         auto_sync = self._auto_sync_market_data()
         positions = list(EquityPosition.objects.prefetch_related("price_history"))
         selected_start_date, selected_end_date = self._selected_period_bounds()
+        optimizer_requested = self._optimizer_requested()
         dashboard = build_equity_analysis_dashboard(
             positions,
             selected_start_date=selected_start_date,
             selected_end_date=selected_end_date,
-            include_ibex_universe=getattr(settings, "EQUITIES_IBEX_UNIVERSE_ANALYSIS", True),
-            ibex_company_limit=(getattr(settings, "EQUITIES_IBEX_UNIVERSE_LIMIT", 0) or None),
+            include_ibex_universe=(True if optimizer_requested else getattr(settings, "EQUITIES_IBEX_UNIVERSE_ANALYSIS", True)),
+            ibex_company_limit=(None if optimizer_requested else (getattr(settings, "EQUITIES_IBEX_UNIVERSE_LIMIT", 0) or None)),
         )
         context["page_title"] = "Acciones cotizadas"
         context["positions"] = positions
@@ -420,6 +426,23 @@ class EquityOptimizationDownloadView(LoginRequiredMixin, View):
         if run.status != EquityOptimizationRun.Status.COMPLETED or not run.report_html:
             messages.info(request, f"La optimizacion {run.reference_code} todavia no esta lista para descargar.")
             return redirect(f"{reverse('equities:list')}#equity-optimizer")
+        try:
+            pdf_source = run.report_pdf_html or build_fallback_report_pdf_html(run)
+            pdf_bytes = render_report_pdf(pdf_source)
+        except Exception as exc:
+            messages.error(request, f"No se ha podido generar el PDF de {run.reference_code}: {exc}")
+            return redirect(f"{reverse('equities:list')}#equity-optimizer")
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{run.reference_code.lower()}.pdf"'
+        return response
+
+
+class EquityOptimizationHtmlDownloadView(LoginRequiredMixin, View):
+    def get(self, request, pk, *args, **kwargs):
+        run = get_object_or_404(EquityOptimizationRun, pk=pk)
+        if run.status != EquityOptimizationRun.Status.COMPLETED or not run.report_html:
+            messages.info(request, f"La optimizacion {run.reference_code} todavia no esta lista para descargar.")
+            return redirect(f"{reverse('equities:list')}#equity-optimizer")
         response = HttpResponse(run.report_html, content_type="text/html; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="{run.reference_code.lower()}.html"'
         return response
@@ -444,5 +467,6 @@ class EquityOptimizationProgressView(LoginRequiredMixin, View):
             "error_message": run.error_message,
             "report_url": reverse("equities:optimization_report", args=[run.id]) if run.report_html else "",
             "download_url": reverse("equities:optimization_download", args=[run.id]) if run.report_html else "",
+            "download_html_url": reverse("equities:optimization_download_html", args=[run.id]) if run.report_html else "",
         }
         return JsonResponse(payload)
