@@ -47,9 +47,19 @@ class EquityPeriodBoundsMixin:
 class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, TemplateView):
     template_name = "equities/equityposition_list.html"
 
+    def _optimizer_requested(self) -> bool:
+        return any(
+            self.request.GET.get(key)
+            for key in ("total_investment", "max_company_pct", "max_sector_positions")
+        )
+
     def _auto_sync_market_data(self):
         positions = list(EquityPosition.objects.all())
-        if not positions or not getattr(settings, "EQUITIES_AUTO_SYNC_ON_VIEW", True):
+        if (
+            not positions
+            or not getattr(settings, "EQUITIES_AUTO_SYNC_ON_VIEW", True)
+            or self._optimizer_requested()
+        ):
             return {
                 "attempted": False,
                 "updated_count": 0,

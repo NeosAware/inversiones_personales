@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import math
 import re
@@ -42,6 +43,9 @@ OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT = Decimal("2.00")
 OPTIMIZER_MIN_GAIN_TO_ROUNDTRIP_MULTIPLE = Decimal("1.80")
 DEFAULT_BENCHMARK_SYMBOL = "^IBEX"
 DEFAULT_BENCHMARK_NAME = "IBEX 35"
+DEFAULT_MARKET_REQUEST_TIMEOUT_SECONDS = 12
+DEFAULT_MARKET_DATA_CACHE_MINUTES = 60
+DEFAULT_IBEX_UNIVERSE_MAX_WORKERS = 8
 EURIBOR_REFERENCE_SYMBOL = "ECB:M.S0.N.C_EUR1Y.E"
 EURIBOR_REFERENCE_NAME = "Euribor 12M"
 SPAIN_HOUSE_PRICE_SYMBOL = "EUROSTAT:prc_hpi_q:ES:TOTAL:I15_Q"
@@ -459,6 +463,48 @@ class MarketSeries:
     latest_price: Decimal
     latest_date: date
     points: list[dict]
+
+
+def clone_market_series(series: MarketSeries | None) -> MarketSeries | None:
+    if series is None:
+        return None
+    return MarketSeries(
+        symbol=series.symbol,
+        name=series.name,
+        latest_price=series.latest_price,
+        latest_date=series.latest_date,
+        points=[dict(point) for point in series.points],
+    )
+
+
+def build_market_data_cache_bucket(now: datetime | None = None) -> int:
+    cache_minutes = max(
+        getattr(settings, "EQUITIES_MARKET_DATA_CACHE_MINUTES", DEFAULT_MARKET_DATA_CACHE_MINUTES) or DEFAULT_MARKET_DATA_CACHE_MINUTES,
+        1,
+    )
+    current = now or django_timezone.now()
+    return int(current.timestamp() // (cache_minutes * 60))
+
+
+def market_request_timeout_seconds() -> int:
+    return max(
+        getattr(settings, "EQUITIES_MARKET_REQUEST_TIMEOUT_SECONDS", DEFAULT_MARKET_REQUEST_TIMEOUT_SECONDS)
+        or DEFAULT_MARKET_REQUEST_TIMEOUT_SECONDS,
+        3,
+    )
+
+
+def ibex_universe_max_workers() -> int:
+    return max(
+        getattr(settings, "EQUITIES_IBEX_UNIVERSE_MAX_WORKERS", DEFAULT_IBEX_UNIVERSE_MAX_WORKERS)
+        or DEFAULT_IBEX_UNIVERSE_MAX_WORKERS,
+        1,
+    )
+
+
+def clear_market_data_caches() -> None:
+    _fetch_market_series_cached.cache_clear()
+    _fetch_reference_series_for_choice_cached.cache_clear()
 
 
 @dataclass
@@ -1189,11 +1235,17 @@ def build_equity_reference_guide(history_cards: list[dict]) -> dict:
     }
 
 
-def fetch_market_series(symbol: str, range_key: str = DEFAULT_MARKET_RANGE_KEY, interval: str = "1d") -> MarketSeries:
+@lru_cache(maxsize=512)
+def _fetch_market_series_cached(
+    symbol: str,
+    range_key: str = DEFAULT_MARKET_RANGE_KEY,
+    interval: str = "1d",
+    cache_bucket: int = 0,
+) -> MarketSeries:
     params = urlencode({"range": range_key, "interval": interval, "includePrePost": "false"})
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?{params}"
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urlopen(request, timeout=20) as response:
+    with urlopen(request, timeout=market_request_timeout_seconds()) as response:
         payload = json.load(response)
 
     error = payload.get("chart", {}).get("error")
@@ -1241,6 +1293,18 @@ def fetch_market_series(symbol: str, range_key: str = DEFAULT_MARKET_RANGE_KEY, 
         latest_price=latest_price,
         latest_date=latest_date,
         points=points,
+    )
+
+
+def fetch_market_series(symbol: str, range_key: str = DEFAULT_MARKET_RANGE_KEY, interval: str = "1d") -> MarketSeries:
+    normalized_symbol = clean_symbol(symbol)
+    return clone_market_series(
+        _fetch_market_series_cached(
+            normalized_symbol,
+            range_key,
+            interval,
+            build_market_data_cache_bucket(),
+        )
     )
 
 
@@ -1429,10 +1493,12 @@ def fetch_eurostat_gas_consumption_series() -> MarketSeries:
     )
 
 
-def fetch_reference_series_for_choice(
+@lru_cache(maxsize=256)
+def _fetch_reference_series_for_choice_cached(
     reference_profile: str,
     benchmark_symbol: str = "",
     benchmark_name: str = "",
+    cache_bucket: int = 0,
 ) -> MarketSeries | None:
     if reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
         return fetch_ecb_reference_series("M.S0.N.C_EUR1Y.E", EURIBOR_REFERENCE_NAME)
@@ -1443,8 +1509,28 @@ def fetch_reference_series_for_choice(
     if reference_profile == EquityPosition.ReferenceProfile.SPAIN_GAS_CONSUMPTION:
         return fetch_eurostat_gas_consumption_series()
     if benchmark_symbol:
-        return fetch_market_series(benchmark_symbol)
+        return _fetch_market_series_cached(
+            clean_symbol(benchmark_symbol),
+            DEFAULT_MARKET_RANGE_KEY,
+            "1d",
+            cache_bucket,
+        )
     return None
+
+
+def fetch_reference_series_for_choice(
+    reference_profile: str,
+    benchmark_symbol: str = "",
+    benchmark_name: str = "",
+) -> MarketSeries | None:
+    return clone_market_series(
+        _fetch_reference_series_for_choice_cached(
+            reference_profile,
+            benchmark_symbol,
+            benchmark_name,
+            build_market_data_cache_bucket(),
+        )
+    )
 
 
 def fetch_reference_series(position: EquityPosition) -> MarketSeries | None:
@@ -3622,7 +3708,12 @@ def find_closest_history_point(history, target_date: date, tolerance_days: int =
     return min(candidates, key=lambda point: (abs((point.price_date - target_date).days), point.price_date))
 
 
-def build_projection_backtest(history, position: EquityPosition, max_rows: int = 8) -> dict:
+def build_projection_backtest(
+    history,
+    position: EquityPosition,
+    max_rows: int = 8,
+    include_monthly_chart: bool = True,
+) -> dict:
     monthly_points = collapse_history_to_frequency(history, "monthly")
     if len(monthly_points) < 20:
         return {
@@ -3706,7 +3797,7 @@ def build_projection_backtest(history, position: EquityPosition, max_rows: int =
 
     recent_rows = list(reversed(rows[-max_rows:]))
     comparisons_count = len(rows)
-    monthly_chart = build_backtest_monthly_chart(rows)
+    monthly_chart = build_backtest_monthly_chart(rows) if include_monthly_chart else {"available": False}
     mean_absolute_error_pct = quantize_decimal(
         sum((row["absolute_error_pct"] for row in rows), ZERO) / Decimal(comparisons_count)
     )
@@ -4133,6 +4224,8 @@ def build_equity_history_card(
     status_label: str | None = None,
     detail_anchor: str | None = None,
     sector_label: str | None = None,
+    include_visuals: bool = True,
+    include_reference_suggestions: bool = True,
 ) -> dict:
     resolved_status_key = status_key or ("owned" if position.is_owned else "watchlist")
     resolved_status_label = status_label or position.get_position_kind_display()
@@ -4202,7 +4295,11 @@ def build_equity_history_card(
     )
     cycle_metrics = build_cycle_metrics(history)
     projection = build_one_year_projection(history, position, correlation, six_month_snapshot, cycle_metrics=cycle_metrics)
-    projection_backtest = build_projection_backtest(history, position)
+    projection_backtest = build_projection_backtest(
+        history,
+        position,
+        include_monthly_chart=include_visuals,
+    )
     projection_reliability = (
         build_projection_reliability(projection, projection_backtest)
         if projection.get("available")
@@ -4218,24 +4315,6 @@ def build_equity_history_card(
         six_month_snapshot,
         one_year_snapshot,
     )
-    stock_series = [{"date": point.price_date, "value": point.close_price} for point in history]
-    benchmark_series = [
-        {"date": point.price_date, "value": point.benchmark_close}
-        for point in history
-        if point.benchmark_close is not None
-    ]
-    projection_series = []
-    if projection.get("available"):
-        projection_series = [{"date": latest_point.price_date, "value": latest_point.close_price}]
-        projection_series.extend(
-            {
-                "date": step["projected_date"],
-                "value": step["projected_price"],
-            }
-            for step in projection.get("quarterly_path", [])
-            if step.get("projected_date") and step.get("projected_price") is not None
-        )
-    dual_axis_chart = build_dual_axis_chart(stock_series, benchmark_series, projection_points=projection_series)
     maintenance_drag_pct = (
         (position.recurring_cost_used / position.invested_amount) * Decimal("100")
         if position.invested_amount
@@ -4247,10 +4326,69 @@ def build_equity_history_card(
         "annual_cost_source": position.recurring_cost_source,
         "net_dividend_income": position.net_dividend_income,
     }
-    suggested_references = build_suggested_reference_cards(history, position, reference_cache)
-    historical_chart = build_stock_history_chart(history)
-    best_correlation_chart = build_best_correlation_chart(history, suggested_references, reference_cache)
-    projection_12m_chart = build_projection_12m_chart(history, projection)
+    dual_axis_chart = {
+        "stock_line": "",
+        "reference_line": "",
+        "projection_line": "",
+        "stock_min_label": "-",
+        "stock_max_label": "-",
+        "reference_min_label": "-",
+        "reference_max_label": "-",
+        "x_markers": [],
+    }
+    historical_chart = {
+        "available": False,
+        "stock_line": "",
+        "stock_min_label": "-",
+        "stock_max_label": "-",
+        "x_markers": [],
+    }
+    best_correlation_chart = {
+        "available": False,
+        "stock_line": "",
+        "reference_line": "",
+        "stock_min_label": "-",
+        "stock_max_label": "-",
+        "reference_min_label": "-",
+        "reference_max_label": "-",
+        "reference_name": "",
+        "x_markers": [],
+    }
+    projection_12m_chart = {
+        "available": False,
+        "stock_line": "",
+        "projection_line": "",
+        "stock_min_label": "-",
+        "stock_max_label": "-",
+        "x_markers": [],
+    }
+    if include_visuals:
+        stock_series = [{"date": point.price_date, "value": point.close_price} for point in history]
+        benchmark_series = [
+            {"date": point.price_date, "value": point.benchmark_close}
+            for point in history
+            if point.benchmark_close is not None
+        ]
+        projection_series = []
+        if projection.get("available"):
+            projection_series = [{"date": latest_point.price_date, "value": latest_point.close_price}]
+            projection_series.extend(
+                {
+                    "date": step["projected_date"],
+                    "value": step["projected_price"],
+                }
+                for step in projection.get("quarterly_path", [])
+                if step.get("projected_date") and step.get("projected_price") is not None
+            )
+        dual_axis_chart = build_dual_axis_chart(stock_series, benchmark_series, projection_points=projection_series)
+        historical_chart = build_stock_history_chart(history)
+        projection_12m_chart = build_projection_12m_chart(history, projection)
+
+    suggested_references = []
+    if include_reference_suggestions:
+        suggested_references = build_suggested_reference_cards(history, position, reference_cache)
+        if include_visuals:
+            best_correlation_chart = build_best_correlation_chart(history, suggested_references, reference_cache)
 
     card = {
         "position": position,
@@ -4294,7 +4432,23 @@ def build_equity_history_card(
         "best_correlation_chart": best_correlation_chart,
         "projection_12m_chart": projection_12m_chart,
     }
-    card["reference_playbook"] = build_reference_playbook_from_card(card)
+    card["reference_playbook"] = (
+        build_reference_playbook_from_card(card)
+        if include_reference_suggestions
+        else {
+            "available": False,
+            "source_label": "",
+            "company_sector": resolved_sector_label or "",
+            "current_reference_label": card.get("reference_label"),
+            "current_candidate": None,
+            "best_candidate": None,
+            "candidates": [],
+            "return_2025": None,
+            "per_2025": None,
+            "dividend_yield": None,
+            "notes": position.notes,
+        }
+    )
     return card
 
 
@@ -4464,6 +4618,8 @@ def build_ibex_universe_card(
     reference_cache: dict | None = None,
     workbook_snapshot: dict | None = None,
     broker_profile: dict | None = None,
+    include_visuals: bool = True,
+    include_reference_suggestions: bool = True,
 ) -> dict:
     reference_cache = reference_cache if reference_cache is not None else {}
     workbook_snapshot = workbook_snapshot or load_ibex_reference_workbook_snapshot()
@@ -4506,6 +4662,8 @@ def build_ibex_universe_card(
         status_label="Radar IBEX",
         detail_anchor="",
         sector_label=company.get("sector", ""),
+        include_visuals=include_visuals,
+        include_reference_suggestions=include_reference_suggestions,
     )
     if workbook_playbook and workbook_playbook.get("available"):
         card["reference_playbook"] = build_workbook_reference_playbook(company, workbook_snapshot, card=card)
@@ -4536,9 +4694,8 @@ def build_ibex_universe_analysis(
         )
 
     broker_profile = resolve_analysis_broker_profile(positions)
-    cards = []
+    candidate_companies = []
     failures = []
-    target_count = 0
 
     for company in companies:
         company_keys = build_security_lookup_keys(
@@ -4548,27 +4705,59 @@ def build_ibex_universe_analysis(
         )
         if tracked_keys & company_keys:
             continue
-        if company_limit is not None and len(cards) >= company_limit:
+        if company_limit is not None and len(candidate_companies) >= company_limit:
             break
         quote_symbol = company.get("quote_symbol", "")
         if not quote_symbol:
             failures.append(f"{company.get('company_name') or company.get('ticker')}: sin simbolo de cotizacion")
             continue
+        candidate_companies.append(company)
 
-        target_count += 1
-        try:
-            card = build_ibex_universe_card(
-                company,
-                positions,
-                selected_start_date=selected_start_date,
-                selected_end_date=selected_end_date,
-                reference_cache=reference_cache,
-                workbook_snapshot=workbook_snapshot,
-                broker_profile=broker_profile,
-            )
-            cards.append(card)
-        except Exception as exc:
-            failures.append(f"{company.get('company_name') or company.get('ticker')}: {exc}")
+    cards = [None] * len(candidate_companies)
+    if candidate_companies:
+        max_workers = min(ibex_universe_max_workers(), len(candidate_companies))
+        if max_workers <= 1:
+            for index, company in enumerate(candidate_companies):
+                try:
+                    cards[index] = build_ibex_universe_card(
+                        company,
+                        positions,
+                        selected_start_date=selected_start_date,
+                        selected_end_date=selected_end_date,
+                        reference_cache={},
+                        workbook_snapshot=workbook_snapshot,
+                        broker_profile=broker_profile,
+                        include_visuals=False,
+                        include_reference_suggestions=False,
+                    )
+                except Exception as exc:
+                    failures.append(f"{company.get('company_name') or company.get('ticker')}: {exc}")
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ibex-analysis") as executor:
+                future_map = {
+                    executor.submit(
+                        build_ibex_universe_card,
+                        company,
+                        positions,
+                        selected_start_date=selected_start_date,
+                        selected_end_date=selected_end_date,
+                        reference_cache={},
+                        workbook_snapshot=workbook_snapshot,
+                        broker_profile=broker_profile,
+                        include_visuals=False,
+                        include_reference_suggestions=False,
+                    ): (index, company)
+                    for index, company in enumerate(candidate_companies)
+                }
+                for future in as_completed(future_map):
+                    index, company = future_map[future]
+                    try:
+                        cards[index] = future.result()
+                    except Exception as exc:
+                        failures.append(f"{company.get('company_name') or company.get('ticker')}: {exc}")
+
+    cards = [card for card in cards if card is not None]
+    target_count = len(candidate_companies)
 
     rows = build_equity_decision_rows(cards)
     buy_alert_count = sum(1 for card in cards if card.get("trade_alert", {}).get("label") == "Comprar")

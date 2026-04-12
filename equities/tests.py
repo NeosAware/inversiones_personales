@@ -1,3 +1,5 @@
+import io
+import json
 import os
 import tempfile
 from calendar import monthrange
@@ -26,7 +28,9 @@ from .services import (
     build_equity_history_cards,
     build_equity_ticket_tracking_context,
     build_reference_suggestions_for_equity,
+    clear_market_data_caches,
     capture_equity_ticket_snapshots,
+    fetch_market_series,
     find_equity_company_profile,
     load_ibex_reference_workbook_snapshot,
     sync_equity_market_data,
@@ -103,6 +107,7 @@ def build_compound_market_series(
 class EquitiesServicesTests(TestCase):
     def tearDown(self):
         load_ibex_reference_workbook_snapshot.cache_clear()
+        clear_market_data_caches()
         super().tearDown()
 
     def test_find_equity_company_profile_by_ibex_name_returns_indra_defaults(self):
@@ -180,7 +185,10 @@ class EquitiesServicesTests(TestCase):
             ],
         )
 
-        with patch("equities.services.fetch_market_series", side_effect=[stock_series, benchmark_series]):
+        with (
+            patch("equities.services.fetch_market_series", return_value=stock_series),
+            patch("equities.services.fetch_reference_series", return_value=benchmark_series),
+        ):
             sync_equity_market_data(position)
 
         position.refresh_from_db()
@@ -1019,6 +1027,114 @@ class EquitiesServicesTests(TestCase):
         self.assertGreaterEqual(dashboard["ibex_universe_summary"]["buy_alert_count"], 1)
         self.assertEqual(dashboard["ibex_universe_summary"]["broker_assumption"], "Interactive Brokers")
 
+    def test_dashboard_uses_summary_mode_for_full_ibex_universe_optimizer(self):
+        acs = find_equity_company_profile("ACS")
+        company = {
+            "ticker": acs["ticker"],
+            "company_name": acs["company_name"],
+            "quote_symbol": acs["quote_symbol"],
+            "sector": acs["sector_label"],
+            "dividend_yield": Decimal("3.10"),
+            "catalog_profile": acs,
+        }
+
+        def fake_market_series(symbol, range_key="10y", interval="1d"):
+            growth = Decimal("1.0210") if symbol.startswith("ACS") else Decimal("1.0070")
+            start_price = Decimal("12.0000") if symbol.startswith("ACS") else Decimal("100.0000")
+            return build_compound_market_series(symbol, symbol, growth=growth, start_price=start_price)
+
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+            return build_compound_market_series(
+                benchmark_symbol or "^IBEX",
+                benchmark_name or "Referencia",
+                growth=Decimal("1.0070"),
+                start_price=Decimal("100.0000"),
+            )
+
+        empty_workbook = {
+            "available": False,
+            "path": "",
+            "companies": [],
+            "companies_by_key": {},
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+        with (
+            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=empty_workbook),
+            patch("equities.services.build_ibex_universe_companies", return_value=[company]),
+            patch("equities.services.fetch_market_series", side_effect=fake_market_series),
+            patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series),
+        ):
+            dashboard = build_equity_analysis_dashboard(
+                [],
+                include_ibex_universe=True,
+                ibex_company_limit=1,
+            )
+
+        self.assertEqual(len(dashboard["optimizer_cards"]), 1)
+        card = dashboard["optimizer_cards"][0]
+        self.assertFalse(card["historical_chart"]["available"])
+        self.assertFalse(card["best_correlation_chart"]["available"])
+        self.assertFalse(card["projection_12m_chart"]["available"])
+        self.assertFalse(card["projection_backtest"]["monthly_chart"]["available"])
+        self.assertEqual(card["suggested_references"], [])
+
+    def test_fetch_market_series_reuses_cache_within_same_bucket(self):
+        class FakeHTTPResponse(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                self.close()
+                return False
+
+        payload = {
+            "chart": {
+                "error": None,
+                "result": [
+                    {
+                        "meta": {
+                            "regularMarketPrice": 12.34,
+                            "regularMarketTime": 1712707200,
+                            "shortName": "Iberdrola",
+                        },
+                        "timestamp": [1712620800, 1712707200],
+                        "indicators": {
+                            "quote": [
+                                {
+                                    "open": [12.0, 12.2],
+                                    "high": [12.3, 12.5],
+                                    "low": [11.9, 12.1],
+                                    "close": [12.15, 12.34],
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        }
+
+        with (
+            patch("equities.services.build_market_data_cache_bucket", return_value=777),
+            patch(
+                "equities.services.urlopen",
+                side_effect=[
+                    FakeHTTPResponse(json.dumps(payload).encode("utf-8")),
+                ],
+            ) as mocked_urlopen,
+        ):
+            first_series = fetch_market_series("ibe.mc")
+            second_series = fetch_market_series("IBE.MC")
+
+        self.assertEqual(mocked_urlopen.call_count, 1)
+        self.assertEqual(first_series.latest_price, Decimal("12.3400"))
+        self.assertEqual(second_series.latest_price, Decimal("12.3400"))
+        self.assertIsNot(first_series, second_series)
+        self.assertIsNot(first_series.points, second_series.points)
+
 @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=False, EQUITIES_IBEX_UNIVERSE_ANALYSIS=False)
 class EquitiesViewTests(TestCase):
     def setUp(self):
@@ -1030,6 +1146,7 @@ class EquitiesViewTests(TestCase):
 
     def tearDown(self):
         load_ibex_reference_workbook_snapshot.cache_clear()
+        clear_market_data_caches()
         super().tearDown()
 
     def test_can_create_equity_position_from_page_form(self):
@@ -1420,6 +1537,34 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Cockpit de acciones")
         self.assertContains(response, "Canal de compra")
         self.assertContains(response, "Indra Sistemas, S.A.")
+
+    @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=True)
+    def test_optimizer_request_skips_auto_sync_even_when_enabled(self):
+        EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+
+        with patch("equities.views.sync_all_equities_market_data") as mocked_sync:
+            response = self.client.get(
+                reverse("equities:list"),
+                {
+                    "total_investment": "400000",
+                    "max_company_pct": "20",
+                    "max_sector_positions": "1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mocked_sync.assert_not_called()
 
     def test_equities_page_renders_ticket_tracking_section(self):
         for ticker, company_name, average_cost, current_price in (
