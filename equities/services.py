@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 import json
 import math
 import re
@@ -21,7 +22,7 @@ from banking.services import load_rows_from_workbook
 from portfolio.ownership import AssetOwnershipCategory
 
 from .broker_costs import estimate_broker_costs, resolve_recurring_cost_used
-from .models import EquityPosition, EquityPriceHistory
+from .models import EquityPosition, EquityPriceHistory, EquityTicketSnapshot
 
 
 ZERO = Decimal("0.00")
@@ -34,6 +35,8 @@ MONTHLY_CORRELATION_WINDOW = 120
 QUARTERLY_CORRELATION_WINDOW = 40
 MONTHLY_RECENT_WINDOW = 12
 QUARTERLY_RECENT_WINDOW = 4
+TRACKING_HORIZON_DAYS = 365
+TRACKING_FORECAST_MARKERS = (91, 182, 273, TRACKING_HORIZON_DAYS)
 OPTIMIZER_MAX_ENTRY_DRAG_PCT = Decimal("1.00")
 OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT = Decimal("2.00")
 OPTIMIZER_MIN_GAIN_TO_ROUNDTRIP_MULTIPLE = Decimal("1.80")
@@ -2236,6 +2239,382 @@ def build_projection_12m_chart(history, projection: dict) -> dict:
         "end_label": latest_date.isoformat(),
         "projection_end_label": end_projection_step.get("projected_date").isoformat() if end_projection_step and end_projection_step.get("projected_date") else "",
         "points_count": len(stock_series),
+    }
+
+
+def build_ticket_snapshot_projection_values(card: dict) -> dict:
+    position = card["position"]
+    projection = card.get("projection", {})
+    projected_price = projection.get("projected_price")
+    projected_market_value_12m = None
+    projected_total_value_12m = None
+    if projected_price is not None:
+        projected_market_value_12m = quantize_decimal(position.shares * projected_price, "0.01")
+    if projection.get("base_return_pct") is not None:
+        projected_total_value_12m = quantize_decimal(
+            position.current_value * (Decimal("1") + (projection["base_return_pct"] / ONE_HUNDRED)),
+            "0.01",
+        )
+    if projected_total_value_12m is None:
+        projected_total_value_12m = projected_market_value_12m
+    return {
+        "projected_price_12m": projected_price,
+        "projected_market_value_12m": projected_market_value_12m,
+        "projected_total_value_12m": projected_total_value_12m,
+    }
+
+
+def capture_equity_ticket_snapshots(history_cards: list[dict], snapshot_date: date | None = None) -> list[EquityTicketSnapshot]:
+    snapshot_date = snapshot_date or django_timezone.localdate()
+    snapshots = []
+    owned_cards = [card for card in history_cards if card["position"].is_owned]
+    with transaction.atomic():
+        for card in owned_cards:
+            position = card["position"]
+            projection_values = build_ticket_snapshot_projection_values(card)
+            snapshot, _ = EquityTicketSnapshot.objects.update_or_create(
+                position=position,
+                snapshot_date=snapshot_date,
+                defaults={
+                    "invested_amount": quantize_decimal(position.invested_amount, "0.01") or ZERO,
+                    "current_value": quantize_decimal(position.current_value, "0.01") or ZERO,
+                    "projected_market_value_12m": projection_values["projected_market_value_12m"],
+                    "projected_total_value_12m": projection_values["projected_total_value_12m"],
+                    "projected_price_12m": projection_values["projected_price_12m"],
+                },
+            )
+            snapshots.append(snapshot)
+    return snapshots
+
+
+def project_expected_value_on_date(
+    start_value: Decimal | None,
+    target_value: Decimal | None,
+    start_date: date | None,
+    point_date: date | None,
+    horizon_days: int = TRACKING_HORIZON_DAYS,
+) -> Decimal | None:
+    if start_value is None or target_value is None or start_date is None or point_date is None:
+        return None
+    if point_date <= start_date:
+        return quantize_decimal(start_value, "0.01")
+
+    elapsed_days = min(max((point_date - start_date).days, 0), horizon_days)
+    ratio = Decimal(str(elapsed_days / horizon_days))
+    if start_value > ZERO and target_value > ZERO:
+        multiplier = float(target_value / start_value)
+        projected_multiplier = Decimal(str(multiplier ** float(ratio)))
+        return quantize_decimal(start_value * projected_multiplier, "0.01")
+    return quantize_decimal(start_value + ((target_value - start_value) * ratio), "0.01")
+
+
+def build_value_tracking_chart(
+    actual_series: list[dict],
+    expected_series: list[dict],
+    width: int = 640,
+    height: int = 220,
+    padding: int = 18,
+) -> dict:
+    def normalize_series(points: list[dict]) -> list[dict]:
+        grouped = {}
+        for point in points:
+            point_date = point.get("date")
+            value = point.get("value")
+            if point_date is None or value is None:
+                continue
+            grouped[point_date] = Decimal(str(value))
+        return [{"date": point_date, "value": grouped[point_date]} for point_date in sorted(grouped)]
+
+    actual_points = normalize_series(actual_series)
+    expected_points = normalize_series(expected_series)
+    if not actual_points or not expected_points:
+        return {
+            "available": False,
+            "actual_line": "",
+            "expected_line": "",
+            "actual_points": [],
+            "expected_points": [],
+            "min_label": "-",
+            "max_label": "-",
+            "start_label": "",
+            "latest_label": "",
+            "projection_end_label": "",
+            "points_count": 0,
+        }
+
+    all_values = [point["value"] for point in actual_points] + [point["value"] for point in expected_points]
+    series_min = min(all_values)
+    series_max = max(all_values)
+    if series_min == series_max:
+        series_max += Decimal("1")
+
+    min_date = min(actual_points[0]["date"], expected_points[0]["date"])
+    max_date = max(actual_points[-1]["date"], expected_points[-1]["date"])
+    total_days = max((max_date - min_date).days, 1)
+    span_x = width - (padding * 2)
+    span_y = height - (padding * 2)
+
+    def scale_point(point_date: date, value: Decimal) -> tuple[float, float]:
+        x = padding + (span_x * ((point_date - min_date).days / total_days))
+        normalized_value = (value - series_min) / (series_max - series_min)
+        y = height - padding - (normalized_value * span_y)
+        return x, y
+
+    def build_series(points: list[dict], prefix: str) -> tuple[str, list[dict]]:
+        line_points = []
+        point_rows = []
+        for point in points:
+            x, y = scale_point(point["date"], point["value"])
+            line_points.append(f"{x:.1f},{y:.1f}")
+            point_rows.append(
+                {
+                    "x": f"{x:.1f}",
+                    "y": f"{y:.1f}",
+                    "value_label": f"{format_axis_value(point['value'])} EUR",
+                    "date_label": point["date"].isoformat(),
+                    "key": f"{prefix}-{point['date'].isoformat()}",
+                }
+            )
+        return " ".join(line_points) if len(line_points) >= 2 else "", point_rows
+
+    actual_line, actual_point_rows = build_series(actual_points, "actual")
+    expected_line, expected_point_rows = build_series(expected_points, "expected")
+    return {
+        "available": True,
+        "actual_line": actual_line,
+        "expected_line": expected_line,
+        "actual_points": actual_point_rows,
+        "expected_points": expected_point_rows,
+        "min_label": f"{format_axis_value(series_min)} EUR",
+        "max_label": f"{format_axis_value(series_max)} EUR",
+        "start_label": min_date.isoformat(),
+        "latest_label": actual_points[-1]["date"].isoformat(),
+        "projection_end_label": expected_points[-1]["date"].isoformat(),
+        "points_count": len(actual_points),
+    }
+
+
+def build_ticket_expected_series(
+    snapshots: list[EquityTicketSnapshot],
+    target_value: Decimal | None,
+) -> tuple[list[dict], Decimal | None, date | None]:
+    if not snapshots:
+        return [], None, None
+    baseline = snapshots[0]
+    projected_end_date = baseline.snapshot_date + timedelta(days=TRACKING_HORIZON_DAYS)
+    series_dates = {baseline.snapshot_date, projected_end_date}
+    for days in TRACKING_FORECAST_MARKERS:
+        series_dates.add(baseline.snapshot_date + timedelta(days=days))
+    for snapshot in snapshots:
+        series_dates.add(snapshot.snapshot_date)
+
+    series = []
+    for point_date in sorted(series_dates):
+        expected_value = project_expected_value_on_date(
+            baseline.current_value,
+            target_value or baseline.current_value,
+            baseline.snapshot_date,
+            point_date,
+        )
+        if expected_value is not None:
+            series.append({"date": point_date, "value": expected_value})
+
+    latest_snapshot_date = snapshots[-1].snapshot_date
+    latest_expected_value = next(
+        (point["value"] for point in reversed(series) if point["date"] <= latest_snapshot_date),
+        None,
+    )
+    return series, latest_expected_value, projected_end_date
+
+
+def build_equity_ticket_tracking_item(
+    card: dict,
+    snapshots: list[EquityTicketSnapshot],
+) -> dict | None:
+    if not snapshots:
+        return None
+
+    position = card["position"]
+    baseline = snapshots[0]
+    latest = snapshots[-1]
+    previous = snapshots[-2] if len(snapshots) >= 2 else None
+    expected_market_value_12m = baseline.projected_market_value_12m or baseline.current_value
+    expected_total_value_12m = baseline.projected_total_value_12m or expected_market_value_12m
+    actual_series = [{"date": snapshot.snapshot_date, "value": snapshot.current_value} for snapshot in snapshots]
+    expected_series, current_expected_value, projected_end_date = build_ticket_expected_series(
+        snapshots,
+        expected_market_value_12m,
+    )
+    chart = build_value_tracking_chart(actual_series, expected_series)
+    gap_value = (
+        quantize_decimal(latest.current_value - current_expected_value, "0.01")
+        if current_expected_value is not None
+        else None
+    )
+    gap_pct = percentage_change(latest.current_value, current_expected_value) if current_expected_value is not None else None
+    daily_change_pct = (
+        percentage_change(latest.current_value, previous.current_value)
+        if previous and previous.current_value
+        else None
+    )
+    return {
+        "position": position,
+        "card": card,
+        "baseline_snapshot": baseline,
+        "latest_snapshot": latest,
+        "snapshot_count": len(snapshots),
+        "days_tracked": max((latest.snapshot_date - baseline.snapshot_date).days, 0),
+        "actual_series": actual_series,
+        "expected_series": expected_series,
+        "chart": chart,
+        "current_expected_value": current_expected_value,
+        "expected_market_value_12m": expected_market_value_12m,
+        "expected_total_value_12m": expected_total_value_12m,
+        "actual_change_pct": percentage_change(latest.current_value, baseline.current_value),
+        "expected_change_pct": percentage_change(current_expected_value, baseline.current_value)
+        if current_expected_value is not None
+        else None,
+        "gap_value": gap_value,
+        "gap_pct": gap_pct,
+        "gap_tone": "good" if gap_value is not None and gap_value >= ZERO else "warn",
+        "daily_change_pct": daily_change_pct,
+        "projection_end_date": projected_end_date,
+    }
+
+
+def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
+    actual_map: dict[date, Decimal] = defaultdict(lambda: ZERO)
+    tracked_dates: set[date] = set()
+    for item in ticket_items:
+        for point in item["actual_series"]:
+            actual_map[point["date"]] += point["value"]
+            tracked_dates.add(point["date"])
+
+    if not actual_map:
+        return {"available": False}
+
+    expected_dates: set[date] = set(tracked_dates)
+    descriptors = []
+    for item in ticket_items:
+        baseline = item["baseline_snapshot"]
+        expected_target = item["expected_market_value_12m"] or baseline.current_value
+        descriptors.append(
+            {
+                "start_date": baseline.snapshot_date,
+                "start_value": baseline.current_value,
+                "target_value": expected_target,
+            }
+        )
+        expected_dates.add(baseline.snapshot_date + timedelta(days=TRACKING_HORIZON_DAYS))
+        for days in TRACKING_FORECAST_MARKERS:
+            expected_dates.add(baseline.snapshot_date + timedelta(days=days))
+
+    actual_series = [
+        {"date": point_date, "value": quantize_decimal(actual_map[point_date], "0.01") or ZERO}
+        for point_date in sorted(actual_map)
+    ]
+    expected_series = []
+    for point_date in sorted(expected_dates):
+        expected_total = ZERO
+        for descriptor in descriptors:
+            if point_date < descriptor["start_date"]:
+                continue
+            expected_value = project_expected_value_on_date(
+                descriptor["start_value"],
+                descriptor["target_value"],
+                descriptor["start_date"],
+                point_date,
+            )
+            if expected_value is not None:
+                expected_total += expected_value
+        expected_series.append(
+            {
+                "date": point_date,
+                "value": quantize_decimal(expected_total, "0.01") or ZERO,
+            }
+        )
+
+    chart = build_value_tracking_chart(actual_series, expected_series)
+    baseline_value = actual_series[0]["value"]
+    latest_actual = actual_series[-1]["value"]
+    latest_date = actual_series[-1]["date"]
+    current_expected_value = next(
+        (point["value"] for point in reversed(expected_series) if point["date"] <= latest_date),
+        None,
+    )
+    expected_total_value_12m = sum(
+        (item["expected_total_value_12m"] or item["expected_market_value_12m"] or ZERO)
+        for item in ticket_items
+    )
+    previous_actual = actual_series[-2]["value"] if len(actual_series) >= 2 else None
+    gap_value = (
+        quantize_decimal(latest_actual - current_expected_value, "0.01")
+        if current_expected_value is not None
+        else None
+    )
+    return {
+        "available": True,
+        "chart": chart,
+        "baseline_value": baseline_value,
+        "latest_value": latest_actual,
+        "expected_today_value": current_expected_value,
+        "expected_market_value_12m": expected_series[-1]["value"] if expected_series else baseline_value,
+        "expected_total_value_12m": quantize_decimal(expected_total_value_12m, "0.01") or ZERO,
+        "actual_change_pct": percentage_change(latest_actual, baseline_value),
+        "expected_change_pct": percentage_change(current_expected_value, baseline_value)
+        if current_expected_value is not None
+        else None,
+        "gap_value": gap_value,
+        "gap_pct": percentage_change(latest_actual, current_expected_value) if current_expected_value is not None else None,
+        "gap_tone": "good" if gap_value is not None and gap_value >= ZERO else "warn",
+        "daily_change_pct": percentage_change(latest_actual, previous_actual) if previous_actual else None,
+        "tracked_days": max((latest_date - actual_series[0]["date"]).days, 0),
+    }
+
+
+def build_equity_ticket_tracking_context(history_cards: list[dict]) -> dict:
+    owned_cards = [card for card in history_cards if card["position"].is_owned]
+    if not owned_cards:
+        return {
+            "available": False,
+            "tickets": [],
+            "tracked_ticket_count": 0,
+            "snapshot_days_count": 0,
+            "global": {"available": False},
+        }
+
+    cards_by_id = {card["position"].id: card for card in owned_cards if card["position"].id}
+    snapshots = list(
+        EquityTicketSnapshot.objects.filter(position_id__in=cards_by_id.keys())
+        .select_related("position")
+        .order_by("snapshot_date", "position__company_name", "position__ticker")
+    )
+    grouped_snapshots: dict[int, list[EquityTicketSnapshot]] = defaultdict(list)
+    for snapshot in snapshots:
+        grouped_snapshots[snapshot.position_id].append(snapshot)
+
+    ticket_items = []
+    for card in owned_cards:
+        position_id = card["position"].id
+        if not position_id:
+            continue
+        item = build_equity_ticket_tracking_item(card, grouped_snapshots.get(position_id, []))
+        if item:
+            ticket_items.append(item)
+
+    ticket_items.sort(
+        key=lambda item: (
+            -(item["latest_snapshot"].current_value if item.get("latest_snapshot") else ZERO),
+            item["position"].company_name,
+        )
+    )
+    snapshot_days = sorted({snapshot.snapshot_date for snapshot in snapshots})
+    return {
+        "available": bool(ticket_items),
+        "tickets": ticket_items,
+        "tracked_ticket_count": len(ticket_items),
+        "snapshot_days_count": len(snapshot_days),
+        "global": build_global_equity_ticket_tracking_item(ticket_items) if ticket_items else {"available": False},
     }
 
 

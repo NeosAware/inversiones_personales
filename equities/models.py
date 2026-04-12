@@ -166,3 +166,21 @@ class EquityPriceHistory(models.Model):
 
     def __str__(self):
         return f"{self.position.ticker} - {self.price_date}"
+
+
+class EquityTicketSnapshot(models.Model):
+    position = models.ForeignKey(EquityPosition, on_delete=models.CASCADE, related_name="ticket_snapshots")
+    snapshot_date = models.DateField()
+    invested_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    current_value = models.DecimalField(max_digits=14, decimal_places=2)
+    projected_market_value_12m = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    projected_total_value_12m = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    projected_price_12m = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    captured_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["snapshot_date", "position_id"]
+        unique_together = ("position", "snapshot_date")
+
+    def __str__(self):
+        return f"{self.position.ticker} snapshot {self.snapshot_date}"

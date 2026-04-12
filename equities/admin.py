@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import EquityPosition, EquityPriceHistory
+from .models import EquityPosition, EquityPriceHistory, EquityTicketSnapshot
 
 
 @admin.register(EquityPosition)
@@ -30,3 +30,17 @@ class EquityPriceHistoryAdmin(admin.ModelAdmin):
     list_display = ("position", "price_date", "open_price", "high_price", "low_price", "close_price", "benchmark_close")
     search_fields = ("position__ticker", "position__company_name")
     list_filter = ("position__benchmark_symbol",)
+
+
+@admin.register(EquityTicketSnapshot)
+class EquityTicketSnapshotAdmin(admin.ModelAdmin):
+    list_display = (
+        "snapshot_date",
+        "position",
+        "invested_amount",
+        "current_value",
+        "projected_market_value_12m",
+        "projected_total_value_12m",
+    )
+    search_fields = ("position__ticker", "position__company_name")
+    list_filter = ("snapshot_date", "position__broker")

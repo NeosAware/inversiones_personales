@@ -22,7 +22,9 @@ from .services import (
     SPAIN_HOUSE_PRICE_SYMBOL,
     build_equity_analysis_dashboard,
     build_equity_allocation_plan,
+    build_equity_ticket_tracking_context,
     build_ibex_universe_card,
+    capture_equity_ticket_snapshots,
     find_ibex_universe_company,
     EquityDocumentImportError,
     build_equity_history_cards,
@@ -96,6 +98,8 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             }
             for row in dashboard["ibex_universe_rows"]
         ]
+        capture_equity_ticket_snapshots(dashboard["owned_history_cards"])
+        context["ticket_tracking"] = build_equity_ticket_tracking_context(dashboard["owned_history_cards"])
         context["ibex_universe_summary"] = dashboard["ibex_universe_summary"]
         context["tracked_reference_rows"] = dashboard["tracked_reference_rows"]
         context["reference_guide_rows"] = dashboard["reference_guide_rows"]
