@@ -789,9 +789,13 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(context["closed_count"], 1)
         self.assertTrue(context["value_chart"]["available"])
         self.assertTrue(context["profit_chart"]["available"])
+        self.assertTrue(context["annual_result_chart"]["available"])
+        self.assertTrue(context["annual_rows"])
+        self.assertIsNotNone(context["current_year_row"])
         self.assertEqual(context["closed_tickets"][0]["status_label"], "Vendida")
         self.assertIsNotNone(context["cumulative_margin_pct"])
         self.assertGreaterEqual(context["costs_total"], Decimal("0.00"))
+        self.assertIsNotNone(context["average_annual_result"])
 
     def test_allocation_plan_respects_max_company_weight_and_sorts_by_projection(self):
         stronger = {
@@ -2332,7 +2336,9 @@ class EquitiesViewTests(TestCase):
         response = self.client.get(reverse("equities:list"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Historico Economico")
+        self.assertContains(response, "Cuadro de Gestion")
+        self.assertContains(response, "Rentabilidad anual por ejercicio")
+        self.assertContains(response, "Cuenta de resultados")
         self.assertContains(response, "Resultado neto de las posiciones cerradas")
         self.assertContains(response, "Margen neto por ticket abierto")
 

@@ -582,9 +582,9 @@
       <section class="equity-panel" id="equity-journey">
         <div class="equity-panel-head">
           <div>
-            <p class="section-title">Historico Economico</p>
-            <h2>Valor neto, ventas y margen real de la cartera</h2>
-            <p>Esta lectura junta lo que sigue en cartera y lo ya vendido. El resultado neto descuenta compra, mantenimiento y, cuando la posicion ya esta cerrada, tambien la venta. En posiciones abiertas, la salida usa el coste estimado de venta a dia de hoy.</p>
+            <p class="section-title">Cuadro de Gestion</p>
+            <h2>Rentabilidad anual, evolucion y resultado neto del negocio</h2>
+            <p>Esta lectura trata la cartera como una actividad de inversion gestionada con criterio empresarial. Junta lo que sigue en cartera y lo ya vendido, y calcula el resultado neto despues de compra, mantenimiento y, cuando procede, venta.</p>
           </div>
           <span class="pill">{{ investment_journey.tickets_count }} tickets | {{ investment_journey.holding_start_label }} a {{ investment_journey.holding_end_label }}</span>
         </div>
@@ -611,14 +611,36 @@
           </div>
         </div>
         <div class="equity-grid-4" style="margin-top:16px;">
+          <div class="equity-box">
+            <span>Resultado {{ investment_journey.current_year_row.year }}</span>
+            <strong class="{% if investment_journey.current_year_row.net_result >= 0 %}good{% else %}warn{% endif %}">{% if investment_journey.current_year_row %}{{ investment_journey.current_year_row.net_result|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
+            <small>{% if investment_journey.current_year_row %}Margen {{ investment_journey.current_year_row.margin_pct|floatformat:2 }} %{% else %}Sin cierre anual{% endif %}</small>
+          </div>
+          <div class="equity-box">
+            <span>Media anual neta</span>
+            <strong class="{% if investment_journey.average_annual_result >= 0 %}good{% else %}warn{% endif %}">{{ investment_journey.average_annual_result|floatformat:0 }} EUR</strong>
+            <small>{{ investment_journey.years_operating|floatformat:2 }} anos efectivos de operacion.</small>
+          </div>
+          <div class="equity-box">
+            <span>Ratio de costes</span>
+            <strong class="{% if investment_journey.cost_ratio_pct <= 3 %}good{% else %}warn{% endif %}">{{ investment_journey.cost_ratio_pct|floatformat:2 }} %</strong>
+            <small>{{ investment_journey.costs_total|floatformat:0 }} EUR sobre el capital comprometido.</small>
+          </div>
+          <div class="equity-box">
+            <span>Yield neto dividendos</span>
+            <strong>{{ investment_journey.dividend_yield_pct|floatformat:2 }} %</strong>
+            <small>{{ investment_journey.dividends_total|floatformat:0 }} EUR netos cobrados o estimados.</small>
+          </div>
+        </div>
+        <div class="equity-grid-4" style="margin-top:16px;">
           <div class="equity-box"><span>Ventas cerradas</span><strong>{{ investment_journey.closed_count }}</strong></div>
           <div class="equity-box"><span>Posiciones abiertas</span><strong>{{ investment_journey.active_count }}</strong></div>
-          <div class="equity-box"><span>Costes acumulados</span><strong>{{ investment_journey.costs_total|floatformat:0 }} EUR</strong></div>
-          <div class="equity-box"><span>Dividendos netos estimados</span><strong>{{ investment_journey.dividends_total|floatformat:0 }} EUR</strong></div>
+          <div class="equity-box"><span>Mejor ejercicio</span><strong>{% if investment_journey.best_year %}{{ investment_journey.best_year.year }}{% else %}-{% endif %}</strong><small>{% if investment_journey.best_year %}{{ investment_journey.best_year.net_result|floatformat:0 }} EUR{% endif %}</small></div>
+          <div class="equity-box"><span>Peor ejercicio</span><strong>{% if investment_journey.worst_year %}{{ investment_journey.worst_year.year }}{% else %}-{% endif %}</strong><small>{% if investment_journey.worst_year %}{{ investment_journey.worst_year.net_result|floatformat:0 }} EUR{% endif %}</small></div>
         </div>
         {% if investment_journey.value_chart.available %}
           <div class="equity-chart-shell" style="margin-top:18px;">
-            <strong style="display:block; color:#17384e; margin-bottom:8px;">Valor neto historico de tus tickets</strong>
+            <strong style="display:block; color:#17384e; margin-bottom:8px;">Evolucion del valor neto del negocio</strong>
             <svg viewBox="0 0 640 220">
               <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
               <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
@@ -658,10 +680,60 @@
             </div>
           </div>
         {% endif %}
+        {% if investment_journey.annual_result_chart.available %}
+          <div class="equity-chart-shell" style="margin-top:18px;">
+            <strong style="display:block; color:#17384e; margin-bottom:8px;">Rentabilidad anual por ejercicio</strong>
+            <svg viewBox="0 0 640 240">
+              <line x1="26" y1="{{ investment_journey.annual_result_chart.zero_y }}" x2="614" y2="{{ investment_journey.annual_result_chart.zero_y }}" stroke="#d7e4ee" stroke-width="1" />
+              <line x1="26" y1="26" x2="26" y2="214" stroke="#d7e4ee" stroke-width="1" />
+              {% for bar in investment_journey.annual_result_chart.bars %}
+                <rect x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.width }}" height="{{ bar.height }}" rx="8" fill="{% if bar.tone == 'good' %}#0d6b46{% else %}#c0712a{% endif %}">
+                  <title>{{ bar.year }} | {{ bar.value_label }}</title>
+                </rect>
+                <text x="{{ bar.text_x }}" y="{{ bar.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ bar.year }}</text>
+              {% endfor %}
+              <text x="8" y="28" font-size="12" fill="#17384e">{{ investment_journey.annual_result_chart.max_label }}</text>
+              <text x="8" y="214" font-size="12" fill="#17384e">{{ investment_journey.annual_result_chart.min_label }}</text>
+            </svg>
+            <div class="equity-chart-foot">
+              <span>Verde: ejercicio con resultado positivo</span>
+              <span>Naranja: ejercicio con resultado negativo</span>
+              <span>{{ investment_journey.annual_result_chart.years_count }} ejercicios con cierre calculado</span>
+            </div>
+          </div>
+        {% endif %}
         <div class="equity-compact-note" style="margin-top:16px;">
           Si una posicion tiene fecha de compra, los margenes y costes acumulados se calculan con esa fecha. Si no, la app usa el primer dato historico disponible como aproximacion.
           {% if investment_journey.estimated_start_count %} Ahora mismo hay {{ investment_journey.estimated_start_count }} ticket(s) con fecha aproximada.{% endif %}
         </div>
+        {% if investment_journey.annual_rows %}
+          <section class="equity-panel table-card" style="margin-top:18px;">
+            <div class="equity-panel-head">
+              <div>
+                <p class="section-title">Cuenta de resultados</p>
+                <h3>Lectura anual del negocio</h3>
+                <p>Cada fila muestra como cerraba la actividad al final del ejercicio y cuanto gano o perdio ese ano en terminos netos.</p>
+              </div>
+            </div>
+            <div class="equity-table-wrap">
+              <table>
+                <thead><tr><th>Ano</th><th>Valor neto cierre</th><th>Beneficio del ano</th><th>Margen del ano</th><th>Capital medio</th><th>Beneficio acumulado</th></tr></thead>
+                <tbody>
+                  {% for row in investment_journey.annual_rows %}
+                    <tr>
+                      <td><strong>{{ row.year }}</strong></td>
+                      <td>{{ row.year_end_value|floatformat:0 }} EUR</td>
+                      <td class="{% if row.net_result >= 0 %}good{% else %}warn{% endif %}">{{ row.net_result|floatformat:0 }} EUR</td>
+                      <td class="{% if row.margin_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.margin_pct|floatformat:2 }} %</td>
+                      <td>{{ row.average_committed_capital|floatformat:0 }} EUR</td>
+                      <td class="{% if row.year_end_profit >= 0 %}good{% else %}warn{% endif %}">{{ row.year_end_profit|floatformat:0 }} EUR</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        {% endif %}
         <div class="equity-grid-2" style="margin-top:18px;">
           <section class="equity-panel table-card" style="margin:0;">
             <div class="equity-panel-head">

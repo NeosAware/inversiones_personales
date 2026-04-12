@@ -2826,6 +2826,58 @@ def build_single_value_history_chart(series: list[dict]) -> dict:
     }
 
 
+def build_annual_result_chart(rows: list[dict], width: int = 640, height: int = 240, padding: int = 26) -> dict:
+    if not rows:
+        return {"available": False, "bars": []}
+
+    values = [Decimal(str(row.get("net_result") or ZERO)) for row in rows]
+    min_value = min([*values, ZERO])
+    max_value = max([*values, ZERO])
+    if min_value == max_value:
+        max_value += Decimal("1")
+        min_value -= Decimal("1")
+
+    span_y = height - (padding * 2)
+    span_x = width - (padding * 2)
+    slot_width = span_x / max(len(rows), 1)
+    bar_width = max(slot_width * 0.48, 18)
+
+    def to_y(value: Decimal) -> float:
+        normalized = (value - min_value) / (max_value - min_value)
+        return float(height - padding - (normalized * span_y))
+
+    zero_y = to_y(ZERO)
+    bars = []
+    for index, row in enumerate(rows):
+        value = Decimal(str(row.get("net_result") or ZERO))
+        center_x = padding + (slot_width * index) + (slot_width / 2)
+        value_y = to_y(value)
+        top_y = min(value_y, zero_y)
+        bar_height = max(abs(zero_y - value_y), 1.5)
+        bars.append(
+            {
+                "x": f"{center_x - (bar_width / 2):.1f}",
+                "y": f"{top_y:.1f}",
+                "width": f"{bar_width:.1f}",
+                "height": f"{bar_height:.1f}",
+                "year": row["year"],
+                "value_label": f'{format_axis_value(value)} EUR',
+                "tone": "good" if value >= ZERO else "warn",
+                "text_x": f"{center_x:.1f}",
+                "text_y": f"{height - 8:.1f}",
+            }
+        )
+
+    return {
+        "available": True,
+        "bars": bars,
+        "zero_y": f"{zero_y:.1f}",
+        "min_label": f"{format_axis_value(min_value)} EUR",
+        "max_label": f"{format_axis_value(max_value)} EUR",
+        "years_count": len(rows),
+    }
+
+
 def collapse_date_value_series(series: list[dict], frequency: str = "monthly") -> list[dict]:
     buckets = {}
     for point in series:
@@ -3036,7 +3088,8 @@ def build_equity_investment_journey_context(
     date_points = sorted({point["date"] for ticket in all_tickets for point in ticket["value_series"]})
     aggregated_value_series = []
     aggregated_profit_series = []
-    yearly_profit_buckets: dict[int, Decimal] = {}
+    yearly_snapshot_buckets: dict[int, dict] = {}
+    yearly_committed_points: dict[int, list[Decimal]] = defaultdict(list)
 
     for point_date in date_points:
         total_value = ZERO
@@ -3051,7 +3104,13 @@ def build_equity_investment_journey_context(
         total_profit = total_value - total_committed
         aggregated_value_series.append({"date": point_date, "value": quantize_decimal(total_value, "0.01") or ZERO})
         aggregated_profit_series.append({"date": point_date, "value": quantize_decimal(total_profit, "0.01") or ZERO})
-        yearly_profit_buckets[point_date.year] = quantize_decimal(total_profit, "0.01") or ZERO
+        yearly_snapshot_buckets[point_date.year] = {
+            "date": point_date,
+            "value": quantize_decimal(total_value, "0.01") or ZERO,
+            "profit": quantize_decimal(total_profit, "0.01") or ZERO,
+            "committed": quantize_decimal(total_committed, "0.01") or ZERO,
+        }
+        yearly_committed_points[point_date.year].append(quantize_decimal(total_committed, "0.01") or ZERO)
 
     total_committed_capital = sum((ticket["committed_capital"] for ticket in all_tickets), ZERO)
     total_net_result = sum((ticket["net_result"] for ticket in all_tickets), ZERO)
@@ -3062,15 +3121,52 @@ def build_equity_investment_journey_context(
     earliest_start = min((ticket["start_date"] for ticket in all_tickets), default=django_timezone.localdate())
     latest_end = max((ticket["end_date"] for ticket in all_tickets), default=django_timezone.localdate())
     total_days = max((latest_end - earliest_start).days, 1)
+    years_operating = Decimal(str(total_days)) / Decimal("365")
     cumulative_margin_pct = ((total_net_result / total_committed_capital) * ONE_HUNDRED) if total_committed_capital else ZERO
     annualized_margin_pct = cumulative_margin_pct * (Decimal("365") / Decimal(str(total_days))) if total_committed_capital else ZERO
     annual_rows = []
     previous_profit = ZERO
-    for year in sorted(yearly_profit_buckets):
-        year_profit = yearly_profit_buckets[year]
+    for year in sorted(yearly_snapshot_buckets):
+        snapshot = yearly_snapshot_buckets[year]
+        year_profit = snapshot["profit"]
         annual_result = quantize_decimal(year_profit - previous_profit, "0.01") or ZERO
-        annual_rows.append({"year": year, "net_result": annual_result})
+        average_committed_capital = average_decimal(yearly_committed_points.get(year, [])) or snapshot["committed"] or ZERO
+        annual_margin_pct = (
+            quantize_decimal((annual_result / average_committed_capital) * ONE_HUNDRED, "0.01")
+            if average_committed_capital
+            else ZERO
+        )
+        annual_rows.append(
+            {
+                "year": year,
+                "year_end_value": snapshot["value"],
+                "year_end_profit": year_profit,
+                "average_committed_capital": quantize_decimal(average_committed_capital, "0.01") or ZERO,
+                "net_result": annual_result,
+                "margin_pct": annual_margin_pct,
+            }
+        )
         previous_profit = year_profit
+
+    average_annual_result = (
+        quantize_decimal(total_net_result / years_operating, "0.01")
+        if years_operating
+        else ZERO
+    ) or ZERO
+    cost_ratio_pct = (
+        quantize_decimal((total_costs / total_committed_capital) * ONE_HUNDRED, "0.01")
+        if total_committed_capital
+        else ZERO
+    ) or ZERO
+    dividend_yield_pct = (
+        quantize_decimal((total_dividends / total_committed_capital) * ONE_HUNDRED, "0.01")
+        if total_committed_capital
+        else ZERO
+    ) or ZERO
+    current_year_row = annual_rows[-1] if annual_rows else None
+    previous_year_row = annual_rows[-2] if len(annual_rows) >= 2 else None
+    best_year = max(annual_rows, key=lambda row: row["net_result"], default=None)
+    worst_year = min(annual_rows, key=lambda row: row["net_result"], default=None)
 
     active_tickets.sort(key=lambda ticket: (-ticket["current_or_sale_value"], ticket["company_name"]))
     closed_tickets.sort(key=lambda ticket: (ticket["end_date"], ticket["company_name"]), reverse=True)
@@ -3087,6 +3183,10 @@ def build_equity_investment_journey_context(
         "cumulative_net_result": quantize_decimal(total_net_result, "0.01") or ZERO,
         "cumulative_margin_pct": quantize_decimal(cumulative_margin_pct, "0.01") or ZERO,
         "annualized_margin_pct": quantize_decimal(annualized_margin_pct, "0.01") or ZERO,
+        "years_operating": quantize_decimal(years_operating, "0.01") or ZERO,
+        "average_annual_result": average_annual_result,
+        "cost_ratio_pct": cost_ratio_pct,
+        "dividend_yield_pct": dividend_yield_pct,
         "realized_net_result": quantize_decimal(total_realized_result, "0.01") or ZERO,
         "live_net_result": quantize_decimal(total_live_result, "0.01") or ZERO,
         "committed_capital_total": quantize_decimal(total_committed_capital, "0.01") or ZERO,
@@ -3095,6 +3195,11 @@ def build_equity_investment_journey_context(
         "holding_start_label": earliest_start.isoformat() if earliest_start else "",
         "holding_end_label": latest_end.isoformat() if latest_end else "",
         "annual_rows": annual_rows,
+        "annual_result_chart": build_annual_result_chart(annual_rows),
+        "current_year_row": current_year_row,
+        "previous_year_row": previous_year_row,
+        "best_year": best_year,
+        "worst_year": worst_year,
         "estimated_start_count": sum(1 for ticket in all_tickets if ticket["start_date_is_estimated"]),
     }
 
