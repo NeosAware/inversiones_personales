@@ -15,7 +15,7 @@ from django.urls import reverse
 from portfolio.ownership import AssetOwnershipCategory
 
 from .broker_costs import estimate_broker_costs
-from .models import EquityOptimizationRun, EquityPosition, EquityTicketSnapshot
+from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition, EquityTicketSnapshot
 from .optimization_runs import process_equity_optimization_run
 from .services import (
     EURIBOR_REFERENCE_NAME,
@@ -28,7 +28,9 @@ from .services import (
     build_equity_allocation_plan,
     build_equity_analysis_dashboard,
     build_equity_history_cards,
+    build_equity_investment_journey_context,
     build_equity_ticket_tracking_context,
+    archive_equity_position_sale,
     build_trade_alert,
     build_reference_suggestions_for_equity,
     clear_market_data_caches,
@@ -714,6 +716,83 @@ class EquitiesServicesTests(TestCase):
         self.assertIsNotNone(tracking["global"]["expected_today_value"])
         self.assertTrue(tracking["global"]["chart"]["x_markers"])
 
+    def test_investment_journey_builds_active_and_closed_ticket_history(self):
+        active = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2024, 1, 15),
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.5000"),
+            annual_dividend_income=Decimal("30.00"),
+            annual_maintenance_cost=Decimal("6.00"),
+        )
+        sold = EquityPosition.objects.create(
+            broker="Banco Sabadell",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            opened_on=date(2023, 2, 1),
+            shares=Decimal("15.0000"),
+            average_cost_per_share=Decimal("20.0000"),
+            current_price_per_share=Decimal("24.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("10.00"),
+        )
+        for position, start_price, growth in (
+            (active, Decimal("10.00"), Decimal("1.0100")),
+            (sold, Decimal("20.00"), Decimal("1.0120")),
+        ):
+            stock_series = build_compound_market_series(
+                position.quote_symbol,
+                position.company_name,
+                growth=growth,
+                start_price=start_price,
+            )
+            reference_series = build_compound_market_series(
+                "^IBEX",
+                "IBEX 35",
+                growth=Decimal("1.0060"),
+                start_price=Decimal("100.0000"),
+            )
+            for stock_point, reference_point in zip(stock_series.points, reference_series.points):
+                position.price_history.create(
+                    price_date=stock_point["date"],
+                    open_price=stock_point["open"],
+                    high_price=stock_point["high"],
+                    low_price=stock_point["low"],
+                    close_price=stock_point["close"],
+                    benchmark_close=reference_point["close"],
+                )
+
+        archive_equity_position_sale(
+            sold,
+            closed_on=date(2025, 9, 30),
+            sale_price_per_share=Decimal("25.0000"),
+            notes="Cierre completo",
+        )
+        context = build_equity_investment_journey_context(
+            list(EquityPosition.objects.prefetch_related("price_history")),
+            list(EquityClosedPosition.objects.all()),
+        )
+
+        self.assertTrue(context["available"])
+        self.assertEqual(context["active_count"], 1)
+        self.assertEqual(context["closed_count"], 1)
+        self.assertTrue(context["value_chart"]["available"])
+        self.assertTrue(context["profit_chart"]["available"])
+        self.assertEqual(context["closed_tickets"][0]["status_label"], "Vendida")
+        self.assertIsNotNone(context["cumulative_margin_pct"])
+        self.assertGreaterEqual(context["costs_total"], Decimal("0.00"))
+
     def test_allocation_plan_respects_max_company_weight_and_sorts_by_projection(self):
         stronger = {
             "position": EquityPosition(
@@ -1393,6 +1472,69 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(position.quote_symbol, "IDR.MC")
         self.assertEqual(position.benchmark_symbol, "^IBEX")
 
+    def test_can_delete_watchlist_position(self):
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.XIMO,
+            broker="Seguimiento",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("0"),
+            average_cost_per_share=Decimal("12.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "delete_position",
+                "position_id": str(position.id),
+            },
+        )
+
+        self.assertRedirects(response, reverse("equities:list"))
+        self.assertFalse(EquityPosition.objects.filter(pk=position.id).exists())
+
+    def test_can_close_owned_position_and_move_it_to_sales_history(self):
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.XIMO,
+            broker="Interactive Brokers",
+            trade_channel=EquityPosition.TradeChannel.APP,
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2025, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.3000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "close_position",
+                "position_id": str(position.id),
+                "closed_on": "2026-04-12",
+                "sale_price_per_share": "12,8000",
+                "notes": "Venta completa",
+            },
+        )
+
+        self.assertRedirects(response, reverse("equities:list"))
+        self.assertFalse(EquityPosition.objects.filter(pk=position.id).exists())
+        closed = EquityClosedPosition.objects.get(ticker="IBE")
+        self.assertEqual(closed.sale_price_per_share, Decimal("12.8000"))
+        self.assertEqual(closed.closed_on, date(2026, 4, 12))
+        self.assertEqual(closed.notes, "Venta completa")
+
     def test_bank_company_name_switches_default_reference_to_euribor(self):
         response = self.client.post(
             reverse("equities:list"),
@@ -1957,6 +2099,69 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Ticket IBE")
         self.assertContains(response, "Ticket ENG")
         self.assertEqual(EquityTicketSnapshot.objects.count(), 2)
+
+    def test_equities_page_renders_investment_journey_section(self):
+        active = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2024, 1, 15),
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        sold = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Banco Sabadell",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            opened_on=date(2023, 2, 1),
+            shares=Decimal("15.0000"),
+            average_cost_per_share=Decimal("20.0000"),
+            current_price_per_share=Decimal("24.0000"),
+        )
+        for position, start_price in ((active, Decimal("10.00")), (sold, Decimal("20.00"))):
+            stock_series = build_compound_market_series(
+                position.quote_symbol,
+                position.company_name,
+                growth=Decimal("1.0100"),
+                start_price=start_price,
+            )
+            reference_series = build_compound_market_series(
+                "^IBEX",
+                "IBEX 35",
+                growth=Decimal("1.0060"),
+                start_price=Decimal("100.0000"),
+            )
+            for stock_point, reference_point in zip(stock_series.points, reference_series.points):
+                position.price_history.create(
+                    price_date=stock_point["date"],
+                    open_price=stock_point["open"],
+                    high_price=stock_point["high"],
+                    low_price=stock_point["low"],
+                    close_price=stock_point["close"],
+                    benchmark_close=reference_point["close"],
+                )
+        archive_equity_position_sale(
+            sold,
+            closed_on=date(2025, 9, 30),
+            sale_price_per_share=Decimal("25.0000"),
+            notes="Cierre completo",
+        )
+
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Historico Economico")
+        self.assertContains(response, "Resultado neto de las posiciones cerradas")
+        self.assertContains(response, "Margen neto por ticket abierto")
 
     @override_settings(EQUITIES_REFERENCE_WORKBOOK="")
     def test_equities_page_renders_workbook_reference_guide(self):

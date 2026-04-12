@@ -68,6 +68,11 @@ class EquityPositionForm(forms.Form):
         initial="IBEX 35",
         label="Nombre de referencia",
     )
+    opened_on = forms.DateField(
+        required=False,
+        label="Fecha de compra",
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
     shares = FlexibleDecimalField(
         max_digits=14,
         decimal_places=4,
@@ -143,6 +148,9 @@ class EquityPositionForm(forms.Form):
         )
         self.fields["annual_maintenance_cost"].help_text = (
             "Si lo dejas a 0, la app aplicara la tarifa del banco cuando la conozca; usalo solo para ajustes manuales."
+        )
+        self.fields["opened_on"].help_text = (
+            "Muy recomendable para calcular historico, rentabilidad anualizada y costes acumulados con precision."
         )
 
     def clean_broker(self):
@@ -335,3 +343,24 @@ class EquityOptimizationRunForm(EquityAllocationOptimizerForm):
 
     def clean_restrictions_note(self):
         return str(self.cleaned_data.get("restrictions_note") or "").strip()
+
+
+class EquityClosePositionForm(forms.Form):
+    closed_on = forms.DateField(
+        label="Fecha de venta",
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
+    sale_price_per_share = FlexibleDecimalField(
+        max_digits=14,
+        decimal_places=4,
+        min_value=Decimal("0"),
+        label="Precio de venta por accion",
+    )
+    notes = forms.CharField(
+        required=False,
+        label="Notas de venta",
+        widget=forms.Textarea(attrs={"rows": 2}),
+    )
+
+    def clean_notes(self):
+        return str(self.cleaned_data.get("notes") or "").strip()

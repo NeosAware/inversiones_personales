@@ -6,11 +6,12 @@ from django.contrib import messages
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.generic import TemplateView, View
 
-from .forms import EquityAllocationOptimizerForm, EquityDocumentImportForm, EquityOptimizationRunForm, EquityPositionForm
-from .models import EquityOptimizationRun, EquityPosition
+from .forms import EquityAllocationOptimizerForm, EquityClosePositionForm, EquityDocumentImportForm, EquityOptimizationRunForm, EquityPositionForm
+from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition
 from .optimization_runs import (
     build_fallback_report_pdf_html,
     launch_equity_optimization_run,
@@ -28,8 +29,10 @@ from .services import (
     SPAIN_HOUSE_PRICE_SYMBOL,
     build_equity_analysis_dashboard,
     build_equity_allocation_plan,
+    build_equity_investment_journey_context,
     build_equity_ticket_tracking_context,
     build_ibex_universe_card,
+    archive_equity_position_sale,
     capture_equity_ticket_snapshots,
     find_ibex_universe_company,
     EquityDocumentImportError,
@@ -84,6 +87,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         resume_equity_optimization_runs()
         auto_sync = self._auto_sync_market_data()
         positions = list(EquityPosition.objects.prefetch_related("price_history"))
+        closed_positions = list(EquityClosedPosition.objects.all())
         selected_start_date, selected_end_date = self._selected_period_bounds()
         optimizer_requested = self._optimizer_requested()
         dashboard = build_equity_analysis_dashboard(
@@ -118,6 +122,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         ]
         capture_equity_ticket_snapshots(dashboard["owned_history_cards"])
         context["ticket_tracking"] = build_equity_ticket_tracking_context(dashboard["owned_history_cards"])
+        context["investment_journey"] = build_equity_investment_journey_context(positions, closed_positions)
         context["ibex_universe_summary"] = dashboard["ibex_universe_summary"]
         context["tracked_reference_rows"] = dashboard["tracked_reference_rows"]
         context["reference_guide_rows"] = dashboard["reference_guide_rows"]
@@ -164,6 +169,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         )
         context["prefill_source_filename"] = kwargs.get("prefill_source_filename")
         context["equity_company_catalog"] = get_equity_company_catalog()
+        context["today"] = timezone.localdate()
         return context
 
     def post(self, request, *args, **kwargs):
@@ -174,6 +180,10 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             return self._prefill_position_from_document(request)
         if action == "change_reference":
             return self._change_reference(request)
+        if action == "delete_position":
+            return self._delete_position(request)
+        if action == "close_position":
+            return self._close_position(request)
         if action == "launch_optimizer_run":
             return self._launch_optimizer_run(request)
         return self._save_position(request)
@@ -282,6 +292,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             "quote_symbol": form.cleaned_data["quote_symbol"],
             **reference_defaults,
             "trade_channel": form.cleaned_data["trade_channel"],
+            "opened_on": form.cleaned_data["opened_on"],
             "shares": form.cleaned_data["shares"],
             "average_cost_per_share": form.cleaned_data["average_cost_per_share"],
             "current_price_per_share": form.cleaned_data["current_price_per_share"],
@@ -349,6 +360,63 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 f"Se ha cambiado la referencia de {position.ticker}, pero no se pudo refrescar el historico: {exc}",
             )
 
+        return redirect("equities:list")
+
+    def _delete_position(self, request):
+        position_id = request.POST.get("position_id", "").strip()
+        if not position_id:
+            messages.error(request, "No se ha encontrado la posicion a eliminar.")
+            return redirect("equities:list")
+
+        try:
+            position = EquityPosition.objects.get(pk=position_id)
+        except EquityPosition.DoesNotExist:
+            messages.info(request, "La posicion ya no existe.")
+            return redirect("equities:list")
+
+        ticker = position.ticker
+        company_name = position.company_name
+        position.delete()
+        messages.success(request, f"{ticker} - {company_name} se ha eliminado de la lista de acciones.")
+        return redirect("equities:list")
+
+    def _close_position(self, request):
+        position_id = request.POST.get("position_id", "").strip()
+        if not position_id:
+            messages.error(request, "No se ha encontrado la posicion a vender.")
+            return redirect("equities:list")
+
+        try:
+            position = EquityPosition.objects.get(pk=position_id)
+        except EquityPosition.DoesNotExist:
+            messages.info(request, "La posicion ya no existe.")
+            return redirect("equities:list")
+
+        if not position.is_owned:
+            messages.error(request, "Solo puedes registrar una venta sobre posiciones compradas.")
+            return redirect("equities:list")
+
+        form = EquityClosePositionForm(request.POST)
+        if not form.is_valid():
+            error_text = " ".join(error for errors in form.errors.values() for error in errors)
+            messages.error(request, error_text or "No se ha podido registrar la venta.")
+            return redirect("equities:list")
+
+        closed_on = form.cleaned_data["closed_on"]
+        if position.opened_on and closed_on < position.opened_on:
+            messages.error(request, "La fecha de venta no puede ser anterior a la fecha de compra.")
+            return redirect("equities:list")
+
+        archived = archive_equity_position_sale(
+            position,
+            closed_on=closed_on,
+            sale_price_per_share=form.cleaned_data["sale_price_per_share"],
+            notes=form.cleaned_data["notes"],
+        )
+        messages.success(
+            request,
+            f"Venta registrada para {archived.ticker}. Resultado neto {archived.net_result:.2f} EUR y margen acumulado {archived.cumulative_margin_pct:.2f} %.",
+        )
         return redirect("equities:list")
 
     def _launch_optimizer_run(self, request):

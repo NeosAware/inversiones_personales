@@ -7,8 +7,49 @@
     <div class="equity-tag-list">
       <span class="equity-tag">{{ card.reference_label }}</span>
       <span class="equity-tag">{{ card.broker_costs.trade_channel_label }}</span>
+      {% if card.position.opened_on %}<span class="equity-tag">Compra {{ card.position.opened_on|date:"Y-m-d" }}</span>{% endif %}
       {% if card.position.latest_price_date %}<span class="equity-tag">Precio {{ card.position.latest_price_date|date:"Y-m-d" }}</span>{% endif %}
     </div>
+  </div>
+
+  <div class="equity-chart-foot" style="margin-top:10px;">
+    {% if card.position.is_owned %}
+      <details class="equity-inline-fold" style="flex:1 1 340px;">
+        <summary>Registrar venta total</summary>
+        <div class="equity-inline-body">
+          <form method="post" class="stack">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="close_position">
+            <input type="hidden" name="position_id" value="{{ card.position.id }}">
+            <div class="equity-grid-4">
+              <div>
+                <label for="close-date-{{ card.position.id }}">Fecha venta</label>
+                <input id="close-date-{{ card.position.id }}" type="date" name="closed_on" value="{{ today|date:'Y-m-d' }}">
+              </div>
+              <div>
+                <label for="close-price-{{ card.position.id }}">Precio venta</label>
+                <input id="close-price-{{ card.position.id }}" type="text" name="sale_price_per_share" value="{{ card.position.current_price_per_share }}">
+              </div>
+              <div style="grid-column:span 2;">
+                <label for="close-notes-{{ card.position.id }}">Notas</label>
+                <textarea id="close-notes-{{ card.position.id }}" name="notes" rows="2" placeholder="Motivo de venta o recordatorio"></textarea>
+              </div>
+            </div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button class="button" type="submit">Vender y sacar de cartera</button>
+              <span class="metric-sub">La venta se guarda en historico y desaparece de posiciones activas.</span>
+            </div>
+          </form>
+        </div>
+      </details>
+    {% else %}
+      <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="delete_position">
+        <input type="hidden" name="position_id" value="{{ card.position.id }}">
+        <button class="button secondary" type="submit">Eliminar seguimiento</button>
+      </form>
+    {% endif %}
   </div>
 
   {% if card.has_history %}

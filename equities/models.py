@@ -54,6 +54,7 @@ class EquityPosition(models.Model):
         choices=TradeChannel.choices,
         default=TradeChannel.APP,
     )
+    opened_on = models.DateField(null=True, blank=True)
     shares = models.DecimalField(max_digits=14, decimal_places=4)
     average_cost_per_share = models.DecimalField(max_digits=14, decimal_places=4)
     current_price_per_share = models.DecimalField(max_digits=14, decimal_places=4)
@@ -106,6 +107,10 @@ class EquityPosition(models.Model):
     @property
     def purchase_total_cost(self):
         return self.estimated_broker_costs.get("purchase_total_cost", Decimal("0.00"))
+
+    @property
+    def sale_total_cost_estimate(self):
+        return self.estimated_broker_costs.get("sale_total_cost", Decimal("0.00"))
 
     @property
     def net_dividend_income(self):
@@ -186,6 +191,83 @@ class EquityTicketSnapshot(models.Model):
 
     def __str__(self):
         return f"{self.position.ticker} snapshot {self.snapshot_date}"
+
+
+class EquityClosedPosition(models.Model):
+    ownership_category = models.CharField(
+        max_length=12,
+        choices=AssetOwnershipCategory.choices,
+        default=AssetOwnershipCategory.JOINT,
+    )
+    broker = models.CharField(max_length=120)
+    ticker = models.CharField(max_length=20)
+    quote_symbol = models.CharField(max_length=40, blank=True)
+    company_name = models.CharField(max_length=160)
+    trade_channel = models.CharField(
+        max_length=24,
+        choices=EquityPosition.TradeChannel.choices,
+        default=EquityPosition.TradeChannel.APP,
+    )
+    benchmark_symbol = models.CharField(max_length=40, blank=True, default="^IBEX")
+    benchmark_name = models.CharField(max_length=120, blank=True, default="IBEX 35")
+    opened_on = models.DateField(null=True, blank=True)
+    closed_on = models.DateField()
+    shares = models.DecimalField(max_digits=14, decimal_places=4)
+    average_cost_per_share = models.DecimalField(max_digits=14, decimal_places=4)
+    sale_price_per_share = models.DecimalField(max_digits=14, decimal_places=4)
+    purchase_total_cost = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    sale_total_cost = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    maintenance_cost_total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    net_dividend_income_total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    archived_price_history = models.JSONField(default=list, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-closed_on", "ticker"]
+
+    def __str__(self):
+        return f"{self.ticker} vendida el {self.closed_on}"
+
+    @property
+    def invested_amount(self):
+        return self.shares * self.average_cost_per_share
+
+    @property
+    def gross_sale_value(self):
+        return self.shares * self.sale_price_per_share
+
+    @property
+    def net_sale_value(self):
+        return self.gross_sale_value - self.sale_total_cost
+
+    @property
+    def committed_capital(self):
+        return self.invested_amount + self.purchase_total_cost
+
+    @property
+    def net_result(self):
+        return self.net_sale_value - self.invested_amount - self.purchase_total_cost - self.maintenance_cost_total + self.net_dividend_income_total
+
+    @property
+    def cumulative_margin_pct(self):
+        if not self.committed_capital:
+            return Decimal("0.00")
+        return (self.net_result / self.committed_capital) * Decimal("100")
+
+    @property
+    def holding_days(self):
+        if not self.opened_on:
+            return 0
+        return max((self.closed_on - self.opened_on).days, 0)
+
+    @property
+    def annualized_margin_pct(self):
+        if not self.committed_capital:
+            return Decimal("0.00")
+        holding_days = max(self.holding_days, 1)
+        return self.cumulative_margin_pct * (Decimal("365") / Decimal(str(holding_days)))
 
 
 class EquityOptimizationRun(models.Model):

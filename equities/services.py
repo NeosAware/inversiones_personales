@@ -23,7 +23,7 @@ from banking.services import load_rows_from_workbook
 from portfolio.ownership import AssetOwnershipCategory
 
 from .broker_costs import estimate_broker_costs, resolve_recurring_cost_used
-from .models import EquityPosition, EquityPriceHistory, EquityTicketSnapshot
+from .models import EquityClosedPosition, EquityPosition, EquityPriceHistory, EquityTicketSnapshot
 
 
 ZERO = Decimal("0.00")
@@ -2778,6 +2778,374 @@ def build_equity_ticket_tracking_context(history_cards: list[dict]) -> dict:
         "snapshot_days_count": len(snapshot_days),
         "global": build_global_equity_ticket_tracking_item(ticket_items) if ticket_items else {"available": False},
     }
+
+
+def serialize_equity_market_value_history(
+    position: EquityPosition,
+    closed_on: date | None = None,
+    sale_price_per_share: Decimal | None = None,
+) -> list[dict]:
+    history = list(position.price_history.all().order_by("price_date"))
+    serialized = []
+    for point in history:
+        if closed_on and point.price_date > closed_on:
+            break
+        serialized.append(
+            {
+                "date": point.price_date.isoformat(),
+                "market_value": str(quantize_decimal(position.shares * point.close_price, "0.01") or ZERO),
+            }
+        )
+    if closed_on and sale_price_per_share is not None:
+        sale_market_value = quantize_decimal(position.shares * sale_price_per_share, "0.01") or ZERO
+        if serialized and serialized[-1]["date"] == closed_on.isoformat():
+            serialized[-1]["market_value"] = str(sale_market_value)
+        else:
+            serialized.append({"date": closed_on.isoformat(), "market_value": str(sale_market_value)})
+    return serialized
+
+
+def build_single_value_history_chart(series: list[dict]) -> dict:
+    filtered = [
+        {"date": point.get("date"), "value": Decimal(str(point.get("value")))}
+        for point in series
+        if point.get("date") is not None and point.get("value") is not None
+    ]
+    if len(filtered) < 2:
+        return {"available": False}
+    chart = build_dual_axis_chart(filtered, [])
+    return {
+        "available": bool(chart.get("stock_line")),
+        "line": chart.get("stock_line", ""),
+        "min_label": chart.get("stock_min_label", "-"),
+        "max_label": chart.get("stock_max_label", "-"),
+        "x_markers": chart.get("x_markers", []),
+        "start_label": filtered[0]["date"].isoformat(),
+        "end_label": filtered[-1]["date"].isoformat(),
+        "points_count": len(filtered),
+    }
+
+
+def collapse_date_value_series(series: list[dict], frequency: str = "monthly") -> list[dict]:
+    buckets = {}
+    for point in series:
+        point_date = point.get("date")
+        value = point.get("value")
+        if point_date is None or value is None:
+            continue
+        label = bucket_label_for_date(point_date, frequency)
+        buckets[label] = {"date": point_date, "value": Decimal(str(value))}
+    return [buckets[label] for label in sorted(buckets.keys())]
+
+
+def resolve_position_start_date(
+    opened_on: date | None,
+    fallback_date: date | None,
+    default_date: date | None = None,
+) -> tuple[date, str, bool]:
+    if opened_on:
+        return opened_on, "Fecha de compra indicada", False
+    if fallback_date:
+        return fallback_date, "Primer dato historico disponible", True
+    if default_date:
+        return default_date, "Fecha aproximada sin historico", True
+    today = django_timezone.localdate()
+    return today, "Fecha aproximada sin historico", True
+
+
+def estimate_period_totals(
+    annual_recurring_cost: Decimal,
+    annual_net_dividend_income: Decimal,
+    start_date: date,
+    end_date: date,
+) -> tuple[Decimal, Decimal, int]:
+    elapsed_days = max((end_date - start_date).days, 0)
+    year_fraction = Decimal(str(elapsed_days)) / Decimal("365")
+    maintenance_total = quantize_decimal(annual_recurring_cost * year_fraction, "0.01") or ZERO
+    dividend_total = quantize_decimal(annual_net_dividend_income * year_fraction, "0.01") or ZERO
+    return maintenance_total, dividend_total, elapsed_days
+
+
+def build_active_equity_investment_ticket(position: EquityPosition) -> dict | None:
+    history = list(position.price_history.all().order_by("price_date"))
+    fallback_start_date = history[0].price_date if history else position.latest_price_date
+    default_end_date = position.latest_price_date or (history[-1].price_date if history else django_timezone.localdate())
+    start_date, start_label, is_estimated = resolve_position_start_date(position.opened_on, fallback_start_date, default_end_date)
+    end_date = max(default_end_date, start_date)
+    purchase_cost = quantize_decimal(position.purchase_total_cost, "0.01") or ZERO
+    sale_cost_estimate = quantize_decimal(position.sale_total_cost_estimate, "0.01") or ZERO
+    maintenance_total, dividend_total, holding_days = estimate_period_totals(
+        position.recurring_cost_used,
+        position.net_dividend_income,
+        start_date,
+        end_date,
+    )
+
+    live_series = [{"date": start_date, "value": quantize_decimal(position.invested_amount - purchase_cost, "0.01") or ZERO}]
+    monthly_history = collapse_date_value_series(
+        [
+            {
+                "date": point.price_date,
+                "value": quantize_decimal(
+                    (position.shares * point.close_price)
+                    - purchase_cost
+                    - (quantize_decimal(position.recurring_cost_used * (Decimal(str(max((point.price_date - start_date).days, 0))) / Decimal("365")), "0.01") or ZERO)
+                    + (quantize_decimal(position.net_dividend_income * (Decimal(str(max((point.price_date - start_date).days, 0))) / Decimal("365")), "0.01") or ZERO),
+                    "0.01",
+                )
+                or ZERO,
+            }
+            for point in history
+            if point.price_date >= start_date
+        ]
+    )
+    live_series.extend(monthly_history)
+    latest_live_value = quantize_decimal(position.current_value - purchase_cost - maintenance_total + dividend_total, "0.01") or ZERO
+    if not live_series or live_series[-1]["date"] != end_date:
+        live_series.append({"date": end_date, "value": latest_live_value})
+    else:
+        live_series[-1]["value"] = latest_live_value
+
+    committed_capital = quantize_decimal(position.invested_amount + purchase_cost, "0.01") or ZERO
+    net_exit_value = quantize_decimal(latest_live_value - sale_cost_estimate, "0.01") or ZERO
+    net_result = quantize_decimal(net_exit_value - position.invested_amount, "0.01") or ZERO
+    cumulative_margin_pct = ((net_result / committed_capital) * ONE_HUNDRED) if committed_capital else ZERO
+    annualized_margin_pct = (
+        cumulative_margin_pct * (Decimal("365") / Decimal(str(max(holding_days, 1))))
+        if committed_capital
+        else ZERO
+    )
+    return {
+        "status": "active",
+        "status_label": "En cartera",
+        "ticker": position.ticker,
+        "company_name": position.company_name,
+        "broker": position.broker,
+        "position": position,
+        "start_date": start_date,
+        "end_date": end_date,
+        "start_date_label": start_date.isoformat(),
+        "end_date_label": end_date.isoformat(),
+        "start_date_source_label": start_label,
+        "start_date_is_estimated": is_estimated,
+        "committed_capital": committed_capital,
+        "purchase_cost": purchase_cost,
+        "sale_cost": sale_cost_estimate,
+        "maintenance_total": maintenance_total,
+        "dividend_total": dividend_total,
+        "costs_total": quantize_decimal(purchase_cost + sale_cost_estimate + maintenance_total, "0.01") or ZERO,
+        "current_or_sale_value": quantize_decimal(position.current_value, "0.01") or ZERO,
+        "net_live_value": latest_live_value,
+        "net_exit_value": net_exit_value,
+        "net_result": net_result,
+        "cumulative_margin_pct": quantize_decimal(cumulative_margin_pct, "0.01") or ZERO,
+        "annualized_margin_pct": quantize_decimal(annualized_margin_pct, "0.01") or ZERO,
+        "holding_days": holding_days,
+        "value_series": live_series,
+        "value_chart": build_single_value_history_chart(live_series),
+        "notes": "La rentabilidad actual descuenta compra y mantenimiento. La salida neta incluye tambien el coste estimado de venta si cerraras hoy.",
+    }
+
+
+def build_closed_equity_investment_ticket(position: EquityClosedPosition) -> dict:
+    archived_series = collapse_date_value_series(
+        [
+            {
+                "date": date.fromisoformat(str(point.get("date"))),
+                "value": Decimal(str(point.get("market_value") or "0")),
+            }
+            for point in (position.archived_price_history or [])
+            if point.get("date")
+        ]
+    )
+    fallback_start_date = archived_series[0]["date"] if archived_series else position.closed_on
+    start_date, start_label, is_estimated = resolve_position_start_date(position.opened_on, fallback_start_date, position.closed_on)
+    end_date = position.closed_on
+    total_days = max((end_date - start_date).days, 0)
+    live_series = [{"date": start_date, "value": quantize_decimal(position.invested_amount - position.purchase_total_cost, "0.01") or ZERO}]
+    for point in archived_series:
+        if point["date"] < start_date:
+            continue
+        elapsed_ratio = Decimal(str(max((point["date"] - start_date).days, 0))) / Decimal(str(max(total_days, 1)))
+        accrued_maintenance = quantize_decimal(position.maintenance_cost_total * elapsed_ratio, "0.01") or ZERO
+        accrued_dividends = quantize_decimal(position.net_dividend_income_total * elapsed_ratio, "0.01") or ZERO
+        live_series.append(
+            {
+                "date": point["date"],
+                "value": quantize_decimal(point["value"] - position.purchase_total_cost - accrued_maintenance + accrued_dividends, "0.01") or ZERO,
+            }
+        )
+    net_sale_value = quantize_decimal(position.net_sale_value - position.purchase_total_cost - position.maintenance_cost_total + position.net_dividend_income_total, "0.01") or ZERO
+    if not live_series or live_series[-1]["date"] != end_date:
+        live_series.append({"date": end_date, "value": net_sale_value})
+    else:
+        live_series[-1]["value"] = net_sale_value
+
+    committed_capital = quantize_decimal(position.committed_capital, "0.01") or ZERO
+    net_result = quantize_decimal(position.net_result, "0.01") or ZERO
+    cumulative_margin_pct = quantize_decimal(position.cumulative_margin_pct, "0.01") or ZERO
+    annualized_margin_pct = quantize_decimal(position.annualized_margin_pct, "0.01") or ZERO
+    return {
+        "status": "closed",
+        "status_label": "Vendida",
+        "ticker": position.ticker,
+        "company_name": position.company_name,
+        "broker": position.broker,
+        "position": position,
+        "start_date": start_date,
+        "end_date": end_date,
+        "start_date_label": start_date.isoformat(),
+        "end_date_label": end_date.isoformat(),
+        "start_date_source_label": start_label,
+        "start_date_is_estimated": is_estimated,
+        "committed_capital": committed_capital,
+        "purchase_cost": quantize_decimal(position.purchase_total_cost, "0.01") or ZERO,
+        "sale_cost": quantize_decimal(position.sale_total_cost, "0.01") or ZERO,
+        "maintenance_total": quantize_decimal(position.maintenance_cost_total, "0.01") or ZERO,
+        "dividend_total": quantize_decimal(position.net_dividend_income_total, "0.01") or ZERO,
+        "costs_total": quantize_decimal(position.purchase_total_cost + position.sale_total_cost + position.maintenance_cost_total, "0.01") or ZERO,
+        "current_or_sale_value": quantize_decimal(position.gross_sale_value, "0.01") or ZERO,
+        "net_live_value": net_sale_value,
+        "net_exit_value": net_sale_value,
+        "net_result": net_result,
+        "cumulative_margin_pct": cumulative_margin_pct,
+        "annualized_margin_pct": annualized_margin_pct,
+        "holding_days": max((end_date - start_date).days, 0),
+        "value_series": live_series,
+        "value_chart": build_single_value_history_chart(live_series),
+        "notes": "Resultado cerrado. La venta ya descuenta compra, mantenimiento y el coste real estimado de salida.",
+    }
+
+
+def build_equity_investment_journey_context(
+    open_positions: list[EquityPosition],
+    closed_positions: list[EquityClosedPosition],
+) -> dict:
+    active_tickets = [ticket for ticket in (build_active_equity_investment_ticket(position) for position in open_positions if position.is_owned) if ticket]
+    closed_tickets = [build_closed_equity_investment_ticket(position) for position in closed_positions]
+    all_tickets = [*active_tickets, *closed_tickets]
+    if not all_tickets:
+        return {
+            "available": False,
+            "active_tickets": [],
+            "closed_tickets": [],
+            "value_chart": {"available": False},
+            "profit_chart": {"available": False},
+        }
+
+    date_points = sorted({point["date"] for ticket in all_tickets for point in ticket["value_series"]})
+    aggregated_value_series = []
+    aggregated_profit_series = []
+    yearly_profit_buckets: dict[int, Decimal] = {}
+
+    for point_date in date_points:
+        total_value = ZERO
+        total_committed = ZERO
+        for ticket in all_tickets:
+            applicable_points = [point for point in ticket["value_series"] if point["date"] <= point_date]
+            if not applicable_points or point_date < ticket["start_date"]:
+                continue
+            latest_point = applicable_points[-1]
+            total_value += latest_point["value"]
+            total_committed += ticket["committed_capital"]
+        total_profit = total_value - total_committed
+        aggregated_value_series.append({"date": point_date, "value": quantize_decimal(total_value, "0.01") or ZERO})
+        aggregated_profit_series.append({"date": point_date, "value": quantize_decimal(total_profit, "0.01") or ZERO})
+        yearly_profit_buckets[point_date.year] = quantize_decimal(total_profit, "0.01") or ZERO
+
+    total_committed_capital = sum((ticket["committed_capital"] for ticket in all_tickets), ZERO)
+    total_net_result = sum((ticket["net_result"] for ticket in all_tickets), ZERO)
+    total_realized_result = sum((ticket["net_result"] for ticket in closed_tickets), ZERO)
+    total_live_result = sum((ticket["net_result"] for ticket in active_tickets), ZERO)
+    total_costs = sum((ticket["costs_total"] for ticket in all_tickets), ZERO)
+    total_dividends = sum((ticket["dividend_total"] for ticket in all_tickets), ZERO)
+    earliest_start = min((ticket["start_date"] for ticket in all_tickets), default=django_timezone.localdate())
+    latest_end = max((ticket["end_date"] for ticket in all_tickets), default=django_timezone.localdate())
+    total_days = max((latest_end - earliest_start).days, 1)
+    cumulative_margin_pct = ((total_net_result / total_committed_capital) * ONE_HUNDRED) if total_committed_capital else ZERO
+    annualized_margin_pct = cumulative_margin_pct * (Decimal("365") / Decimal(str(total_days))) if total_committed_capital else ZERO
+    annual_rows = []
+    previous_profit = ZERO
+    for year in sorted(yearly_profit_buckets):
+        year_profit = yearly_profit_buckets[year]
+        annual_result = quantize_decimal(year_profit - previous_profit, "0.01") or ZERO
+        annual_rows.append({"year": year, "net_result": annual_result})
+        previous_profit = year_profit
+
+    active_tickets.sort(key=lambda ticket: (-ticket["current_or_sale_value"], ticket["company_name"]))
+    closed_tickets.sort(key=lambda ticket: (ticket["end_date"], ticket["company_name"]), reverse=True)
+    return {
+        "available": True,
+        "active_tickets": active_tickets,
+        "closed_tickets": closed_tickets,
+        "tickets_count": len(all_tickets),
+        "active_count": len(active_tickets),
+        "closed_count": len(closed_tickets),
+        "value_chart": build_single_value_history_chart(aggregated_value_series),
+        "profit_chart": build_single_value_history_chart(aggregated_profit_series),
+        "current_net_value": aggregated_value_series[-1]["value"] if aggregated_value_series else ZERO,
+        "cumulative_net_result": quantize_decimal(total_net_result, "0.01") or ZERO,
+        "cumulative_margin_pct": quantize_decimal(cumulative_margin_pct, "0.01") or ZERO,
+        "annualized_margin_pct": quantize_decimal(annualized_margin_pct, "0.01") or ZERO,
+        "realized_net_result": quantize_decimal(total_realized_result, "0.01") or ZERO,
+        "live_net_result": quantize_decimal(total_live_result, "0.01") or ZERO,
+        "committed_capital_total": quantize_decimal(total_committed_capital, "0.01") or ZERO,
+        "costs_total": quantize_decimal(total_costs, "0.01") or ZERO,
+        "dividends_total": quantize_decimal(total_dividends, "0.01") or ZERO,
+        "holding_start_label": earliest_start.isoformat() if earliest_start else "",
+        "holding_end_label": latest_end.isoformat() if latest_end else "",
+        "annual_rows": annual_rows,
+        "estimated_start_count": sum(1 for ticket in all_tickets if ticket["start_date_is_estimated"]),
+    }
+
+
+@transaction.atomic
+def archive_equity_position_sale(
+    position: EquityPosition,
+    closed_on: date,
+    sale_price_per_share: Decimal,
+    notes: str = "",
+) -> EquityClosedPosition:
+    fallback_start_date = position.price_history.order_by("price_date").values_list("price_date", flat=True).first()
+    start_date = position.opened_on or fallback_start_date or closed_on
+    maintenance_total, dividend_total, _ = estimate_period_totals(
+        position.recurring_cost_used,
+        position.net_dividend_income,
+        start_date,
+        closed_on,
+    )
+    sale_trade_amount = quantize_decimal(position.shares * sale_price_per_share, "0.01") or ZERO
+    sale_costs = estimate_broker_costs(
+        broker_name=position.broker,
+        trade_channel=position.trade_channel,
+        trade_amount=sale_trade_amount,
+        valuation_amount=sale_trade_amount,
+        annual_dividend_income=position.annual_dividend_income,
+        quote_symbol=position.quote_symbol,
+    )
+    archived = EquityClosedPosition.objects.create(
+        ownership_category=position.ownership_category,
+        broker=position.broker,
+        ticker=position.ticker,
+        quote_symbol=position.quote_symbol,
+        company_name=position.company_name,
+        trade_channel=position.trade_channel,
+        benchmark_symbol=position.benchmark_symbol,
+        benchmark_name=position.benchmark_name,
+        opened_on=position.opened_on,
+        closed_on=closed_on,
+        shares=position.shares,
+        average_cost_per_share=position.average_cost_per_share,
+        sale_price_per_share=sale_price_per_share,
+        purchase_total_cost=quantize_decimal(position.purchase_total_cost, "0.01") or ZERO,
+        sale_total_cost=quantize_decimal(sale_costs.get("sale_total_cost", ZERO), "0.01") or ZERO,
+        maintenance_cost_total=maintenance_total,
+        net_dividend_income_total=dividend_total,
+        archived_price_history=serialize_equity_market_value_history(position, closed_on, sale_price_per_share),
+        notes="\n\n".join(filter(None, [position.notes, notes])),
+    )
+    position.delete()
+    return archived
 
 
 def average_decimal(values: list[Decimal]) -> Decimal | None:
