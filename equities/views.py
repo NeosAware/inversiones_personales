@@ -80,6 +80,9 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
         context["watchlist_positions"] = dashboard["watchlist_positions"]
         context["owned_history_cards"] = dashboard["owned_history_cards"]
         context["watchlist_history_cards"] = dashboard["watchlist_history_cards"]
+        context["tracked_reference_rows"] = dashboard["tracked_reference_rows"]
+        context["reference_guide_rows"] = dashboard["reference_guide_rows"]
+        context["reference_guide_summary"] = dashboard["reference_guide_summary"]
         context["analysis_overview"] = dashboard["overview"]
         context["auto_sync"] = auto_sync
         context["selected_period_start"] = selected_start_date

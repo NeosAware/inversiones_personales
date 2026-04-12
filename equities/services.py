@@ -7,10 +7,12 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone as django_timezone
@@ -403,6 +405,28 @@ IBEX_COMPANY_PROFILES = [
     },
 ]
 
+IBEX_REFERENCE_WORKBOOK_FILENAME = "IBEX35_Indicadores_Referencia.xlsx"
+WORKBOOK_CORRELATION_INDICATOR_ALIASES = {
+    "Euribor 12m": "Euribor 12m (%)",
+    "Precio electricidad": "Precio electricidad OMIE (EUR/MWh)",
+    "Gasto defensa": "Gasto defensa Espana (% PIB)",
+    "IPV vivienda": "Indice Precio Vivienda INE (2015=100)",
+    "Trafico aereo": "Trafico aereo AENA (M pax)",
+    "Brent": "Precio Brent (USD/barril prom.)",
+    "Licitacion obra": "Licitacion obra publica (MrdEUR)",
+    "Consumo privado": "Consumo privado Espana (var. %)",
+}
+WORKBOOK_LIVE_REFERENCE_ALIASES = {
+    "Euribor 12m (%)": "euribor_12m",
+    "IBEX 35 (puntos)": "ibex_35",
+    "Consumo electrico Espana (TWh)": "spain_electricity_demand",
+    "Indice Precio Vivienda INE (2015=100)": "spain_house_price",
+    "Precio Brent (USD/barril prom.)": "brent",
+}
+WORKBOOK_BASELINE_INDICATORS = [
+    "IBEX 35 (puntos)",
+]
+
 
 class MarketDataError(Exception):
     pass
@@ -523,6 +547,606 @@ def apply_equity_company_defaults(data: dict, override_generic_reference: bool =
         result["benchmark_name"] = default_reference["benchmark_name"]
 
     return result
+
+
+def workbook_text(value) -> str:
+    return str(value or "").strip()
+
+
+def workbook_decimal(value) -> Decimal | None:
+    if value in {None, ""}:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, (int, float)):
+        return Decimal(str(value))
+
+    text = workbook_text(value)
+    if not text or text in {"-", "—"}:
+        return None
+    text = (
+        text.replace("\xa0", "")
+        .replace("%", "")
+        .replace("EUR", "")
+        .replace("Mrd", "")
+        .replace("€", "")
+        .replace(",", ".")
+    )
+    try:
+        return Decimal(text)
+    except Exception:
+        return None
+
+
+def describe_reference_score(score: Decimal | None) -> str:
+    if score is None:
+        return "Sin referencia"
+    if score >= Decimal("0.70"):
+        return "Alta"
+    if score >= Decimal("0.50"):
+        return "Buena"
+    if score >= Decimal("0.35"):
+        return "Media"
+    return "Baja"
+
+
+def resolve_equities_reference_workbook_path() -> Path | None:
+    configured_path = getattr(settings, "EQUITIES_REFERENCE_WORKBOOK", "")
+    candidates = []
+    if configured_path:
+        candidates.append(Path(configured_path).expanduser())
+    candidates.append(Path.home() / "Downloads" / IBEX_REFERENCE_WORKBOOK_FILENAME)
+
+    for candidate in candidates:
+        try:
+            resolved = candidate.expanduser()
+        except Exception:
+            continue
+        if resolved.exists():
+            return resolved
+    return None
+
+
+def find_workbook_sheet(workbook, keyword: str):
+    normalized_keyword = normalize_company_lookup(keyword)
+    for worksheet in workbook.worksheets:
+        if normalized_keyword in normalize_company_lookup(worksheet.title):
+            return worksheet
+    return None
+
+
+def find_workbook_header_index(rows: list[list], first_header: str) -> int | None:
+    expected = normalize_company_lookup(first_header)
+    for index, row in enumerate(rows):
+        if not row:
+            continue
+        current = normalize_company_lookup(row[0])
+        if current == expected or current.startswith(expected):
+            return index
+    return None
+
+
+def extract_year_values(row: list, start_index: int = 3) -> dict[int, Decimal]:
+    values = {}
+    for offset, year in enumerate(range(2019, 2026), start=start_index):
+        if len(row) <= offset:
+            continue
+        numeric_value = workbook_decimal(row[offset])
+        if numeric_value is not None:
+            values[year] = numeric_value
+    return values
+
+
+def resolve_workbook_live_reference(indicator_name: str) -> dict | None:
+    normalized_name = normalize_company_lookup(indicator_name)
+    for alias, reference_key in WORKBOOK_LIVE_REFERENCE_ALIASES.items():
+        if normalize_company_lookup(alias) == normalized_name:
+            preset = get_reference_preset(reference_key)
+            return preset or None
+    return None
+
+
+def match_workbook_indicator_name(raw_label: str, workbook_snapshot: dict) -> str | None:
+    normalized_label = normalize_company_lookup(raw_label)
+    if not normalized_label:
+        return None
+
+    candidates = []
+    for short_name, full_name in workbook_snapshot.get("indicator_name_by_short", {}).items():
+        for candidate_name in (short_name, full_name):
+            normalized_candidate = normalize_company_lookup(candidate_name)
+            if not normalized_candidate:
+                continue
+            if normalized_candidate in normalized_label or normalized_label in normalized_candidate:
+                candidates.append((len(normalized_candidate), full_name))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def calculate_series_change_correlation(primary_series: dict[int, Decimal], secondary_series: dict[int, Decimal]) -> tuple[Decimal | None, int]:
+    shared_years = sorted(set(primary_series.keys()) & set(secondary_series.keys()))
+    if len(shared_years) < 4:
+        return None, 0
+
+    primary_changes = []
+    secondary_changes = []
+    for previous_year, current_year in zip(shared_years, shared_years[1:]):
+        primary_previous = primary_series.get(previous_year)
+        primary_current = primary_series.get(current_year)
+        secondary_previous = secondary_series.get(previous_year)
+        secondary_current = secondary_series.get(current_year)
+        if None in {primary_previous, primary_current, secondary_previous, secondary_current}:
+            continue
+        primary_changes.append(primary_current - primary_previous)
+        secondary_changes.append(secondary_current - secondary_previous)
+
+    if len(primary_changes) < 3:
+        return None, len(primary_changes)
+    return pearson_correlation(primary_changes, secondary_changes), len(primary_changes)
+
+
+@lru_cache(maxsize=1)
+def load_ibex_reference_workbook_snapshot() -> dict:
+    workbook_path = resolve_equities_reference_workbook_path()
+    if workbook_path is None:
+        return {
+            "available": False,
+            "path": "",
+            "companies": [],
+            "companies_by_key": {},
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return {
+            "available": False,
+            "path": str(workbook_path),
+            "companies": [],
+            "companies_by_key": {},
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+    workbook = load_workbook(workbook_path, data_only=True, read_only=True)
+    try:
+        summary_sheet = find_workbook_sheet(workbook, "Resumen")
+        quotes_sheet = find_workbook_sheet(workbook, "Cotizaciones")
+        indicators_sheet = find_workbook_sheet(workbook, "Indicadores")
+        correlations_sheet = find_workbook_sheet(workbook, "Correlaciones")
+
+        if not summary_sheet or not quotes_sheet or not indicators_sheet or not correlations_sheet:
+            return {
+                "available": False,
+                "path": str(workbook_path),
+                "companies": [],
+            "companies_by_key": {},
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+        summary_rows = [list(row) for row in summary_sheet.iter_rows(values_only=True)]
+        quotes_rows = [list(row) for row in quotes_sheet.iter_rows(values_only=True)]
+        indicators_rows = [list(row) for row in indicators_sheet.iter_rows(values_only=True)]
+        correlations_rows = [list(row) for row in correlations_sheet.iter_rows(values_only=True)]
+
+        summary_header_index = find_workbook_header_index(summary_rows, "Ticker")
+        quotes_header_index = find_workbook_header_index(quotes_rows, "Ticker")
+        indicators_header_index = find_workbook_header_index(indicators_rows, "Indicador")
+        correlations_header_index = find_workbook_header_index(correlations_rows, "Sector")
+        if None in {summary_header_index, quotes_header_index, indicators_header_index, correlations_header_index}:
+            return {
+                "available": False,
+                "path": str(workbook_path),
+                "companies": [],
+            "companies_by_key": {},
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+        companies = []
+        companies_by_key = {}
+        for row in summary_rows[summary_header_index + 1 :]:
+            ticker = workbook_text(row[0] if len(row) > 0 else "")
+            company_name = workbook_text(row[1] if len(row) > 1 else "")
+            if not ticker or not company_name:
+                continue
+            company = {
+                "ticker": ticker.upper(),
+                "company_name": company_name,
+                "sector": workbook_text(row[2] if len(row) > 2 else ""),
+                "return_2025": (
+                    workbook_decimal(row[3] if len(row) > 3 else None) * Decimal("100")
+                    if workbook_decimal(row[3] if len(row) > 3 else None) is not None
+                    else None
+                ),
+                "primary_reference": workbook_text(row[4] if len(row) > 4 else ""),
+                "reference_source": workbook_text(row[5] if len(row) > 5 else ""),
+                "primary_correlation": workbook_decimal(row[6] if len(row) > 6 else None),
+                "per_2025": workbook_decimal(row[7] if len(row) > 7 else None),
+                "dividend_yield": (
+                    workbook_decimal(row[8] if len(row) > 8 else None) * Decimal("100")
+                    if workbook_decimal(row[8] if len(row) > 8 else None) is not None
+                    else None
+                ),
+                "market_cap_billion": workbook_decimal(row[9] if len(row) > 9 else None),
+                "notes": workbook_text(row[10] if len(row) > 10 else ""),
+                "quote_symbol": workbook_text(row[11] if len(row) > 11 else ""),
+                "price_history": {},
+            }
+            companies.append(company)
+            for lookup_key in {
+                normalize_company_lookup(company["ticker"]),
+                normalize_company_lookup(company["company_name"]),
+                normalize_company_lookup(company["quote_symbol"]),
+            }:
+                if lookup_key:
+                    companies_by_key[lookup_key] = company
+
+        quote_prices_by_key = {}
+        for row in quotes_rows[quotes_header_index + 1 :]:
+            ticker = workbook_text(row[0] if len(row) > 0 else "")
+            company_name = workbook_text(row[1] if len(row) > 1 else "")
+            quote_symbol = workbook_text(row[15] if len(row) > 15 else "")
+            price_history = extract_year_values(row)
+            for lookup_key in {
+                normalize_company_lookup(ticker),
+                normalize_company_lookup(company_name),
+                normalize_company_lookup(quote_symbol),
+            }:
+                if lookup_key:
+                    quote_prices_by_key[lookup_key] = price_history
+
+        for company in companies:
+            for lookup_key in (
+                normalize_company_lookup(company["ticker"]),
+                normalize_company_lookup(company["company_name"]),
+                normalize_company_lookup(company["quote_symbol"]),
+            ):
+                if lookup_key in quote_prices_by_key:
+                    company["price_history"] = quote_prices_by_key[lookup_key]
+                    break
+
+        indicators_by_name = {}
+        indicators_by_key = {}
+        for row in indicators_rows[indicators_header_index + 1 :]:
+            indicator_name = workbook_text(row[0] if len(row) > 0 else "")
+            if not indicator_name:
+                continue
+            indicator_entry = {
+                "name": indicator_name,
+                "source": workbook_text(row[1] if len(row) > 1 else ""),
+                "sector_label": workbook_text(row[2] if len(row) > 2 else ""),
+                "values": extract_year_values(row),
+            }
+            indicators_by_name[indicator_name] = indicator_entry
+            indicators_by_key[normalize_company_lookup(indicator_name)] = indicator_entry
+
+        correlation_headers = [
+            workbook_text(value)
+            for value in correlations_rows[correlations_header_index][1:]
+            if workbook_text(value)
+        ]
+        indicator_name_by_short = {}
+        for short_name in correlation_headers:
+            full_name = WORKBOOK_CORRELATION_INDICATOR_ALIASES.get(short_name, short_name)
+            indicator_name_by_short[short_name] = full_name
+
+        sector_map = {}
+        for row in correlations_rows[correlations_header_index + 1 :]:
+            sector_label = workbook_text(row[0] if len(row) > 0 else "")
+            if not sector_label or sector_label.upper().startswith("NOTAS"):
+                continue
+            scores = {}
+            for column_index, short_name in enumerate(correlation_headers, start=1):
+                score = workbook_decimal(row[column_index] if len(row) > column_index else None)
+                if score is not None:
+                    scores[short_name] = score
+            if scores:
+                sector_map[sector_label] = scores
+
+        return {
+            "available": True,
+            "path": str(workbook_path),
+            "companies": companies,
+            "companies_by_key": companies_by_key,
+            "indicators_by_name": indicators_by_name,
+            "indicators_by_key": indicators_by_key,
+            "indicator_name_by_short": indicator_name_by_short,
+            "sector_map": sector_map,
+        }
+    finally:
+        workbook.close()
+
+
+def build_workbook_reference_candidates(company: dict, workbook_snapshot: dict, position: EquityPosition | None = None) -> list[dict]:
+    sector_scores = workbook_snapshot.get("sector_map", {}).get(company.get("sector", ""), {})
+    selected_reference_key = None
+    if position is not None:
+        selected_reference_key = (
+            position.reference_profile,
+            position.benchmark_symbol,
+            position.benchmark_name,
+        )
+
+    primary_indicator_name = match_workbook_indicator_name(company.get("primary_reference", ""), workbook_snapshot)
+    candidate_names = []
+    for short_name in sector_scores.keys():
+        full_name = workbook_snapshot.get("indicator_name_by_short", {}).get(short_name, short_name)
+        candidate_names.append(full_name)
+    if primary_indicator_name:
+        candidate_names.append(primary_indicator_name)
+    candidate_names.extend(WORKBOOK_BASELINE_INDICATORS)
+
+    seen = set()
+    candidates = []
+    for indicator_name in candidate_names:
+        normalized_indicator = normalize_company_lookup(indicator_name)
+        if not normalized_indicator or normalized_indicator in seen:
+            continue
+        seen.add(normalized_indicator)
+
+        short_name = next(
+            (
+                item_short_name
+                for item_short_name, item_full_name in workbook_snapshot.get("indicator_name_by_short", {}).items()
+                if normalize_company_lookup(item_full_name) == normalized_indicator
+            ),
+            indicator_name,
+        )
+        sector_score = sector_scores.get(short_name)
+        if primary_indicator_name and normalize_company_lookup(primary_indicator_name) == normalized_indicator:
+            if company.get("primary_correlation") is not None:
+                sector_score = max(sector_score or ZERO, company["primary_correlation"])
+
+        indicator_entry = workbook_snapshot.get("indicators_by_key", {}).get(normalized_indicator)
+        historical_coefficient = None
+        observations_count = 0
+        if company.get("price_history") and indicator_entry:
+            historical_coefficient, observations_count = calculate_series_change_correlation(
+                company["price_history"],
+                indicator_entry.get("values", {}),
+            )
+
+        live_reference = resolve_workbook_live_reference(indicator_name)
+        is_active_reference = False
+        if selected_reference_key and live_reference:
+            candidate_key = (
+                live_reference["reference_profile"],
+                live_reference["benchmark_symbol"],
+                live_reference["benchmark_name"],
+            )
+            is_active_reference = candidate_key == selected_reference_key
+
+        sector_component = sector_score or ZERO
+        history_component = abs(historical_coefficient) if historical_coefficient is not None else ZERO
+        composite_score = (sector_component * Decimal("0.65")) + (history_component * Decimal("0.35"))
+        if normalize_company_lookup(primary_indicator_name or "") == normalized_indicator:
+            composite_score += Decimal("0.05")
+
+        candidates.append(
+            {
+                "name": indicator_name,
+                "short_name": short_name,
+                "sector_score": sector_score,
+                "sector_score_label": describe_reference_score(sector_score),
+                "historical_coefficient": historical_coefficient,
+                "historical_label": describe_correlation(historical_coefficient),
+                "observations_count": observations_count,
+                "live_reference": live_reference,
+                "supports_chart": bool(live_reference),
+                "is_active_reference": is_active_reference,
+                "is_primary_reference": normalize_company_lookup(primary_indicator_name or "") == normalized_indicator,
+                "composite_score": composite_score,
+            }
+        )
+
+    candidates.sort(
+        key=lambda item: (
+            item["composite_score"],
+            item["sector_score"] or ZERO,
+            abs(item["historical_coefficient"]) if item["historical_coefficient"] is not None else ZERO,
+            item["name"],
+        ),
+        reverse=True,
+    )
+
+    best_marked = False
+    for candidate in candidates:
+        candidate["is_best"] = not best_marked
+        if not best_marked:
+            best_marked = True
+    return candidates
+
+
+def build_reference_playbook_from_card(card: dict) -> dict:
+    candidates = []
+    for suggestion in card.get("suggested_references", []):
+        live_reference = {
+            "reference_profile": suggestion["reference_profile"],
+            "benchmark_symbol": suggestion["benchmark_symbol"],
+            "benchmark_name": suggestion["benchmark_name"],
+        }
+        historical_coefficient = suggestion["correlation"].get("coefficient")
+        candidates.append(
+            {
+                "name": suggestion["benchmark_name"],
+                "short_name": suggestion["benchmark_name"],
+                "sector_score": None,
+                "sector_score_label": "Sin guia sectorial",
+                "historical_coefficient": historical_coefficient,
+                "historical_label": suggestion["correlation"].get("label") or describe_correlation(historical_coefficient),
+                "observations_count": suggestion["correlation"].get("observations_count", 0),
+                "live_reference": live_reference,
+                "supports_chart": True,
+                "is_active_reference": suggestion.get("is_selected", False),
+                "is_primary_reference": suggestion.get("is_best", False),
+                "is_best": suggestion.get("is_best", False),
+                "composite_score": abs(historical_coefficient) if historical_coefficient is not None else ZERO,
+            }
+        )
+
+    return {
+        "available": bool(candidates),
+        "source_label": "Historico de la app",
+        "company_sector": "",
+        "current_reference_label": card.get("reference_label"),
+        "current_candidate": next((candidate for candidate in candidates if candidate["is_active_reference"]), None),
+        "best_candidate": next((candidate for candidate in candidates if candidate["is_best"]), None),
+        "candidates": candidates[:4],
+        "return_2025": None,
+        "per_2025": None,
+        "dividend_yield": None,
+        "notes": card["position"].notes,
+    }
+
+
+def build_workbook_reference_playbook(company: dict, workbook_snapshot: dict, card: dict | None = None) -> dict:
+    position = card["position"] if card else None
+    ranked_candidates = build_workbook_reference_candidates(company, workbook_snapshot, position=position)
+    current_candidate = next((candidate for candidate in ranked_candidates if candidate["is_active_reference"]), None)
+    candidates = ranked_candidates[:4]
+    if current_candidate and current_candidate not in candidates:
+        candidates = [current_candidate, *candidates[:3]]
+    current_candidate = next((candidate for candidate in candidates if candidate["is_active_reference"]), None)
+    if current_candidate is None and card is None:
+        current_candidate = next((candidate for candidate in candidates if candidate["is_primary_reference"]), None)
+
+    return {
+        "available": bool(candidates),
+        "source_label": "Excel IBEX 2019-2025",
+        "company_sector": company.get("sector", ""),
+        "current_reference_label": card.get("reference_label") if card else company.get("primary_reference"),
+        "current_candidate": current_candidate,
+        "best_candidate": next((candidate for candidate in candidates if candidate["is_best"]), None),
+        "candidates": candidates,
+        "return_2025": company.get("return_2025"),
+        "per_2025": company.get("per_2025"),
+        "dividend_yield": company.get("dividend_yield"),
+        "notes": company.get("notes", ""),
+    }
+
+
+def find_history_card_for_workbook_company(company: dict, history_cards: list[dict]) -> dict | None:
+    lookup_keys = {
+        normalize_company_lookup(company.get("ticker")),
+        normalize_company_lookup(company.get("company_name")),
+        normalize_company_lookup(company.get("quote_symbol")),
+    }
+    for card in history_cards:
+        position = card["position"]
+        position_keys = {
+            normalize_company_lookup(position.ticker),
+            normalize_company_lookup(position.company_name),
+            normalize_company_lookup(position.quote_symbol),
+        }
+        if lookup_keys & position_keys:
+            return card
+    return None
+
+
+def build_reference_guide_row(playbook: dict, card: dict | None = None, company: dict | None = None) -> dict:
+    current_candidate = playbook.get("current_candidate")
+    position = card["position"] if card else None
+    status_key = "guide"
+    status_label = "Solo guia"
+    detail_anchor = ""
+    current_live_correlation = None
+    one_year_return = None
+
+    if position is not None:
+        status_key = "owned" if position.is_owned else "watchlist"
+        status_label = position.get_position_kind_display()
+        detail_anchor = f"stock-{position.id}"
+        current_live_correlation = card.get("correlation", {}).get("coefficient")
+        one_year_snapshot = next((snapshot for snapshot in card.get("period_snapshots", []) if snapshot.get("label") == "1Y"), None)
+        if one_year_snapshot and one_year_snapshot.get("available"):
+            one_year_return = one_year_snapshot.get("stock_return_pct")
+
+    ticker = company.get("ticker") if company else position.ticker
+    company_name = company.get("company_name") if company else position.company_name
+    sector = playbook.get("company_sector") or (company.get("sector") if company else "")
+
+    return {
+        "ticker": ticker,
+        "company_name": company_name,
+        "sector": sector,
+        "status_key": status_key,
+        "status_label": status_label,
+        "is_tracked": bool(position),
+        "detail_anchor": detail_anchor,
+        "current_reference_label": playbook.get("current_reference_label"),
+        "current_candidate": current_candidate,
+        "current_live_correlation": current_live_correlation,
+        "best_candidate": playbook.get("best_candidate"),
+        "top_candidates": playbook.get("candidates", [])[:3],
+        "return_2025": playbook.get("return_2025"),
+        "per_2025": playbook.get("per_2025"),
+        "dividend_yield": playbook.get("dividend_yield"),
+        "notes": playbook.get("notes"),
+        "one_year_return": one_year_return,
+        "source_label": playbook.get("source_label"),
+    }
+
+
+def build_equity_reference_guide(history_cards: list[dict]) -> dict:
+    workbook_snapshot = load_ibex_reference_workbook_snapshot()
+    rows = []
+    matched_position_ids = set()
+
+    if workbook_snapshot.get("available"):
+        for company in workbook_snapshot.get("companies", []):
+            card = find_history_card_for_workbook_company(company, history_cards)
+            if card is not None:
+                matched_position_ids.add(card["position"].id)
+            playbook = build_workbook_reference_playbook(company, workbook_snapshot, card=card)
+            if card is not None:
+                card["reference_playbook"] = playbook
+            rows.append(build_reference_guide_row(playbook, card=card, company=company))
+
+    for card in history_cards:
+        if card["position"].id in matched_position_ids or card.get("reference_playbook"):
+            continue
+        playbook = build_reference_playbook_from_card(card)
+        card["reference_playbook"] = playbook
+        rows.append(build_reference_guide_row(playbook, card=card))
+
+    rows.sort(
+        key=lambda item: (
+            0 if item["status_key"] == "owned" else 1 if item["status_key"] == "watchlist" else 2,
+            item["sector"],
+            item["company_name"],
+        )
+    )
+    tracked_rows = [row for row in rows if row["is_tracked"]]
+    if not tracked_rows:
+        tracked_rows = rows[:6]
+
+    return {
+        "rows": rows,
+        "tracked_rows": tracked_rows,
+        "summary": {
+            "available": bool(rows),
+            "workbook_loaded": workbook_snapshot.get("available", False),
+            "source_label": Path(workbook_snapshot["path"]).name if workbook_snapshot.get("path") else "",
+            "tracked_count": len([row for row in rows if row["is_tracked"]]),
+            "owned_count": len([row for row in rows if row["status_key"] == "owned"]),
+            "watchlist_count": len([row for row in rows if row["status_key"] == "watchlist"]),
+            "guide_only_count": len([row for row in rows if row["status_key"] == "guide"]),
+        },
+    }
 
 
 def fetch_market_series(symbol: str, range_key: str = "5y", interval: str = "1d") -> MarketSeries:
@@ -2286,6 +2910,8 @@ def build_equity_analysis_dashboard(
     else:
         selected_period_label = "Ultimos 90 dias"
 
+    reference_guide = build_equity_reference_guide(history_cards)
+
     overview = {
         "positions_count": len(positions),
         "owned_positions_count": len(owned_positions),
@@ -2312,6 +2938,9 @@ def build_equity_analysis_dashboard(
         "watchlist_positions": watchlist_positions,
         "owned_history_cards": [card for card in history_cards if card["position"].is_owned],
         "watchlist_history_cards": [card for card in history_cards if not card["position"].is_owned],
+        "reference_guide_rows": reference_guide["rows"],
+        "tracked_reference_rows": reference_guide["tracked_rows"],
+        "reference_guide_summary": reference_guide["summary"],
     }
 
 

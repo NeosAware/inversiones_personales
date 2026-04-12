@@ -1,3 +1,5 @@
+import os
+import tempfile
 from calendar import monthrange
 from datetime import date
 from decimal import Decimal
@@ -24,11 +26,47 @@ from .services import (
     build_equity_history_cards,
     build_reference_suggestions_for_equity,
     find_equity_company_profile,
+    load_ibex_reference_workbook_snapshot,
     sync_equity_market_data,
 )
 
 
+def build_test_reference_workbook() -> str:
+    from openpyxl import Workbook
+
+    fd, path = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+
+    workbook = Workbook()
+    summary = workbook.active
+    summary.title = "Resumen"
+    summary.append(["Ticker", "Empresa", "Sector", "Rent. 2025", "Ind. referencia", "Fuente", "Correl.", "PER 2025e", "Div. yield", "Capitaliz. (MrdEUR)", "Notas", "Ticker Yahoo"])
+    summary.append(["SAN", "Banco Santander", "Banca", 0.923, "Euribor 12m / Tipos BCE", "BCE", 0.78, 7.2, 0.048, 92, "Banco de prueba", "SAN.MC"])
+
+    quotes = workbook.create_sheet("Cotizaciones")
+    quotes.append(["Ticker", "Empresa", "Sector", "2019", "2020", "2021", "2022", "2023", "2024", "2025"])
+    quotes.append(["SAN", "Banco Santander", "Banca", 4.18, 2.31, 3.08, 2.83, 4.06, 5.42, 10.42])
+
+    indicators = workbook.create_sheet("Indicadores")
+    indicators.append(["Indicador", "Fuente", "Sector relacionado", "2019", "2020", "2021", "2022", "2023", "2024", "2025", "Var. 3a", "Var. total"])
+    indicators.append(["Euribor 12m (%)", "BCE", "Banca", -0.24, -0.50, -0.50, 2.59, 4.16, 2.70, 2.10, "", ""])
+    indicators.append(["IBEX 35 (puntos)", "BME", "Todos", 9549, 8073, 8713, 8229, 10102, 11595, 17315, "", ""])
+    indicators.append(["Precio Brent (USD/barril prom.)", "ICE", "Consumo", 64, 42, 70, 101, 82, 79, 74, "", ""])
+
+    correlations = workbook.create_sheet("Correlaciones")
+    correlations.append(["Sector \\ Indicador", "Euribor 12m", "Brent"])
+    correlations.append(["Banca", 0.78, 0.15])
+
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
 class EquitiesServicesTests(TestCase):
+    def tearDown(self):
+        load_ibex_reference_workbook_snapshot.cache_clear()
+        super().tearDown()
+
     def test_find_equity_company_profile_by_ibex_name_returns_indra_defaults(self):
         profile = find_equity_company_profile("Indra")
 
@@ -315,6 +353,36 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(dashboard["overview"]["invested_amount"], Decimal("100.0000"))
         self.assertEqual(dashboard["overview"]["current_value"], Decimal("120.0000"))
 
+    @override_settings(EQUITIES_REFERENCE_WORKBOOK="")
+    def test_dashboard_builds_reference_guide_from_workbook(self):
+        workbook_path = build_test_reference_workbook()
+        self.addCleanup(lambda: os.path.exists(workbook_path) and os.remove(workbook_path))
+        load_ibex_reference_workbook_snapshot.cache_clear()
+
+        with override_settings(EQUITIES_REFERENCE_WORKBOOK=workbook_path):
+            position = EquityPosition.objects.create(
+                broker="Interactive Brokers",
+                ticker="SAN",
+                quote_symbol="SAN.MC",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="Banco Santander",
+                shares=Decimal("10"),
+                average_cost_per_share=Decimal("4.0000"),
+                current_price_per_share=Decimal("5.0000"),
+            )
+
+            dashboard = build_equity_analysis_dashboard([position])
+
+        self.assertTrue(dashboard["reference_guide_summary"]["workbook_loaded"])
+        self.assertEqual(len(dashboard["tracked_reference_rows"]), 1)
+        tracked_row = dashboard["tracked_reference_rows"][0]
+        self.assertEqual(tracked_row["company_name"], "Banco Santander")
+        self.assertEqual(tracked_row["best_candidate"]["name"], "Euribor 12m (%)")
+        self.assertTrue(tracked_row["best_candidate"]["supports_chart"])
+        self.assertEqual(dashboard["history_cards"][0]["reference_playbook"]["best_candidate"]["name"], "Euribor 12m (%)")
+
     def test_allocation_plan_respects_max_company_weight_and_sorts_by_projection(self):
         stronger = {
             "position": EquityPosition(
@@ -427,6 +495,10 @@ class EquitiesViewTests(TestCase):
             password="StrongPass123!",
         )
         self.client.force_login(self.user)
+
+    def tearDown(self):
+        load_ibex_reference_workbook_snapshot.cache_clear()
+        super().tearDown()
 
     def test_can_create_equity_position_from_page_form(self):
         response = self.client.post(
@@ -815,6 +887,32 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Cockpit de acciones")
         self.assertContains(response, "Coste anual de mantenimiento")
         self.assertContains(response, "Indra Sistemas, S.A.")
+
+    @override_settings(EQUITIES_REFERENCE_WORKBOOK="")
+    def test_equities_page_renders_workbook_reference_guide(self):
+        workbook_path = build_test_reference_workbook()
+        self.addCleanup(lambda: os.path.exists(workbook_path) and os.remove(workbook_path))
+        load_ibex_reference_workbook_snapshot.cache_clear()
+
+        with override_settings(EQUITIES_REFERENCE_WORKBOOK=workbook_path):
+            EquityPosition.objects.create(
+                ownership_category=AssetOwnershipCategory.JOINT,
+                broker="Banco Sabadell",
+                ticker="SAN",
+                quote_symbol="SAN.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="Banco Santander",
+                shares=Decimal("10.0000"),
+                average_cost_per_share=Decimal("4.0000"),
+                current_price_per_share=Decimal("5.0000"),
+            )
+
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Guia completa IBEX del Excel")
+        self.assertContains(response, "Euribor 12m (%)")
 
     def test_can_store_same_ticker_as_owned_and_watchlist_without_collision(self):
         EquityPosition.objects.create(

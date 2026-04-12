@@ -4,354 +4,289 @@
 
 {% block content %}
   <style>
-    .equity-page{ display:grid; gap:22px; }
-    .equity-hero{
-      padding:26px;
-      border-radius:28px;
-      border:1px solid rgba(16,52,77,.12);
-      background:
-        radial-gradient(circle at top right, rgba(98,181,220,.28), transparent 28%),
-        linear-gradient(135deg, #0f273a 0%, #103f61 46%, #d9eef8 145%);
-      color:#fff;
-      box-shadow:0 28px 60px rgba(16,52,77,.22);
+    .equity-page{
+      --ink:#102531;
+      --muted:#627380;
+      --line:#d8e3ea;
+      --accent:#0d5d78;
+      display:grid;
+      gap:22px;
+      color:var(--ink);
     }
-    .equity-hero-top{
+    .equity-page h1, .equity-page h2, .equity-page h3, .equity-page h4, .equity-page h5{
+      font-family:"Iowan Old Style", Georgia, serif;
+      color:#132b39;
+    }
+    .equity-hero{
+      padding:28px;
+      border-radius:28px;
+      border:1px solid rgba(255,255,255,.18);
+      background:
+        radial-gradient(circle at top right, rgba(225,190,154,.24), transparent 28%),
+        linear-gradient(135deg, #10212c 0%, #173748 52%, #e6dbc8 150%);
+      color:#fff;
+      box-shadow:0 24px 56px rgba(17,34,46,.18);
+    }
+    .equity-hero-top, .equity-panel-head, .equity-toolbar, .equity-stock-summary{
       display:flex;
       justify-content:space-between;
+      gap:16px;
       align-items:flex-start;
-      gap:18px;
-      margin-bottom:20px;
     }
-    .equity-hero h2{ margin:0; font-size:34px; }
-    .equity-hero p{ margin:8px 0 0; color:rgba(255,255,255,.82); max-width:880px; }
-    .equity-badges, .equity-nav{
+    .equity-hero h1{ margin:0; color:#fff; font-size:38px; line-height:1.05; }
+    .equity-hero p{ margin:10px 0 0; color:rgba(255,255,255,.82); max-width:860px; }
+    .equity-chip-row, .equity-summary-tags, .equity-candidate-list, .equity-tag-list{
       display:flex;
       flex-wrap:wrap;
       gap:10px;
     }
-    .equity-badge, .equity-nav a{
+    .equity-chip, .equity-summary-tag{
       display:inline-flex;
       align-items:center;
-      gap:8px;
-      padding:9px 14px;
+      padding:8px 12px;
       border-radius:999px;
-      border:1px solid rgba(255,255,255,.18);
-      background:rgba(255,255,255,.12);
+      border:1px solid rgba(255,255,255,.16);
+      background:rgba(255,255,255,.10);
       color:#fff;
       font-size:12px;
       font-weight:700;
       letter-spacing:.03em;
     }
-    .equity-nav{
-      position:sticky;
-      top:18px;
-      z-index:4;
-      padding:14px 16px;
-      border-radius:20px;
-      border:1px solid var(--line);
-      background:rgba(255,255,255,.94);
-      backdrop-filter:blur(12px);
-      box-shadow:0 12px 28px rgba(18,37,53,.08);
-    }
-    .equity-nav a{
-      color:#214157;
-      background:#f7fbfe;
-      border-color:#d7e6f0;
-    }
-    .equity-nav a:hover{
-      color:var(--accent);
-      border-color:var(--accent-2);
-    }
-    .equity-hero-grid, .equity-period-grid, .equity-card-grid, .equity-panel-grid{
+    .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid{
       display:grid;
       gap:16px;
     }
-    .equity-hero-grid{ grid-template-columns:repeat(4, minmax(0,1fr)); }
-    .equity-panel-grid{ grid-template-columns:repeat(2, minmax(0,1fr)); }
-    .equity-optimizer-grid{
-      display:grid;
-      grid-template-columns:1.15fr .85fr;
-      gap:18px;
-    }
-    .equity-kpi{
+    .equity-kpis{ grid-template-columns:repeat(4, minmax(0,1fr)); margin-top:22px; }
+    .equity-grid-2{ grid-template-columns:repeat(2, minmax(0,1fr)); }
+    .equity-grid-4{ grid-template-columns:repeat(4, minmax(0,1fr)); }
+    .equity-board{ grid-template-columns:repeat(2, minmax(0,1fr)); }
+    .equity-detail-grid{ grid-template-columns:repeat(4, minmax(0,1fr)); }
+    .equity-kpi, .equity-box, .equity-board-card, .equity-detail-card, .equity-mini-stat{
       padding:18px;
       border-radius:22px;
-      background:rgba(255,255,255,.12);
-      border:1px solid rgba(255,255,255,.12);
+      border:1px solid var(--line);
+      background:linear-gradient(180deg, #ffffff 0%, #f7fafc 100%);
+      box-shadow:0 14px 30px rgba(18,37,53,.05);
     }
-    .equity-kpi-label{
+    .equity-kpi{
+      background:rgba(255,255,255,.12);
+      border-color:rgba(255,255,255,.14);
+      box-shadow:none;
+    }
+    .equity-kpi span, .equity-box span, .equity-mini-stat span{
+      display:block;
       font-size:12px;
       text-transform:uppercase;
       letter-spacing:.12em;
-      color:rgba(255,255,255,.7);
+      font-weight:700;
     }
-    .equity-kpi-value{
-      margin-top:10px;
-      font-size:31px;
-      font-weight:800;
-      line-height:1.05;
+    .equity-kpi span{ color:rgba(255,255,255,.72); }
+    .equity-box span, .equity-mini-stat span{ color:var(--accent); }
+    .equity-kpi strong, .equity-box strong, .equity-mini-stat strong{
+      display:block;
+      margin-top:8px;
+      font-size:28px;
       font-variant-numeric:tabular-nums;
     }
-    .equity-kpi-sub{
-      margin-top:10px;
-      font-size:13px;
-      color:rgba(255,255,255,.8);
+    .equity-kpi strong{ color:#fff; }
+    .equity-kpi small, .equity-box small, .equity-mini-stat small, .equity-note{
+      display:block;
+      margin-top:8px;
+      color:var(--muted);
+      line-height:1.5;
     }
-    .equity-panel{
-      background:linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+    .equity-kpi small{ color:rgba(255,255,255,.82); }
+    .equity-panel, .equity-fold{
+      background:linear-gradient(180deg, #ffffff 0%, #fbfcfd 100%);
       border:1px solid var(--line);
       border-radius:24px;
-      padding:22px;
-      box-shadow:0 16px 34px rgba(18,37,53,.06);
+      box-shadow:0 14px 30px rgba(18,37,53,.05);
     }
-    .equity-panel h3{ margin:0; font-size:24px; }
-    .equity-panel-copy{
+    .equity-panel{ padding:22px; }
+    .equity-panel h2, .equity-panel h3{ margin:0; }
+    .equity-panel-head p{ margin:8px 0 0; color:var(--muted); max-width:780px; }
+    .equity-board-card h3, .equity-detail-card h4{ margin:0; font-size:24px; }
+    .equity-board-card p, .equity-detail-card p{ margin:6px 0 0; color:var(--muted); }
+    .equity-detail-head, .equity-section-head{
       display:flex;
       justify-content:space-between;
-      align-items:flex-start;
       gap:16px;
-      margin-bottom:18px;
+      align-items:flex-start;
     }
-    .equity-panel-copy p{ margin:6px 0 0; color:var(--muted); max-width:780px; }
-    .equity-period-grid{ grid-template-columns:repeat(4, minmax(0,1fr)); }
-    .equity-period-card, .equity-stat{
-      padding:16px;
-      border-radius:18px;
-      border:1px solid #dde9f1;
-      background:#f8fbfe;
-    }
-    .equity-period-label, .equity-stat-label{
-      font-size:12px;
-      font-weight:700;
-      letter-spacing:.12em;
-      text-transform:uppercase;
-      color:var(--accent);
-    }
-    .equity-period-value, .equity-stat-value{
-      margin-top:10px;
-      font-size:24px;
-      font-weight:800;
-      font-variant-numeric:tabular-nums;
-    }
-    .equity-range-form{
-      display:grid;
-      gap:12px;
-      grid-template-columns:repeat(4, minmax(0,1fr));
-      align-items:end;
-      margin-top:18px;
-    }
-    .equity-chart-shell{
-      padding:16px;
-      border-radius:20px;
-      border:1px solid #e1ebf3;
-      background:linear-gradient(180deg, #fbfdff 0%, #f4f9fc 100%);
-      margin-top:14px;
-    }
-    .equity-chart-shell svg{ display:block; width:100%; height:220px; }
-    .equity-chart-caption{
-      margin-top:10px;
-      font-size:13px;
-      color:var(--muted);
-    }
-    .equity-position-grid{
-      display:grid;
-      gap:18px;
-      grid-template-columns:repeat(2, minmax(0,1fr));
-    }
-    .equity-analysis-shell{
-      display:grid;
-      gap:18px;
-    }
-    .equity-analysis-switch,
-    .equity-stock-tabs{
+    .equity-period-strip{
       display:flex;
       flex-wrap:wrap;
       gap:10px;
     }
-    .equity-analysis-switch{
-      padding:14px;
-      border-radius:22px;
-      border:1px solid #dce8f1;
-      background:#f7fbfe;
+    .equity-period-pill{
+      display:inline-flex;
+      gap:10px;
+      align-items:center;
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid #d8e3ea;
+      background:#fff;
+      color:#234050;
+      font-size:13px;
     }
-    .equity-analysis-switch button,
-    .equity-stock-tab{
-      appearance:none;
-      border:1px solid #cddfeb;
-      background:#ffffff;
-      color:#214157;
-      border-radius:16px;
-      padding:12px 14px;
-      cursor:pointer;
-      font:inherit;
-      text-align:left;
-    }
-    .equity-analysis-switch button.active,
-    .equity-stock-tab.active{
-      background:#103f61;
-      color:#ffffff;
-      border-color:#103f61;
-      box-shadow:0 10px 24px rgba(16,63,97,.18);
-    }
-    .equity-stock-tab{
-      min-width:190px;
-    }
-    .equity-stock-tab strong{
-      display:block;
-      font-size:15px;
-      margin-bottom:4px;
-    }
-    .equity-stock-tab span{
-      display:block;
+    .equity-period-pill span{
+      color:var(--muted);
       font-size:12px;
-      color:inherit;
-      opacity:.82;
+      text-transform:uppercase;
+      letter-spacing:.08em;
     }
-    .equity-stock-panels{
-      margin-top:16px;
-    }
-    .equity-stock-panel{
-      display:none;
-    }
-    .equity-stock-panel.active{
-      display:block;
-    }
-    .equity-group-panel[hidden]{
-      display:none !important;
-    }
-    .equity-position-card{
-      border:1px solid var(--line);
-      border-radius:24px;
-      padding:20px;
-      background:#ffffff;
-      box-shadow:0 16px 34px rgba(18,37,53,.05);
-    }
-    .equity-position-head{
-      display:flex;
-      justify-content:space-between;
-      align-items:flex-start;
-      gap:14px;
-      margin-bottom:14px;
-    }
-    .equity-position-head h4{ margin:0; font-size:22px; }
-    .equity-position-head p{ margin:6px 0 0; color:var(--muted); }
-    .equity-chip-row{
+    .equity-meta-stack{
       display:flex;
       flex-wrap:wrap;
       gap:8px;
     }
-    .equity-chip{
+    .equity-meta-stack span{
       display:inline-flex;
-      align-items:center;
-      gap:6px;
-      padding:6px 10px;
+      padding:7px 10px;
       border-radius:999px;
-      border:1px solid #dde8f1;
-      background:#f8fbfe;
-      color:#476075;
+      background:#fff;
+      border:1px solid #d8e4ec;
       font-size:12px;
       font-weight:700;
+      color:#224254;
     }
-    .equity-card-grid{ grid-template-columns:repeat(4, minmax(0,1fr)); margin:16px 0; }
-    .equity-fold{
-      border:1px solid var(--line);
-      border-radius:24px;
-      background:#ffffff;
-      box-shadow:0 16px 30px rgba(18,37,53,.05);
-      overflow:hidden;
-    }
-    .equity-fold summary{
-      list-style:none;
-      cursor:pointer;
-      padding:22px;
-      font-size:22px;
-      font-weight:800;
-    }
-    .equity-fold summary::-webkit-details-marker{ display:none; }
-    .equity-fold-body{ padding:0 22px 22px; }
-    .equity-table-note{ margin:0 0 16px; color:var(--muted); }
-    .equity-optimizer-summary{
+    .equity-candidate-section{
       display:grid;
       gap:14px;
-      grid-template-columns:repeat(4, minmax(0,1fr));
-      margin-top:16px;
+      padding:18px;
+      border-radius:22px;
+      border:1px solid #dbe6ee;
+      background:#f8fbfd;
     }
-    .equity-optimizer-note{
-      margin-top:14px;
-      color:var(--muted);
-      font-size:14px;
-      line-height:1.5;
-    }
-    .equity-optimizer-table{
-      margin-top:18px;
-    }
-    .equity-suggestion-grid{
+    .equity-candidate-grid{
       display:grid;
       gap:12px;
-      grid-template-columns:repeat(3, minmax(0,1fr));
-      margin-top:16px;
+      grid-template-columns:repeat(2, minmax(0,1fr));
     }
-    .equity-suggestion-card{
+    .equity-candidate-card{
       padding:16px;
       border-radius:18px;
-      border:1px solid #d9e7f0;
-      background:#f8fbfe;
-    }
-    .equity-suggestion-card.selected{
-      border-color:#0f5f88;
-      background:#eef7fc;
-      box-shadow:inset 0 0 0 1px rgba(15,95,136,.08);
-    }
-    .equity-suggestion-card form{
-      margin-top:12px;
-    }
-    .equity-suggestion-head{
-      display:flex;
-      justify-content:space-between;
-      align-items:flex-start;
+      border:1px solid #d5e3ec;
+      background:#fff;
+      display:grid;
       gap:12px;
     }
-    .equity-suggestion-title{
-      font-size:16px;
-      font-weight:800;
-      color:#16384d;
+    .equity-candidate-card.best{
+      border-color:#d4aa82;
+      background:#fff8f2;
     }
-    .equity-form-hint,
-    .equity-autofill-card{
+    .equity-candidate-card.active{
+      border-color:#0d5d78;
+      background:#eef7fb;
+    }
+    .equity-candidate-metrics{
+      display:grid;
+      gap:6px;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .equity-candidate-note{
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.45;
+    }
+    .equity-candidate{
+      padding:12px 14px;
+      border-radius:16px;
+      border:1px solid #d7e3ea;
+      background:#fff;
+      color:#234050;
+      font-size:13px;
+    }
+    .equity-candidate.best{ border-color:#d4aa82; background:#fff8f2; }
+    .equity-candidate.active{ border-color:#0d5d78; background:#eef7fb; }
+    .equity-table-wrap{
+      overflow:auto;
+      border:1px solid #dbe5ec;
+      border-radius:18px;
+      background:#fff;
+    }
+    .equity-table-wrap table{ width:100%; min-width:760px; margin:0; }
+    .equity-fold{
+      overflow:hidden;
+    }
+    .equity-fold summary, .equity-inline-fold summary{
+      list-style:none;
+      cursor:pointer;
+      font-weight:800;
+    }
+    .equity-fold summary{
+      padding:20px 22px;
+      font-size:24px;
+      font-family:"Iowan Old Style", Georgia, serif;
+      color:#132b39;
+    }
+    .equity-fold summary::-webkit-details-marker, .equity-inline-fold summary::-webkit-details-marker{ display:none; }
+    .equity-fold-body{ padding:0 22px 22px; display:grid; gap:18px; }
+    .equity-stock-list{ display:grid; gap:14px; }
+    .equity-stock-fold{
+      border:1px solid var(--line);
+      border-radius:20px;
+      overflow:hidden;
+      background:#fff;
+    }
+    .equity-stock-fold summary{
+      padding:18px 20px;
+      background:linear-gradient(180deg, #ffffff 0%, #f6fafc 100%);
+    }
+    .equity-stock-summary strong{ display:block; font-size:18px; }
+    .equity-stock-summary span{ display:block; margin-top:4px; color:var(--muted); font-size:13px; }
+    .equity-stock-body{ padding:0 20px 20px; }
+    .equity-inline-fold{
+      border:1px solid var(--line);
+      border-radius:18px;
+      overflow:hidden;
+      background:#fff;
+    }
+    .equity-inline-fold summary{
+      padding:14px 16px;
+      color:#17384e;
+      background:#f7fafc;
+    }
+    .equity-inline-body{ padding:16px; display:grid; gap:14px; }
+    .equity-chart-shell{
+      padding:16px;
+      border-radius:18px;
+      border:1px solid #dce7ef;
+      background:linear-gradient(180deg, #fbfdff 0%, #f3f8fb 100%);
+    }
+    .equity-chart-shell svg{ display:block; width:100%; height:220px; }
+    .equity-chart-foot{ margin-top:12px; display:flex; flex-wrap:wrap; gap:14px; color:var(--muted); font-size:13px; }
+    .equity-toolbar input{ max-width:320px; }
+    .equity-filter{
+      appearance:none;
+      border:1px solid #cadbe6;
+      background:#fff;
+      color:#214157;
+      border-radius:14px;
+      padding:10px 13px;
+      cursor:pointer;
+      font:inherit;
+    }
+    .equity-filter.active{ background:#10384d; color:#fff; border-color:#10384d; }
+    .equity-form-hint, .equity-autofill-card{
       padding:16px 18px;
       border-radius:18px;
       border:1px solid #d9e7f0;
       background:#f8fbfe;
     }
-    .equity-autofill-shell{
-      display:grid;
-      gap:14px;
-      margin-top:18px;
-    }
-    .equity-autofill-title{
-      margin:0;
-      font-size:18px;
-      font-weight:800;
-      color:#16384d;
-    }
-    .equity-autofill-meta{
-      margin-top:8px;
-      color:var(--muted);
-      font-size:14px;
-    }
-    .equity-suggestion-actions{
-      display:grid;
-      gap:10px;
-      margin-top:14px;
-    }
-    .equity-suggestion-button{
+    .equity-autofill-shell{ display:grid; gap:14px; margin-top:18px; }
+    .equity-autofill-title{ margin:0; font-size:18px; font-weight:800; color:#16384d; }
+    .equity-autofill-meta{ margin-top:8px; color:var(--muted); font-size:14px; }
+    .equity-suggestion-actions{ display:grid; gap:10px; margin-top:14px; }
+    .equity-suggestion-button, .equity-mini-button{
       display:flex;
       justify-content:space-between;
       align-items:flex-start;
       gap:14px;
       width:100%;
       padding:12px 14px;
-      border-radius:16px;
+      border-radius:14px;
       border:1px solid #d7e6f0;
       background:#ffffff;
       color:#17384e;
@@ -359,520 +294,327 @@
       cursor:pointer;
       font:inherit;
     }
-    .equity-suggestion-button.selected{
-      border-color:#0f5f88;
-      background:#eef7fc;
-    }
-    .equity-suggestion-button strong{
-      display:block;
-      font-size:15px;
-      margin-bottom:4px;
-    }
-    .equity-suggestion-button span{
-      font-size:13px;
-      color:var(--muted);
-    }
-    .equity-mini-button{
-      width:100%;
-      padding:10px 12px;
-      border-radius:12px;
-      border:1px solid #c8dcea;
-      background:#fff;
-      color:#17384e;
-      font:inherit;
-      cursor:pointer;
-    }
-    .equity-chart-legend{
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      gap:16px;
-      margin-top:12px;
-      font-size:13px;
-      color:var(--muted);
-    }
-    .equity-legend-item{
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-    }
-    .equity-legend-dot{
-      width:10px;
-      height:10px;
-      border-radius:999px;
-      display:inline-block;
-    }
-    .equity-projection-note{
-      margin-top:12px;
-      color:var(--muted);
-      font-size:14px;
-      line-height:1.5;
-    }
+    .equity-suggestion-button.selected{ border-color:#0f5f88; background:#eef7fc; }
+    .equity-suggestion-button strong{ display:block; font-size:15px; margin-bottom:4px; }
+    .equity-suggestion-button span{ font-size:13px; color:var(--muted); }
     @media (max-width: 1180px){
-      .equity-hero-grid, .equity-period-grid, .equity-card-grid, .equity-panel-grid, .equity-range-form, .equity-position-grid, .equity-suggestion-grid, .equity-optimizer-grid, .equity-optimizer-summary{
-        grid-template-columns:1fr;
-      }
+      .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-candidate-grid{ grid-template-columns:1fr; }
+      .equity-hero-top, .equity-panel-head, .equity-toolbar, .equity-stock-summary, .equity-detail-head, .equity-section-head{ flex-direction:column; }
     }
   </style>
 
   <div class="equity-page">
-    <section class="equity-hero" id="equity-cockpit">
+    <section class="equity-hero">
       <div class="equity-hero-top">
         <div>
-          <p class="section-title" style="color:rgba(255,255,255,.78); margin-bottom:12px;">Cockpit de acciones</p>
-          <h2>Cartera real y seguimiento en una vista mucho mas clara</h2>
-          <p>Primero separas lo que ya has comprado de lo que solo estas siguiendo. Despues analizas la rentabilidad mensual, trimestral, semestral y anual junto a una referencia que tenga sentido para cada tesis: indice bursatil, Euribor 12M o precio de vivienda en Espana.</p>
+          <p class="section-title" style="color:rgba(255,255,255,.74); margin-bottom:12px;">Cockpit de acciones</p>
+          <h1>Decidir mejor la referencia de cada valor</h1>
+          <p>La pagina ahora separa la decision de la operativa. Arriba ves que indicador encaja mejor con cada valor, usando tu Excel del IBEX como guia y la correlacion historica de la app como contraste.</p>
         </div>
-        <div class="equity-badges">
-          <span class="equity-badge">{{ analysis_overview.owned_positions_count }} compradas</span>
-          <span class="equity-badge">{{ analysis_overview.watchlist_positions_count }} en seguimiento</span>
-          <span class="equity-badge">Periodo {{ analysis_overview.selected_period_label }}</span>
-          <span class="equity-badge">
-            {% if auto_sync.attempted %}Auto-sync {{ auto_sync.updated_count }} OK{% else %}Auto-sync inactivo{% endif %}
-          </span>
+        <div class="equity-chip-row">
+          <span class="equity-chip">{{ summary.owned_positions_count }} compradas</span>
+          <span class="equity-chip">{{ summary.watchlist_positions_count }} en seguimiento</span>
+          <span class="equity-chip">Periodo {{ analysis_overview.selected_period_label }}</span>
+          <span class="equity-chip">{% if reference_guide_summary.workbook_loaded %}Guia Excel activa{% else %}Guia Excel no encontrada{% endif %}</span>
         </div>
       </div>
-      <div class="equity-hero-grid">
-        <div class="equity-kpi">
-          <div class="equity-kpi-label">Acciones compradas</div>
-          <div class="equity-kpi-value">{{ summary.owned_positions_count }}</div>
-          <div class="equity-kpi-sub">Capital invertido {{ summary.owned_invested_amount|floatformat:0 }} EUR</div>
-        </div>
-        <div class="equity-kpi">
-          <div class="equity-kpi-label">En seguimiento</div>
-          <div class="equity-kpi-value">{{ summary.watchlist_positions_count }}</div>
-          <div class="equity-kpi-sub">Ideas y valores que aun no forman parte de la cartera.</div>
-        </div>
-        <div class="equity-kpi">
-          <div class="equity-kpi-label">Valor actual cartera</div>
-          <div class="equity-kpi-value">{{ analysis_overview.current_value|floatformat:0 }} EUR</div>
-          <div class="equity-kpi-sub">Solo incluye acciones compradas.</div>
-        </div>
-        <div class="equity-kpi">
-          <div class="equity-kpi-label">Rentabilidad neta</div>
-          <div class="equity-kpi-value {% if analysis_overview.unrealized_return_pct or analysis_overview.unrealized_return_pct == 0 %}{% if analysis_overview.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
-            {{ analysis_overview.unrealized_return_pct|floatformat:1|default:"-" }}{% if analysis_overview.unrealized_return_pct or analysis_overview.unrealized_return_pct == 0 %} %{% endif %}
-          </div>
-          <div class="equity-kpi-sub">{{ analysis_overview.unrealized_gain_total|floatformat:0 }} EUR despues de costes</div>
-        </div>
+      <div class="equity-kpis">
+        <div class="equity-kpi"><span>Valor cartera</span><strong>{{ analysis_overview.current_value|floatformat:0 }} EUR</strong><small>Capital ya invertido.</small></div>
+        <div class="equity-kpi"><span>Rentabilidad neta</span><strong class="{% if analysis_overview.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.unrealized_return_pct|floatformat:1 }} %</strong><small>{{ analysis_overview.unrealized_gain_total|floatformat:0 }} EUR despues de costes.</small></div>
+        <div class="equity-kpi"><span>Flujo anual neto</span><strong class="{% if analysis_overview.net_annual_income_total >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.net_annual_income_total|floatformat:0 }} EUR</strong><small>Dividendos menos mantenimiento.</small></div>
+        <div class="equity-kpi"><span>Ultimo precio</span><strong>{% if analysis_overview.latest_price_date %}{{ analysis_overview.latest_price_date|date:"Y-m-d" }}{% else %}-{% endif %}</strong><small>{% if auto_sync.attempted %}Auto-sync {{ auto_sync.updated_count }} OK{% else %}Auto-sync inactivo{% endif %}</small></div>
       </div>
     </section>
 
-    <nav class="equity-nav">
-      <a href="#equity-cockpit">Cockpit</a>
-      <a href="#equity-periods">Rentabilidad</a>
-      <a href="#equity-optimizer">Optimizador</a>
-      <a href="#equity-owned">Compradas</a>
-      <a href="#equity-watchlist">Seguimiento</a>
-      <a href="#equity-analysis">Correlacion</a>
-      <a href="#equity-ops">Operativa</a>
-    </nav>
+    <section class="equity-panel">
+      <div class="equity-panel-head">
+        <div>
+          <p class="section-title">Decision rapida</p>
+          <h2>Que referencia elegir ahora</h2>
+          <p>Estas tarjetas condensan lo importante por valor: que tienes activo, cual es la mejor alternativa y si esa alternativa sirve ya para el grafico o de momento solo como guia del Excel.</p>
+        </div>
+        {% if reference_guide_summary.workbook_loaded %}<span class="pill">{{ reference_guide_summary.source_label }}</span>{% endif %}
+      </div>
+      {% if tracked_reference_rows %}
+        <div class="equity-board">
+          {% for row in tracked_reference_rows %}
+            <article class="equity-board-card">
+              <div class="equity-panel-head" style="margin-bottom:0;">
+                <div>
+                  <h3>{{ row.company_name }}</h3>
+                  <p>{{ row.ticker }}{% if row.sector %} | {{ row.sector }}{% endif %}</p>
+                </div>
+                <div class="equity-chip-row">
+                  <span class="equity-summary-tag" style="border-color:#d8e3ea; background:#eef4f7; color:#244355;">{{ row.status_label }}</span>
+                  {% if row.detail_anchor %}<a class="button secondary" href="#{{ row.detail_anchor }}">Ver detalle</a>{% endif %}
+                </div>
+              </div>
+              <div class="equity-grid-2">
+                <div class="equity-box">
+                  <span>Referencia actual</span>
+                  <strong>{{ row.current_reference_label|default:"Sin definir" }}</strong>
+                  <small>{% if row.current_live_correlation is not None %}Correlacion app {{ row.current_live_correlation|floatformat:2 }}{% elif row.current_candidate and row.current_candidate.historical_coefficient is not None %}Correlacion Excel {{ row.current_candidate.historical_coefficient|floatformat:2 }}{% else %}Sin lectura historica suficiente{% endif %}</small>
+                </div>
+                <div class="equity-box">
+                  <span>Mejor ajuste</span>
+                  <strong>{% if row.best_candidate %}{{ row.best_candidate.name }}{% else %}Sin sugerencia{% endif %}</strong>
+                  <small>{% if row.best_candidate and row.best_candidate.supports_chart %}Disponible para el grafico.{% elif row.best_candidate %}De momento funciona como guia.{% else %}La app mantiene tu referencia actual.{% endif %}</small>
+                </div>
+              </div>
+              <div class="equity-candidate-list">
+                {% for candidate in row.top_candidates %}
+                  <span class="equity-candidate{% if candidate.is_active_reference %} active{% elif candidate.is_best %} best{% endif %}">{{ candidate.short_name }} {% if candidate.sector_score is not None %}{{ candidate.sector_score|floatformat:2 }}{% elif candidate.historical_coefficient is not None %}{{ candidate.historical_coefficient|floatformat:2 }}{% endif %}</span>
+                {% endfor %}
+              </div>
+              {% if row.return_2025 is not None or row.per_2025 is not None or row.dividend_yield is not None %}
+                <small class="equity-note">{% if row.return_2025 is not None %}2025 {{ row.return_2025|floatformat:1 }} %{% endif %}{% if row.per_2025 is not None %} | PER {{ row.per_2025|floatformat:1 }}{% endif %}{% if row.dividend_yield is not None %} | Div {{ row.dividend_yield|floatformat:1 }} %{% endif %}{% if row.one_year_return is not None %} | App 1Y {{ row.one_year_return|floatformat:1 }} %{% endif %}</small>
+              {% endif %}
+              {% if row.notes %}<small class="equity-note">{{ row.notes }}</small>{% endif %}
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="message info">Todavia no hay valores con informacion suficiente para construir el tablero de decision.</div>
+      {% endif %}
+    </section>
 
-    <section class="equity-panel-grid" id="equity-periods">
+    <section class="equity-grid-2">
       <section class="equity-panel">
-        <div class="equity-panel-copy">
+        <div class="equity-panel-head">
           <div>
-            <p class="section-title">Rentabilidad por periodos</p>
-            <h3>Cartera comprada</h3>
-            <p>Las cuatro ventanas clave se calculan sobre la cartera real: mensual, trimestral, semestral y anual. Asi ves enseguida si vas mejor o peor que la referencia elegida.</p>
+            <p class="section-title">Rentabilidad</p>
+            <h3>Cartera comprada por periodos</h3>
+            <p>Solo la cartera real entra en este bloque. Asi no se mezclan posiciones patrimoniales con ideas en observacion.</p>
           </div>
         </div>
-        <div class="equity-period-grid">
+        <div class="equity-grid-4">
           {% for item in analysis_overview.weighted_periods %}
-            <div class="equity-period-card">
-              <div class="equity-period-label">{{ item.label }}</div>
-              <div class="equity-period-value {% if item.stock_return_pct or item.stock_return_pct == 0 %}{% if item.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
-                {% if item.stock_return_pct is not None %}{{ item.stock_return_pct|floatformat:1 }} %{% else %}-{% endif %}
-              </div>
-              <div class="metric-sub">
-                Referencia:
-                {% if item.benchmark_return_pct is not None %}{{ item.benchmark_return_pct|floatformat:1 }} %{% else %}sin dato{% endif %}
-              </div>
+            <div class="equity-box">
+              <span>{{ item.label }}</span>
+              <strong class="{% if item.stock_return_pct or item.stock_return_pct == 0 %}{% if item.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">{% if item.stock_return_pct is not None %}{{ item.stock_return_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+              <small>Referencia {% if item.benchmark_return_pct is not None %}{{ item.benchmark_return_pct|floatformat:1 }} %{% else %}sin dato{% endif %}</small>
             </div>
           {% endfor %}
         </div>
-        <form method="get" class="equity-range-form">
-          <div>
-            <label for="period_start">Inicio</label>
-            <input id="period_start" type="date" name="period_start" value="{{ selected_period_start|date:'Y-m-d' }}">
-          </div>
-          <div>
-            <label for="period_end">Fin</label>
-            <input id="period_end" type="date" name="period_end" value="{{ selected_period_end|date:'Y-m-d' }}">
-          </div>
+        <form method="get" class="equity-grid-4" style="margin-top:16px; align-items:end;">
+          <div><label for="period_start">Inicio</label><input id="period_start" type="date" name="period_start" value="{{ selected_period_start|date:'Y-m-d' }}"></div>
+          <div><label for="period_end">Fin</label><input id="period_end" type="date" name="period_end" value="{{ selected_period_end|date:'Y-m-d' }}"></div>
           <button class="button" type="submit">Analizar rango</button>
           <a class="button secondary" href="{% url 'equities:list' %}">Limpiar filtro</a>
         </form>
       </section>
 
       <section class="equity-panel">
-        <div class="equity-panel-copy">
+        <div class="equity-panel-head">
           <div>
-            <p class="section-title">Flujo y mantenimiento</p>
-            <h3>Lectura economica simple</h3>
-            <p>Dividendos, costes y valor actual quedan separados de las ideas en seguimiento para que el analisis no mezcle activos reales con oportunidades todavia no compradas.</p>
+            <p class="section-title">Lectura economica</p>
+            <h3>Flujo, costes y cobertura</h3>
+            <p>Una vista corta para saber como va la cartera sin entrar todavia al detalle por valor.</p>
           </div>
-          <span class="pill">{% if analysis_overview.latest_price_date %}Ultimo precio {{ analysis_overview.latest_price_date|date:"Y-m-d" }}{% else %}Sin historico{% endif %}</span>
         </div>
-        <div class="equity-period-grid">
-          <div class="equity-period-card">
-            <div class="equity-period-label">Dividendos</div>
-            <div class="equity-period-value">{{ analysis_overview.annual_dividends_total|floatformat:0 }} EUR</div>
-            <div class="metric-sub">Solo cartera comprada</div>
-          </div>
-          <div class="equity-period-card">
-            <div class="equity-period-label">Costes</div>
-            <div class="equity-period-value">{{ analysis_overview.annual_maintenance_total|floatformat:0 }} EUR</div>
-            <div class="metric-sub">Custodia y mantenimiento</div>
-          </div>
-          <div class="equity-period-card">
-            <div class="equity-period-label">Flujo neto anual</div>
-            <div class="equity-period-value {% if analysis_overview.net_annual_income_total >= 0 %}good{% else %}warn{% endif %}">
-              {{ analysis_overview.net_annual_income_total|floatformat:0 }} EUR
-            </div>
-            <div class="metric-sub">Dividendos menos costes</div>
-          </div>
-          <div class="equity-period-card">
-            <div class="equity-period-label">Precios seguidos</div>
-            <div class="equity-period-value">{{ summary.synced_positions }}</div>
-            <div class="metric-sub">Posiciones con ultimo sync registrado</div>
-          </div>
+        <div class="equity-grid-4">
+          <div class="equity-box"><span>Dividendos</span><strong>{{ analysis_overview.annual_dividends_total|floatformat:0 }} EUR</strong></div>
+          <div class="equity-box"><span>Costes</span><strong>{{ analysis_overview.annual_maintenance_total|floatformat:0 }} EUR</strong></div>
+          <div class="equity-box"><span>Sincronizadas</span><strong>{{ summary.synced_positions }}</strong></div>
+          <div class="equity-box"><span>Seguimiento</span><strong>{{ analysis_overview.watchlist_latest_price_count }}</strong></div>
         </div>
         {% if auto_sync.failed %}
-          <div class="message warning" style="margin-top:16px;">
-            No se pudieron actualizar {{ auto_sync.failed|length }} posicion(es): {{ auto_sync.failed|join:", " }}.
-          </div>
+          <div class="message warning" style="margin-top:16px;">No se pudieron actualizar {{ auto_sync.failed|length }} posicion(es): {{ auto_sync.failed|join:", " }}.</div>
         {% endif %}
       </section>
     </section>
 
-    <section class="equity-optimizer-grid" id="equity-optimizer">
-      <section class="equity-panel">
-        <div class="equity-panel-copy">
+    <section class="equity-grid-2">
+      <section class="equity-panel table-card">
+        <div class="equity-panel-head">
           <div>
-            <p class="section-title">Optimizador 12M</p>
-            <h3>Distribucion sugerida para maximizar el beneficio esperado</h3>
-            <p>La propuesta usa la proyeccion a 12 meses ya calculada por accion, la ajusta por nivel de confianza y respeta el limite maximo que pongas por empresa. Si faltan ideas con retorno atractivo, deja el resto en reserva.</p>
+            <p class="section-title">Cartera real</p>
+            <h3>Acciones compradas</h3>
+            <p>La tabla patrimonial queda reducida a lo que realmente tienes comprado.</p>
           </div>
         </div>
-        <form method="get" class="equity-range-form">
+        <div class="equity-table-wrap">
+          <table>
+            <thead><tr><th>Ticker</th><th>Empresa</th><th>Invertido</th><th>Valor actual</th><th>Rent. neta</th><th>Referencia</th><th>Precio</th></tr></thead>
+            <tbody>
+              {% for position in owned_positions %}
+                <tr><td><strong>{{ position.ticker }}</strong></td><td>{{ position.company_name }}</td><td>{{ position.invested_amount|floatformat:2 }} EUR</td><td>{{ position.current_value|floatformat:2 }} EUR</td><td class="{% if position.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ position.unrealized_return_pct|floatformat:2 }} %</td><td>{{ position.analysis_reference_label }}</td><td>{{ position.current_price_per_share|floatformat:4 }}</td></tr>
+              {% empty %}
+                <tr><td colspan="7" class="muted">Todavia no hay acciones compradas.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="equity-panel table-card">
+        <div class="equity-panel-head">
           <div>
-            <label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>
-            {{ optimizer_form.total_investment }}
+            <p class="section-title">Radar</p>
+            <h3>Acciones en seguimiento</h3>
+            <p>Aqui quedan las ideas que todavia no forman parte del patrimonio.</p>
           </div>
-          <div>
-            <label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>
-            {{ optimizer_form.max_company_pct }}
-          </div>
-          <button class="button" type="submit">Calcular propuesta</button>
-          <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
-        </form>
-        {% if optimizer_plan and optimizer_plan.available %}
-          <div class="equity-optimizer-summary">
-            <div class="equity-stat">
-              <div class="equity-stat-label">Capital analizado</div>
-              <div class="equity-stat-value">{{ optimizer_plan.total_investment|floatformat:0 }} EUR</div>
-            </div>
-            <div class="equity-stat">
-              <div class="equity-stat-label">Ganancia 12M</div>
-              <div class="equity-stat-value {% if optimizer_plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ optimizer_plan.projected_gain_total|floatformat:0 }} EUR</div>
-            </div>
-            <div class="equity-stat">
-              <div class="equity-stat-label">Rentabilidad media</div>
-              <div class="equity-stat-value {% if optimizer_plan.weighted_return_pct and optimizer_plan.weighted_return_pct >= 0 %}good{% elif optimizer_plan.weighted_return_pct %}warn{% endif %}">
-                {% if optimizer_plan.weighted_return_pct is not None %}{{ optimizer_plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}
-              </div>
-            </div>
-            <div class="equity-stat">
-              <div class="equity-stat-label">Caja en reserva</div>
-              <div class="equity-stat-value">{{ optimizer_plan.cash_reserve_amount|floatformat:0 }} EUR</div>
-            </div>
-          </div>
-          <div class="equity-optimizer-note">
-            {% if optimizer_plan.top_pick %}
-              Mejor idea segun el modelo: <strong>{{ optimizer_plan.top_pick.position.company_name }}</strong> con una propuesta ajustada del {{ optimizer_plan.top_pick.adjusted_return_pct|floatformat:2 }} %.
-            {% endif %}
-            La distribucion mezcla {{ optimizer_plan.owned_allocations_count }} acciones compradas y {{ optimizer_plan.watchlist_allocations_count }} en seguimiento.
-          </div>
-          <div class="equity-optimizer-table">
-            <table>
-              <thead>
+        </div>
+        <div class="equity-table-wrap">
+          <table>
+            <thead><tr><th>Ticker</th><th>Empresa</th><th>Precio actual</th><th>1M</th><th>3M</th><th>6M</th><th>1Y</th><th>Referencia</th></tr></thead>
+            <tbody>
+              {% for card in watchlist_history_cards %}
                 <tr>
-                  <th>Orden</th>
-                  <th>Empresa</th>
-                  <th>Estado</th>
-                  <th>Referencia</th>
-                  <th>Peso</th>
-                  <th>Importe</th>
-                  <th>Retorno 12M</th>
-                  <th>Retorno ajustado</th>
-                  <th>Ganancia estimada</th>
-                  <th>Confianza</th>
+                  <td><strong>{{ card.position.ticker }}</strong></td>
+                  <td>{{ card.position.company_name }}</td>
+                  <td>{{ card.position.current_price_per_share|floatformat:4 }}</td>
+                  {% for snapshot in card.period_snapshots %}
+                    <td class="{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:1 }} %{% else %}-{% endif %}</td>
+                  {% endfor %}
+                  <td>{{ card.reference_label }}</td>
                 </tr>
-              </thead>
+              {% empty %}
+                <tr><td colspan="8" class="muted">Todavia no hay acciones en seguimiento.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <details class="equity-fold" open>
+      <summary>Analisis por valor</summary>
+      <div class="equity-fold-body">
+        <p class="equity-note">El detalle queda agrupado por accion y solo se abre cuando te interesa.</p>
+        <div class="equity-stock-list">
+          {% for card in history_cards %}
+            <details class="equity-stock-fold" id="stock-{{ card.position.id }}">
+              <summary>
+                <div class="equity-stock-summary">
+                  <div>
+                    <strong>{{ card.position.company_name }}</strong>
+                    <span>{{ card.position.ticker }} | {{ card.reference_label }}</span>
+                  </div>
+                  <div class="equity-summary-tags">
+                    <span class="equity-summary-tag" style="border-color:#d8e3ea; background:#eef4f7; color:#244355;">{{ card.position.get_position_kind_display }}</span>
+                    {% if card.reference_playbook.best_candidate %}<span class="equity-summary-tag" style="border-color:#d8e3ea; background:#eef4f7; color:#244355;">Mejor {{ card.reference_playbook.best_candidate.short_name }}</span>{% endif %}
+                    {% if card.correlation.coefficient is not None %}<span class="equity-summary-tag" style="border-color:#d8e3ea; background:#eef4f7; color:#244355;">Corr {{ card.correlation.coefficient|floatformat:2 }}</span>{% endif %}
+                  </div>
+                </div>
+              </summary>
+              <div class="equity-stock-body">{% include "equities/_analysis_card.html" with card=card %}</div>
+            </details>
+          {% empty %}
+            <div class="message info">Todavia no hay posiciones para analizar.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </details>
+
+    <details class="equity-fold" id="equity-optimizer">
+      <summary>Optimizador 12M</summary>
+      <div class="equity-fold-body">
+        <div class="equity-panel" style="padding:0; border:none; box-shadow:none; background:transparent;">
+          <div class="equity-panel-head"><div><p class="section-title">Optimizador</p><h3>Distribucion sugerida a 12 meses</h3><p>Se mantiene como herramienta secundaria: primero decides la referencia, luego si quieres usas la proyeccion para repartir capital.</p></div></div>
+          <form method="get" class="equity-grid-4" style="align-items:end;">
+            <div><label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>{{ optimizer_form.total_investment }}</div>
+            <div><label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>{{ optimizer_form.max_company_pct }}</div>
+            <button class="button" type="submit">Calcular propuesta</button>
+            <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
+          </form>
+          {% if optimizer_plan and optimizer_plan.available %}
+            <div class="equity-detail-grid" style="margin-top:18px;">
+              <div class="equity-box"><span>Capital</span><strong>{{ optimizer_plan.total_investment|floatformat:0 }} EUR</strong></div>
+              <div class="equity-box"><span>Ganancia 12M</span><strong class="{% if optimizer_plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ optimizer_plan.projected_gain_total|floatformat:0 }} EUR</strong></div>
+              <div class="equity-box"><span>Rentabilidad media</span><strong>{% if optimizer_plan.weighted_return_pct is not None %}{{ optimizer_plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
+              <div class="equity-box"><span>Caja en reserva</span><strong>{{ optimizer_plan.cash_reserve_amount|floatformat:0 }} EUR</strong></div>
+            </div>
+            <div class="equity-table-wrap" style="margin-top:18px;">
+              <table>
+                <thead><tr><th>Orden</th><th>Empresa</th><th>Estado</th><th>Referencia</th><th>Peso</th><th>Importe</th><th>Retorno ajustado</th><th>Confianza</th></tr></thead>
+                <tbody>
+                  {% for item in optimizer_plan.allocations %}
+                    <tr><td>{{ item.rank }}</td><td><strong>{{ item.position.company_name }}</strong><br><span class="metric-sub">{{ item.position.ticker }}</span></td><td>{{ item.position.get_position_kind_display }}</td><td>{{ item.reference_label }}</td><td>{{ item.allocated_weight_pct|floatformat:1 }} %</td><td>{{ item.allocated_amount|floatformat:0 }} EUR</td><td class="{% if item.adjusted_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.adjusted_return_pct|floatformat:2 }} %</td><td>{{ item.confidence_label }}</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% if optimizer_plan.reserve_reason %}<small class="equity-note">{{ optimizer_plan.reserve_reason }}</small>{% endif %}
+          {% elif optimizer_plan %}
+            <div class="message info" style="margin-top:16px;">{{ optimizer_plan.reason }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </details>
+
+    <details class="equity-fold">
+      <summary>Guia completa IBEX del Excel</summary>
+      <div class="equity-fold-body">
+        <p class="equity-note">Esta tabla te deja revisar toda la guia cargada desde el Excel, aunque el valor no este todavia en cartera ni en seguimiento.</p>
+        {% if reference_guide_rows %}
+          <div class="equity-toolbar">
+            <div style="width:100%;">
+              <label for="equity-guide-search">Buscar valor o indicador</label>
+              <input id="equity-guide-search" type="search" placeholder="Ejemplo: Indra, Euribor o turismo">
+            </div>
+            <div class="equity-chip-row">
+              <button type="button" class="equity-filter active" data-guide-filter="all">Todos</button>
+              <button type="button" class="equity-filter" data-guide-filter="owned">Compradas</button>
+              <button type="button" class="equity-filter" data-guide-filter="watchlist">Seguimiento</button>
+              <button type="button" class="equity-filter" data-guide-filter="guide">Solo guia</button>
+            </div>
+          </div>
+          <div class="equity-table-wrap">
+            <table>
+              <thead><tr><th>Empresa</th><th>Estado</th><th>Referencia actual</th><th>Mejor indicador</th><th>Alternativas</th><th>Datos 2025</th></tr></thead>
               <tbody>
-                {% for item in optimizer_plan.allocations %}
-                  <tr>
-                    <td>{{ item.rank }}</td>
-                    <td><strong>{{ item.position.company_name }}</strong><br><span class="metric-sub">{{ item.position.ticker }}</span></td>
-                    <td>{{ item.position.get_position_kind_display }}</td>
-                    <td>{{ item.reference_label }}</td>
-                    <td>{{ item.allocated_weight_pct|floatformat:2 }} %</td>
-                    <td>{{ item.allocated_amount|floatformat:2 }} EUR</td>
-                    <td class="{% if item.base_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.base_return_pct|floatformat:2 }} %</td>
-                    <td class="{% if item.adjusted_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.adjusted_return_pct|floatformat:2 }} %</td>
-                    <td class="{% if item.projected_gain_amount >= 0 %}good{% else %}warn{% endif %}">{{ item.projected_gain_amount|floatformat:2 }} EUR</td>
-                    <td>{{ item.confidence_label }}</td>
+                {% for row in reference_guide_rows %}
+                  <tr data-guide-row data-guide-status="{{ row.status_key }}" data-guide-search="{{ row.company_name|lower }} {{ row.ticker|lower }} {{ row.sector|lower }} {{ row.current_reference_label|default:''|lower }} {% for candidate in row.top_candidates %}{{ candidate.name|lower }} {{ candidate.short_name|lower }} {% endfor %}">
+                    <td>{% if row.detail_anchor %}<strong><a href="#{{ row.detail_anchor }}">{{ row.company_name }}</a></strong>{% else %}<strong>{{ row.company_name }}</strong>{% endif %}<br><span class="metric-sub">{{ row.ticker }}{% if row.sector %} | {{ row.sector }}{% endif %}</span>{% if row.notes %}<br><span class="metric-sub">{{ row.notes }}</span>{% endif %}</td>
+                    <td>{{ row.status_label }}</td>
+                    <td>{{ row.current_reference_label|default:"Sin definir" }}{% if row.current_live_correlation is not None %}<br><span class="metric-sub">App {{ row.current_live_correlation|floatformat:2 }}</span>{% elif row.current_candidate and row.current_candidate.historical_coefficient is not None %}<br><span class="metric-sub">Excel {{ row.current_candidate.historical_coefficient|floatformat:2 }}</span>{% endif %}</td>
+                    <td>{% if row.best_candidate %}<strong>{{ row.best_candidate.name }}</strong><br><span class="metric-sub">{% if row.best_candidate.sector_score is not None %}Sector {{ row.best_candidate.sector_score|floatformat:2 }}{% endif %}{% if row.best_candidate.historical_coefficient is not None %} | Hist {{ row.best_candidate.historical_coefficient|floatformat:2 }}{% endif %}</span>{% else %}-{% endif %}</td>
+                    <td>{% for candidate in row.top_candidates %}<span class="equity-candidate{% if candidate.is_active_reference %} active{% elif candidate.is_best %} best{% endif %}" style="display:inline-flex; margin:0 8px 8px 0;">{{ candidate.short_name }} {% if candidate.sector_score is not None %}{{ candidate.sector_score|floatformat:2 }}{% elif candidate.historical_coefficient is not None %}{{ candidate.historical_coefficient|floatformat:2 }}{% endif %}</span>{% endfor %}</td>
+                    <td>{% if row.return_2025 is not None %}2025 {{ row.return_2025|floatformat:1 }} %<br>{% endif %}{% if row.per_2025 is not None %}PER {{ row.per_2025|floatformat:1 }}<br>{% endif %}{% if row.dividend_yield is not None %}Div {{ row.dividend_yield|floatformat:1 }} %<br>{% endif %}{% if row.one_year_return is not None %}App 1Y {{ row.one_year_return|floatformat:1 }} %{% endif %}</td>
                   </tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
-        {% elif optimizer_plan %}
-          <div class="message info" style="margin-top:16px;">{{ optimizer_plan.reason }}</div>
+        {% else %}
+          <div class="message info">No se ha podido cargar la guia del Excel ni hay suficiente informacion para montar la tabla.</div>
         {% endif %}
-      </section>
-
-      <section class="equity-panel">
-        <div class="equity-panel-copy">
-          <div>
-            <p class="section-title">Como lo reparte</p>
-            <h3>Reglas del optimizador</h3>
-            <p>Para ser util de verdad, la propuesta no se limita a coger la accion con mejor pinta y ya. Respeta el tope por empresa y trata de no forzar compras con una lectura floja.</p>
-          </div>
-        </div>
-        <div class="equity-period-grid">
-          <div class="equity-period-card">
-            <div class="equity-period-label">Tope por valor</div>
-            <div class="equity-period-value">{% if optimizer_plan %}{{ optimizer_plan.max_company_pct|floatformat:0 }} %{% else %}20 %{% endif %}</div>
-            <div class="metric-sub">Nunca supera el porcentaje maximo que marques.</div>
-          </div>
-          <div class="equity-period-card">
-            <div class="equity-period-label">Base 12M</div>
-            <div class="equity-period-value">6M + Ref</div>
-            <div class="metric-sub">Parte de la evolucion reciente y la referencia activa.</div>
-          </div>
-          <div class="equity-period-card">
-            <div class="equity-period-label">Ajuste</div>
-            <div class="equity-period-value">Confianza</div>
-            <div class="metric-sub">Reduce la agresividad si la correlacion es debil o hay pocas observaciones.</div>
-          </div>
-          <div class="equity-period-card">
-            <div class="equity-period-label">Liquidez</div>
-            <div class="equity-period-value">Reserva</div>
-            <div class="metric-sub">Si no hay suficientes ideas buenas, deja parte sin asignar.</div>
-          </div>
-        </div>
-        {% if optimizer_plan and optimizer_plan.reserve_reason %}
-          <div class="equity-optimizer-note">{{ optimizer_plan.reserve_reason }}</div>
-        {% endif %}
-      </section>
-    </section>
-
-    <section class="equity-panel table-card" id="equity-owned">
-      <div class="equity-panel-copy">
-        <div>
-          <p class="section-title">Acciones compradas</p>
-          <h3>Cartera real</h3>
-          <p>Esta tabla solo recoge posiciones ya compradas. Asi el valor actual, la rentabilidad y el flujo anual salen limpios y comparables.</p>
-        </div>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Ticker</th>
-            <th>Empresa</th>
-            <th>Titular</th>
-            <th>Acciones</th>
-            <th>Invertido</th>
-            <th>Valor actual</th>
-            <th>Ganancia neta</th>
-            <th>Rentabilidad neta</th>
-            <th>Referencia</th>
-            <th>Precio</th>
-            <th>Fecha</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for position in owned_positions %}
-            <tr>
-              <td><strong>{{ position.ticker }}</strong></td>
-              <td>{{ position.company_name }}</td>
-              <td>{{ position.get_ownership_category_display }}</td>
-              <td>{{ position.shares|floatformat:4 }}</td>
-              <td>{{ position.invested_amount|floatformat:2 }} EUR</td>
-              <td>{{ position.current_value|floatformat:2 }} EUR</td>
-              <td class="{% if position.unrealized_gain_after_costs >= 0 %}good{% else %}warn{% endif %}">{{ position.unrealized_gain_after_costs|floatformat:2 }} EUR</td>
-              <td class="{% if position.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ position.unrealized_return_pct|floatformat:2 }} %</td>
-              <td>{{ position.analysis_reference_label }}</td>
-              <td>{{ position.current_price_per_share|floatformat:4 }}</td>
-              <td>{{ position.latest_price_date|date:"Y-m-d"|default:"-" }}</td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="11" class="muted">Todavia no hay acciones compradas.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
-
-    <section class="equity-panel table-card" id="equity-watchlist">
-      <div class="equity-panel-copy">
-        <div>
-          <p class="section-title">Acciones en seguimiento</p>
-          <h3>Radar de oportunidades</h3>
-          <p>Las ideas que todavia no has comprado quedan fuera del patrimonio. No necesitas meter acciones ni precio de compra: la app puede seguirlas solo con el valor y la referencia.</p>
-        </div>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Ticker</th>
-            <th>Empresa</th>
-            <th>Titular</th>
-            <th>Precio de referencia</th>
-            <th>Precio actual</th>
-            <th>1M</th>
-            <th>3M</th>
-            <th>6M</th>
-            <th>1Y</th>
-            <th>Referencia</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for card in watchlist_history_cards %}
-            <tr>
-              <td><strong>{{ card.position.ticker }}</strong></td>
-              <td>{{ card.position.company_name }}</td>
-              <td>{{ card.position.get_ownership_category_display }}</td>
-              <td>
-                {% if card.position.average_cost_per_share > 0 %}
-                  {{ card.position.average_cost_per_share|floatformat:4 }}
-                {% elif card.position.current_price_per_share > 0 %}
-                  {{ card.position.current_price_per_share|floatformat:4 }}
-                {% else %}
-                  -
-                {% endif %}
-              </td>
-              <td>{{ card.position.current_price_per_share|floatformat:4 }}</td>
-              {% for snapshot in card.period_snapshots %}
-                <td class="{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">
-                  {% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:1 }} %{% else %}-{% endif %}
-                </td>
-              {% endfor %}
-              <td>{{ card.reference_label }}</td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="10" class="muted">Todavia no hay acciones en seguimiento.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
-
-    <section class="equity-panel" id="equity-analysis">
-      <div class="equity-panel-copy" style="margin-bottom:18px;">
-        <div>
-          <p class="section-title">Analisis y correlacion</p>
-          <h3 style="margin:0;">Cada tesis ligada a su variable de referencia</h3>
-          <p>La comparativa principal enfrenta el precio de la accion con la referencia que hayas elegido. Ahora la navegacion se hace por pestañas: primero separas cartera real y seguimiento, y dentro de cada bloque abres la accion concreta que quieras estudiar.</p>
-        </div>
-      </div>
-      <div class="equity-analysis-shell">
-        <div class="equity-analysis-switch" role="tablist" aria-label="Tipo de acciones">
-          <button type="button" class="active" data-group-target="owned">Compradas ({{ owned_history_cards|length }})</button>
-          <button type="button" data-group-target="watchlist">En seguimiento ({{ watchlist_history_cards|length }})</button>
-        </div>
-
-        <section class="equity-group-panel" data-group-panel="owned">
-          {% if owned_history_cards %}
-            <div class="equity-stock-tabs" role="tablist" aria-label="Acciones compradas">
-              {% for card in owned_history_cards %}
-                <button type="button" class="equity-stock-tab{% if forloop.first %} active{% endif %}" data-stock-target="owned-{{ card.position.id }}">
-                  <strong>{{ card.position.company_name }}</strong>
-                  <span>{{ card.position.ticker }} | {{ card.reference_label }}</span>
-                </button>
-              {% endfor %}
-            </div>
-            <div class="equity-stock-panels">
-              {% for card in owned_history_cards %}
-                <div class="equity-stock-panel{% if forloop.first %} active{% endif %}" data-stock-panel="owned-{{ card.position.id }}">
-                  {% include "equities/_analysis_card.html" with card=card %}
-                </div>
-              {% endfor %}
-            </div>
-          {% else %}
-            <div class="message info">Todavia no hay acciones compradas con historico para analizar.</div>
-          {% endif %}
-        </section>
-
-        <section class="equity-group-panel" data-group-panel="watchlist" hidden>
-          {% if watchlist_history_cards %}
-            <div class="equity-stock-tabs" role="tablist" aria-label="Acciones en seguimiento">
-              {% for card in watchlist_history_cards %}
-                <button type="button" class="equity-stock-tab{% if forloop.first %} active{% endif %}" data-stock-target="watchlist-{{ card.position.id }}">
-                  <strong>{{ card.position.company_name }}</strong>
-                  <span>{{ card.position.ticker }} | {{ card.reference_label }}</span>
-                </button>
-              {% endfor %}
-            </div>
-            <div class="equity-stock-panels">
-              {% for card in watchlist_history_cards %}
-                <div class="equity-stock-panel{% if forloop.first %} active{% endif %}" data-stock-panel="watchlist-{{ card.position.id }}">
-                  {% include "equities/_analysis_card.html" with card=card %}
-                </div>
-              {% endfor %}
-            </div>
-          {% else %}
-            <div class="message info">Todavia no hay acciones en seguimiento con historico para analizar.</div>
-          {% endif %}
-        </section>
-      </div>
-    </section>
+    </details>
 
     <details class="equity-fold" id="equity-ops">
       <summary>Operativa de acciones</summary>
       <div class="equity-fold-body">
-        <p class="equity-table-note">La operativa queda al final para no competir con el analisis. Aqui puedes refrescar precios, rellenar el formulario desde un documento y registrar tanto cartera real como ideas en seguimiento.</p>
-        <div class="equity-panel-grid">
+        <p class="equity-note">La operativa queda al final para que no compita con la lectura de cartera ni con la eleccion de referencias.</p>
+        <div class="equity-grid-2">
           <section class="equity-panel">
             <p class="section-title">Sincronizacion manual</p>
             <h3>Actualizar mercado ahora</h3>
-            <p class="metric-sub">Normalmente no hace falta porque el precio se actualiza al entrar, pero puedes forzar una nueva carga si acabas de guardar una accion o has cambiado su referencia.</p>
-            <form method="post" style="margin-top:18px;">
-              {% csrf_token %}
-              <input type="hidden" name="action" value="sync_market_data">
-              <button class="button" type="submit">Actualizar datos de mercado</button>
-            </form>
+            <p class="metric-sub">Normalmente no hace falta porque el precio se actualiza al entrar, pero puedes forzar una nueva carga si acabas de cambiar la referencia.</p>
+            <form method="post" style="margin-top:18px;">{% csrf_token %}<input type="hidden" name="action" value="sync_market_data"><button class="button" type="submit">Actualizar datos de mercado</button></form>
           </section>
-
           <section class="equity-panel">
             <p class="section-title">Importacion asistida</p>
             <h3>Rellenar desde XLS, XLSX o PDF</h3>
             <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
               {% csrf_token %}
               <input type="hidden" name="action" value="prefill_from_document">
-              <label for="{{ document_form.document.id_for_label }}">{{ document_form.document.label }}</label>
-              {{ document_form.document }}
-              <label for="{{ document_form.default_broker.id_for_label }}">{{ document_form.default_broker.label }}</label>
-              {{ document_form.default_broker }}
-              <label for="{{ document_form.default_ownership_category.id_for_label }}">{{ document_form.default_ownership_category.label }}</label>
-              {{ document_form.default_ownership_category }}
+              <label for="{{ document_form.document.id_for_label }}">{{ document_form.document.label }}</label>{{ document_form.document }}
+              <label for="{{ document_form.default_broker.id_for_label }}">{{ document_form.default_broker.label }}</label>{{ document_form.default_broker }}
+              <label for="{{ document_form.default_ownership_category.id_for_label }}">{{ document_form.default_ownership_category.label }}</label>{{ document_form.default_ownership_category }}
               <button class="button secondary" type="submit">Completar formulario</button>
             </form>
-            {% if prefill_source_filename %}
-              <div class="message info" style="margin-top:14px;">Formulario precargado desde {{ prefill_source_filename }}.</div>
-            {% endif %}
+            {% if prefill_source_filename %}<div class="message info" style="margin-top:14px;">Formulario precargado desde {{ prefill_source_filename }}.</div>{% endif %}
           </section>
         </div>
-
         <section class="equity-panel" style="margin-top:18px;">
           <p class="section-title">Alta o actualizacion</p>
           <h3>Registrar cartera o seguimiento</h3>
           <form method="post" class="stack" style="margin-top:18px;" novalidate>
             {% csrf_token %}
             <input type="hidden" name="action" value="create_position">
-            <div class="equity-form-hint">
-              Escribe una empresa del IBEX, por ejemplo <strong>Indra</strong>, y la app te rellenara ticker, simbolo cotizado y la referencia externa mas util para analizarla. Si marcas <strong>En seguimiento</strong>, acciones y precios pasan a ser opcionales.
-            </div>
+            <div class="equity-form-hint">Escribe una empresa del IBEX, por ejemplo <strong>Indra</strong>, y la app te rellenara ticker, simbolo cotizado y una referencia inicial. Luego podras revisarla con calma en el tablero superior.</div>
             <div class="grid cols-2">
               <div><label for="{{ position_form.position_kind.id_for_label }}">{{ position_form.position_kind.label }}</label>{{ position_form.position_kind }}</div>
               <div><label for="{{ position_form.ownership_category.id_for_label }}">{{ position_form.ownership_category.label }}</label>{{ position_form.ownership_category }}</div>
@@ -883,15 +625,8 @@
               <div><label for="{{ position_form.reference_profile.id_for_label }}">{{ position_form.reference_profile.label }}</label>{{ position_form.reference_profile }}</div>
               <div><label for="{{ position_form.benchmark_name.id_for_label }}">{{ position_form.benchmark_name.label }}</label>{{ position_form.benchmark_name }}</div>
               <div><label for="{{ position_form.benchmark_symbol.id_for_label }}">{{ position_form.benchmark_symbol.label }}</label>{{ position_form.benchmark_symbol }}</div>
-              <div>
-                <label for="{{ position_form.shares.id_for_label }}">{{ position_form.shares.label }}</label>
-                {{ position_form.shares }}
-                {% if position_form.shares.help_text %}<div class="metric-sub">{{ position_form.shares.help_text }}</div>{% endif %}
-              </div>
-              <div>
-                <label for="{{ position_form.average_cost_per_share.id_for_label }}">{{ position_form.average_cost_per_share.label }}</label>
-                {{ position_form.average_cost_per_share }}
-              </div>
+              <div><label for="{{ position_form.shares.id_for_label }}">{{ position_form.shares.label }}</label>{{ position_form.shares }}{% if position_form.shares.help_text %}<div class="metric-sub">{{ position_form.shares.help_text }}</div>{% endif %}</div>
+              <div><label for="{{ position_form.average_cost_per_share.id_for_label }}">{{ position_form.average_cost_per_share.label }}</label>{{ position_form.average_cost_per_share }}</div>
               <div><label for="{{ position_form.current_price_per_share.id_for_label }}">{{ position_form.current_price_per_share.label }}</label>{{ position_form.current_price_per_share }}</div>
               <div><label for="{{ position_form.annual_dividend_income.id_for_label }}">{{ position_form.annual_dividend_income.label }}</label>{{ position_form.annual_dividend_income }}</div>
               <div><label for="{{ position_form.annual_maintenance_cost.id_for_label }}">{{ position_form.annual_maintenance_cost.label }}</label>{{ position_form.annual_maintenance_cost }}</div>
@@ -900,16 +635,14 @@
               <div class="equity-autofill-card" id="equity-company-match" hidden></div>
               <div class="equity-autofill-card" id="equity-reference-suggestions" hidden></div>
             </div>
-            <div>
-              <label for="{{ position_form.notes.id_for_label }}">{{ position_form.notes.label }}</label>
-              {{ position_form.notes }}
-            </div>
+            <div><label for="{{ position_form.notes.id_for_label }}">{{ position_form.notes.label }}</label>{{ position_form.notes }}</div>
             <button class="button" type="submit">Guardar accion</button>
           </form>
         </section>
       </div>
     </details>
   </div>
+
   {{ equity_company_catalog|json_script:"equity-company-catalog" }}
   <datalist id="equity-company-options">
     {% for entry in equity_company_catalog %}
@@ -1028,7 +761,7 @@
         suggestionsBox.hidden = false;
         suggestionsBox.innerHTML = `
           <div class="equity-autofill-title">Variables sugeridas para esta tesis</div>
-          <div class="equity-autofill-meta">Las referencias propuestas intentan explicar mejor la empresa que un indice general sin quitarte libertad para cambiarla.</div>
+          <div class="equity-autofill-meta">Son una ayuda inicial para registrar el valor. La revision fina la haces luego en el tablero superior.</div>
           <div class="equity-suggestion-actions">
             ${(entry.reference_suggestions || []).map((reference) => {
               const referenceKey = [reference.reference_profile || "", reference.benchmark_symbol || "", reference.benchmark_name || ""].join("|");
@@ -1095,15 +828,11 @@
         applyCompany(entry, options);
       };
 
-      companyInput.addEventListener("input", () => {
-        renderMatch(findMatch(companyInput.value));
-      });
+      companyInput.addEventListener("input", () => renderMatch(findMatch(companyInput.value)));
       companyInput.addEventListener("change", () => syncFromField(companyInput.value, { overwriteReference: true }));
       companyInput.addEventListener("blur", () => syncFromField(companyInput.value, { overwriteReference: true }));
 
-      tickerInput.addEventListener("input", () => {
-        renderMatch(findMatch(tickerInput.value));
-      });
+      tickerInput.addEventListener("input", () => renderMatch(findMatch(tickerInput.value)));
       tickerInput.addEventListener("change", () => syncFromField(tickerInput.value, { overwriteReference: true }));
       tickerInput.addEventListener("blur", () => syncFromField(tickerInput.value, { overwriteReference: true }));
 
@@ -1121,9 +850,7 @@
         renderMatch(entry);
       });
 
-      positionKindInput.addEventListener("change", () => {
-        applyPositionKindMode(true);
-      });
+      positionKindInput.addEventListener("change", () => applyPositionKindMode(true));
 
       applyPositionKindMode(positionKindInput.value === "watchlist");
       syncFromField(companyInput.value || tickerInput.value, { overwriteReference: false });
@@ -1131,47 +858,34 @@
   </script>
   <script>
     (() => {
-      const groupButtons = Array.from(document.querySelectorAll("[data-group-target]"));
-      const groupPanels = Array.from(document.querySelectorAll("[data-group-panel]"));
-      if (!groupButtons.length || !groupPanels.length) {
+      const rows = Array.from(document.querySelectorAll("[data-guide-row]"));
+      const searchInput = document.getElementById("equity-guide-search");
+      const filterButtons = Array.from(document.querySelectorAll("[data-guide-filter]"));
+      if (!rows.length || !searchInput || !filterButtons.length) {
         return;
       }
 
-      const activateStockTab = (scope, target) => {
-        scope.querySelectorAll("[data-stock-target]").forEach((button) => {
-          button.classList.toggle("active", button.dataset.stockTarget === target);
-        });
-        scope.querySelectorAll("[data-stock-panel]").forEach((panel) => {
-          panel.classList.toggle("active", panel.dataset.stockPanel === target);
-        });
-      };
-
-      const activateGroup = (target) => {
-        groupButtons.forEach((button) => {
-          button.classList.toggle("active", button.dataset.groupTarget === target);
-        });
-        groupPanels.forEach((panel) => {
-          const isActive = panel.dataset.groupPanel === target;
-          panel.hidden = !isActive;
-          if (isActive) {
-            const firstButton = panel.querySelector("[data-stock-target]");
-            const activeButton = panel.querySelector("[data-stock-target].active");
-            activateStockTab(panel, (activeButton || firstButton)?.dataset.stockTarget);
-          }
+      let activeFilter = "all";
+      const applyFilters = () => {
+        const searchTerm = (searchInput.value || "").trim().toLowerCase();
+        rows.forEach((row) => {
+          const matchesFilter = activeFilter === "all" || row.dataset.guideStatus === activeFilter;
+          const haystack = row.dataset.guideSearch || "";
+          const matchesSearch = !searchTerm || haystack.includes(searchTerm);
+          row.hidden = !(matchesFilter && matchesSearch);
         });
       };
 
-      groupButtons.forEach((button) => {
-        button.addEventListener("click", () => activateGroup(button.dataset.groupTarget));
-      });
-
-      groupPanels.forEach((panel) => {
-        panel.querySelectorAll("[data-stock-target]").forEach((button) => {
-          button.addEventListener("click", () => activateStockTab(panel, button.dataset.stockTarget));
+      filterButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          activeFilter = button.dataset.guideFilter || "all";
+          filterButtons.forEach((item) => item.classList.toggle("active", item === button));
+          applyFilters();
         });
       });
 
-      activateGroup(groupButtons[0].dataset.groupTarget);
+      searchInput.addEventListener("input", applyFilters);
+      applyFilters();
     })();
   </script>
-{% endblock %}
+  {% endblock %}
