@@ -1284,6 +1284,103 @@ class EquitiesServicesTests(TestCase):
         self.assertGreaterEqual(dashboard["ibex_universe_summary"]["buy_alert_count"], 1)
         self.assertEqual(dashboard["ibex_universe_summary"]["broker_assumption"], "Interactive Brokers")
 
+    def test_ibex_universe_master_list_includes_registered_positions_without_duplication(self):
+        iberdrola = find_equity_company_profile("Iberdrola")
+        acs = find_equity_company_profile("ACS")
+        tracked = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Seguimiento",
+            ticker=iberdrola["ticker"],
+            quote_symbol=iberdrola["quote_symbol"],
+            reference_profile=EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND,
+            benchmark_symbol=SPAIN_ELECTRICITY_DEMAND_SYMBOL,
+            benchmark_name=SPAIN_ELECTRICITY_DEMAND_NAME,
+            company_name=iberdrola["company_name"],
+            shares=Decimal("0"),
+            average_cost_per_share=Decimal("12.0000"),
+            current_price_per_share=Decimal("12.2000"),
+        )
+        stock_series = build_compound_market_series(
+            tracked.quote_symbol,
+            tracked.company_name,
+            growth=Decimal("1.0100"),
+            start_price=Decimal("12.0000"),
+        )
+        reference_series = build_compound_market_series(
+            tracked.benchmark_symbol,
+            tracked.benchmark_name,
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+        for stock_point, reference_point in zip(stock_series.points, reference_series.points):
+            tracked.price_history.create(
+                price_date=stock_point["date"],
+                open_price=stock_point["open"],
+                high_price=stock_point["high"],
+                low_price=stock_point["low"],
+                close_price=stock_point["close"],
+                benchmark_close=reference_point["close"],
+            )
+
+        companies = [
+            {
+                "ticker": iberdrola["ticker"],
+                "company_name": iberdrola["company_name"],
+                "quote_symbol": iberdrola["quote_symbol"],
+                "sector": iberdrola["sector_label"],
+                "dividend_yield": Decimal("4.20"),
+                "catalog_profile": iberdrola,
+            },
+            {
+                "ticker": acs["ticker"],
+                "company_name": acs["company_name"],
+                "quote_symbol": acs["quote_symbol"],
+                "sector": acs["sector_label"],
+                "dividend_yield": Decimal("3.10"),
+                "catalog_profile": acs,
+            },
+        ]
+
+        def fake_market_series(symbol, range_key="10y", interval="1d"):
+            growth = Decimal("1.0210") if symbol.startswith("ACS") else Decimal("1.0170")
+            return build_compound_market_series(symbol, symbol, growth=growth, start_price=Decimal("12.0000"))
+
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+            return build_compound_market_series(
+                benchmark_symbol or "^IBEX",
+                benchmark_name or "Referencia",
+                growth=Decimal("1.0070"),
+                start_price=Decimal("100.0000"),
+            )
+
+        empty_workbook = {
+            "available": False,
+            "path": "",
+            "companies": [],
+            "companies_by_key": {},
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+        with (
+            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=empty_workbook),
+            patch("equities.services.build_ibex_universe_companies", return_value=companies),
+            patch("equities.services.fetch_market_series", side_effect=fake_market_series),
+            patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series),
+        ):
+            dashboard = build_equity_analysis_dashboard([tracked], include_ibex_universe=True, ibex_company_limit=5)
+
+        rows = dashboard["ibex_universe_rows"]
+        self.assertEqual(len(rows), 2)
+        tracked_row = next(row for row in rows if row["ticker"] == "IBE")
+        self.assertEqual(tracked_row["status_label"], "En seguimiento")
+        self.assertEqual(dashboard["ibex_universe_summary"]["registered_watchlist_count"], 1)
+        self.assertEqual(dashboard["ibex_universe_summary"]["radar_only_count"], 1)
+        self.assertEqual(len(dashboard["optimizer_cards"]), 2)
+
     def test_dashboard_uses_summary_mode_for_full_ibex_universe_optimizer(self):
         acs = find_equity_company_profile("ACS")
         company = {
@@ -1948,6 +2045,82 @@ class EquitiesViewTests(TestCase):
         mocked_dashboard.assert_called_once()
         self.assertTrue(mocked_dashboard.call_args.kwargs["include_ibex_universe"])
         self.assertIsNone(mocked_dashboard.call_args.kwargs["ibex_company_limit"])
+
+    def test_equities_page_uses_ibex_radar_as_master_list_for_saved_watchlist(self):
+        with patch("equities.views.build_equity_analysis_dashboard") as mocked_dashboard:
+            mocked_dashboard.return_value = {
+                "overview": {
+                    "owned_positions_count": 1,
+                    "watchlist_positions_count": 1,
+                    "invested_amount": Decimal("1000"),
+                    "current_value": Decimal("1100"),
+                    "annual_dividends_total": Decimal("30"),
+                    "net_dividends_total": Decimal("24"),
+                    "annual_maintenance_total": Decimal("6"),
+                    "purchase_cost_total": Decimal("4"),
+                    "net_annual_income_total": Decimal("20"),
+                    "unrealized_gain_total": Decimal("50"),
+                    "unrealized_return_pct": Decimal("5"),
+                    "weighted_projected_return_12m": Decimal("8"),
+                    "weighted_safety_score": Decimal("62"),
+                    "weighted_periods": [],
+                    "best_decision": None,
+                },
+                "history_cards": [],
+                "owned_positions": [],
+                "watchlist_positions": [],
+                "owned_history_cards": [],
+                "watchlist_history_cards": [],
+                "decision_rows": [],
+                "ibex_universe_rows": [
+                    {
+                        "ticker": "IBE",
+                        "company_name": "Iberdrola",
+                        "status_label": "En seguimiento",
+                        "status_note": "La tienes guardada",
+                        "trade_alert_label": "Comprar",
+                        "trade_alert_tone": "buy",
+                        "trade_alert_trigger": "Pendiente positiva",
+                        "reference_label": "IBEX 35",
+                        "best_reference_label": "IBEX 35",
+                        "correlation": Decimal("0.72"),
+                        "years_covered": Decimal("10.00"),
+                        "projected_return_pct": Decimal("8.50"),
+                        "safety_score": Decimal("70.00"),
+                        "reliability_label": "Alta",
+                        "benefit_risk_ratio": Decimal("1.80"),
+                        "cycle_phase": "Expansion",
+                    }
+                ],
+                "ibex_universe_summary": {
+                    "available": True,
+                    "analyzed_count": 35,
+                    "buy_alert_count": 10,
+                    "sell_alert_count": 5,
+                    "watch_alert_count": 20,
+                    "registered_count": 2,
+                    "registered_owned_count": 1,
+                    "registered_watchlist_count": 1,
+                    "radar_only_count": 33,
+                    "failed_count": 0,
+                    "failures": [],
+                    "broker_assumption": "Interactive Brokers",
+                    "trade_channel_label": "App",
+                    "top_pick": {"ticker": "IBE", "company_name": "Iberdrola"},
+                },
+                "tracked_reference_rows": [],
+                "reference_guide_rows": [],
+                "reference_guide_summary": {"workbook_loaded": False},
+                "optimizer_cards": [],
+            }
+
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Esta es ahora la lista maestra del IBEX")
+        self.assertContains(response, "seguimientos guardados")
+        self.assertContains(response, "La tienes guardada")
+        self.assertNotContains(response, "Acciones en seguimiento")
 
     def test_can_launch_background_optimizer_run_from_page(self):
         run = EquityOptimizationRun.objects.create(

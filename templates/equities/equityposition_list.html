@@ -417,7 +417,7 @@
         </div>
         <div class="equity-chip-row">
           <span class="equity-chip">{{ summary.owned_positions_count }} compradas</span>
-          <span class="equity-chip">{{ summary.watchlist_positions_count }} en seguimiento</span>
+          <span class="equity-chip">{{ summary.watchlist_positions_count }} seguimientos guardados</span>
           {% if investment_journey.available %}<span class="equity-chip">{{ investment_journey.closed_count }} vendidas</span>{% endif %}
           {% if analysis_overview.best_decision %}<span class="equity-chip">Mejor lectura {{ analysis_overview.best_decision.ticker }}</span>{% endif %}
           {% if ibex_universe_summary.available %}<span class="equity-chip">Radar IBEX {{ ibex_universe_summary.analyzed_count }}</span>{% endif %}
@@ -507,7 +507,7 @@
         <div>
           <p class="section-title">Radar IBEX</p>
           <h2>Todo el IBEX cribado para nuevas compras o ventas</h2>
-          <p>Se aplica el mismo analisis de 10 anos, dividendos, costes, riesgo y alertas de tendencia a todos los valores del IBEX, no solo a los que ya tienes dados de alta. Pulsa cualquier fila para abrir el analisis completo en otra pestana.</p>
+          <p>Esta es ahora la lista maestra del IBEX. Aqui aparecen juntos todos los valores del indice y, dentro de ellos, se marcan tus compradas y tus seguimientos guardados para no duplicar informacion en otra tabla aparte. Pulsa cualquier fila para abrir el analisis completo en otra pestana.</p>
         </div>
         {% if ibex_universe_summary.available %}<span class="pill">{{ ibex_universe_summary.analyzed_count }} valores analizados</span>{% endif %}
       </div>
@@ -515,8 +515,14 @@
         <div class="equity-grid-4">
           <div class="equity-box"><span>Alertas compra</span><strong class="good">{{ ibex_universe_summary.buy_alert_count }}</strong></div>
           <div class="equity-box"><span>Alertas venta</span><strong class="warn">{{ ibex_universe_summary.sell_alert_count }}</strong></div>
+          <div class="equity-box"><span>Compradas dentro del IBEX</span><strong>{{ ibex_universe_summary.registered_owned_count }}</strong><small>Tus posiciones ya aparecen aqui marcadas.</small></div>
+          <div class="equity-box"><span>Seguimientos guardados</span><strong>{{ ibex_universe_summary.registered_watchlist_count }}</strong><small>El resto queda como solo radar.</small></div>
+        </div>
+        <div class="equity-grid-4" style="margin-top:16px;">
           <div class="equity-box"><span>Broker asumido</span><strong>{{ ibex_universe_summary.broker_assumption }}</strong><small>{{ ibex_universe_summary.trade_channel_label }}</small></div>
           <div class="equity-box"><span>Mejor opcion</span><strong>{% if ibex_universe_summary.top_pick %}{{ ibex_universe_summary.top_pick.ticker }}{% else %}-{% endif %}</strong><small>{% if ibex_universe_summary.top_pick %}{{ ibex_universe_summary.top_pick.company_name }}{% endif %}</small></div>
+          <div class="equity-box"><span>Valores ya guardados</span><strong>{{ ibex_universe_summary.registered_count }}</strong><small>Compradas o seguimientos dentro del radar.</small></div>
+          <div class="equity-box"><span>Solo radar</span><strong>{{ ibex_universe_summary.radar_only_count }}</strong><small>Valores no guardados todavia.</small></div>
         </div>
         {% if ibex_universe_summary.failed_count %}
           <div class="message warning" style="margin-top:16px;">
@@ -548,9 +554,10 @@
                         <strong>{{ row.company_name }}</strong>
                       </a>
                       <br><span class="metric-sub">{{ row.ticker }} | {{ row.status_label }}</span>
+                      {% if row.status_note %}<br><span class="metric-sub">{{ row.status_note }}</span>{% endif %}
                       <br><span class="equity-row-launch">Abrir analisis completo</span>
                     {% else %}
-                      <strong>{{ row.company_name }}</strong><br><span class="metric-sub">{{ row.ticker }} | {{ row.status_label }}</span>
+                      <strong>{{ row.company_name }}</strong><br><span class="metric-sub">{{ row.ticker }} | {{ row.status_label }}</span>{% if row.status_note %}<br><span class="metric-sub">{{ row.status_note }}</span>{% endif %}
                     {% endif %}
                   </td>
                   <td><strong class="{% if row.trade_alert_tone == 'buy' %}good{% elif row.trade_alert_tone == 'sell' %}warn{% endif %}">{{ row.trade_alert_label }}</strong><br><span class="metric-sub">{{ row.trade_alert_trigger }}</span></td>
@@ -889,15 +896,14 @@
         {% if auto_sync.failed %}
           <div class="message warning" style="margin-top:16px;">No se pudieron actualizar {{ auto_sync.failed|length }} posicion(es): {{ auto_sync.failed|join:", " }}.</div>
         {% endif %}
-        </section>
+      </section>
 
-        <section class="equity-grid-2">
-          <section class="equity-panel table-card">
+        <section class="equity-panel table-card">
         <div class="equity-panel-head">
           <div>
             <p class="section-title">Cartera real</p>
             <h3>Acciones compradas</h3>
-            <p>Vista patrimonial con el broker y la proyeccion neta.</p>
+            <p>Vista patrimonial con el broker y la proyeccion neta. Los seguimientos guardados ya no se repiten aqui: ahora viven integrados dentro del radar IBEX con su estado.</p>
           </div>
         </div>
         <div class="equity-table-wrap">
@@ -912,44 +918,6 @@
             </tbody>
           </table>
         </div>
-          </section>
-
-          <section class="equity-panel table-card">
-        <div class="equity-panel-head">
-          <div>
-            <p class="section-title">Radar</p>
-            <h3>Acciones en seguimiento</h3>
-            <p>Aqui quedan las ideas que todavia no forman parte del patrimonio.</p>
-          </div>
-        </div>
-        <div class="equity-table-wrap">
-          <table>
-            <thead><tr><th>Ticker</th><th>Empresa</th><th>Precio actual</th><th>1Y</th><th>3Y</th><th>5Y</th><th>10Y</th><th>Referencia</th><th></th></tr></thead>
-            <tbody>
-              {% for card in watchlist_history_cards %}
-                <tr>
-                  <td><strong>{{ card.position.ticker }}</strong></td>
-                  <td>{{ card.position.company_name }}</td>
-                  <td>{{ card.position.current_price_per_share|floatformat:4 }}</td>
-                  {% for snapshot in card.period_snapshots %}
-                    <td class="{% if snapshot.stock_return_pct or snapshot.stock_return_pct == 0 %}{% if snapshot.stock_return_pct >= 0 %}good{% else %}warn{% endif %}{% endif %}">{% if snapshot.available %}{{ snapshot.stock_return_pct|floatformat:1 }} %{% else %}-{% endif %}</td>
-                  {% endfor %}
-                  <td>{{ card.reference_label }}</td>
-                  <td>
-                    <form method="post">{% csrf_token %}
-                      <input type="hidden" name="action" value="delete_position">
-                      <input type="hidden" name="position_id" value="{{ card.position.id }}">
-                      <button class="button secondary" type="submit">Eliminar</button>
-                    </form>
-                  </td>
-                </tr>
-              {% empty %}
-                <tr><td colspan="9" class="muted">Todavia no hay acciones en seguimiento.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-          </section>
         </section>
       </div>
     </details>

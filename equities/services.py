@@ -4489,6 +4489,7 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
                 "position": position,
                 "status_key": card.get("status_key") or ("owned" if position.is_owned else "watchlist"),
                 "status_label": card.get("status_label") or position.get_position_kind_display(),
+                "status_note": card.get("status_note", ""),
                 "company_name": position.company_name,
                 "ticker": position.ticker,
                 "sector_label": card.get("sector_label") or "Sin sector",
@@ -5156,7 +5157,7 @@ def build_ibex_universe_card(
         selected_start_date=selected_start_date,
         selected_end_date=selected_end_date,
         status_key="ibex",
-        status_label="Radar IBEX",
+        status_label="Solo radar",
         detail_anchor="",
         sector_label=company.get("sector", ""),
         include_visuals=include_visuals,
@@ -5166,6 +5167,72 @@ def build_ibex_universe_card(
         card["reference_playbook"] = build_workbook_reference_playbook(company, workbook_snapshot, card=card)
     card["ibex_company"] = company
     return card
+
+
+def build_ibex_registered_summary(cards: list[dict]) -> dict:
+    owned_count = sum(1 for card in cards if card["position"].is_owned)
+    watchlist_count = sum(1 for card in cards if not card["position"].is_owned)
+    if owned_count and watchlist_count:
+        return {
+            "status_key": "owned",
+            "status_label": "Comprada + seguimiento",
+            "status_note": f"{owned_count} compra(s) y {watchlist_count} seguimiento(s) guardados",
+        }
+    if owned_count:
+        return {
+            "status_key": "owned",
+            "status_label": "Comprada",
+            "status_note": f"{owned_count} posicion(es) guardadas" if owned_count > 1 else "Ya esta en cartera",
+        }
+    return {
+        "status_key": "watchlist",
+        "status_label": "En seguimiento",
+        "status_note": f"{watchlist_count} seguimiento(s) guardados" if watchlist_count > 1 else "La tienes guardada",
+    }
+
+
+def merge_tracked_ibex_card(company: dict, matching_cards: list[dict]) -> dict:
+    def card_rank(card: dict) -> tuple[int, int, int]:
+        position = card["position"]
+        return (
+            0 if position.is_owned else 1,
+            0 if position.current_price_per_share else 1,
+            -(position.id or 0),
+        )
+
+    primary = dict(sorted(matching_cards, key=card_rank)[0])
+    summary = build_ibex_registered_summary(matching_cards)
+    primary["status_key"] = summary["status_key"]
+    primary["status_label"] = summary["status_label"]
+    primary["status_note"] = summary["status_note"]
+    primary["sector_label"] = company.get("sector", "") or primary.get("sector_label") or "Sin sector"
+    primary["ibex_company"] = company
+    return primary
+
+
+def build_optimizer_master_cards(history_cards: list[dict], ibex_cards: list[dict]) -> list[dict]:
+    ibex_keys = set()
+    for card in ibex_cards:
+        position = card["position"]
+        ibex_keys.update(
+            build_security_lookup_keys(
+                ticker=position.ticker,
+                company_name=position.company_name,
+                quote_symbol=position.quote_symbol,
+            )
+        )
+    cards = list(ibex_cards)
+    for card in history_cards:
+        position = card["position"]
+        position_keys = build_security_lookup_keys(
+            ticker=position.ticker,
+            company_name=position.company_name,
+            quote_symbol=position.quote_symbol,
+        )
+        if position_keys & ibex_keys:
+            continue
+        cards.append(card)
+    return cards
 
 
 def build_ibex_universe_analysis(
@@ -5180,18 +5247,18 @@ def build_ibex_universe_analysis(
     reference_cache = reference_cache if reference_cache is not None else {}
     workbook_snapshot = load_ibex_reference_workbook_snapshot()
     companies = build_ibex_universe_companies(workbook_snapshot)
-    tracked_keys = set()
+    tracked_card_map: dict[str, list[dict]] = defaultdict(list)
     for card in tracked_history_cards:
         position = card["position"]
-        tracked_keys.update(
-            build_security_lookup_keys(
-                ticker=position.ticker,
-                company_name=position.company_name,
-                quote_symbol=position.quote_symbol,
-            )
-        )
+        for key in build_security_lookup_keys(
+            ticker=position.ticker,
+            company_name=position.company_name,
+            quote_symbol=position.quote_symbol,
+        ):
+            tracked_card_map[key].append(card)
 
     broker_profile = resolve_analysis_broker_profile(positions)
+    tracked_cards = []
     candidate_companies = []
     failures = []
 
@@ -5201,7 +5268,19 @@ def build_ibex_universe_analysis(
             company_name=company.get("company_name", ""),
             quote_symbol=company.get("quote_symbol", ""),
         )
-        if tracked_keys & company_keys:
+        matching_cards = []
+        for key in company_keys:
+            matching_cards.extend(tracked_card_map.get(key, []))
+        unique_matching_cards = []
+        seen_card_ids = set()
+        for card in matching_cards:
+            card_id = id(card)
+            if card_id in seen_card_ids:
+                continue
+            seen_card_ids.add(card_id)
+            unique_matching_cards.append(card)
+        if unique_matching_cards:
+            tracked_cards.append(merge_tracked_ibex_card(company, unique_matching_cards))
             continue
         if company_limit is not None and len(candidate_companies) >= company_limit:
             break
@@ -5272,15 +5351,20 @@ def build_ibex_universe_analysis(
                             failures_count=len(failures),
                         )
 
-    cards = [card for card in cards if card is not None]
-    target_count = len(candidate_companies)
+    generated_cards = [card for card in cards if card is not None]
+    cards = [*tracked_cards, *generated_cards]
+    target_count = len(tracked_cards) + len(candidate_companies)
 
     rows = build_equity_decision_rows(cards)
     buy_alert_count = sum(1 for card in cards if card.get("trade_alert", {}).get("label") == "Comprar")
     sell_alert_count = sum(1 for card in cards if card.get("trade_alert", {}).get("label") == "Vender")
+    registered_owned_count = sum(1 for card in tracked_cards if card.get("status_key") == "owned")
+    registered_watchlist_count = sum(1 for card in tracked_cards if card.get("status_key") == "watchlist")
 
     return {
         "cards": cards,
+        "tracked_cards": tracked_cards,
+        "generated_cards": generated_cards,
         "rows": rows,
         "summary": {
             "available": bool(cards),
@@ -5291,6 +5375,10 @@ def build_ibex_universe_analysis(
             "buy_alert_count": buy_alert_count,
             "sell_alert_count": sell_alert_count,
             "watch_alert_count": max(len(cards) - buy_alert_count - sell_alert_count, 0),
+            "registered_count": len(tracked_cards),
+            "registered_owned_count": registered_owned_count,
+            "registered_watchlist_count": registered_watchlist_count,
+            "radar_only_count": max(len(cards) - len(tracked_cards), 0),
             "failed_count": len(failures),
             "failures": failures[:8],
             "broker_assumption": broker_profile["broker"],
@@ -5462,7 +5550,7 @@ def build_equity_analysis_dashboard(
         "ibex_universe_cards": ibex_universe["cards"],
         "ibex_universe_rows": ibex_universe["rows"],
         "ibex_universe_summary": ibex_universe["summary"],
-        "optimizer_cards": [*history_cards, *ibex_universe["cards"]],
+        "optimizer_cards": build_optimizer_master_cards(history_cards, ibex_universe["cards"]),
         "reference_guide_rows": reference_guide["rows"],
         "tracked_reference_rows": reference_guide["tracked_rows"],
         "reference_guide_summary": reference_guide["summary"],
