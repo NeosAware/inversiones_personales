@@ -622,6 +622,7 @@
           <form method="get" class="equity-grid-4" style="align-items:end;">
             <div><label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>{{ optimizer_form.total_investment }}</div>
             <div><label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>{{ optimizer_form.max_company_pct }}</div>
+            <div><label for="{{ optimizer_form.max_sector_positions.id_for_label }}">{{ optimizer_form.max_sector_positions.label }}</label>{{ optimizer_form.max_sector_positions }}</div>
             <button class="button" type="submit">Calcular propuesta</button>
             <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
           </form>
@@ -638,9 +639,11 @@
               <div class="equity-box"><span>Volatilidad media</span><strong>{% if optimizer_plan.weighted_volatility_pct is not None %}{{ optimizer_plan.weighted_volatility_pct|floatformat:1 }} %{% else %}-{% endif %}</strong></div>
               <div class="equity-box"><span>Caja en reserva</span><strong>{{ optimizer_plan.cash_reserve_amount|floatformat:0 }} EUR</strong></div>
               <div class="equity-box"><span>Radar IBEX elegido</span><strong>{{ optimizer_plan.ibex_allocations_count }}</strong><small>Posiciones virtuales seleccionadas.</small></div>
+              <div class="equity-box"><span>Sectores usados</span><strong>{{ optimizer_plan.sectors_used_count }}</strong><small>{% if optimizer_plan.max_sector_positions > 0 %}Max {{ optimizer_plan.max_sector_positions }} por sector{% else %}Sin limite sectorial{% endif %}</small></div>
             </div>
             <div class="equity-compact-note" style="margin-top:16px;">
               {{ optimizer_plan.methodology_note }}
+              {% if optimizer_plan.sector_filter_note %} {{ optimizer_plan.sector_filter_note }}{% endif %}
               {% if optimizer_plan.ticket_filter_note %} {{ optimizer_plan.ticket_filter_note }}{% endif %}
               {% if ibex_universe_summary.available %} Se han evaluado {{ ibex_universe_summary.analyzed_count }} valores adicionales del IBEX.{% endif %}
               {% if optimizer_plan.top_pick %}
@@ -649,12 +652,13 @@
             </div>
             <div class="equity-table-wrap" style="margin-top:18px;">
               <table>
-                <thead><tr><th>Orden</th><th>Empresa</th><th>Estado</th><th>Alerta</th><th>Referencia</th><th>Score</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th><th>Seguridad</th><th>Fiabilidad</th></tr></thead>
+                <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Referencia</th><th>Score</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th><th>Seguridad</th><th>Fiabilidad</th></tr></thead>
                 <tbody>
                   {% for item in optimizer_plan.allocations %}
                     <tr>
                       <td>{{ item.rank }}</td>
                       <td><strong>{{ item.position.company_name }}</strong><br><span class="metric-sub">{{ item.position.ticker }} | {{ item.cycle_phase }}</span></td>
+                      <td>{{ item.sector_label }}</td>
                       <td>{{ item.status_label }}</td>
                       <td><strong class="{% if item.trade_alert_tone == 'buy' %}good{% elif item.trade_alert_tone == 'sell' %}warn{% endif %}">{{ item.trade_alert_label }}</strong></td>
                       <td>{{ item.reference_label }}</td>

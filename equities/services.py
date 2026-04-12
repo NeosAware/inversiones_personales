@@ -484,6 +484,15 @@ def build_security_lookup_keys(ticker: str = "", company_name: str = "", quote_s
     }
 
 
+def resolve_equity_sector_label(company_name: str = "", ticker: str = "", quote_symbol: str = "") -> str:
+    profile = (
+        find_equity_company_profile(company_name)
+        or find_equity_company_profile(ticker)
+        or find_equity_company_profile(quote_symbol)
+    )
+    return profile.get("sector_label", "") if profile else ""
+
+
 def get_reference_preset(reference_key: str) -> dict:
     preset = REFERENCE_PRESETS.get(reference_key)
     return dict(preset) if preset else {}
@@ -3328,6 +3337,7 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
                 "status_label": card.get("status_label") or position.get_position_kind_display(),
                 "company_name": position.company_name,
                 "ticker": position.ticker,
+                "sector_label": card.get("sector_label") or "Sin sector",
                 "detail_anchor": card.get("detail_anchor") or "",
                 "reference_label": card.get("reference_label"),
                 "best_reference_label": best_candidate.get("name") if best_candidate else card.get("reference_label"),
@@ -3547,10 +3557,16 @@ def build_equity_history_card(
     status_key: str | None = None,
     status_label: str | None = None,
     detail_anchor: str | None = None,
+    sector_label: str | None = None,
 ) -> dict:
     resolved_status_key = status_key or ("owned" if position.is_owned else "watchlist")
     resolved_status_label = status_label or position.get_position_kind_display()
     resolved_detail_anchor = detail_anchor if detail_anchor is not None else (f"stock-{position.id}" if position.id else "")
+    resolved_sector_label = sector_label or resolve_equity_sector_label(
+        company_name=position.company_name,
+        ticker=position.ticker,
+        quote_symbol=position.quote_symbol,
+    )
 
     if not history:
         return {
@@ -3558,6 +3574,7 @@ def build_equity_history_card(
             "status_key": resolved_status_key,
             "status_label": resolved_status_label,
             "detail_anchor": resolved_detail_anchor,
+            "sector_label": resolved_sector_label,
             "has_history": False,
             "projection": {"available": False},
             "projection_backtest": {"available": False, "monthly_chart": {"available": False}},
@@ -3662,6 +3679,7 @@ def build_equity_history_card(
         "status_key": resolved_status_key,
         "status_label": resolved_status_label,
         "detail_anchor": resolved_detail_anchor,
+        "sector_label": resolved_sector_label or "Sin sector",
         "has_history": True,
         "points_count": len(history),
         "start_date": history[0].price_date,
@@ -3916,6 +3934,7 @@ def build_ibex_universe_analysis(
                 status_key="ibex",
                 status_label="Radar IBEX",
                 detail_anchor="",
+                sector_label=company.get("sector", ""),
             )
             if workbook_playbook and workbook_playbook.get("available"):
                 card["reference_playbook"] = build_workbook_reference_playbook(company, workbook_snapshot, card=card)
@@ -4204,6 +4223,11 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
         "projection": projection,
         "status_key": card.get("status_key") or ("owned" if card["position"].is_owned else "watchlist"),
         "status_label": card.get("status_label") or card["position"].get_position_kind_display(),
+        "sector_label": card.get("sector_label") or resolve_equity_sector_label(
+            company_name=card["position"].company_name,
+            ticker=card["position"].ticker,
+            quote_symbol=card["position"].quote_symbol,
+        ) or "Sin sector",
         "reference_label": card["reference_label"],
         "confidence_label": confidence_label,
         "reliability_label": reliability_label,
@@ -4226,6 +4250,27 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
         "trade_alert_note": trade_alert.get("note", ""),
         "trade_signal_adjustment": trade_signal_adjustment,
     }
+
+
+def filter_optimizer_candidates_by_sector(
+    candidates: list[dict],
+    max_sector_positions: int,
+) -> tuple[list[dict], list[dict]]:
+    if max_sector_positions <= 0:
+        return candidates, []
+
+    sector_counts: dict[str, int] = {}
+    accepted = []
+    excluded = []
+    for candidate in candidates:
+        sector_label = candidate.get("sector_label") or "Sin sector"
+        current_count = sector_counts.get(sector_label, 0)
+        if current_count >= max_sector_positions:
+            excluded.append(candidate)
+            continue
+        sector_counts[sector_label] = current_count + 1
+        accepted.append(candidate)
+    return accepted, excluded
 
 
 def distribute_optimizer_amounts(
@@ -4458,6 +4503,7 @@ def build_equity_allocation_plan(
     history_cards: list[dict],
     total_investment: Decimal,
     max_company_pct: Decimal,
+    max_sector_positions: int = 0,
 ) -> dict:
     if total_investment <= 0 or max_company_pct <= 0:
         return {
@@ -4497,6 +4543,18 @@ def build_equity_allocation_plan(
         ),
         reverse=True,
     )
+    sector_excluded_candidates = []
+    if max_sector_positions > 0:
+        ranked_candidates, sector_excluded_candidates = filter_optimizer_candidates_by_sector(
+            ranked_candidates,
+            max_sector_positions,
+        )
+
+    if not ranked_candidates:
+        return {
+            "available": False,
+            "reason": "Con el limite por sector indicado no quedan suficientes candidatos validos para construir la propuesta.",
+        }
 
     ticket_filtered_count = 0
     ticket_filter_reasons = {"entry_drag": 0, "roundtrip_drag": 0, "gain_vs_cost": 0}
@@ -4575,6 +4633,7 @@ def build_equity_allocation_plan(
                 "position": candidate["position"],
                 "status_key": candidate["status_key"],
                 "status_label": candidate["status_label"],
+                "sector_label": candidate["sector_label"],
                 "reference_label": candidate["reference_label"],
                 "allocated_amount": allocated_amount,
                 "allocated_weight_pct": (allocated_amount / total_investment) * Decimal("100"),
@@ -4648,6 +4707,7 @@ def build_equity_allocation_plan(
         for item in allocations
         if not item["position"].is_owned and item["status_key"] != "ibex"
     )
+    sectors_used = sorted({item["sector_label"] for item in allocations if item.get("sector_label")})
 
     if remaining_amount > ZERO:
         reserve_reason = (
@@ -4663,10 +4723,19 @@ def build_equity_allocation_plan(
         )
     else:
         ticket_filter_note = ""
+    if max_sector_positions > 0:
+        sector_limit_note = (
+            f"Se aplica un maximo de {max_sector_positions} empresa(s) por sector."
+        )
+        if sector_excluded_candidates:
+            sector_limit_note += f" {len(sector_excluded_candidates)} candidata(s) han quedado fuera por diversificacion sectorial."
+    else:
+        sector_limit_note = ""
     reason = ""
     if not allocations:
         reason = (
             ticket_filter_note
+            or sector_limit_note
             or "Con las tarifas actuales del broker, las compras que caben por peso maximo no compensan el coste fijo+variable por operacion."
         )
 
@@ -4692,6 +4761,11 @@ def build_equity_allocation_plan(
         "owned_allocations_count": owned_allocations_count,
         "watchlist_allocations_count": watchlist_allocations_count,
         "ibex_allocations_count": ibex_allocations_count,
+        "max_sector_positions": max_sector_positions,
+        "sectors_used": sectors_used,
+        "sectors_used_count": len(sectors_used),
+        "sector_filtered_count": len(sector_excluded_candidates),
+        "sector_filter_note": sector_limit_note,
         "ticket_filtered_count": ticket_filtered_count,
         "ticket_filter_reasons": ticket_filter_reasons,
         "ticket_filter_note": ticket_filter_note,
@@ -4699,6 +4773,7 @@ def build_equity_allocation_plan(
         "top_pick": top_pick,
         "methodology_note": (
             "La optimizacion prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
-            "seguridad, fiabilidad del modelo, alertas de tendencia, riesgo historico y eficiencia real del ticket de compra."
+            "seguridad, fiabilidad del modelo, alertas de tendencia, riesgo historico, eficiencia real del ticket de compra "
+            "y, si lo marcas, diversificacion maxima por sector."
         ),
     }

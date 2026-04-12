@@ -267,12 +267,20 @@ class EquityAllocationOptimizerForm(forms.Form):
         max_value=Decimal("100"),
         label="Peso maximo por empresa (%)",
     )
+    max_sector_positions = forms.IntegerField(
+        required=False,
+        min_value=0,
+        max_value=35,
+        label="Maximo de empresas por sector",
+        help_text="Pon 0 para no limitar sectores; si pones 1 solo entrara la mejor empresa de cada sector.",
+    )
 
     def __init__(self, *args, **kwargs):
         default_total_investment = kwargs.pop("default_total_investment", Decimal("100000"))
         super().__init__(*args, **kwargs)
         self.fields["total_investment"].initial = default_total_investment
         self.fields["max_company_pct"].initial = Decimal("20")
+        self.fields["max_sector_positions"].initial = 0
         self.fields["total_investment"].widget.attrs.update(
             {
                 "placeholder": "Ejemplo: 100000",
@@ -283,6 +291,11 @@ class EquityAllocationOptimizerForm(forms.Form):
                 "placeholder": "Ejemplo: 20",
             }
         )
+        self.fields["max_sector_positions"].widget.attrs.update(
+            {
+                "placeholder": "0 sin limite, 1 por sector",
+            }
+        )
 
     def clean(self):
         cleaned_data = super().clean()
@@ -290,4 +303,6 @@ class EquityAllocationOptimizerForm(forms.Form):
             cleaned_data["total_investment"] = self.fields["total_investment"].initial or Decimal("100000")
         if cleaned_data.get("max_company_pct") is None:
             cleaned_data["max_company_pct"] = self.fields["max_company_pct"].initial or Decimal("20")
+        if cleaned_data.get("max_sector_positions") is None:
+            cleaned_data["max_sector_positions"] = self.fields["max_sector_positions"].initial or 0
         return cleaned_data

@@ -108,6 +108,7 @@ class EquityPositionListView(LoginRequiredMixin, TemplateView):
                 dashboard["optimizer_cards"],
                 optimizer_form.cleaned_data["total_investment"],
                 optimizer_form.cleaned_data["max_company_pct"],
+                optimizer_form.cleaned_data["max_sector_positions"],
             )
         context["optimizer_form"] = optimizer_form
         context["optimizer_plan"] = optimizer_plan

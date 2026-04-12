@@ -625,6 +625,119 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(plan["cash_reserve_amount"], Decimal("0"))
         self.assertGreater(plan["projected_gain_total"], Decimal("0"))
 
+    def test_allocation_plan_can_limit_max_positions_per_sector(self):
+        utility_best = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="IBE",
+                company_name="Iberdrola",
+                reference_profile=EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND,
+                benchmark_name="Demanda electrica Espana",
+                benchmark_symbol="REE:demand:es:peninsular",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("14"),
+            ),
+            "sector_label": "Electrica",
+            "reference_label": "Demanda electrica Espana",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": ""},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("16.0"),
+                "projected_price": Decimal("16.24"),
+                "confidence_label": "Media",
+                "coefficient": Decimal("0.31"),
+                "safety_score": Decimal("70.00"),
+                "net_income_yield_pct": Decimal("2.50"),
+                "gross_dividend_yield_pct": Decimal("3.40"),
+                "transaction_drag_pct": Decimal("0.20"),
+                "annualized_volatility_pct": Decimal("14.00"),
+                "positive_year_ratio_pct": Decimal("68.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-4.00"),
+                "max_drawdown_pct": Decimal("-18.00"),
+            },
+            "projection_reliability": {"label": "Alta", "score": Decimal("80.00")},
+        }
+        utility_weaker = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="ELE",
+                company_name="Endesa",
+                reference_profile=EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND,
+                benchmark_name="Demanda electrica Espana",
+                benchmark_symbol="REE:demand:es:peninsular",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("18"),
+            ),
+            "sector_label": "Electrica",
+            "reference_label": "Demanda electrica Espana",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": ""},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("10.0"),
+                "projected_price": Decimal("19.80"),
+                "confidence_label": "Media",
+                "coefficient": Decimal("0.28"),
+                "safety_score": Decimal("68.00"),
+                "net_income_yield_pct": Decimal("2.90"),
+                "gross_dividend_yield_pct": Decimal("4.10"),
+                "transaction_drag_pct": Decimal("0.15"),
+                "annualized_volatility_pct": Decimal("13.00"),
+                "positive_year_ratio_pct": Decimal("66.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-3.00"),
+                "max_drawdown_pct": Decimal("-16.00"),
+            },
+            "projection_reliability": {"label": "Alta", "score": Decimal("79.00")},
+        }
+        defense = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="IDR",
+                company_name="Indra",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("18"),
+            ),
+            "sector_label": "Tecnologia y defensa",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": ""},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("24.0"),
+                "projected_price": Decimal("22.32"),
+                "confidence_label": "Alta",
+                "coefficient": Decimal("0.55"),
+                "safety_score": Decimal("74.00"),
+                "net_income_yield_pct": Decimal("1.20"),
+                "gross_dividend_yield_pct": Decimal("1.50"),
+                "transaction_drag_pct": Decimal("0.10"),
+                "annualized_volatility_pct": Decimal("17.00"),
+                "positive_year_ratio_pct": Decimal("72.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-5.00"),
+                "max_drawdown_pct": Decimal("-22.00"),
+            },
+            "projection_reliability": {"label": "Alta", "score": Decimal("84.00")},
+        }
+
+        plan = build_equity_allocation_plan([utility_weaker, utility_best, defense], Decimal("100000"), Decimal("50"), 1)
+
+        self.assertTrue(plan["available"])
+        self.assertEqual(len(plan["allocations"]), 2)
+        self.assertEqual(plan["max_sector_positions"], 1)
+        self.assertEqual(plan["sector_filtered_count"], 1)
+        self.assertEqual({item["sector_label"] for item in plan["allocations"]}, {"Electrica", "Tecnologia y defensa"})
+        self.assertEqual({item["position"].ticker for item in plan["allocations"]}, {"IBE", "IDR"})
+
     def test_allocation_plan_can_keep_cash_when_no_positive_candidates(self):
         losing_card = {
             "position": EquityPosition(
