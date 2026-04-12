@@ -306,3 +306,32 @@ class EquityAllocationOptimizerForm(forms.Form):
         if cleaned_data.get("max_sector_positions") is None:
             cleaned_data["max_sector_positions"] = self.fields["max_sector_positions"].initial or 0
         return cleaned_data
+
+
+class EquityOptimizationRunForm(EquityAllocationOptimizerForm):
+    reference_label = forms.CharField(
+        max_length=160,
+        required=False,
+        label="Referencia de la optimizacion",
+        help_text="Opcional. Si no la rellenas, la app generara una referencia automatica con fecha y hora.",
+    )
+    restrictions_note = forms.CharField(
+        required=False,
+        label="Restricciones y notas",
+        widget=forms.Textarea(attrs={"rows": 3}),
+        help_text="Ejemplo: priorizar dividendos, evitar bancos, cartera conservadora o cualquier condicion adicional.",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["reference_label"].widget.attrs.update(
+            {
+                "placeholder": "Ejemplo: Cartera defensiva abril 2026",
+            }
+        )
+
+    def clean_reference_label(self):
+        return str(self.cleaned_data.get("reference_label") or "").strip()
+
+    def clean_restrictions_note(self):
+        return str(self.cleaned_data.get("restrictions_note") or "").strip()

@@ -14,7 +14,9 @@ from django.urls import reverse
 
 from portfolio.ownership import AssetOwnershipCategory
 
-from .models import EquityPosition, EquityTicketSnapshot
+from .broker_costs import estimate_broker_costs
+from .models import EquityOptimizationRun, EquityPosition, EquityTicketSnapshot
+from .optimization_runs import process_equity_optimization_run
 from .services import (
     EURIBOR_REFERENCE_NAME,
     EURIBOR_REFERENCE_SYMBOL,
@@ -964,6 +966,90 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(all(item["purchase_total_cost"] == Decimal("13.00") for item in plan["allocations"]))
         self.assertTrue(all(item["allocated_amount"] == Decimal("1500.00") for item in plan["allocations"]))
 
+    def test_unknown_broker_uses_santander_fallback_costs(self):
+        costs = estimate_broker_costs(
+            broker_name="Broker Desconocido",
+            trade_channel="app",
+            trade_amount=Decimal("10000"),
+            valuation_amount=Decimal("10000"),
+            annual_dividend_income=Decimal("400"),
+            quote_symbol="IBE.MC",
+        )
+
+        self.assertEqual(costs["profile_key"], "santander_fallback")
+        self.assertEqual(costs["purchase_total_cost"], Decimal("26.00"))
+        self.assertEqual(costs["annual_custody_cost"], Decimal("25.00"))
+        self.assertIn("Santander", costs["pdf_source_label"])
+
+    def test_process_equity_optimization_run_persists_summary_and_report(self):
+        run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-TEST-001",
+            label="Cartera de prueba",
+            total_investment=Decimal("100000"),
+            max_company_pct=Decimal("20"),
+            max_sector_positions=1,
+        )
+        position = EquityPosition(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("1.0000"),
+            average_cost_per_share=Decimal("11.0000"),
+            current_price_per_share=Decimal("11.0000"),
+        )
+        card = {
+            "position": position,
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "sector_label": "Energia",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": "Tendencia favorable."},
+            "projection_reliability": {"label": "Alta", "score": Decimal("82.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("8.50"),
+                "price_return_pct": Decimal("6.20"),
+                "price_low_return_pct": Decimal("-4.00"),
+                "price_high_return_pct": Decimal("13.00"),
+                "projected_price": Decimal("11.6800"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("74.00"),
+                "gross_dividend_yield_pct": Decimal("4.10"),
+                "net_income_yield_pct": Decimal("3.30"),
+                "transaction_drag_pct": Decimal("0.90"),
+                "annualized_volatility_pct": Decimal("13.00"),
+                "positive_year_ratio_pct": Decimal("68.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-3.00"),
+                "max_drawdown_pct": Decimal("-20.00"),
+            },
+        }
+        dashboard = {
+            "optimizer_cards": [card],
+            "history_cards": [],
+            "ibex_universe_summary": {"analyzed_count": 35},
+        }
+
+        with (
+            patch("equities.optimization_runs.sync_all_equities_market_data", return_value=[]),
+            patch("equities.optimization_runs.build_equity_analysis_dashboard", return_value=dashboard),
+            patch("equities.optimization_runs.build_news_signal_map", return_value={"IBE": {"label": "Prensa favorable", "score": Decimal("2.10"), "items_count": 2, "items": [], "note": "Buen tono", "available": True, "positive_count": 2, "negative_count": 0, "neutral_count": 0}}),
+            patch("equities.optimization_runs.build_report_entries", return_value=[]),
+            patch("equities.optimization_runs.build_report_html", return_value="<html>informe</html>"),
+        ):
+            process_equity_optimization_run(run.id)
+
+        run.refresh_from_db()
+        self.assertEqual(run.status, EquityOptimizationRun.Status.COMPLETED)
+        self.assertEqual(run.report_html, "<html>informe</html>")
+        self.assertTrue(run.summary_data["available"])
+        self.assertEqual(run.summary_data["top_pick_name"], "Iberdrola")
+
     def test_dashboard_can_extend_optimizer_to_full_ibex_universe(self):
         acerinox = find_equity_company_profile("Acerinox")
         acs = find_equity_company_profile("ACS")
@@ -1565,6 +1651,52 @@ class EquitiesViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         mocked_sync.assert_not_called()
+
+    def test_can_launch_background_optimizer_run_from_page(self):
+        run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-TEST-LAUNCH",
+            total_investment=Decimal("100000"),
+            max_company_pct=Decimal("20"),
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.PENDING,
+        )
+
+        with patch("equities.views.launch_equity_optimization_run", return_value=run) as mocked_launch:
+            response = self.client.post(
+                reverse("equities:list"),
+                {
+                    "action": "launch_optimizer_run",
+                    "reference_label": "Cartera defensiva",
+                    "total_investment": "400000",
+                    "max_company_pct": "20",
+                    "max_sector_positions": "1",
+                    "restrictions_note": "Maximo una empresa por sector",
+                },
+            )
+
+        self.assertRedirects(response, f"{reverse('equities:list')}#equity-optimizer")
+        mocked_launch.assert_called_once()
+
+    def test_completed_optimization_run_can_render_and_download_report(self):
+        run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-TEST-REPORT",
+            label="Informe guardado",
+            total_investment=Decimal("50000"),
+            max_company_pct=Decimal("20"),
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            report_html="<html><body>Informe optimizado</body></html>",
+            summary_data={"available": True, "projected_gain_total": 5000},
+        )
+
+        report_response = self.client.get(reverse("equities:optimization_report", args=[run.id]))
+        download_response = self.client.get(reverse("equities:optimization_download", args=[run.id]))
+
+        self.assertEqual(report_response.status_code, 200)
+        self.assertContains(report_response, "Informe optimizado")
+        self.assertEqual(download_response.status_code, 200)
+        self.assertIn("attachment;", download_response.headers["Content-Disposition"])
+        self.assertIn("opt-test-report.html", download_response.headers["Content-Disposition"])
 
     def test_equities_page_renders_ticket_tracking_section(self):
         for ticker, company_name, average_cost, current_price in (

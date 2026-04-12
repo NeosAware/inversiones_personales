@@ -777,68 +777,166 @@
       <summary>Optimizador 12M</summary>
       <div class="equity-fold-body">
         <div class="equity-panel" style="padding:0; border:none; box-shadow:none; background:transparent;">
-          <div class="equity-panel-head"><div><p class="section-title">Optimizador</p><h3>Distribucion neta sugerida a 12 meses</h3><p>La propuesta reparte entre cartera actual, seguimiento y radar IBEX completo. Recalcula para tu capital dividendos netos, compra/venta, mantenimiento, alertas de tendencia y riesgo historico antes de asignar pesos.</p></div></div>
-          <form method="get" class="equity-grid-4" style="align-items:end;">
-            <div><label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>{{ optimizer_form.total_investment }}</div>
-            <div><label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>{{ optimizer_form.max_company_pct }}</div>
-            <div><label for="{{ optimizer_form.max_sector_positions.id_for_label }}">{{ optimizer_form.max_sector_positions.label }}</label>{{ optimizer_form.max_sector_positions }}</div>
-            <button class="button" type="submit">Calcular propuesta</button>
-            <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
+          <div class="equity-panel-head">
+            <div>
+              <p class="section-title">Optimizador robusto</p>
+              <h3>Proceso completo en segundo plano</h3>
+              <p>Lanza una optimizacion persistente con referencia propia, fecha de ejecucion, costes de compra y mantenimiento, dividendos, riesgo historico, universo completo del IBEX y senal externa reciente de prensa. El resultado se guarda para consultarlo, compararlo y descargar el informe completo en local.</p>
+            </div>
+          </div>
+          <form method="post" class="stack" style="margin-top:18px;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="launch_optimizer_run">
+            <div class="equity-grid-4" style="align-items:end;">
+              <div><label for="{{ optimizer_run_form.reference_label.id_for_label }}">{{ optimizer_run_form.reference_label.label }}</label>{{ optimizer_run_form.reference_label }}{% if optimizer_run_form.reference_label.help_text %}<div class="metric-sub">{{ optimizer_run_form.reference_label.help_text }}</div>{% endif %}</div>
+              <div><label for="{{ optimizer_run_form.total_investment.id_for_label }}">{{ optimizer_run_form.total_investment.label }}</label>{{ optimizer_run_form.total_investment }}</div>
+              <div><label for="{{ optimizer_run_form.max_company_pct.id_for_label }}">{{ optimizer_run_form.max_company_pct.label }}</label>{{ optimizer_run_form.max_company_pct }}</div>
+              <div><label for="{{ optimizer_run_form.max_sector_positions.id_for_label }}">{{ optimizer_run_form.max_sector_positions.label }}</label>{{ optimizer_run_form.max_sector_positions }}</div>
+            </div>
+            <div>
+              <label for="{{ optimizer_run_form.restrictions_note.id_for_label }}">{{ optimizer_run_form.restrictions_note.label }}</label>
+              {{ optimizer_run_form.restrictions_note }}
+              {% if optimizer_run_form.restrictions_note.help_text %}<div class="metric-sub">{{ optimizer_run_form.restrictions_note.help_text }}</div>{% endif %}
+            </div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button class="button" type="submit">Lanzar optimizacion robusta</button>
+              <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Restablecer formulario</a>
+            </div>
           </form>
-          {% if optimizer_plan and optimizer_plan.available %}
-            <div class="equity-grid-4" style="margin-top:18px;">
-              <div class="equity-box"><span>Capital</span><strong>{{ optimizer_plan.total_investment|floatformat:0 }} EUR</strong></div>
-              <div class="equity-box"><span>Ganancia 12M</span><strong class="{% if optimizer_plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ optimizer_plan.projected_gain_total|floatformat:0 }} EUR</strong></div>
-              <div class="equity-box"><span>Rentabilidad neta</span><strong>{% if optimizer_plan.weighted_return_pct is not None %}{{ optimizer_plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
-              <div class="equity-box"><span>Peor escenario</span><strong class="{% if optimizer_plan.weighted_low_return_pct is not None and optimizer_plan.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if optimizer_plan.weighted_low_return_pct is not None %}{{ optimizer_plan.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
-              <div class="equity-box"><span>Seguridad media</span><strong>{% if optimizer_plan.weighted_safety_score is not None %}{{ optimizer_plan.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
-              <div class="equity-box"><span>Fiabilidad media</span><strong>{% if optimizer_plan.weighted_reliability_score is not None %}{{ optimizer_plan.weighted_reliability_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
-              <div class="equity-box"><span>Dividendos netos</span><strong>{{ optimizer_plan.net_dividend_income_total|floatformat:0 }} EUR</strong></div>
-              <div class="equity-box"><span>Costes totales</span><strong>{{ optimizer_plan.annual_cost_total|floatformat:0 }} + {{ optimizer_plan.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Mantenimiento anual + compra/venta.</small></div>
-              <div class="equity-box"><span>Volatilidad media</span><strong>{% if optimizer_plan.weighted_volatility_pct is not None %}{{ optimizer_plan.weighted_volatility_pct|floatformat:1 }} %{% else %}-{% endif %}</strong></div>
-              <div class="equity-box"><span>Caja en reserva</span><strong>{{ optimizer_plan.cash_reserve_amount|floatformat:0 }} EUR</strong></div>
-              <div class="equity-box"><span>Radar IBEX elegido</span><strong>{{ optimizer_plan.ibex_allocations_count }}</strong><small>Posiciones virtuales seleccionadas.</small></div>
-              <div class="equity-box"><span>Sectores usados</span><strong>{{ optimizer_plan.sectors_used_count }}</strong><small>{% if optimizer_plan.max_sector_positions > 0 %}Max {{ optimizer_plan.max_sector_positions }} por sector{% else %}Sin limite sectorial{% endif %}</small></div>
-            </div>
-            <div class="equity-compact-note" style="margin-top:16px;">
-              {{ optimizer_plan.methodology_note }}
-              {% if optimizer_plan.sector_filter_note %} {{ optimizer_plan.sector_filter_note }}{% endif %}
-              {% if optimizer_plan.ticket_filter_note %} {{ optimizer_plan.ticket_filter_note }}{% endif %}
-              {% if ibex_universe_summary.available %} Se han evaluado {{ ibex_universe_summary.analyzed_count }} valores adicionales del IBEX.{% endif %}
-              {% if optimizer_plan.top_pick %}
-                La mejor relacion actual entre beneficio esperado y seguridad es <strong>{{ optimizer_plan.top_pick.position.company_name }}</strong>.
-              {% endif %}
-            </div>
+
+          {% if optimization_runs %}
             <div class="equity-table-wrap" style="margin-top:18px;">
               <table>
-                <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Referencia</th><th>Score</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th><th>Seguridad</th><th>Fiabilidad</th></tr></thead>
+                <thead><tr><th>Referencia</th><th>Fecha</th><th>Estado</th><th>Restricciones</th><th>Resultado</th><th>Acciones</th></tr></thead>
                 <tbody>
-                  {% for item in optimizer_plan.allocations %}
+                  {% for run in optimization_runs %}
                     <tr>
-                      <td>{{ item.rank }}</td>
-                      <td><strong>{{ item.position.company_name }}</strong><br><span class="metric-sub">{{ item.position.ticker }} | {{ item.cycle_phase }}</span></td>
-                      <td>{{ item.sector_label }}</td>
-                      <td>{{ item.status_label }}</td>
-                      <td><strong class="{% if item.trade_alert_tone == 'buy' %}good{% elif item.trade_alert_tone == 'sell' %}warn{% endif %}">{{ item.trade_alert_label }}</strong></td>
-                      <td>{{ item.reference_label }}</td>
-                      <td>{% if item.optimization_score >= 0 %}+{% endif %}{{ item.optimization_score|floatformat:2 }}</td>
-                      <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>
-                      <td>{{ item.allocated_amount|floatformat:0 }} EUR</td>
-                      <td class="{% if item.net_projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.net_projected_return_pct|floatformat:2 }} %</td>
-                      <td class="{% if item.low_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.low_return_pct|floatformat:2 }} %</td>
-                      <td>{{ item.expected_net_dividend_income|floatformat:0 }} EUR</td>
-                      <td>{{ item.annual_cost_used|floatformat:0 }} + {{ item.roundtrip_total_cost|floatformat:0 }} EUR</td>
-                      <td>{{ item.safety_score|floatformat:0 }}/100</td>
-                      <td>{{ item.reliability_label }}</td>
+                      <td><strong>{{ run.display_label }}</strong><br><span class="metric-sub">{{ run.reference_code }}</span></td>
+                      <td>{{ run.created_at|date:"Y-m-d H:i" }}{% if run.completed_at %}<br><span class="metric-sub">Finalizada {{ run.completed_at|date:"Y-m-d H:i" }}</span>{% endif %}</td>
+                      <td>
+                        <strong class="{% if run.status == 'completed' %}good{% elif run.status == 'failed' %}warn{% endif %}">{{ run.get_status_display }}</strong>
+                        {% if run.status_note %}<br><span class="metric-sub">{{ run.status_note }}</span>{% endif %}
+                      </td>
+                      <td>{% if run.restrictions_note %}{{ run.restrictions_note }}{% else %}<span class="metric-sub">Sin nota adicional</span>{% endif %}</td>
+                      <td>
+                        {% if run.summary_data.available %}
+                          {{ run.summary_data.projected_gain_total|floatformat:0 }} EUR
+                          <br><span class="metric-sub">Retorno {% if run.summary_data.weighted_return_pct is not None %}{{ run.summary_data.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %} | {{ run.summary_data.allocations_count }} valores</span>
+                        {% elif run.summary_data.reason %}
+                          <span class="metric-sub">{{ run.summary_data.reason }}</span>
+                        {% elif run.error_message %}
+                          <span class="metric-sub">{{ run.error_message }}</span>
+                        {% else %}
+                          <span class="metric-sub">Pendiente de resultado</span>
+                        {% endif %}
+                      </td>
+                      <td>
+                        {% if run.status == 'completed' and run.report_html %}
+                          <a class="button secondary" href="{% url 'equities:optimization_report' run.id %}" target="_blank" rel="noopener">Ver informe</a>
+                          <a class="button secondary" href="{% url 'equities:optimization_download' run.id %}">Descargar</a>
+                        {% else %}
+                          <span class="metric-sub">Se actualiza al terminar.</span>
+                        {% endif %}
+                      </td>
                     </tr>
                   {% endfor %}
                 </tbody>
               </table>
             </div>
-            {% if optimizer_plan.reserve_reason %}<small class="equity-note">{{ optimizer_plan.reserve_reason }}</small>{% endif %}
-          {% elif optimizer_plan %}
-            <div class="message info" style="margin-top:16px;">{{ optimizer_plan.reason }}</div>
           {% endif %}
+
+          {% if latest_completed_optimization %}
+            <div class="equity-panel" style="margin-top:18px;">
+              <div class="equity-panel-head">
+                <div>
+                  <p class="section-title">Ultima optimizacion guardada</p>
+                  <h3>{{ latest_completed_optimization.display_label }}</h3>
+                  <p>Referencia {{ latest_completed_optimization.reference_code }}. Hecha el {{ latest_completed_optimization.created_at|date:"Y-m-d H:i" }}{% if latest_completed_optimization.completed_at %} y cerrada el {{ latest_completed_optimization.completed_at|date:"Y-m-d H:i" }}{% endif %}.</p>
+                </div>
+                <div class="equity-chip-row">
+                  <a class="button secondary" href="{% url 'equities:optimization_report' latest_completed_optimization.id %}" target="_blank" rel="noopener">Abrir informe</a>
+                  <a class="button secondary" href="{% url 'equities:optimization_download' latest_completed_optimization.id %}">Descargar HTML</a>
+                </div>
+              </div>
+              <div class="equity-grid-4" style="margin-top:18px;">
+                <div class="equity-box"><span>Capital</span><strong>{{ latest_completed_optimization.summary_data.total_investment|floatformat:0 }} EUR</strong></div>
+                <div class="equity-box"><span>Ganancia 12M</span><strong class="{% if latest_completed_optimization.summary_data.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ latest_completed_optimization.summary_data.projected_gain_total|floatformat:0 }} EUR</strong></div>
+                <div class="equity-box"><span>Rentabilidad neta</span><strong>{% if latest_completed_optimization.summary_data.weighted_return_pct is not None %}{{ latest_completed_optimization.summary_data.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
+                <div class="equity-box"><span>Peor escenario</span><strong class="{% if latest_completed_optimization.summary_data.weighted_low_return_pct is not None and latest_completed_optimization.summary_data.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if latest_completed_optimization.summary_data.weighted_low_return_pct is not None %}{{ latest_completed_optimization.summary_data.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
+                <div class="equity-box"><span>Seguridad media</span><strong>{% if latest_completed_optimization.summary_data.weighted_safety_score is not None %}{{ latest_completed_optimization.summary_data.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
+                <div class="equity-box"><span>Fiabilidad media</span><strong>{% if latest_completed_optimization.summary_data.weighted_reliability_score is not None %}{{ latest_completed_optimization.summary_data.weighted_reliability_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
+                <div class="equity-box"><span>Dividendos netos</span><strong>{{ latest_completed_optimization.summary_data.net_dividend_income_total|floatformat:0 }} EUR</strong></div>
+                <div class="equity-box"><span>Costes totales</span><strong>{{ latest_completed_optimization.summary_data.annual_cost_total|floatformat:0 }} + {{ latest_completed_optimization.summary_data.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Mantenimiento anual + compra/venta.</small></div>
+                <div class="equity-box"><span>Caja en reserva</span><strong>{{ latest_completed_optimization.summary_data.cash_reserve_amount|floatformat:0 }} EUR</strong></div>
+                <div class="equity-box"><span>Valores elegidos</span><strong>{{ latest_completed_optimization.summary_data.allocations_count }}</strong></div>
+                <div class="equity-box"><span>IBEX analizado</span><strong>{{ latest_completed_optimization.summary_data.ibex_analyzed_count }}</strong></div>
+                <div class="equity-box"><span>Prensa integrada</span><strong>{{ latest_completed_optimization.summary_data.news_items_count }}</strong><small>{{ latest_completed_optimization.summary_data.news_signals_count }} senales recientes.</small></div>
+              </div>
+              {% if latest_completed_optimization.summary_data.methodology_note %}
+                <div class="equity-compact-note" style="margin-top:16px;">
+                  {{ latest_completed_optimization.summary_data.methodology_note }}
+                  {% if latest_completed_optimization.summary_data.top_pick_name %} La mejor idea de la ultima ejecucion fue <strong>{{ latest_completed_optimization.summary_data.top_pick_name }}</strong>.{% endif %}
+                </div>
+              {% endif %}
+              {% if latest_completed_optimization.allocations_data %}
+                <div class="equity-table-wrap" style="margin-top:18px;">
+                  <table>
+                    <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Referencia</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
+                    <tbody>
+                      {% for item in latest_completed_optimization.allocations_data %}
+                        <tr>
+                          <td>{{ item.rank }}</td>
+                          <td><strong>{{ item.company_name }}</strong><br><span class="metric-sub">{{ item.ticker }}</span></td>
+                          <td>{{ item.sector_label }}</td>
+                          <td>{{ item.status_label }}</td>
+                          <td>{{ item.trade_alert_label }}</td>
+                          <td>{{ item.reference_label }}</td>
+                          <td>{{ item.external_signal_label }}{% if item.external_signal_score %}<br><span class="metric-sub">{% if item.external_signal_score > 0 %}+{% endif %}{{ item.external_signal_score|floatformat:2 }}</span>{% endif %}</td>
+                          <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>
+                          <td>{{ item.allocated_amount|floatformat:0 }} EUR</td>
+                          <td class="{% if item.net_projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.net_projected_return_pct|floatformat:2 }} %</td>
+                          <td class="{% if item.low_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.low_return_pct|floatformat:2 }} %</td>
+                          <td>{{ item.expected_net_dividend_income|floatformat:0 }} EUR</td>
+                          <td>{{ item.annual_cost_used|floatformat:0 }} + {{ item.roundtrip_total_cost|floatformat:0 }} EUR</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% endif %}
+            </div>
+          {% endif %}
+
+          <div class="equity-panel" style="margin-top:18px;">
+            <div class="equity-panel-head"><div><p class="section-title">Estimacion rapida</p><h3>Distribucion neta orientativa a 12 meses</h3><p>Esta vista rapida sigue disponible para hacer pruebas inmediatas. Para un analisis serio y guardado, usa el lanzador superior.</p></div></div>
+            <form method="get" class="equity-grid-4" style="align-items:end;">
+              <div><label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>{{ optimizer_form.total_investment }}</div>
+              <div><label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>{{ optimizer_form.max_company_pct }}</div>
+              <div><label for="{{ optimizer_form.max_sector_positions.id_for_label }}">{{ optimizer_form.max_sector_positions.label }}</label>{{ optimizer_form.max_sector_positions }}</div>
+              <button class="button" type="submit">Calcular propuesta</button>
+              <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
+            </form>
+            {% if optimizer_plan and optimizer_plan.available %}
+              <div class="equity-grid-4" style="margin-top:18px;">
+                <div class="equity-box"><span>Capital</span><strong>{{ optimizer_plan.total_investment|floatformat:0 }} EUR</strong></div>
+                <div class="equity-box"><span>Ganancia 12M</span><strong class="{% if optimizer_plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ optimizer_plan.projected_gain_total|floatformat:0 }} EUR</strong></div>
+                <div class="equity-box"><span>Rentabilidad neta</span><strong>{% if optimizer_plan.weighted_return_pct is not None %}{{ optimizer_plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
+                <div class="equity-box"><span>Peor escenario</span><strong class="{% if optimizer_plan.weighted_low_return_pct is not None and optimizer_plan.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if optimizer_plan.weighted_low_return_pct is not None %}{{ optimizer_plan.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
+                <div class="equity-box"><span>Seguridad media</span><strong>{% if optimizer_plan.weighted_safety_score is not None %}{{ optimizer_plan.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
+                <div class="equity-box"><span>Fiabilidad media</span><strong>{% if optimizer_plan.weighted_reliability_score is not None %}{{ optimizer_plan.weighted_reliability_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
+                <div class="equity-box"><span>Dividendos netos</span><strong>{{ optimizer_plan.net_dividend_income_total|floatformat:0 }} EUR</strong></div>
+                <div class="equity-box"><span>Costes totales</span><strong>{{ optimizer_plan.annual_cost_total|floatformat:0 }} + {{ optimizer_plan.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Mantenimiento anual + compra/venta.</small></div>
+              </div>
+              <div class="equity-compact-note" style="margin-top:16px;">
+                {{ optimizer_plan.methodology_note }}
+                {% if optimizer_plan.sector_filter_note %} {{ optimizer_plan.sector_filter_note }}{% endif %}
+                {% if optimizer_plan.ticket_filter_note %} {{ optimizer_plan.ticket_filter_note }}{% endif %}
+                {% if optimizer_plan.external_signal_used_count %} La version rapida ya integra {{ optimizer_plan.external_signal_used_count }} senales externas recientes.{% endif %}
+              </div>
+            {% elif optimizer_plan %}
+              <div class="message info" style="margin-top:16px;">{{ optimizer_plan.reason }}</div>
+            {% endif %}
+          </div>
         </div>
       </div>
     </details>
@@ -1220,4 +1318,12 @@
       applyFilters();
     })();
   </script>
+  {% if active_optimization_runs %}
+    <script>
+      setTimeout(() => {
+        window.location.hash = "equity-optimizer";
+        window.location.reload();
+      }, 15000);
+    </script>
+  {% endif %}
   {% endblock %}

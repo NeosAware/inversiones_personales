@@ -153,25 +153,24 @@ def estimate_broker_costs(
             quote_symbol=quote_symbol,
             trade_channel=trade_channel,
         )
+    fallback_costs = estimate_santander_costs(
+        trade_amount=trade_amount,
+        valuation_amount=valuation_amount,
+        annual_dividend_income=annual_dividend_income,
+        quote_symbol=quote_symbol,
+        trade_channel=trade_channel,
+    )
     market_scope = infer_market_scope(quote_symbol)
     trade_channel = resolve_trade_channel(trade_channel)
     return {
-        "profile_key": "",
-        "profile_label": str(broker_name or "").strip() or "Sin perfil",
-        "market_scope": market_scope,
-        "market_scope_label": MARKET_SCOPE_LABELS[market_scope],
-        "trade_channel": trade_channel,
-        "trade_channel_label": CHANNEL_LABELS[trade_channel],
-        "entry_fee": ZERO,
-        "exit_fee": ZERO,
-        "transaction_tax_cost": ZERO,
-        "purchase_total_cost": ZERO,
-        "roundtrip_total_cost": ZERO,
-        "annual_custody_cost": ZERO,
-        "annual_dividend_fee": ZERO,
-        "annual_recurring_cost": ZERO,
-        "notes": ["Broker sin tarifa automatizada. Solo se usan los costes manuales indicados en la posicion."],
-        "pdf_source_label": "",
+        **fallback_costs,
+        "profile_key": "santander_fallback",
+        "profile_label": str(broker_name or "").strip() or "Broker sin perfil",
+        "notes": [
+            f"Broker sin tarifa automatizada. Se usa Banco Santander como aproximacion conservadora para compra, venta, custodia y dividendos.",
+            *fallback_costs.get("notes", []),
+        ],
+        "pdf_source_label": "Informe de Tarifas Santander 2026 (respaldo)",
     }
 
 

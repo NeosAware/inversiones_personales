@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ run.display_label }} | Informe de optimizacion</title>
+  <style>
+    :root{
+      --bg:#f3f7fb;
+      --card:#ffffff;
+      --ink:#132535;
+      --muted:#677b8f;
+      --line:#dbe6ef;
+      --accent:#0f5f88;
+      --good:#177245;
+      --warn:#a85f00;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family:"Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background:linear-gradient(180deg, #f9fbfd 0%, var(--bg) 100%);
+      color:var(--ink);
+    }
+    .shell{ max-width:1280px; margin:0 auto; padding:24px; }
+    .hero{
+      padding:24px 28px; border-radius:24px; color:#fff;
+      background:linear-gradient(135deg, #10344d 0%, #0f5f88 55%, #7ec4df 100%);
+      box-shadow:0 24px 48px rgba(16,52,77,.18);
+    }
+    .hero h1{ margin:0; font-size:32px; }
+    .hero p{ margin:10px 0 0; color:rgba(255,255,255,.84); }
+    .meta{ display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:7px 12px; border-radius:999px;
+      background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.24);
+      font-size:12px; font-weight:700;
+    }
+    .section{ margin-top:22px; }
+    .section h2{ margin:0 0 12px; font-size:24px; }
+    .grid{ display:grid; gap:18px; }
+    .grid.cols-4{ grid-template-columns:repeat(4, minmax(0,1fr)); }
+    .grid.cols-3{ grid-template-columns:repeat(3, minmax(0,1fr)); }
+    .card{
+      background:linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+      border:1px solid var(--line); border-radius:22px; padding:20px;
+      box-shadow:0 16px 36px rgba(18,37,53,.06);
+    }
+    .box span{ display:block; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+    .box strong{ display:block; margin-top:8px; font-size:28px; }
+    .box small{ display:block; margin-top:8px; color:var(--muted); }
+    .good{ color:var(--good); }
+    .warn{ color:var(--warn); }
+    .muted{ color:var(--muted); }
+    table{ width:100%; border-collapse:collapse; font-size:14px; }
+    th, td{ padding:12px 10px; border-bottom:1px solid #ecf2f7; text-align:left; vertical-align:top; }
+    th{
+      color:#476075; background:#f4f8fb; font-size:12px;
+      text-transform:uppercase; letter-spacing:.08em;
+    }
+    tr:last-child td{ border-bottom:none; }
+    .note{
+      padding:16px 18px; border-radius:18px; border:1px solid var(--line);
+      background:#f8fbfd; color:#29455c; line-height:1.5;
+    }
+    .chart-shell{
+      border:1px solid var(--line); border-radius:18px; background:#fff; padding:14px;
+    }
+    .chart-shell strong{ display:block; margin-bottom:8px; color:#17384e; }
+    .chart-foot{ display:flex; flex-wrap:wrap; gap:14px; margin-top:10px; color:var(--muted); font-size:12px; }
+    .report-entry{ margin-top:22px; }
+    .entry-head{
+      display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap;
+      margin-bottom:14px;
+    }
+    .entry-head h3{ margin:0; font-size:24px; }
+    .entry-tags{ display:flex; flex-wrap:wrap; gap:8px; }
+    .entry-tag{
+      padding:7px 12px; border-radius:999px; border:1px solid var(--line);
+      background:#f7fafc; color:#244355; font-size:12px; font-weight:700;
+    }
+    .mini-grid{ display:grid; gap:14px; grid-template-columns:repeat(5, minmax(0,1fr)); }
+    .mini{
+      border:1px solid var(--line); border-radius:18px; background:#fff; padding:16px;
+    }
+    .mini span{ display:block; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.07em; }
+    .mini strong{ display:block; margin-top:8px; font-size:24px; }
+    .mini small{ display:block; margin-top:8px; color:var(--muted); line-height:1.4; }
+    .news-list{ display:grid; gap:10px; margin-top:14px; }
+    .news-item{
+      border:1px solid var(--line); border-radius:16px; padding:12px 14px; background:#fff;
+    }
+    .news-item a{ color:var(--accent); text-decoration:none; font-weight:700; }
+    .news-item p{ margin:6px 0 0; color:var(--muted); font-size:13px; line-height:1.45; }
+    .footer-note{ margin-top:24px; color:var(--muted); font-size:12px; }
+    @media (max-width: 1024px){
+      .grid.cols-4, .grid.cols-3, .mini-grid{ grid-template-columns:repeat(2, minmax(0,1fr)); }
+    }
+    @media (max-width: 720px){
+      .shell{ padding:16px; }
+      .grid.cols-4, .grid.cols-3, .mini-grid{ grid-template-columns:1fr; }
+      .hero h1{ font-size:28px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <h1>{{ run.display_label }}</h1>
+      <p>Informe completo de optimizacion de cartera a 12 meses. Referencia {{ run.reference_code }} generada el {{ generated_at|date:"Y-m-d H:i" }}.</p>
+      <div class="meta">
+        <span class="pill">{{ run.reference_code }}</span>
+        <span class="pill">Capital {{ plan.total_investment|floatformat:0 }} EUR</span>
+        <span class="pill">Max empresa {{ plan.max_company_pct|floatformat:1 }} %</span>
+        <span class="pill">{% if plan.max_sector_positions %}Max {{ plan.max_sector_positions }} por sector{% else %}Sin limite sectorial{% endif %}</span>
+        <span class="pill">{{ dashboard.ibex_universe_summary.analyzed_count }} valores IBEX analizados</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Resumen ejecutivo</h2>
+      {% if plan.available %}
+        <div class="grid cols-4">
+          <div class="card box"><span>Ganancia 12M</span><strong class="{% if plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ plan.projected_gain_total|floatformat:0 }} EUR</strong><small>Escenario central neto.</small></div>
+          <div class="card box"><span>Rentabilidad neta</span><strong>{% if plan.weighted_return_pct is not None %}{{ plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Media ponderada de la propuesta.</small></div>
+          <div class="card box"><span>Peor escenario</span><strong class="{% if plan.weighted_low_return_pct is not None and plan.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if plan.weighted_low_return_pct is not None %}{{ plan.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Lectura conservadora 12M.</small></div>
+          <div class="card box"><span>Caja en reserva</span><strong>{{ plan.cash_reserve_amount|floatformat:0 }} EUR</strong><small>Capital no asignado por filtros de calidad.</small></div>
+          <div class="card box"><span>Dividendos netos</span><strong>{{ plan.net_dividend_income_total|floatformat:0 }} EUR</strong><small>Flujo esperado menos comisiones de dividendo.</small></div>
+          <div class="card box"><span>Coste anual</span><strong>{{ plan.annual_cost_total|floatformat:0 }} EUR</strong><small>Custodia y mantenimiento.</small></div>
+          <div class="card box"><span>Compra + venta</span><strong>{{ plan.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Coste total de ida y vuelta.</small></div>
+          <div class="card box"><span>Top pick</span><strong>{% if plan.top_pick %}{{ plan.top_pick.position.company_name }}{% else %}-{% endif %}</strong><small>Mejor equilibrio actual entre retorno y seguridad.</small></div>
+        </div>
+      {% else %}
+        <div class="note">{{ plan.reason }}</div>
+      {% endif %}
+    </section>
+
+    <section class="section">
+      <h2>Metodologia</h2>
+      <div class="note">
+        {{ plan.methodology_note }}
+        {% if run.restrictions_note %} Restricciones anotadas: <strong>{{ run.restrictions_note }}</strong>.{% endif %}
+        {% if plan.sector_filter_note %} {{ plan.sector_filter_note }}{% endif %}
+        {% if plan.ticket_filter_note %} {{ plan.ticket_filter_note }}{% endif %}
+        {% if plan.reserve_reason %} {{ plan.reserve_reason }}{% endif %}
+      </div>
+    </section>
+
+    {% if plan.available %}
+      <section class="section">
+        <h2>Vision global</h2>
+        <div class="grid cols-3">
+          {% if weight_chart_svg %}<div class="chart-shell"><strong>Peso por valor (%)</strong>{{ weight_chart_svg|safe }}</div>{% endif %}
+          {% if sector_chart_svg %}<div class="chart-shell"><strong>Peso por sector (%)</strong>{{ sector_chart_svg|safe }}</div>{% endif %}
+          {% if risk_return_chart_svg %}<div class="chart-shell"><strong>Riesgo frente a retorno</strong>{{ risk_return_chart_svg|safe }}</div>{% endif %}
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Tabla de asignacion</h2>
+        <div class="card">
+          <table>
+            <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
+            <tbody>
+              {% for item in plan.allocations %}
+                <tr>
+                  <td>{{ item.rank }}</td>
+                  <td><strong>{{ item.position.company_name }}</strong><br><span class="muted">{{ item.position.ticker }} | {{ item.cycle_phase }}</span></td>
+                  <td>{{ item.sector_label }}</td>
+                  <td>{{ item.status_label }}</td>
+                  <td>{{ item.trade_alert_label }}</td>
+                  <td>{{ item.external_signal_label }}{% if item.external_signal_score %}<br><span class="muted">{% if item.external_signal_score > 0 %}+{% endif %}{{ item.external_signal_score|floatformat:2 }}</span>{% endif %}</td>
+                  <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>
+                  <td>{{ item.allocated_amount|floatformat:0 }} EUR</td>
+                  <td class="{% if item.net_projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.net_projected_return_pct|floatformat:2 }} %</td>
+                  <td class="{% if item.low_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.low_return_pct|floatformat:2 }} %</td>
+                  <td>{{ item.expected_net_dividend_income|floatformat:0 }} EUR</td>
+                  <td>{{ item.annual_cost_used|floatformat:0 }} + {{ item.roundtrip_total_cost|floatformat:0 }} EUR</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Prensa reciente agregada</h2>
+        <div class="grid cols-4">
+          <div class="card box"><span>Senales</span><strong>{{ news_overview.signals_count }}</strong><small>Empresas con lectura de prensa.</small></div>
+          <div class="card box"><span>Titulares</span><strong>{{ news_overview.items_count }}</strong><small>Noticias recientes procesadas.</small></div>
+          <div class="card box"><span>Favorable</span><strong class="good">{{ news_overview.positive_count }}</strong><small>Senales positivas.</small></div>
+          <div class="card box"><span>Adversa</span><strong class="warn">{{ news_overview.negative_count }}</strong><small>Senales negativas.</small></div>
+        </div>
+      </section>
+
+      {% for entry in report_entries %}
+        <section class="section report-entry">
+          <div class="entry-head">
+            <div>
+              <h3>{{ entry.card.position.company_name }}</h3>
+              <p class="muted" style="margin:8px 0 0;">{{ entry.card.position.ticker }} | {{ entry.allocation.sector_label }} | {{ entry.allocation.status_label }}</p>
+            </div>
+            <div class="entry-tags">
+              <span class="entry-tag">{{ entry.allocation.reference_label }}</span>
+              <span class="entry-tag">{{ entry.allocation.trade_alert_label }}</span>
+              <span class="entry-tag">{{ entry.external_signal.label }}</span>
+              <span class="entry-tag">{{ entry.card.position.broker }}</span>
+            </div>
+          </div>
+
+          <div class="mini-grid">
+            <div class="mini"><span>Peso sugerido</span><strong>{{ entry.allocation.allocated_weight_pct|floatformat:1 }} %</strong><small>{{ entry.allocation.allocated_amount|floatformat:0 }} EUR</small></div>
+            <div class="mini"><span>Retorno neto 12M</span><strong class="{% if entry.allocation.net_projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ entry.allocation.net_projected_return_pct|floatformat:2 }} %</strong><small>Peor escenario {{ entry.allocation.low_return_pct|floatformat:2 }} %</small></div>
+            <div class="mini"><span>Dividendos netos</span><strong>{{ entry.allocation.expected_net_dividend_income|floatformat:0 }} EUR</strong><small>Coste anual {{ entry.allocation.annual_cost_used|floatformat:0 }} EUR</small></div>
+            <div class="mini"><span>Compra + venta</span><strong>{{ entry.allocation.roundtrip_total_cost|floatformat:0 }} EUR</strong><small>Entrada {{ entry.allocation.purchase_total_cost|floatformat:0 }} EUR</small></div>
+            <div class="mini"><span>Seguridad / fiabilidad</span><strong>{{ entry.allocation.safety_score|floatformat:0 }}/100</strong><small>{{ entry.allocation.reliability_label }} | Vol {{ entry.allocation.annualized_volatility_pct|floatformat:1 }} %</small></div>
+          </div>
+
+          <div class="grid cols-3" style="margin-top:14px;">
+            {% if entry.card.historical_chart.available %}
+              <div class="chart-shell">
+                <strong>Historico</strong>
+                <svg viewBox="0 0 640 220">
+                  <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                  <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                  <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ entry.card.historical_chart.stock_line }}" />
+                  {% for marker in entry.card.historical_chart.x_markers %}
+                    <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                    <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                  {% endfor %}
+                  <text x="8" y="20" font-size="12" fill="#0d5d78">{{ entry.card.historical_chart.stock_max_label }}</text>
+                  <text x="8" y="214" font-size="12" fill="#0d5d78">{{ entry.card.historical_chart.stock_min_label }}</text>
+                </svg>
+                <div class="chart-foot">
+                  <span>{{ entry.card.historical_chart.start_label }} a {{ entry.card.historical_chart.end_label }}</span>
+                  <span>{{ entry.card.historical_chart.points_count }} puntos</span>
+                </div>
+              </div>
+            {% endif %}
+
+            {% if entry.card.best_correlation_chart.available %}
+              <div class="chart-shell">
+                <strong>Mejor correlacion</strong>
+                <svg viewBox="0 0 640 220">
+                  <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                  <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                  <line x1="622" y1="18" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                  <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ entry.card.best_correlation_chart.stock_line }}" />
+                  <polyline fill="none" stroke="#7e8c97" stroke-width="3" points="{{ entry.card.best_correlation_chart.reference_line }}" />
+                  {% for marker in entry.card.best_correlation_chart.x_markers %}
+                    <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                    <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                  {% endfor %}
+                  <text x="8" y="20" font-size="12" fill="#0d5d78">{{ entry.card.best_correlation_chart.stock_max_label }}</text>
+                  <text x="8" y="214" font-size="12" fill="#0d5d78">{{ entry.card.best_correlation_chart.stock_min_label }}</text>
+                  <text x="632" y="20" font-size="12" text-anchor="end" fill="#627380">{{ entry.card.best_correlation_chart.reference_max_label }}</text>
+                  <text x="632" y="214" font-size="12" text-anchor="end" fill="#627380">{{ entry.card.best_correlation_chart.reference_min_label }}</text>
+                </svg>
+                <div class="chart-foot">
+                  <span>{{ entry.card.best_correlation_chart.reference_label }}</span>
+                  <span>Corr {% if entry.card.best_correlation_chart.coefficient is not None %}{{ entry.card.best_correlation_chart.coefficient|floatformat:2 }}{% else %}-{% endif %}</span>
+                </div>
+              </div>
+            {% endif %}
+
+            {% if entry.card.projection_12m_chart.available %}
+              <div class="chart-shell">
+                <strong>Prevision 12M</strong>
+                <svg viewBox="0 0 640 220">
+                  <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                  <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                  <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ entry.card.projection_12m_chart.stock_line }}" />
+                  <polyline fill="none" stroke="#b7642d" stroke-width="4" stroke-dasharray="10 8" points="{{ entry.card.projection_12m_chart.projection_line }}" />
+                  {% for marker in entry.card.projection_12m_chart.x_markers %}
+                    <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                    <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                  {% endfor %}
+                  <text x="8" y="20" font-size="12" fill="#0d5d78">{{ entry.card.projection_12m_chart.stock_max_label }}</text>
+                  <text x="8" y="214" font-size="12" fill="#0d5d78">{{ entry.card.projection_12m_chart.stock_min_label }}</text>
+                </svg>
+                <div class="chart-foot">
+                  <span>{{ entry.card.projection_12m_chart.end_label }} a {{ entry.card.projection_12m_chart.projection_end_label }}</span>
+                  <span>Objetivo {% if entry.card.projection.projected_price is not None %}{{ entry.card.projection.projected_price|floatformat:4 }}{% else %}-{% endif %}</span>
+                </div>
+              </div>
+            {% endif %}
+          </div>
+
+          {% if entry.card.projection_backtest.available and entry.card.projection_backtest.monthly_chart.available %}
+            <div class="chart-shell" style="margin-top:14px;">
+              <strong>Backtest mensual</strong>
+              <svg viewBox="0 0 640 220">
+                <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                <polyline fill="none" stroke="#b7642d" stroke-width="3" stroke-dasharray="8 6" points="{{ entry.card.projection_backtest.monthly_chart.forecast_line }}" />
+                <polyline fill="none" stroke="#0d5d78" stroke-width="3" points="{{ entry.card.projection_backtest.monthly_chart.actual_line }}" />
+                {% for marker in entry.card.projection_backtest.monthly_chart.x_markers %}
+                  <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                  <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                {% endfor %}
+                <text x="8" y="20" font-size="12" fill="#17384e">{{ entry.card.projection_backtest.monthly_chart.max_label }}</text>
+                <text x="8" y="214" font-size="12" fill="#17384e">{{ entry.card.projection_backtest.monthly_chart.min_label }}</text>
+              </svg>
+              <div class="chart-foot">
+                <span>Error medio {{ entry.card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %</span>
+                <span>Acierto direccion {{ entry.card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %</span>
+                <span>Precision {{ entry.card.projection_backtest.precision_label }}</span>
+              </div>
+            </div>
+          {% endif %}
+
+          <div class="note" style="margin-top:14px;">
+            {{ entry.card.trade_alert.note }}
+            {% if entry.external_signal.note %} {{ entry.external_signal.note }}{% endif %}
+            {% if entry.card.projection.explanation %} {{ entry.card.projection.explanation }}{% endif %}
+          </div>
+
+          {% if entry.external_signal.items %}
+            <div class="news-list">
+              {% for item in entry.external_signal.items %}
+                <article class="news-item">
+                  <a href="{{ item.link }}">{{ item.title }}</a>
+                  <p>{{ item.published_label }}{% if item.source %} | {{ item.source }}{% endif %} | {% if item.score > 0 %}Senal favorable{% elif item.score < 0 %}Senal adversa{% else %}Senal neutra{% endif %}</p>
+                  {% if item.description %}<p>{{ item.description }}</p>{% endif %}
+                </article>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </section>
+      {% endfor %}
+    {% endif %}
+
+    <p class="footer-note">Informe generado por el optimizador robusto de acciones. Los escenarios se basan en historico de mercado, dividendos, costes, riesgo y prensa reciente agregada. No sustituye al criterio profesional ni elimina el riesgo de mercado.</p>
+  </div>
+</body>
+</html>

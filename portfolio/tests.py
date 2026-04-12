@@ -321,7 +321,7 @@ class PortfolioServicesTests(TestCase):
         self.assertEqual(owner_groups[AssetOwnershipCategory.XIMO]["banking_current_value"], Decimal("11000.00"))
         self.assertEqual(owner_groups[AssetOwnershipCategory.MONICA]["equities_current_value"], Decimal("120.0000"))
         self.assertEqual(owner_groups[AssetOwnershipCategory.MONICA]["real_estate_current_value"], Decimal("100000.00"))
-        self.assertEqual(owner_groups[AssetOwnershipCategory.MONICA]["annual_income"], Decimal("7035.00"))
+        self.assertEqual(owner_groups[AssetOwnershipCategory.MONICA]["annual_income"], Decimal("7011.00"))
 
 
 class AccessControlTests(TestCase):

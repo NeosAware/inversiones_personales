@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import EquityPosition, EquityPriceHistory, EquityTicketSnapshot
+from .models import EquityOptimizationRun, EquityPosition, EquityPriceHistory, EquityTicketSnapshot
 
 
 @admin.register(EquityPosition)
@@ -44,3 +44,20 @@ class EquityTicketSnapshotAdmin(admin.ModelAdmin):
     )
     search_fields = ("position__ticker", "position__company_name")
     list_filter = ("snapshot_date", "position__broker")
+
+
+@admin.register(EquityOptimizationRun)
+class EquityOptimizationRunAdmin(admin.ModelAdmin):
+    list_display = (
+        "reference_code",
+        "label",
+        "status",
+        "created_at",
+        "started_at",
+        "completed_at",
+        "total_investment",
+        "max_company_pct",
+        "max_sector_positions",
+    )
+    search_fields = ("reference_code", "label", "requested_by__username")
+    list_filter = ("status", "created_at", "requested_by")

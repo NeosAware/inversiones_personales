@@ -1,5 +1,7 @@
-from django.db import models
 from decimal import Decimal
+
+from django.conf import settings
+from django.db import models
 
 from portfolio.metrics import build_metrics
 from portfolio.ownership import AssetOwnershipCategory
@@ -184,3 +186,45 @@ class EquityTicketSnapshot(models.Model):
 
     def __str__(self):
         return f"{self.position.ticker} snapshot {self.snapshot_date}"
+
+
+class EquityOptimizationRun(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pendiente"
+        RUNNING = "running", "En proceso"
+        COMPLETED = "completed", "Completada"
+        FAILED = "failed", "Fallida"
+
+    reference_code = models.CharField(max_length=40, unique=True)
+    label = models.CharField(max_length=160, blank=True)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="equity_optimization_runs",
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    status_note = models.CharField(max_length=255, blank=True)
+    total_investment = models.DecimalField(max_digits=14, decimal_places=2)
+    max_company_pct = models.DecimalField(max_digits=5, decimal_places=2)
+    max_sector_positions = models.PositiveIntegerField(default=0)
+    restrictions_note = models.TextField(blank=True)
+    summary_data = models.JSONField(default=dict, blank=True)
+    allocations_data = models.JSONField(default=list, blank=True)
+    report_html = models.TextField(blank=True)
+    error_message = models.TextField(blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return self.reference_code
+
+    @property
+    def display_label(self):
+        return self.label or self.reference_code

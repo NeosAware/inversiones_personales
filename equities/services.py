@@ -4994,11 +4994,19 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
     transaction_drag_pct = projection.get("transaction_drag_pct") or ZERO
     trade_alert = card.get("trade_alert") or {}
     trade_alert_label = trade_alert.get("label") or "Vigilar"
+    external_signal = card.get("external_signal") or {}
+    external_signal_score = Decimal(str(external_signal.get("score", "0") or "0"))
+    external_signal_label = external_signal.get("label") or "Sin prensa reciente"
     trade_signal_adjustment = {
         "Comprar": Decimal("1.75"),
         "Vigilar": ZERO,
         "Vender": Decimal("-4.50"),
     }.get(trade_alert_label, ZERO)
+    external_signal_adjustment = clamp_decimal(
+        external_signal_score * Decimal("0.35"),
+        Decimal("-2.50"),
+        Decimal("2.50"),
+    )
 
     downside_return_pct = ZERO
     if low_return_pct is not None and low_return_pct < ZERO:
@@ -5031,8 +5039,18 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
     )
     income_support_bonus_pct = clamp_decimal(net_income_yield_pct * Decimal("0.30"), Decimal("-2.00"), Decimal("3.00"))
     cost_efficiency_penalty_pct = clamp_decimal(transaction_drag_pct * Decimal("0.40"), ZERO, Decimal("3.00"))
-    risk_adjusted_return_pct = (base_return_pct * quality_multiplier) - risk_penalty_pct
-    optimization_score = risk_adjusted_return_pct + income_support_bonus_pct - cost_efficiency_penalty_pct + trade_signal_adjustment
+    risk_adjusted_return_pct = (
+        (base_return_pct * quality_multiplier)
+        - risk_penalty_pct
+        + clamp_decimal(external_signal_score * Decimal("0.12"), Decimal("-1.20"), Decimal("1.20"))
+    )
+    optimization_score = (
+        risk_adjusted_return_pct
+        + income_support_bonus_pct
+        - cost_efficiency_penalty_pct
+        + trade_signal_adjustment
+        + external_signal_adjustment
+    )
 
     return {
         "card": card,
@@ -5066,6 +5084,11 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
         "trade_alert_tone": trade_alert.get("tone", "watch"),
         "trade_alert_note": trade_alert.get("note", ""),
         "trade_signal_adjustment": trade_signal_adjustment,
+        "external_signal_label": external_signal_label,
+        "external_signal_score": external_signal_score,
+        "external_signal_adjustment": external_signal_adjustment,
+        "external_signal_note": external_signal.get("note", ""),
+        "external_signal_items_count": external_signal.get("items_count", 0),
     }
 
 
@@ -5478,6 +5501,10 @@ def build_equity_allocation_plan(
                 "optimization_score": candidate["optimization_score"],
                 "trade_alert_label": candidate["trade_alert_label"],
                 "trade_alert_tone": candidate["trade_alert_tone"],
+                "external_signal_label": candidate["external_signal_label"],
+                "external_signal_score": candidate["external_signal_score"],
+                "external_signal_note": candidate["external_signal_note"],
+                "external_signal_items_count": candidate["external_signal_items_count"],
                 "annualized_volatility_pct": candidate["annualized_volatility_pct"],
                 "years_covered": candidate["years_covered"],
                 "cycle_phase": candidate["cycle_phase"],
@@ -5525,6 +5552,7 @@ def build_equity_allocation_plan(
         if not item["position"].is_owned and item["status_key"] != "ibex"
     )
     sectors_used = sorted({item["sector_label"] for item in allocations if item.get("sector_label")})
+    external_signal_used_count = sum(1 for item in allocations if item.get("external_signal_items_count"))
 
     if remaining_amount > ZERO:
         reserve_reason = (
@@ -5581,6 +5609,7 @@ def build_equity_allocation_plan(
         "max_sector_positions": max_sector_positions,
         "sectors_used": sectors_used,
         "sectors_used_count": len(sectors_used),
+        "external_signal_used_count": external_signal_used_count,
         "sector_filtered_count": len(sector_excluded_candidates),
         "sector_filter_note": sector_limit_note,
         "ticket_filtered_count": ticket_filtered_count,
@@ -5590,7 +5619,7 @@ def build_equity_allocation_plan(
         "top_pick": top_pick,
         "methodology_note": (
             "La optimizacion prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
-            "seguridad, fiabilidad del modelo, alertas de tendencia, riesgo historico, eficiencia real del ticket de compra "
-            "y, si lo marcas, diversificacion maxima por sector."
+            "seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa, riesgo historico, "
+            "eficiencia real del ticket de compra y, si lo marcas, diversificacion maxima por sector."
         ),
     }

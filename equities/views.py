@@ -3,14 +3,15 @@ from decimal import Decimal
 from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib import messages
-from django.http import Http404
-from django.shortcuts import redirect
+from django.http import Http404, HttpResponse
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.dateparse import parse_date
-from django.views.generic import TemplateView
+from django.views.generic import TemplateView, View
 
-from .forms import EquityAllocationOptimizerForm, EquityDocumentImportForm, EquityPositionForm
-from .models import EquityPosition
+from .forms import EquityAllocationOptimizerForm, EquityDocumentImportForm, EquityOptimizationRunForm, EquityPositionForm
+from .models import EquityOptimizationRun, EquityPosition
+from .optimization_runs import launch_equity_optimization_run, resume_equity_optimization_runs
 from .services import (
     EURIBOR_REFERENCE_NAME,
     EURIBOR_REFERENCE_SYMBOL,
@@ -75,6 +76,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        resume_equity_optimization_runs()
         auto_sync = self._auto_sync_market_data()
         positions = list(EquityPosition.objects.prefetch_related("price_history"))
         selected_start_date, selected_end_date = self._selected_period_bounds()
@@ -121,6 +123,12 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["position_form"] = kwargs.get("position_form", EquityPositionForm())
         context["document_form"] = kwargs.get("document_form", EquityDocumentImportForm())
         optimizer_default_total = dashboard["overview"]["current_value"] or dashboard["overview"]["invested_amount"] or Decimal("100000")
+        optimizer_run_form = kwargs.get(
+            "optimizer_run_form",
+            EquityOptimizationRunForm(
+                default_total_investment=optimizer_default_total,
+            ),
+        )
         optimizer_form = kwargs.get(
             "optimizer_form",
             EquityAllocationOptimizerForm(
@@ -137,7 +145,17 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 optimizer_form.cleaned_data["max_sector_positions"],
             )
         context["optimizer_form"] = optimizer_form
+        context["optimizer_run_form"] = optimizer_run_form
         context["optimizer_plan"] = optimizer_plan
+        optimization_runs = list(EquityOptimizationRun.objects.select_related("requested_by")[:12])
+        context["optimization_runs"] = optimization_runs
+        context["active_optimization_runs"] = [
+            run for run in optimization_runs if run.status in {EquityOptimizationRun.Status.PENDING, EquityOptimizationRun.Status.RUNNING}
+        ]
+        context["latest_completed_optimization"] = next(
+            (run for run in optimization_runs if run.status == EquityOptimizationRun.Status.COMPLETED and run.summary_data),
+            None,
+        )
         context["prefill_source_filename"] = kwargs.get("prefill_source_filename")
         context["equity_company_catalog"] = get_equity_company_catalog()
         return context
@@ -150,6 +168,8 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             return self._prefill_position_from_document(request)
         if action == "change_reference":
             return self._change_reference(request)
+        if action == "launch_optimizer_run":
+            return self._launch_optimizer_run(request)
         return self._save_position(request)
 
     def _sync_market_data(self, request):
@@ -325,6 +345,34 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
 
         return redirect("equities:list")
 
+    def _launch_optimizer_run(self, request):
+        positions = list(EquityPosition.objects.all())
+        optimizer_default_total = sum((position.current_value for position in positions if position.is_owned), Decimal("0.00")) or sum(
+            (position.invested_amount for position in positions if position.is_owned),
+            Decimal("0.00"),
+        ) or Decimal("100000")
+        form = EquityOptimizationRunForm(
+            request.POST,
+            default_total_investment=optimizer_default_total,
+        )
+        if not form.is_valid():
+            context = self.get_context_data(optimizer_run_form=form)
+            return self.render_to_response(context, status=400)
+
+        run = launch_equity_optimization_run(
+            total_investment=form.cleaned_data["total_investment"],
+            max_company_pct=form.cleaned_data["max_company_pct"],
+            max_sector_positions=form.cleaned_data["max_sector_positions"],
+            requested_by=request.user if request.user.is_authenticated else None,
+            reference_label=form.cleaned_data["reference_label"],
+            restrictions_note=form.cleaned_data["restrictions_note"],
+        )
+        if run.status == EquityOptimizationRun.Status.COMPLETED:
+            messages.success(request, f"Optimizacion {run.reference_code} completada y guardada.")
+        else:
+            messages.success(request, f"Optimizacion {run.reference_code} lanzada en segundo plano.")
+        return redirect(f"{reverse('equities:list')}#equity-optimizer")
+
 
 class IbexEquityDetailView(LoginRequiredMixin, EquityPeriodBoundsMixin, TemplateView):
     template_name = "equities/ibex_equity_detail.html"
@@ -354,3 +402,24 @@ class IbexEquityDetailView(LoginRequiredMixin, EquityPeriodBoundsMixin, Template
         context["selected_period_start"] = selected_start_date
         context["selected_period_end"] = selected_end_date
         return context
+
+
+class EquityOptimizationReportView(LoginRequiredMixin, View):
+    def get(self, request, pk, *args, **kwargs):
+        resume_equity_optimization_runs()
+        run = get_object_or_404(EquityOptimizationRun, pk=pk)
+        if run.status != EquityOptimizationRun.Status.COMPLETED or not run.report_html:
+            messages.info(request, f"La optimizacion {run.reference_code} todavia no esta lista.")
+            return redirect(f"{reverse('equities:list')}#equity-optimizer")
+        return HttpResponse(run.report_html)
+
+
+class EquityOptimizationDownloadView(LoginRequiredMixin, View):
+    def get(self, request, pk, *args, **kwargs):
+        run = get_object_or_404(EquityOptimizationRun, pk=pk)
+        if run.status != EquityOptimizationRun.Status.COMPLETED or not run.report_html:
+            messages.info(request, f"La optimizacion {run.reference_code} todavia no esta lista para descargar.")
+            return redirect(f"{reverse('equities:list')}#equity-optimizer")
+        response = HttpResponse(run.report_html, content_type="text/html; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{run.reference_code.lower()}.html"'
+        return response
