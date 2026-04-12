@@ -575,6 +575,7 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "reason": plan.get("reason", ""),
         "total_investment": float(plan.get("total_investment", 0) or 0),
         "max_total_positions": int(plan.get("max_total_positions", 0) or 0),
+        "selected_sectors": list(plan.get("selected_sectors") or []),
         "projected_gain_total": float(plan.get("projected_gain_total", 0) or 0),
         "weighted_return_pct": float(plan.get("weighted_return_pct", 0) or 0) if plan.get("weighted_return_pct") is not None else None,
         "weighted_low_return_pct": float(plan.get("weighted_low_return_pct", 0) or 0) if plan.get("weighted_low_return_pct") is not None else None,
@@ -657,6 +658,8 @@ def build_optimization_comparison_context(runs: list[EquityOptimizationRun]) -> 
                 "max_company_pct": summary.get("max_company_pct"),
                 "max_total_positions": summary.get("max_total_positions") or 0,
                 "max_sector_positions": summary.get("max_sector_positions") or 0,
+                "selected_sectors": list(summary.get("selected_sectors") or run.selected_sectors or []),
+                "selected_sectors_label": ", ".join(summary.get("selected_sectors") or run.selected_sectors or []),
                 "allocations_count": summary.get("allocations_count", len(allocations)),
                 "constituents_label": constituents_label,
                 "sectors_count": len(sectors),
@@ -955,6 +958,7 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
             run.max_company_pct,
             run.max_total_positions,
             run.max_sector_positions,
+            selected_sectors=run.selected_sectors,
         )
         preview_allocations = build_allocation_preview(plan)
         update_run_progress(
@@ -1033,6 +1037,7 @@ def launch_equity_optimization_run(
     max_company_pct: Decimal,
     max_total_positions: int,
     max_sector_positions: int,
+    selected_sectors: list[str],
     requested_by=None,
     reference_label: str = "",
     restrictions_note: str = "",
@@ -1047,6 +1052,7 @@ def launch_equity_optimization_run(
         max_company_pct=max_company_pct,
         max_total_positions=max_total_positions,
         max_sector_positions=max_sector_positions,
+        selected_sectors=selected_sectors,
         restrictions_note=restrictions_note,
         progress_data={
             "percent": 0,

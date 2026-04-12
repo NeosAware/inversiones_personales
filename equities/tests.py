@@ -1101,6 +1101,89 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(len(plan["allocations"]), 2)
         self.assertEqual({item["position"].ticker for item in plan["allocations"]}, {"IDR", "IBE"})
 
+    def test_allocation_plan_can_filter_allowed_sectors(self):
+        strongest = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="IDR",
+                company_name="Indra",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("18"),
+            ),
+            "sector_label": "Tecnologia y defensa",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": ""},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("24.0"),
+                "projected_price": Decimal("22.32"),
+                "confidence_label": "Alta",
+                "coefficient": Decimal("0.55"),
+                "safety_score": Decimal("74.00"),
+                "net_income_yield_pct": Decimal("1.20"),
+                "gross_dividend_yield_pct": Decimal("1.50"),
+                "transaction_drag_pct": Decimal("0.10"),
+                "annualized_volatility_pct": Decimal("17.00"),
+                "positive_year_ratio_pct": Decimal("72.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-5.00"),
+                "max_drawdown_pct": Decimal("-22.00"),
+            },
+            "projection_reliability": {"label": "Alta", "score": Decimal("84.00")},
+        }
+        electric = {
+            **strongest,
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="IBE",
+                company_name="Iberdrola",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("11"),
+            ),
+            "sector_label": "Electrica",
+            "projection": {**strongest["projection"], "base_return_pct": Decimal("17.0"), "projected_price": Decimal("12.87")},
+        }
+        energy = {
+            **strongest,
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="REP",
+                company_name="Repsol",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("14"),
+            ),
+            "sector_label": "Energia",
+            "projection": {**strongest["projection"], "base_return_pct": Decimal("12.0"), "projected_price": Decimal("15.68")},
+        }
+
+        plan = build_equity_allocation_plan(
+            [strongest, electric, energy],
+            Decimal("100000"),
+            Decimal("50"),
+            0,
+            0,
+            selected_sectors=["Electrica"],
+        )
+
+        self.assertTrue(plan["available"])
+        self.assertEqual(plan["selected_sectors"], ["Electrica"])
+        self.assertIn("Electrica", plan["selected_sector_note"])
+        self.assertEqual(len(plan["allocations"]), 1)
+        self.assertEqual(plan["allocations"][0]["position"].ticker, "IBE")
+
     def test_allocation_plan_can_keep_cash_when_no_positive_candidates(self):
         losing_card = {
             "position": EquityPosition(
@@ -1271,6 +1354,7 @@ class EquitiesServicesTests(TestCase):
             max_company_pct=Decimal("20"),
             max_total_positions=8,
             max_sector_positions=1,
+            selected_sectors=["Energia"],
         )
         position = EquityPosition(
             position_kind=EquityPosition.PositionKind.WATCHLIST,
@@ -1335,6 +1419,7 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(run.report_pdf_html, "<html>pdf</html>")
         self.assertTrue(run.summary_data["available"])
         self.assertEqual(run.summary_data["max_total_positions"], 8)
+        self.assertEqual(run.summary_data["selected_sectors"], ["Energia"])
         self.assertEqual(run.summary_data["top_pick_name"], "Iberdrola")
         self.assertEqual(run.progress_data["percent"], 100)
         self.assertEqual(run.progress_data["note"], "Optimizacion completada")
@@ -2266,6 +2351,7 @@ class EquitiesViewTests(TestCase):
                     "max_company_pct": "20",
                     "max_total_positions": "8",
                     "max_sector_positions": "1",
+                    "selected_sectors": ["Electrica", "Banca"],
                     "restrictions_note": "Maximo una empresa por sector",
                 },
             )
@@ -2273,6 +2359,14 @@ class EquitiesViewTests(TestCase):
         self.assertRedirects(response, f"{reverse('equities:list')}#equity-optimizer")
         mocked_launch.assert_called_once()
         self.assertEqual(mocked_launch.call_args.kwargs["max_total_positions"], 8)
+        self.assertEqual(mocked_launch.call_args.kwargs["selected_sectors"], ["Electrica", "Banca"])
+
+    def test_equities_page_renders_optimizer_sector_selection(self):
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Sectores donde si comprar")
+        self.assertContains(response, "Banca")
 
     def test_equities_page_renders_completed_optimization_comparison_table(self):
         first = EquityOptimizationRun.objects.create(
@@ -2282,6 +2376,7 @@ class EquitiesViewTests(TestCase):
             max_company_pct=Decimal("20"),
             max_total_positions=6,
             max_sector_positions=1,
+            selected_sectors=["Electrica", "Tecnologia y defensa"],
             status=EquityOptimizationRun.Status.COMPLETED,
             report_html="<html>uno</html>",
             summary_data={
@@ -2292,6 +2387,7 @@ class EquitiesViewTests(TestCase):
                 "max_company_pct": 20,
                 "max_total_positions": 6,
                 "max_sector_positions": 1,
+                "selected_sectors": ["Electrica", "Tecnologia y defensa"],
                 "projected_gain_total": 42000,
                 "weighted_return_pct": 14.0,
                 "weighted_low_return_pct": -4.5,
@@ -2326,6 +2422,7 @@ class EquitiesViewTests(TestCase):
                 "max_company_pct": 25,
                 "max_total_positions": 8,
                 "max_sector_positions": 2,
+                "selected_sectors": [],
                 "projected_gain_total": 57000,
                 "weighted_return_pct": 19.0,
                 "weighted_low_return_pct": -9.0,
@@ -2353,6 +2450,8 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "IBE, IDR")
         self.assertContains(response, "IDR, REP")
         self.assertContains(response, "Mayor rentabilidad")
+        self.assertContains(response, "Electrica, Tecnologia y defensa")
+        self.assertContains(response, "todos los del IBEX")
 
     def test_completed_optimization_run_can_render_and_download_report(self):
         run = EquityOptimizationRun.objects.create(

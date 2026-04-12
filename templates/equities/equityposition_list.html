@@ -401,6 +401,35 @@
       color:var(--muted);
       line-height:1.55;
     }
+    .equity-sector-selector{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      margin-top:10px;
+    }
+    .equity-sector-option{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:10px 12px;
+      border-radius:999px;
+      border:1px solid #d7e4ec;
+      background:#fff;
+      color:#17384e;
+      font-size:13px;
+      font-weight:700;
+      cursor:pointer;
+    }
+    .equity-sector-option input{
+      margin:0;
+      accent-color:#0d5d78;
+    }
+    .equity-sector-caption{
+      margin-top:8px;
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.5;
+    }
     @media (max-width: 1180px){
       .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-candidate-grid, .equity-chart-grid, .equity-progress-events, .equity-preview-columns{ grid-template-columns:1fr; }
       .equity-hero-top, .equity-panel-head, .equity-toolbar, .equity-stock-summary, .equity-detail-head, .equity-section-head{ flex-direction:column; }
@@ -1072,8 +1101,19 @@
               <div><label for="{{ optimizer_run_form.total_investment.id_for_label }}">{{ optimizer_run_form.total_investment.label }}</label>{{ optimizer_run_form.total_investment }}</div>
               <div><label for="{{ optimizer_run_form.max_company_pct.id_for_label }}">{{ optimizer_run_form.max_company_pct.label }}</label>{{ optimizer_run_form.max_company_pct }}</div>
               <div><label for="{{ optimizer_run_form.max_total_positions.id_for_label }}">{{ optimizer_run_form.max_total_positions.label }}</label>{{ optimizer_run_form.max_total_positions }}{% if optimizer_run_form.max_total_positions.help_text %}<div class="metric-sub">{{ optimizer_run_form.max_total_positions.help_text }}</div>{% endif %}</div>
-              <div><label for="{{ optimizer_run_form.max_sector_positions.id_for_label }}">{{ optimizer_run_form.max_sector_positions.label }}</label>{{ optimizer_run_form.max_sector_positions }}</div>
+              <div><label for="{{ optimizer_run_form.max_sector_positions.id_for_label }}">{{ optimizer_run_form.max_sector_positions.label }}</label>{{ optimizer_run_form.max_sector_positions }}{% if optimizer_run_form.max_sector_positions.help_text %}<div class="metric-sub">{{ optimizer_run_form.max_sector_positions.help_text }}</div>{% endif %}</div>
             </div>
+            {% if optimizer_run_form.selected_sectors.field.choices %}
+              <div>
+                <label>{{ optimizer_run_form.selected_sectors.label }}</label>
+                <div class="equity-sector-selector">
+                  {% for checkbox in optimizer_run_form.selected_sectors %}
+                    <label class="equity-sector-option">{{ checkbox.tag }} <span>{{ checkbox.choice_label }}</span></label>
+                  {% endfor %}
+                </div>
+                {% if optimizer_run_form.selected_sectors.help_text %}<div class="equity-sector-caption">{{ optimizer_run_form.selected_sectors.help_text }}</div>{% endif %}
+              </div>
+            {% endif %}
             <div>
               <label for="{{ optimizer_run_form.restrictions_note.id_for_label }}">{{ optimizer_run_form.restrictions_note.label }}</label>
               {{ optimizer_run_form.restrictions_note }}
@@ -1224,7 +1264,10 @@
                         <strong class="{% if run.status == 'completed' %}good{% elif run.status == 'failed' %}warn{% endif %}">{{ run.get_status_display }}</strong>
                         {% if run.status_note %}<br><span class="metric-sub">{{ run.status_note }}</span>{% endif %}
                       </td>
-                      <td>{% if run.restrictions_note %}{{ run.restrictions_note }}{% else %}<span class="metric-sub">Sin nota adicional</span>{% endif %}</td>
+                      <td>
+                        {% if run.restrictions_note %}{{ run.restrictions_note }}{% else %}<span class="metric-sub">Sin nota adicional</span>{% endif %}
+                        <br><span class="metric-sub">Sectores {% if run.summary_data.selected_sectors %}{{ run.summary_data.selected_sectors|join:", " }}{% elif run.selected_sectors %}{{ run.selected_sectors|join:", " }}{% else %}todos los del IBEX{% endif %}</span>
+                      </td>
                       <td>
                         {% if run.summary_data.available %}
                           {{ run.summary_data.projected_gain_total|floatformat:0 }} EUR
@@ -1299,6 +1342,7 @@
                         <td>
                           Capital {{ row.total_investment|floatformat:0 }} EUR<br>
                           <span class="metric-sub">Max empresa {% if row.max_company_pct is not None %}{{ row.max_company_pct|floatformat:1 }} %{% else %}-{% endif %} | Max total {% if row.max_total_positions %}{{ row.max_total_positions }}{% else %}sin limite{% endif %} | Max sector {% if row.max_sector_positions %}{{ row.max_sector_positions }}{% else %}sin limite{% endif %}</span>
+                          <br><span class="metric-sub">Sectores {% if row.selected_sectors_label %}{{ row.selected_sectors_label }}{% else %}todos los del IBEX{% endif %}</span>
                           {% if row.restrictions_note %}<br><span class="metric-sub">{{ row.restrictions_note }}</span>{% endif %}
                         </td>
                         <td>
@@ -1356,6 +1400,7 @@
                 <div class="equity-box"><span>Caja en reserva</span><strong>{{ latest_completed_optimization.summary_data.cash_reserve_amount|floatformat:0 }} EUR</strong></div>
                 <div class="equity-box"><span>Valores elegidos</span><strong>{{ latest_completed_optimization.summary_data.allocations_count }}</strong></div>
                 <div class="equity-box"><span>Max empresas</span><strong>{% if latest_completed_optimization.max_total_positions %}{{ latest_completed_optimization.max_total_positions }}{% else %}Sin limite{% endif %}</strong></div>
+                <div class="equity-box"><span>Sectores permitidos</span><strong>{% if latest_completed_optimization.summary_data.selected_sectors %}{{ latest_completed_optimization.summary_data.selected_sectors|length }}{% elif latest_completed_optimization.selected_sectors %}{{ latest_completed_optimization.selected_sectors|length }}{% else %}Todos{% endif %}</strong><small>{% if latest_completed_optimization.summary_data.selected_sectors %}{{ latest_completed_optimization.summary_data.selected_sectors|join:", " }}{% elif latest_completed_optimization.selected_sectors %}{{ latest_completed_optimization.selected_sectors|join:", " }}{% else %}Sin filtro sectorial{% endif %}</small></div>
                 <div class="equity-box"><span>IBEX analizado</span><strong>{{ latest_completed_optimization.summary_data.ibex_analyzed_count }}</strong></div>
                 <div class="equity-box"><span>Prensa integrada</span><strong>{{ latest_completed_optimization.summary_data.news_items_count }}</strong><small>{{ latest_completed_optimization.summary_data.news_signals_count }} senales recientes.</small></div>
               </div>
@@ -1398,13 +1443,28 @@
             <summary>Simulacion inmediata</summary>
             <div class="equity-inline-body">
               <div class="equity-panel-head"><div><p class="section-title">Simulacion rapida</p><h3>Distribucion neta orientativa a 12 meses</h3><p>Esta vista sirve para pruebas instantaneas y tambien utiliza todo el IBEX disponible. La diferencia es que no guarda historico ni seguimiento del progreso. Para eso usa la optimizacion robusta, que ademas deja informe descargable en PDF y HTML.</p></div></div>
-              <form method="get" class="equity-grid-4" style="align-items:end;">
-                <div><label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>{{ optimizer_form.total_investment }}</div>
-                <div><label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>{{ optimizer_form.max_company_pct }}</div>
-                <div><label for="{{ optimizer_form.max_total_positions.id_for_label }}">{{ optimizer_form.max_total_positions.label }}</label>{{ optimizer_form.max_total_positions }}{% if optimizer_form.max_total_positions.help_text %}<div class="metric-sub">{{ optimizer_form.max_total_positions.help_text }}</div>{% endif %}</div>
-                <div><label for="{{ optimizer_form.max_sector_positions.id_for_label }}">{{ optimizer_form.max_sector_positions.label }}</label>{{ optimizer_form.max_sector_positions }}</div>
-                <button class="button" type="submit">Calcular propuesta</button>
-                <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
+              <form method="get" class="stack">
+                <div class="equity-grid-4" style="align-items:end;">
+                  <div><label for="{{ optimizer_form.total_investment.id_for_label }}">{{ optimizer_form.total_investment.label }}</label>{{ optimizer_form.total_investment }}</div>
+                  <div><label for="{{ optimizer_form.max_company_pct.id_for_label }}">{{ optimizer_form.max_company_pct.label }}</label>{{ optimizer_form.max_company_pct }}</div>
+                  <div><label for="{{ optimizer_form.max_total_positions.id_for_label }}">{{ optimizer_form.max_total_positions.label }}</label>{{ optimizer_form.max_total_positions }}{% if optimizer_form.max_total_positions.help_text %}<div class="metric-sub">{{ optimizer_form.max_total_positions.help_text }}</div>{% endif %}</div>
+                  <div><label for="{{ optimizer_form.max_sector_positions.id_for_label }}">{{ optimizer_form.max_sector_positions.label }}</label>{{ optimizer_form.max_sector_positions }}{% if optimizer_form.max_sector_positions.help_text %}<div class="metric-sub">{{ optimizer_form.max_sector_positions.help_text }}</div>{% endif %}</div>
+                </div>
+                {% if optimizer_form.selected_sectors.field.choices %}
+                  <div>
+                    <label>{{ optimizer_form.selected_sectors.label }}</label>
+                    <div class="equity-sector-selector">
+                      {% for checkbox in optimizer_form.selected_sectors %}
+                        <label class="equity-sector-option">{{ checkbox.tag }} <span>{{ checkbox.choice_label }}</span></label>
+                      {% endfor %}
+                    </div>
+                    {% if optimizer_form.selected_sectors.help_text %}<div class="equity-sector-caption">{{ optimizer_form.selected_sectors.help_text }}</div>{% endif %}
+                  </div>
+                {% endif %}
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                  <button class="button" type="submit">Calcular propuesta</button>
+                  <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
+                </div>
               </form>
               {% if optimizer_plan and optimizer_plan.available %}
                 <div class="equity-grid-4" style="margin-top:18px;">
@@ -1420,6 +1480,7 @@
                 <div class="equity-compact-note" style="margin-top:16px;">
                   {{ optimizer_plan.methodology_note }}
                   {% if optimizer_plan.position_cap_note %} {{ optimizer_plan.position_cap_note }}{% endif %}
+                  {% if optimizer_plan.selected_sector_note %} {{ optimizer_plan.selected_sector_note }}{% endif %}
                   {% if optimizer_plan.sector_filter_note %} {{ optimizer_plan.sector_filter_note }}{% endif %}
                   {% if optimizer_plan.ticket_filter_note %} {{ optimizer_plan.ticket_filter_note }}{% endif %}
                   {% if optimizer_plan.external_signal_used_count %} La version rapida ya integra {{ optimizer_plan.external_signal_used_count }} senales externas recientes.{% endif %}

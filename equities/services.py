@@ -573,6 +573,17 @@ def get_equity_company_catalog() -> list[dict]:
     return catalog
 
 
+def get_equity_optimizer_sector_choices() -> list[tuple[str, str]]:
+    sectors = sorted(
+        {
+            str(entry.get("sector_label") or "").strip()
+            for entry in get_equity_company_catalog()
+            if str(entry.get("sector_label") or "").strip()
+        }
+    )
+    return [(sector, sector) for sector in sectors]
+
+
 def find_equity_company_profile(query: str) -> dict | None:
     normalized_query = normalize_company_lookup(query)
     if not normalized_query:
@@ -6147,6 +6158,7 @@ def build_equity_allocation_plan(
     max_company_pct: Decimal,
     max_total_positions: int = 0,
     max_sector_positions: int = 0,
+    selected_sectors: list[str] | None = None,
 ) -> dict:
     if total_investment <= 0 or max_company_pct <= 0:
         return {
@@ -6174,6 +6186,41 @@ def build_equity_allocation_plan(
         return {
             "available": False,
             "reason": "Ahora mismo ninguna accion supera el filtro de retorno neto y riesgo para una optimizacion equilibrada a 12M.",
+        }
+
+    normalized_selected_sectors = []
+    seen_selected_sectors = set()
+    for sector in selected_sectors or []:
+        normalized_sector = str(sector or "").strip()
+        if not normalized_sector or normalized_sector in seen_selected_sectors:
+            continue
+        seen_selected_sectors.add(normalized_sector)
+        normalized_selected_sectors.append(normalized_sector)
+    selected_sector_set = set(normalized_selected_sectors)
+    selected_sector_excluded_candidates = []
+    if selected_sector_set:
+        selected_sector_filtered_candidates = []
+        for item in positive_candidates:
+            sector_label = item.get("sector_label") or "Sin sector"
+            if sector_label in selected_sector_set:
+                selected_sector_filtered_candidates.append(item)
+            else:
+                selected_sector_excluded_candidates.append(item)
+        positive_candidates = selected_sector_filtered_candidates
+
+    if not positive_candidates and selected_sector_set:
+        return {
+            "available": False,
+            "reason": (
+                "Con los sectores elegidos no quedan candidatas validas para construir la propuesta. "
+                "Prueba ampliando sectores o relajando otras restricciones."
+            ),
+            "selected_sectors": normalized_selected_sectors,
+            "selected_sector_note": (
+                "La optimizacion se ha limitado a estos sectores: "
+                + ", ".join(normalized_selected_sectors)
+                + "."
+            ),
         }
 
     ranked_candidates = sorted(
@@ -6389,6 +6436,14 @@ def build_equity_allocation_plan(
         )
     else:
         ticket_filter_note = ""
+    if selected_sector_set:
+        selected_sector_note = "La optimizacion se limita a estos sectores: " + ", ".join(normalized_selected_sectors) + "."
+        if selected_sector_excluded_candidates:
+            selected_sector_note += (
+                f" {len(selected_sector_excluded_candidates)} candidata(s) han quedado fuera por no pertenecer a los sectores permitidos."
+            )
+    else:
+        selected_sector_note = ""
     if max_total_positions > 0:
         position_limit_note = f"Se aplica un maximo total de {max_total_positions} empresa(s) en la cartera propuesta."
         if position_cap_overflow_count:
@@ -6423,6 +6478,8 @@ def build_equity_allocation_plan(
         "max_company_pct": max_company_pct,
         "max_total_positions": max_total_positions,
         "company_cap_amount": company_cap_amount,
+        "selected_sectors": normalized_selected_sectors,
+        "selected_sector_note": selected_sector_note,
         "allocated_amount_total": allocated_amount_total,
         "cash_reserve_amount": remaining_amount,
         "projected_gain_total": projected_gain_total,

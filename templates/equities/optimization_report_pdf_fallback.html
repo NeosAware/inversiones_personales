@@ -37,7 +37,10 @@
     <tr>
       <td><strong>Max total de empresas</strong><br>{% if summary.max_total_positions %}{{ summary.max_total_positions }}{% else %}Sin limite{% endif %}</td>
       <td><strong>Valores elegidos</strong><br>{{ summary.allocations_count }}</td>
-      <td colspan="2"><strong>Metodo</strong><br>{{ summary.methodology_note }}</td>
+      <td colspan="2"><strong>Sectores permitidos</strong><br>{% if summary.selected_sectors %}{{ summary.selected_sectors|join:", " }}{% else %}Todos los sectores{% endif %}</td>
+    </tr>
+    <tr>
+      <td colspan="4"><strong>Metodo</strong><br>{{ summary.methodology_note }}</td>
     </tr>
   </table>
 

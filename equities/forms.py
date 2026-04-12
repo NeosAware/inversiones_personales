@@ -289,14 +289,23 @@ class EquityAllocationOptimizerForm(forms.Form):
         label="Maximo de empresas por sector",
         help_text="Pon 0 para no limitar sectores; si pones 1 solo entrara la mejor empresa de cada sector.",
     )
+    selected_sectors = forms.MultipleChoiceField(
+        required=False,
+        choices=(),
+        label="Sectores donde si comprar",
+        help_text="Si no marcas ninguno, la optimizacion puede elegir cualquier sector del IBEX.",
+        widget=forms.CheckboxSelectMultiple,
+    )
 
     def __init__(self, *args, **kwargs):
         default_total_investment = kwargs.pop("default_total_investment", Decimal("100000"))
+        sector_choices = kwargs.pop("sector_choices", ())
         super().__init__(*args, **kwargs)
         self.fields["total_investment"].initial = default_total_investment
         self.fields["max_company_pct"].initial = Decimal("20")
         self.fields["max_total_positions"].initial = 0
         self.fields["max_sector_positions"].initial = 0
+        self.fields["selected_sectors"].choices = sector_choices
         self.fields["total_investment"].widget.attrs.update(
             {
                 "placeholder": "Ejemplo: 100000",
@@ -328,6 +337,11 @@ class EquityAllocationOptimizerForm(forms.Form):
             cleaned_data["max_total_positions"] = self.fields["max_total_positions"].initial or 0
         if cleaned_data.get("max_sector_positions") is None:
             cleaned_data["max_sector_positions"] = self.fields["max_sector_positions"].initial or 0
+        cleaned_data["selected_sectors"] = [
+            str(sector or "").strip()
+            for sector in cleaned_data.get("selected_sectors") or []
+            if str(sector or "").strip()
+        ]
         return cleaned_data
 
 
