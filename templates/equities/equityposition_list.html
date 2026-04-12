@@ -551,6 +551,10 @@
               <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
               <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ ticket_tracking.global.chart.expected_line }}" />
               {% if ticket_tracking.global.chart.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ ticket_tracking.global.chart.actual_line }}" />{% endif %}
+              {% for marker in ticket_tracking.global.chart.x_markers %}
+                <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+              {% endfor %}
               {% for point in ticket_tracking.global.chart.actual_points %}
                 <circle cx="{{ point.x }}" cy="{{ point.y }}" r="4.5" fill="#0d5d78">
                   <title>{{ point.date_label }} | {{ point.value_label }}</title>
@@ -610,6 +614,10 @@
                     <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
                     <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ ticket.chart.expected_line }}" />
                     {% if ticket.chart.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ ticket.chart.actual_line }}" />{% endif %}
+                    {% for marker in ticket.chart.x_markers %}
+                      <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                      <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                    {% endfor %}
                     {% for point in ticket.chart.actual_points %}
                       <circle cx="{{ point.x }}" cy="{{ point.y }}" r="4.5" fill="#0d5d78">
                         <title>{{ point.date_label }} | {{ point.value_label }}</title>

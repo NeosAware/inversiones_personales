@@ -2044,6 +2044,70 @@ def format_axis_value(value: Decimal | None) -> str:
     return f"{value:.2f}"
 
 
+def build_time_axis_markers(
+    point_dates: list[date],
+    width: int = 640,
+    height: int = 220,
+    padding: int = 18,
+) -> list[dict]:
+    filtered_dates = sorted({point_date for point_date in point_dates if point_date is not None})
+    if len(filtered_dates) < 2:
+        return []
+
+    min_date = filtered_dates[0]
+    max_date = filtered_dates[-1]
+    total_days = max((max_date - min_date).days, 1)
+    span_x = width - (padding * 2)
+
+    def to_x(point_date: date) -> float:
+        return padding + (span_x * ((point_date - min_date).days / total_days))
+
+    markers = []
+    if min_date.year != max_date.year:
+        for year in range(min_date.year, max_date.year + 1):
+            marker_date = date(year, 1, 1)
+            if marker_date < min_date or marker_date > max_date:
+                continue
+            markers.append(
+                {
+                    "x": f"{to_x(marker_date):.1f}",
+                    "label": str(year),
+                    "date": marker_date.isoformat(),
+                    "y1": str(height - padding),
+                    "y2": str(height - padding + 6),
+                    "text_y": str(height - 2),
+                }
+            )
+
+    if len(markers) < 2:
+        fallback_dates = [min_date]
+        if min_date.year != max_date.year:
+            fallback_dates.append(max_date)
+        else:
+            midpoint = min_date + timedelta(days=total_days // 2)
+            fallback_dates.extend([midpoint, max_date])
+
+        seen_labels = set()
+        markers = []
+        for marker_date in fallback_dates:
+            label = str(marker_date.year) if min_date.year != max_date.year else marker_date.strftime("%Y-%m")
+            if label in seen_labels:
+                continue
+            seen_labels.add(label)
+            markers.append(
+                {
+                    "x": f"{to_x(marker_date):.1f}",
+                    "label": label,
+                    "date": marker_date.isoformat(),
+                    "y1": str(height - padding),
+                    "y2": str(height - padding + 6),
+                    "text_y": str(height - 2),
+                }
+            )
+
+    return markers
+
+
 def build_dual_axis_chart(
     stock_points,
     reference_points,
@@ -2076,6 +2140,7 @@ def build_dual_axis_chart(
             "stock_max_label": "-",
             "reference_min_label": "-",
             "reference_max_label": "-",
+            "x_markers": [],
         }
 
     all_stock_values = [value for _, value in stock_filtered]
@@ -2124,6 +2189,7 @@ def build_dual_axis_chart(
         "stock_max_label": format_axis_value(stock_max),
         "reference_min_label": format_axis_value(reference_min),
         "reference_max_label": format_axis_value(reference_max),
+        "x_markers": build_time_axis_markers(all_dates, width=width, height=height, padding=padding),
     }
 
 
@@ -2138,6 +2204,7 @@ def build_stock_history_chart(history) -> dict:
         "stock_line": chart.get("stock_line", ""),
         "stock_min_label": chart.get("stock_min_label", "-"),
         "stock_max_label": chart.get("stock_max_label", "-"),
+        "x_markers": chart.get("x_markers", []),
         "start_label": history[0].price_date.isoformat(),
         "end_label": history[-1].price_date.isoformat(),
         "points_count": len(stock_series),
@@ -2198,6 +2265,7 @@ def build_best_correlation_chart(history, suggestions: list[dict], reference_cac
         "reference_max_label": chart.get("reference_max_label", "-"),
         "reference_label": best_suggestion["benchmark_name"],
         "coefficient": coefficient,
+        "x_markers": chart.get("x_markers", []),
         "start_label": history[0].price_date.isoformat(),
         "end_label": history[-1].price_date.isoformat(),
         "points_count": len(stock_series),
@@ -2235,6 +2303,7 @@ def build_projection_12m_chart(history, projection: dict) -> dict:
         "projection_line": chart.get("projection_line", ""),
         "stock_min_label": chart.get("stock_min_label", "-"),
         "stock_max_label": chart.get("stock_max_label", "-"),
+        "x_markers": chart.get("x_markers", []),
         "start_label": recent_history[0].price_date.isoformat(),
         "end_label": latest_date.isoformat(),
         "projection_end_label": end_projection_step.get("projected_date").isoformat() if end_projection_step and end_projection_step.get("projected_date") else "",
@@ -2391,6 +2460,12 @@ def build_value_tracking_chart(
         "latest_label": actual_points[-1]["date"].isoformat(),
         "projection_end_label": expected_points[-1]["date"].isoformat(),
         "points_count": len(actual_points),
+        "x_markers": build_time_axis_markers(
+            [point["date"] for point in actual_points] + [point["date"] for point in expected_points],
+            width=width,
+            height=height,
+            padding=padding,
+        ),
     }
 
 
@@ -3361,6 +3436,12 @@ def build_backtest_monthly_chart(rows: list[dict], width: int = 640, height: int
         "start_label": normalized_rows[0]["forecast_date"].isoformat(),
         "end_label": normalized_rows[-1]["forecast_date"].isoformat(),
         "points_count": len(normalized_rows),
+        "x_markers": build_time_axis_markers(
+            [row["forecast_date"] for row in normalized_rows],
+            width=width,
+            height=height,
+            padding=padding,
+        ),
     }
 
 

@@ -345,6 +345,8 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(cards[0]["projection_line"])
         self.assertTrue(cards[0]["historical_chart"]["available"])
         self.assertTrue(cards[0]["projection_12m_chart"]["available"])
+        self.assertTrue(cards[0]["historical_chart"]["x_markers"])
+        self.assertTrue(cards[0]["projection_12m_chart"]["x_markers"])
 
     def test_projection_includes_dividends_and_broker_drag(self):
         position = EquityPosition.objects.create(
@@ -618,6 +620,7 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(len(tracking["tickets"]), 2)
         self.assertTrue(all(item["chart"]["available"] for item in tracking["tickets"]))
         self.assertIsNotNone(tracking["global"]["expected_today_value"])
+        self.assertTrue(tracking["global"]["chart"]["x_markers"])
 
     def test_allocation_plan_respects_max_company_weight_and_sorts_by_projection(self):
         stronger = {
