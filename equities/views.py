@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
+from django.http import HttpResponseRedirect
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.generic import TemplateView, View
@@ -376,9 +377,16 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
 
         ticker = position.ticker
         company_name = position.company_name
+        was_owned = position.is_owned
         position.delete()
-        messages.success(request, f"{ticker} - {company_name} se ha eliminado de la lista de acciones.")
-        return redirect("equities:list")
+        if was_owned:
+            messages.success(request, f"{ticker} - {company_name} se ha eliminado de la lista de acciones.")
+            return HttpResponseRedirect(f"{reverse('equities:list')}#equity-journey")
+        messages.success(
+            request,
+            f"{ticker} - {company_name} ya no esta en seguimiento. Seguira apareciendo solo en el radar IBEX.",
+        )
+        return HttpResponseRedirect(f"{reverse('equities:list')}#equity-ibex")
 
     def _close_position(self, request):
         position_id = request.POST.get("position_id", "").strip()
@@ -415,9 +423,9 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         )
         messages.success(
             request,
-            f"Venta registrada para {archived.ticker}. Resultado neto {archived.net_result:.2f} EUR y margen acumulado {archived.cumulative_margin_pct:.2f} %.",
+            f"Venta registrada para {archived.ticker}. Resultado neto {archived.net_result:.2f} EUR y margen acumulado {archived.cumulative_margin_pct:.2f} %. La veras en Ventas dentro del cuadro de gestion.",
         )
-        return redirect("equities:list")
+        return HttpResponseRedirect(f"{reverse('equities:list')}#equity-journey")
 
     def _launch_optimizer_run(self, request):
         positions = list(EquityPosition.objects.all())

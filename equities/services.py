@@ -2918,8 +2918,96 @@ def estimate_period_totals(
     return maintenance_total, dividend_total, elapsed_days
 
 
+def build_equity_sale_preview(
+    position: EquityPosition,
+    sale_price_per_share: Decimal | None = None,
+    closed_on: date | None = None,
+) -> dict:
+    if not position.is_owned:
+        return {"available": False}
+
+    history = sorted(position.price_history.all(), key=lambda point: point.price_date)
+    fallback_start_date = history[0].price_date if history else position.latest_price_date
+    requested_closed_on = closed_on or django_timezone.localdate()
+    start_date, start_label, is_estimated = resolve_position_start_date(
+        position.opened_on,
+        fallback_start_date,
+        requested_closed_on,
+    )
+    effective_closed_on = max(requested_closed_on, start_date)
+    sale_price = quantize_decimal(
+        Decimal(str(sale_price_per_share if sale_price_per_share is not None else position.current_price_per_share or ZERO)),
+        "0.0001",
+    ) or ZERO
+    gross_sale_value = quantize_decimal(position.shares * sale_price, "0.01") or ZERO
+    sale_costs = estimate_broker_costs(
+        broker_name=position.broker,
+        trade_channel=position.trade_channel,
+        trade_amount=gross_sale_value,
+        valuation_amount=gross_sale_value,
+        annual_dividend_income=position.annual_dividend_income,
+        quote_symbol=position.quote_symbol,
+    )
+    sale_total_cost = quantize_decimal(sale_costs.get("sale_total_cost", ZERO), "0.01") or ZERO
+    purchase_cost = quantize_decimal(position.purchase_total_cost, "0.01") or ZERO
+    maintenance_total, dividend_total, holding_days = estimate_period_totals(
+        position.recurring_cost_used,
+        position.net_dividend_income,
+        start_date,
+        effective_closed_on,
+    )
+    invested_amount = quantize_decimal(position.invested_amount, "0.01") or ZERO
+    committed_capital = quantize_decimal(invested_amount + purchase_cost, "0.01") or ZERO
+    net_exit_value = quantize_decimal(gross_sale_value - sale_total_cost, "0.01") or ZERO
+    total_costs = quantize_decimal(purchase_cost + sale_total_cost + maintenance_total, "0.01") or ZERO
+    net_result = quantize_decimal(
+        net_exit_value - invested_amount - purchase_cost - maintenance_total + dividend_total,
+        "0.01",
+    ) or ZERO
+    cumulative_margin_pct = (
+        quantize_decimal((net_result / committed_capital) * ONE_HUNDRED, "0.01")
+        if committed_capital
+        else ZERO
+    ) or ZERO
+    annualized_margin_pct = (
+        quantize_decimal(cumulative_margin_pct * (Decimal("365") / Decimal(str(max(holding_days, 1)))), "0.01")
+        if committed_capital
+        else ZERO
+    ) or ZERO
+
+    return {
+        "available": True,
+        "start_date": start_date,
+        "start_date_label": start_date.isoformat(),
+        "start_date_source_label": start_label,
+        "start_date_is_estimated": is_estimated,
+        "closed_on": effective_closed_on,
+        "closed_on_label": effective_closed_on.isoformat(),
+        "holding_days": holding_days,
+        "shares": position.shares,
+        "sale_price_per_share": sale_price,
+        "invested_amount": invested_amount,
+        "purchase_cost": purchase_cost,
+        "sale_total_cost": sale_total_cost,
+        "annual_recurring_cost": quantize_decimal(position.recurring_cost_used, "0.01") or ZERO,
+        "annual_net_dividend_income": quantize_decimal(position.net_dividend_income, "0.01") or ZERO,
+        "maintenance_total": maintenance_total,
+        "dividend_total": dividend_total,
+        "gross_sale_value": gross_sale_value,
+        "net_exit_value": net_exit_value,
+        "total_costs": total_costs,
+        "net_result": net_result,
+        "committed_capital": committed_capital,
+        "cumulative_margin_pct": cumulative_margin_pct,
+        "annualized_margin_pct": annualized_margin_pct,
+        "cost_profile_label": sale_costs.get("profile_label") or position.broker,
+        "market_scope_label": sale_costs.get("market_scope_label") or "",
+        "trade_channel_label": sale_costs.get("trade_channel_label") or position.get_trade_channel_display(),
+    }
+
+
 def build_active_equity_investment_ticket(position: EquityPosition) -> dict | None:
-    history = list(position.price_history.all().order_by("price_date"))
+    history = sorted(position.price_history.all(), key=lambda point: point.price_date)
     fallback_start_date = history[0].price_date if history else position.latest_price_date
     default_end_date = position.latest_price_date or (history[-1].price_date if history else django_timezone.localdate())
     start_date, start_label, is_estimated = resolve_position_start_date(position.opened_on, fallback_start_date, default_end_date)
@@ -4829,6 +4917,7 @@ def build_equity_history_card(
         ticker=position.ticker,
         quote_symbol=position.quote_symbol,
     )
+    sale_preview = build_equity_sale_preview(position)
 
     if not history:
         return {
@@ -4838,6 +4927,7 @@ def build_equity_history_card(
             "detail_anchor": resolved_detail_anchor,
             "sector_label": resolved_sector_label,
             "has_history": False,
+            "sale_preview": sale_preview,
             "projection": {"available": False},
             "projection_backtest": {"available": False, "monthly_chart": {"available": False}},
             "projection_reliability": {"label": "Baja", "score": Decimal("40.00")},
@@ -5025,6 +5115,7 @@ def build_equity_history_card(
         "broker_costs": broker_costs,
         "correlation": correlation,
         "cycle_metrics": cycle_metrics,
+        "sale_preview": sale_preview,
         "projection": projection,
         "projection_backtest": projection_backtest,
         "projection_reliability": projection_reliability,

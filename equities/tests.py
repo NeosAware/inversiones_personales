@@ -29,6 +29,7 @@ from .services import (
     build_equity_analysis_dashboard,
     build_equity_history_cards,
     build_equity_investment_journey_context,
+    build_equity_sale_preview,
     build_equity_ticket_tracking_context,
     archive_equity_position_sale,
     build_trade_alert,
@@ -797,6 +798,38 @@ class EquitiesServicesTests(TestCase):
         self.assertGreaterEqual(context["costs_total"], Decimal("0.00"))
         self.assertIsNotNone(context["average_annual_result"])
 
+    def test_sale_preview_calculates_net_result_for_a_specific_sale_price(self):
+        position = EquityPosition.objects.create(
+            broker="Banco Santander",
+            trade_channel=EquityPosition.TradeChannel.APP,
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2025, 4, 12),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.5000"),
+            annual_dividend_income=Decimal("12.00"),
+            annual_maintenance_cost=Decimal("5.00"),
+        )
+
+        preview = build_equity_sale_preview(
+            position,
+            sale_price_per_share=Decimal("12.5000"),
+            closed_on=date(2026, 4, 12),
+        )
+
+        self.assertTrue(preview["available"])
+        self.assertEqual(preview["purchase_cost"], Decimal("3.20"))
+        self.assertEqual(preview["sale_total_cost"], Decimal("3.00"))
+        self.assertEqual(preview["net_exit_value"], Decimal("122.00"))
+        self.assertEqual(preview["dividend_total"], Decimal("10.00"))
+        self.assertEqual(preview["maintenance_total"], Decimal("5.00"))
+        self.assertEqual(preview["net_result"], Decimal("23.80"))
+        self.assertEqual(preview["annualized_margin_pct"], preview["cumulative_margin_pct"])
+
     def test_allocation_plan_respects_max_company_weight_and_sorts_by_projection(self):
         stronger = {
             "position": EquityPosition(
@@ -1143,6 +1176,7 @@ class EquitiesServicesTests(TestCase):
 
         self.assertEqual(costs["profile_key"], "santander_fallback")
         self.assertEqual(costs["purchase_total_cost"], Decimal("26.00"))
+        self.assertEqual(costs["sale_total_cost"], Decimal("6.00"))
         self.assertEqual(costs["annual_custody_cost"], Decimal("25.00"))
         self.assertIn("Santander", costs["pdf_source_label"])
 
@@ -1596,7 +1630,8 @@ class EquitiesViewTests(TestCase):
             },
         )
 
-        self.assertRedirects(response, reverse("equities:list"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, f"{reverse('equities:list')}#equity-ibex")
         self.assertFalse(EquityPosition.objects.filter(pk=position.id).exists())
 
     def test_can_close_owned_position_and_move_it_to_sales_history(self):
@@ -1629,7 +1664,8 @@ class EquitiesViewTests(TestCase):
             },
         )
 
-        self.assertRedirects(response, reverse("equities:list"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, f"{reverse('equities:list')}#equity-journey")
         self.assertFalse(EquityPosition.objects.filter(pk=position.id).exists())
         closed = EquityClosedPosition.objects.get(ticker="IBE")
         self.assertEqual(closed.sale_price_per_share, Decimal("12.8000"))
@@ -2341,6 +2377,45 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Cuenta de resultados")
         self.assertContains(response, "Resultado neto de las posiciones cerradas")
         self.assertContains(response, "Margen neto por ticket abierto")
+
+    def test_equities_page_surfaces_sale_simulator_and_unfollow_action(self):
+        EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Banco Santander",
+            trade_channel=EquityPosition.TradeChannel.APP,
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2025, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+            annual_dividend_income=Decimal("12.00"),
+            annual_maintenance_cost=Decimal("5.00"),
+        )
+        EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Seguimiento",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            shares=Decimal("0"),
+            average_cost_per_share=Decimal("0"),
+            current_price_per_share=Decimal("0"),
+        )
+
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Si vendes esta posicion, aqui ves el neto real")
+        self.assertContains(response, "Dejar de seguir y volver al radar")
+        self.assertContains(response, "Si vendo hoy")
+        self.assertContains(response, "Calcular / vender")
 
     @override_settings(EQUITIES_REFERENCE_WORKBOOK="")
     def test_equities_page_renders_workbook_reference_guide(self):

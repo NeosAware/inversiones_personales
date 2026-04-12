@@ -12,43 +12,98 @@
     </div>
   </div>
 
-  <div class="equity-chart-foot" style="margin-top:10px;">
-    {% if card.position.is_owned %}
-      <details class="equity-inline-fold" style="flex:1 1 340px;">
-        <summary>Registrar venta total</summary>
-        <div class="equity-inline-body">
-          <form method="post" class="stack">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="close_position">
-            <input type="hidden" name="position_id" value="{{ card.position.id }}">
-            <div class="equity-grid-4">
-              <div>
-                <label for="close-date-{{ card.position.id }}">Fecha venta</label>
-                <input id="close-date-{{ card.position.id }}" type="date" name="closed_on" value="{{ today|date:'Y-m-d' }}">
-              </div>
-              <div>
-                <label for="close-price-{{ card.position.id }}">Precio venta</label>
-                <input id="close-price-{{ card.position.id }}" type="text" name="sale_price_per_share" value="{{ card.position.current_price_per_share }}">
-              </div>
-              <div style="grid-column:span 2;">
-                <label for="close-notes-{{ card.position.id }}">Notas</label>
-                <textarea id="close-notes-{{ card.position.id }}" name="notes" rows="2" placeholder="Motivo de venta o recordatorio"></textarea>
-              </div>
-            </div>
-            <div style="display:flex; gap:10px; flex-wrap:wrap;">
-              <button class="button" type="submit">Vender y sacar de cartera</button>
-              <span class="metric-sub">La venta se guarda en historico y desaparece de posiciones activas.</span>
-            </div>
-          </form>
+  <div style="margin-top:10px;">
+    {% if card.position.is_owned and card.sale_preview.available %}
+      <section class="equity-panel" style="margin:0; padding:18px; background:#f7fbfd; border:1px solid #d8e3ea;">
+        <div class="equity-panel-head" style="margin-bottom:12px;">
+          <div>
+            <p class="section-title">Venta y rentabilidad</p>
+            <h3 style="margin:0;">Si vendes esta posicion, aqui ves el neto real</h3>
+            <p style="margin:6px 0 0;">Introduce el precio de venta y la fecha. La simulacion descuenta compra, venta, mantenimiento y suma dividendos netos acumulados.</p>
+          </div>
+          <span class="pill">{{ card.sale_preview.cost_profile_label }} | {{ card.sale_preview.trade_channel_label }}</span>
         </div>
-      </details>
+        <div
+          class="equity-grid-4"
+          data-sale-calculator
+          data-start-date="{{ card.sale_preview.start_date_label }}"
+          data-shares="{{ card.sale_preview.shares }}"
+          data-invested-amount="{{ card.sale_preview.invested_amount }}"
+          data-purchase-cost="{{ card.sale_preview.purchase_cost }}"
+          data-annual-recurring-cost="{{ card.sale_preview.annual_recurring_cost }}"
+          data-annual-net-dividend-income="{{ card.sale_preview.annual_net_dividend_income }}"
+          data-trade-channel="{{ card.position.trade_channel }}"
+          data-quote-symbol="{{ card.position.quote_symbol }}"
+          style="margin-bottom:12px;"
+        >
+          <div class="equity-box">
+            <span>Cobro neto estimado</span>
+            <strong><span data-sale-preview="net_exit_value">{{ card.sale_preview.net_exit_value|floatformat:2 }}</span> EUR</strong>
+            <small>Bruto <span data-sale-preview="gross_sale_value">{{ card.sale_preview.gross_sale_value|floatformat:2 }}</span> EUR - venta <span data-sale-preview="sale_total_cost">{{ card.sale_preview.sale_total_cost|floatformat:2 }}</span> EUR.</small>
+          </div>
+          <div class="equity-box">
+            <span>Resultado neto</span>
+            <strong class="{% if card.sale_preview.net_result >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="net_result">{{ card.sale_preview.net_result|floatformat:2 }}</span> EUR</strong>
+            <small>Capital comprometido {{ card.sale_preview.committed_capital|floatformat:2 }} EUR.</small>
+          </div>
+          <div class="equity-box">
+            <span>Margen acumulado</span>
+            <strong class="{% if card.sale_preview.cumulative_margin_pct >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="cumulative_margin_pct">{{ card.sale_preview.cumulative_margin_pct|floatformat:2 }}</span> %</strong>
+            <small>Desde {{ card.sale_preview.start_date_label }}.</small>
+          </div>
+          <div class="equity-box">
+            <span>Margen anualizado</span>
+            <strong class="{% if card.sale_preview.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="annualized_margin_pct">{{ card.sale_preview.annualized_margin_pct|floatformat:2 }}</span> %</strong>
+            <small><span data-sale-preview="holding_days">{{ card.sale_preview.holding_days }}</span> dias de tenencia.</small>
+          </div>
+        </div>
+        <div class="equity-compact-note" style="margin-bottom:14px;">
+          Compra {{ card.sale_preview.purchase_cost|floatformat:2 }} EUR |
+          mantenimiento acumulado <span data-sale-preview="maintenance_total">{{ card.sale_preview.maintenance_total|floatformat:2 }}</span> EUR |
+          dividendos netos acumulados <span data-sale-preview="dividend_total">{{ card.sale_preview.dividend_total|floatformat:2 }}</span> EUR |
+          costes totales <span data-sale-preview="total_costs">{{ card.sale_preview.total_costs|floatformat:2 }}</span> EUR.
+          {% if card.sale_preview.start_date_is_estimated %} La fecha inicial es aproximada: {{ card.sale_preview.start_date_source_label }}.{% endif %}
+        </div>
+        <form method="post" class="stack">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="close_position">
+          <input type="hidden" name="position_id" value="{{ card.position.id }}">
+          <div class="equity-grid-4">
+            <div>
+              <label for="close-date-{{ card.position.id }}">Fecha venta</label>
+              <input id="close-date-{{ card.position.id }}" type="date" name="closed_on" value="{{ today|date:'Y-m-d' }}" data-sale-input="closed_on">
+            </div>
+            <div>
+              <label for="close-price-{{ card.position.id }}">Precio venta por accion</label>
+              <input id="close-price-{{ card.position.id }}" type="text" name="sale_price_per_share" value="{{ card.position.current_price_per_share }}" data-sale-input="sale_price_per_share">
+            </div>
+            <div style="grid-column:span 2;">
+              <label for="close-notes-{{ card.position.id }}">Notas</label>
+              <textarea id="close-notes-{{ card.position.id }}" name="notes" rows="2" placeholder="Motivo de venta o recordatorio"></textarea>
+            </div>
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <button class="button" type="submit">Registrar venta y guardar resultado</button>
+            <span class="metric-sub">Al confirmar, la posicion desaparece de cartera y pasa a Ventas dentro del cuadro de gestion.</span>
+          </div>
+        </form>
+      </section>
     {% else %}
-      <form method="post">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="delete_position">
-        <input type="hidden" name="position_id" value="{{ card.position.id }}">
-        <button class="button secondary" type="submit">Eliminar seguimiento</button>
-      </form>
+      <section class="equity-panel" style="margin:0; padding:18px; background:#f7fbfd; border:1px solid #d8e3ea;">
+        <div class="equity-panel-head" style="margin-bottom:12px;">
+          <div>
+            <p class="section-title">Seguimiento guardado</p>
+            <h3 style="margin:0;">Dejar de seguir este valor</h3>
+            <p style="margin:6px 0 0;">Si ya no quieres tenerlo guardado, quitalo de tu seguimiento. Seguiras viendolo en el radar IBEX como un valor mas del indice.</p>
+          </div>
+        </div>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="delete_position">
+          <input type="hidden" name="position_id" value="{{ card.position.id }}">
+          <button class="button secondary" type="submit">Dejar de seguir y volver al radar</button>
+        </form>
+      </section>
     {% endif %}
   </div>
 

@@ -543,6 +543,7 @@
                 <th>Fiabilidad</th>
                 <th>Benef./riesgo</th>
                 <th>Ciclo</th>
+                <th>Gestion</th>
               </tr>
             </thead>
             <tbody>
@@ -568,6 +569,22 @@
                   <td>{{ row.reliability_label }}</td>
                   <td>{% if row.benefit_risk_ratio is not None %}{{ row.benefit_risk_ratio|floatformat:2 }}{% else %}-{% endif %}</td>
                   <td>{{ row.cycle_phase }}</td>
+                  <td>
+                    {% if row.status_key == 'owned' and row.detail_anchor %}
+                      <a class="button secondary" href="#{{ row.detail_anchor }}">Vender / rentabilidad</a>
+                    {% elif row.status_key == 'watchlist' and row.position.id %}
+                      <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="delete_position">
+                        <input type="hidden" name="position_id" value="{{ row.position.id }}">
+                        <button class="button secondary" type="submit">Dejar de seguir</button>
+                      </form>
+                    {% elif row.detail_url %}
+                      <a class="button secondary" href="{{ row.detail_url }}" target="_blank" rel="noopener">Abrir analisis</a>
+                    {% else %}
+                      <span class="metric-sub">Solo radar</span>
+                    {% endif %}
+                  </td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -975,20 +992,33 @@
           <div>
             <p class="section-title">Cartera real</p>
             <h3>Acciones compradas</h3>
-            <p>Vista patrimonial con el broker y la proyeccion neta. Los seguimientos guardados ya no se repiten aqui: ahora viven integrados dentro del radar IBEX con su estado.</p>
+            <p>Vista patrimonial con el broker y la proyeccion neta. Desde aqui puedes localizar rapido que pasaria si vendieras hoy y abrir la ficha donde introducir el precio exacto de salida.</p>
           </div>
         </div>
         <div class="equity-table-wrap">
           <table>
-            <thead><tr><th>Ticker</th><th>Empresa</th><th>Broker</th><th>Invertido</th><th>Valor actual</th><th>Rent. neta</th><th>Pred. 12M</th><th></th></tr></thead>
+            <thead><tr><th>Ticker</th><th>Empresa</th><th>Broker</th><th>Invertido</th><th>Valor actual</th><th>Rent. neta</th><th>Si vendo hoy</th><th>Margen si vendo hoy</th><th></th></tr></thead>
             <tbody>
               {% for card in owned_history_cards %}
-                <tr><td><strong>{{ card.position.ticker }}</strong></td><td>{{ card.position.company_name }}</td><td>{{ card.position.broker }}</td><td>{{ card.position.invested_amount|floatformat:2 }} EUR</td><td>{{ card.position.current_value|floatformat:2 }} EUR</td><td class="{% if card.position.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ card.position.unrealized_return_pct|floatformat:2 }} %</td><td class="{% if card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if card.projection.available %}{{ card.projection.base_return_pct|floatformat:1 }} %{% else %}-{% endif %}</td><td><a class="button secondary" href="#stock-{{ card.position.id }}">Gestionar</a></td></tr>
+                <tr>
+                  <td><strong>{{ card.position.ticker }}</strong></td>
+                  <td>{{ card.position.company_name }}</td>
+                  <td>{{ card.position.broker }}</td>
+                  <td>{{ card.position.invested_amount|floatformat:2 }} EUR</td>
+                  <td>{{ card.position.current_value|floatformat:2 }} EUR</td>
+                  <td class="{% if card.position.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ card.position.unrealized_return_pct|floatformat:2 }} %</td>
+                  <td class="{% if card.sale_preview.net_result >= 0 %}good{% else %}warn{% endif %}">{% if card.sale_preview.available %}{{ card.sale_preview.net_result|floatformat:2 }} EUR{% else %}-{% endif %}</td>
+                  <td class="{% if card.sale_preview.cumulative_margin_pct >= 0 %}good{% else %}warn{% endif %}">{% if card.sale_preview.available %}{{ card.sale_preview.cumulative_margin_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+                  <td><a class="button secondary" href="#stock-{{ card.position.id }}">Calcular / vender</a></td>
+                </tr>
               {% empty %}
-                <tr><td colspan="8" class="muted">Todavia no hay acciones compradas.</td></tr>
+                <tr><td colspan="9" class="muted">Todavia no hay acciones compradas.</td></tr>
               {% endfor %}
             </tbody>
           </table>
+        </div>
+        <div class="equity-compact-note" style="margin-top:14px;">
+          La columna <strong>Si vendo hoy</strong> ya descuenta compra, venta y mantenimiento acumulado, y suma dividendos netos acumulados. Si quieres usar otro precio de salida, entra en <strong>Calcular / vender</strong>.
         </div>
         </section>
       </div>
@@ -1428,6 +1458,130 @@
       <option value="{{ entry.company_name }}">{{ entry.ticker }} | {{ entry.company_name }}</option>
     {% endfor %}
   </datalist>
+  <script>
+    (() => {
+      const calculators = Array.from(document.querySelectorAll("[data-sale-calculator]"));
+      if (!calculators.length) {
+        return;
+      }
+
+      const parseDecimal = (value) => {
+        if (typeof value !== "string") {
+          return Number(value || 0);
+        }
+        const normalized = value.trim().replace(/\s+/g, "").replace(/\.(?=\d{3}(?:\D|$))/g, "").replace(",", ".");
+        const parsed = Number(normalized);
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
+
+      const amountFee = (amount, percent, minimum) => Math.round((Math.max(amount * percent, minimum) + Number.EPSILON) * 100) / 100;
+      const domesticTradeFee = (amount, channel) => {
+        if (channel === "office" || channel === "contact_center") {
+          return amountFee(amount, 0.0065, 10);
+        }
+        if (amount <= 2000) {
+          return 3;
+        }
+        if (amount <= 15000) {
+          return 6;
+        }
+        return amountFee(amount, 0.0025, 0);
+      };
+      const internationalTradeFee = (amount, channel) => {
+        if (channel === "office" || channel === "contact_center") {
+          return amountFee(amount, 0.01, 60);
+        }
+        if (amount <= 15000) {
+          return 20;
+        }
+        return amountFee(amount, 0.0035, 0);
+      };
+      const formatMoney = (value) => new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value || 0);
+      const formatPercent = (value) => new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value || 0);
+      const diffDays = (startText, endText) => {
+        if (!startText || !endText) {
+          return 0;
+        }
+        const start = new Date(`${startText}T00:00:00`);
+        const end = new Date(`${endText}T00:00:00`);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+          return 0;
+        }
+        const delta = Math.round((end - start) / 86400000);
+        return Math.max(delta, 0);
+      };
+
+      calculators.forEach((calculator) => {
+        const priceInput = calculator.parentElement?.querySelector("[data-sale-input='sale_price_per_share']");
+        const dateInput = calculator.parentElement?.querySelector("[data-sale-input='closed_on']");
+        if (!priceInput || !dateInput) {
+          return;
+        }
+
+        const shares = parseDecimal(calculator.dataset.shares);
+        const investedAmount = parseDecimal(calculator.dataset.investedAmount);
+        const purchaseCost = parseDecimal(calculator.dataset.purchaseCost);
+        const annualRecurringCost = parseDecimal(calculator.dataset.annualRecurringCost);
+        const annualNetDividendIncome = parseDecimal(calculator.dataset.annualNetDividendIncome);
+        const startDate = calculator.dataset.startDate;
+        const tradeChannel = calculator.dataset.tradeChannel || "app";
+        const quoteSymbol = (calculator.dataset.quoteSymbol || "").toUpperCase();
+        const committedCapital = investedAmount + purchaseCost;
+
+        const renderValue = (key, value, formatter = formatMoney) => {
+          const target = calculator.querySelector(`[data-sale-preview='${key}']`);
+          if (target) {
+            target.textContent = formatter(value);
+          }
+        };
+        const renderTone = (key, value) => {
+          const target = calculator.querySelector(`[data-sale-preview='${key}']`);
+          if (!target) {
+            return;
+          }
+          const toneNode = target.closest("strong") || target;
+          toneNode.classList.remove("good", "warn");
+          toneNode.classList.add(value >= 0 ? "good" : "warn");
+        };
+
+        const recalculate = () => {
+          const salePrice = Math.max(parseDecimal(priceInput.value), 0);
+          const closedOn = dateInput.value || startDate;
+          const holdingDays = diffDays(startDate, closedOn);
+          const grossSaleValue = shares * salePrice;
+          const saleTotalCost = quoteSymbol.endsWith(".MC")
+            ? domesticTradeFee(grossSaleValue, tradeChannel)
+            : internationalTradeFee(grossSaleValue, tradeChannel);
+          const yearFraction = holdingDays / 365;
+          const maintenanceTotal = Math.round(((annualRecurringCost * yearFraction) + Number.EPSILON) * 100) / 100;
+          const dividendTotal = Math.round(((annualNetDividendIncome * yearFraction) + Number.EPSILON) * 100) / 100;
+          const totalCosts = Math.round(((purchaseCost + saleTotalCost + maintenanceTotal) + Number.EPSILON) * 100) / 100;
+          const netExitValue = Math.round(((grossSaleValue - saleTotalCost) + Number.EPSILON) * 100) / 100;
+          const netResult = Math.round(((netExitValue - investedAmount - purchaseCost - maintenanceTotal + dividendTotal) + Number.EPSILON) * 100) / 100;
+          const cumulativeMarginPct = committedCapital ? (netResult / committedCapital) * 100 : 0;
+          const annualizedMarginPct = committedCapital ? cumulativeMarginPct * (365 / Math.max(holdingDays, 1)) : 0;
+
+          renderValue("gross_sale_value", grossSaleValue);
+          renderValue("sale_total_cost", saleTotalCost);
+          renderValue("maintenance_total", maintenanceTotal);
+          renderValue("dividend_total", dividendTotal);
+          renderValue("total_costs", totalCosts);
+          renderValue("net_exit_value", netExitValue);
+          renderValue("net_result", netResult);
+          renderValue("cumulative_margin_pct", cumulativeMarginPct, formatPercent);
+          renderValue("annualized_margin_pct", annualizedMarginPct, formatPercent);
+          renderValue("holding_days", holdingDays, (value) => String(Math.max(Math.round(value || 0), 0)));
+          renderTone("net_result", netResult);
+          renderTone("cumulative_margin_pct", cumulativeMarginPct);
+          renderTone("annualized_margin_pct", annualizedMarginPct);
+        };
+
+        priceInput.addEventListener("input", recalculate);
+        dateInput.addEventListener("input", recalculate);
+        recalculate();
+      });
+    })();
+  </script>
   <script>
     (() => {
       const rows = Array.from(document.querySelectorAll("[data-detail-url]"));

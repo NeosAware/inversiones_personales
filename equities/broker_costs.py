@@ -117,6 +117,7 @@ def estimate_santander_costs(
         "exit_fee": exit_fee,
         "transaction_tax_cost": transaction_tax_cost,
         "purchase_total_cost": purchase_total_cost,
+        "sale_total_cost": exit_fee,
         "roundtrip_total_cost": roundtrip_total_cost,
         "annual_custody_cost": annual_custody_cost,
         "annual_dividend_fee": annual_dividend_fee,
