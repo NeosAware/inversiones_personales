@@ -65,12 +65,13 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             for key in ("total_investment", "max_company_pct", "max_total_positions", "max_sector_positions")
         )
 
-    def _auto_sync_market_data(self):
+    def _auto_sync_market_data(self, active_run_exists: bool = False):
         positions = list(EquityPosition.objects.all())
         if (
             not positions
             or not getattr(settings, "EQUITIES_AUTO_SYNC_ON_VIEW", True)
             or self._optimizer_requested()
+            or active_run_exists
         ):
             return {
                 "attempted": False,
@@ -88,17 +89,30 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         resume_equity_optimization_runs()
-        auto_sync = self._auto_sync_market_data()
+        optimization_runs = list(EquityOptimizationRun.objects.select_related("requested_by")[:12])
+        active_optimization_runs = [
+            run for run in optimization_runs if run.status in {EquityOptimizationRun.Status.PENDING, EquityOptimizationRun.Status.RUNNING}
+        ]
+        auto_sync = self._auto_sync_market_data(active_run_exists=bool(active_optimization_runs))
         positions = list(EquityPosition.objects.prefetch_related("price_history"))
         closed_positions = list(EquityClosedPosition.objects.all())
         selected_start_date, selected_end_date = self._selected_period_bounds()
         optimizer_requested = self._optimizer_requested()
+        defer_ibex_analysis = bool(active_optimization_runs) and not optimizer_requested
         dashboard = build_equity_analysis_dashboard(
             positions,
             selected_start_date=selected_start_date,
             selected_end_date=selected_end_date,
-            include_ibex_universe=(True if optimizer_requested else getattr(settings, "EQUITIES_IBEX_UNIVERSE_ANALYSIS", True)),
-            ibex_company_limit=(None if optimizer_requested else (getattr(settings, "EQUITIES_IBEX_UNIVERSE_LIMIT", 0) or None)),
+            include_ibex_universe=(
+                False
+                if defer_ibex_analysis
+                else (True if optimizer_requested else getattr(settings, "EQUITIES_IBEX_UNIVERSE_ANALYSIS", True))
+            ),
+            ibex_company_limit=(
+                None
+                if optimizer_requested
+                else (getattr(settings, "EQUITIES_IBEX_UNIVERSE_LIMIT", 0) or None)
+            ),
         )
         context["page_title"] = "Acciones cotizadas"
         context["positions"] = positions
@@ -127,6 +141,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["ticket_tracking"] = build_equity_ticket_tracking_context(dashboard["owned_history_cards"])
         context["investment_journey"] = build_equity_investment_journey_context(positions, closed_positions)
         context["ibex_universe_summary"] = dashboard["ibex_universe_summary"]
+        context["ibex_analysis_deferred"] = defer_ibex_analysis
         context["tracked_reference_rows"] = dashboard["tracked_reference_rows"]
         context["reference_guide_rows"] = dashboard["reference_guide_rows"]
         context["reference_guide_summary"] = dashboard["reference_guide_summary"]
@@ -166,11 +181,8 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["optimizer_form"] = optimizer_form
         context["optimizer_run_form"] = optimizer_run_form
         context["optimizer_plan"] = optimizer_plan
-        optimization_runs = list(EquityOptimizationRun.objects.select_related("requested_by")[:12])
         context["optimization_runs"] = optimization_runs
-        context["active_optimization_runs"] = [
-            run for run in optimization_runs if run.status in {EquityOptimizationRun.Status.PENDING, EquityOptimizationRun.Status.RUNNING}
-        ]
+        context["active_optimization_runs"] = active_optimization_runs
         context["optimization_comparison"] = build_optimization_comparison_context(optimization_runs)
         context["latest_completed_optimization"] = next(
             (run for run in optimization_runs if run.status == EquityOptimizationRun.Status.COMPLETED and run.summary_data),
@@ -464,7 +476,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             messages.success(request, f"Optimizacion {run.reference_code} completada y guardada.")
         else:
             messages.success(request, f"Optimizacion {run.reference_code} lanzada en segundo plano.")
-        return redirect(f"{reverse('equities:list')}#equity-optimizer")
+        return redirect(f"{reverse('equities:list')}?optimizer_status=1#equity-optimizer")
 
 
 class IbexEquityDetailView(LoginRequiredMixin, EquityPeriodBoundsMixin, TemplateView):

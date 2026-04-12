@@ -16,7 +16,7 @@ from portfolio.ownership import AssetOwnershipCategory
 
 from .broker_costs import estimate_broker_costs
 from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition, EquityTicketSnapshot
-from .optimization_runs import process_equity_optimization_run
+from .optimization_runs import launch_equity_optimization_run, process_equity_optimization_run
 from .services import (
     EURIBOR_REFERENCE_NAME,
     EURIBOR_REFERENCE_SYMBOL,
@@ -1428,6 +1428,24 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(run.progress_data["preview_allocations"])
         self.assertTrue(all(stage["status"] == "completed" for stage in run.progress_data["stages"]))
 
+    @override_settings(EQUITIES_OPTIMIZATION_ASYNC=False)
+    def test_launch_optimization_run_still_queues_background_job_when_async_flag_is_off(self):
+        with (
+            patch("equities.optimization_runs.enqueue_equity_optimization_run") as mocked_enqueue,
+            patch("equities.optimization_runs.process_equity_optimization_run") as mocked_process,
+        ):
+            run = launch_equity_optimization_run(
+                total_investment=Decimal("80000"),
+                max_company_pct=Decimal("20"),
+                max_total_positions=6,
+                max_sector_positions=1,
+                selected_sectors=["Banca"],
+            )
+
+        self.assertEqual(run.status, EquityOptimizationRun.Status.PENDING)
+        mocked_enqueue.assert_called_once_with(run.id)
+        mocked_process.assert_not_called()
+
     def test_dashboard_can_extend_optimizer_to_full_ibex_universe(self):
         acerinox = find_equity_company_profile("Acerinox")
         acs = find_equity_company_profile("ACS")
@@ -2356,7 +2374,7 @@ class EquitiesViewTests(TestCase):
                 },
             )
 
-        self.assertRedirects(response, f"{reverse('equities:list')}#equity-optimizer")
+        self.assertRedirects(response, f"{reverse('equities:list')}?optimizer_status=1#equity-optimizer")
         mocked_launch.assert_called_once()
         self.assertEqual(mocked_launch.call_args.kwargs["max_total_positions"], 8)
         self.assertEqual(mocked_launch.call_args.kwargs["selected_sectors"], ["Electrica", "Banca"])
@@ -2367,6 +2385,51 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Sectores donde si comprar")
         self.assertContains(response, "Banca")
+
+    def test_equities_page_defers_full_ibex_radar_while_optimization_is_active(self):
+        EquityOptimizationRun.objects.create(
+            reference_code="OPT-RUNNING-001",
+            label="Ejecucion activa",
+            total_investment=Decimal("250000"),
+            max_company_pct=Decimal("20"),
+            max_total_positions=6,
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.RUNNING,
+        )
+        dashboard = {
+            "overview": {
+                "invested_amount": Decimal("0"),
+                "current_value": Decimal("0"),
+                "net_annual_income_total": Decimal("0"),
+                "owned_positions_count": 0,
+                "watchlist_positions_count": 0,
+                "unrealized_return_pct": None,
+                "unrealized_gain_total": Decimal("0"),
+                "weighted_projected_return_12m": None,
+                "weighted_safety_score": None,
+                "weighted_periods": [],
+                "best_decision": None,
+            },
+            "history_cards": [],
+            "owned_positions": [],
+            "watchlist_positions": [],
+            "owned_history_cards": [],
+            "watchlist_history_cards": [],
+            "decision_rows": [],
+            "ibex_universe_rows": [],
+            "ibex_universe_summary": {"available": False, "analyzed_count": 0},
+            "tracked_reference_rows": [],
+            "reference_guide_rows": [],
+            "reference_guide_summary": {"workbook_loaded": False},
+            "optimizer_cards": [],
+        }
+
+        with patch("equities.views.build_equity_analysis_dashboard", return_value=dashboard) as mocked_dashboard:
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(mocked_dashboard.call_args.kwargs["include_ibex_universe"])
+        self.assertContains(response, "se aplaza temporalmente mientras hay optimizaciones activas")
 
     def test_equities_page_renders_completed_optimization_comparison_table(self):
         first = EquityOptimizationRun.objects.create(

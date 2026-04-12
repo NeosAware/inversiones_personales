@@ -1041,6 +1041,7 @@ def launch_equity_optimization_run(
     requested_by=None,
     reference_label: str = "",
     restrictions_note: str = "",
+    run_inline: bool = False,
 ) -> EquityOptimizationRun:
     run = EquityOptimizationRun.objects.create(
         reference_code=generate_optimization_reference_code(),
@@ -1069,11 +1070,11 @@ def launch_equity_optimization_run(
             "updated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
         },
     )
-    if optimization_async_enabled():
-        enqueue_equity_optimization_run(run.id)
-    else:
+    if run_inline:
         process_equity_optimization_run(run.id)
         run.refresh_from_db()
+    else:
+        enqueue_equity_optimization_run(run.id)
     return run
 
 

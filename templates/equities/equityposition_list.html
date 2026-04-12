@@ -620,7 +620,11 @@
           </table>
         </div>
       {% else %}
-        <div class="message info">Todavia no se ha podido construir el radar completo del IBEX.</div>
+        {% if ibex_analysis_deferred %}
+          <div class="message info">El radar completo del IBEX se aplaza temporalmente mientras hay optimizaciones activas para que la pagina responda rapido. El seguimiento en vivo y el historial de optimizaciones siguen actualizandose con normalidad.</div>
+        {% else %}
+          <div class="message info">Todavia no se ha podido construir el radar completo del IBEX.</div>
+        {% endif %}
       {% endif %}
     </section>
 
