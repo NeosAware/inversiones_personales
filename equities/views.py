@@ -14,6 +14,7 @@ from django.views.generic import TemplateView, View
 from .forms import EquityAllocationOptimizerForm, EquityClosePositionForm, EquityDocumentImportForm, EquityOptimizationRunForm, EquityPositionForm
 from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition
 from .optimization_runs import (
+    build_optimization_comparison_context,
     build_fallback_report_pdf_html,
     launch_equity_optimization_run,
     render_report_pdf,
@@ -165,6 +166,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["active_optimization_runs"] = [
             run for run in optimization_runs if run.status in {EquityOptimizationRun.Status.PENDING, EquityOptimizationRun.Status.RUNNING}
         ]
+        context["optimization_comparison"] = build_optimization_comparison_context(optimization_runs)
         context["latest_completed_optimization"] = next(
             (run for run in optimization_runs if run.status == EquityOptimizationRun.Status.COMPLETED and run.summary_data),
             None,

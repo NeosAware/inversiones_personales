@@ -2274,6 +2274,86 @@ class EquitiesViewTests(TestCase):
         mocked_launch.assert_called_once()
         self.assertEqual(mocked_launch.call_args.kwargs["max_total_positions"], 8)
 
+    def test_equities_page_renders_completed_optimization_comparison_table(self):
+        first = EquityOptimizationRun.objects.create(
+            reference_code="OPT-COMP-001",
+            label="Cartera defensiva",
+            total_investment=Decimal("300000"),
+            max_company_pct=Decimal("20"),
+            max_total_positions=6,
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            report_html="<html>uno</html>",
+            summary_data={
+                "available": True,
+                "created_at_label": "2026-04-10 08:00",
+                "completed_at_label": "2026-04-10 08:12",
+                "total_investment": 300000,
+                "max_company_pct": 20,
+                "max_total_positions": 6,
+                "max_sector_positions": 1,
+                "projected_gain_total": 42000,
+                "weighted_return_pct": 14.0,
+                "weighted_low_return_pct": -4.5,
+                "weighted_safety_score": 76,
+                "weighted_reliability_score": 71,
+                "net_dividend_income_total": 4200,
+                "annual_cost_total": 350,
+                "roundtrip_cost_total": 980,
+                "cash_reserve_amount": 12000,
+                "allocations_count": 4,
+                "top_pick_name": "Iberdrola",
+            },
+            allocations_data=[
+                {"company_name": "Iberdrola", "ticker": "IBE", "sector_label": "Electrica"},
+                {"company_name": "Indra", "ticker": "IDR", "sector_label": "Tecnologia y defensa"},
+            ],
+        )
+        second = EquityOptimizationRun.objects.create(
+            reference_code="OPT-COMP-002",
+            label="Cartera agresiva",
+            total_investment=Decimal("300000"),
+            max_company_pct=Decimal("25"),
+            max_total_positions=8,
+            max_sector_positions=2,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            report_html="<html>dos</html>",
+            summary_data={
+                "available": True,
+                "created_at_label": "2026-04-11 09:00",
+                "completed_at_label": "2026-04-11 09:18",
+                "total_investment": 300000,
+                "max_company_pct": 25,
+                "max_total_positions": 8,
+                "max_sector_positions": 2,
+                "projected_gain_total": 57000,
+                "weighted_return_pct": 19.0,
+                "weighted_low_return_pct": -9.0,
+                "weighted_safety_score": 62,
+                "weighted_reliability_score": 66,
+                "net_dividend_income_total": 2600,
+                "annual_cost_total": 410,
+                "roundtrip_cost_total": 1320,
+                "cash_reserve_amount": 0,
+                "allocations_count": 5,
+                "top_pick_name": "Indra",
+            },
+            allocations_data=[
+                {"company_name": "Indra", "ticker": "IDR", "sector_label": "Tecnologia y defensa"},
+                {"company_name": "Repsol", "ticker": "REP", "sector_label": "Energia"},
+            ],
+        )
+
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Comparacion entre optimizaciones cerradas")
+        self.assertContains(response, first.display_label)
+        self.assertContains(response, second.display_label)
+        self.assertContains(response, "IBE, IDR")
+        self.assertContains(response, "IDR, REP")
+        self.assertContains(response, "Mayor rentabilidad")
+
     def test_completed_optimization_run_can_render_and_download_report(self):
         run = EquityOptimizationRun.objects.create(
             reference_code="OPT-TEST-REPORT",

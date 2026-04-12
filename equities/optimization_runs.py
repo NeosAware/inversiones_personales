@@ -629,6 +629,75 @@ def serialize_allocations_data(plan: dict) -> list[dict]:
     return items
 
 
+def build_optimization_comparison_context(runs: list[EquityOptimizationRun]) -> dict:
+    completed_runs = [
+        run
+        for run in runs
+        if run.status == EquityOptimizationRun.Status.COMPLETED and (run.summary_data or run.allocations_data)
+    ]
+    rows = []
+    for run in completed_runs:
+        summary = dict(run.summary_data or {})
+        allocations = list(run.allocations_data or [])
+        sectors = sorted({item.get("sector_label") for item in allocations if item.get("sector_label")})
+        company_tokens = [item.get("ticker") or item.get("company_name") or "" for item in allocations]
+        displayed_tokens = [token for token in company_tokens if token][:6]
+        constituents_label = ", ".join(displayed_tokens)
+        if len(company_tokens) > len(displayed_tokens):
+            constituents_label += f" +{len(company_tokens) - len(displayed_tokens)}"
+        rows.append(
+            {
+                "run": run,
+                "display_label": run.display_label,
+                "reference_code": run.reference_code,
+                "created_at_label": summary.get("created_at_label") or timezone.localtime(run.created_at).strftime("%Y-%m-%d %H:%M"),
+                "completed_at_label": summary.get("completed_at_label") or (timezone.localtime(run.completed_at).strftime("%Y-%m-%d %H:%M") if run.completed_at else ""),
+                "restrictions_note": run.restrictions_note,
+                "total_investment": summary.get("total_investment"),
+                "max_company_pct": summary.get("max_company_pct"),
+                "max_total_positions": summary.get("max_total_positions") or 0,
+                "max_sector_positions": summary.get("max_sector_positions") or 0,
+                "allocations_count": summary.get("allocations_count", len(allocations)),
+                "constituents_label": constituents_label,
+                "sectors_count": len(sectors),
+                "top_pick_name": summary.get("top_pick_name") or (allocations[0].get("company_name") if allocations else ""),
+                "projected_gain_total": summary.get("projected_gain_total"),
+                "weighted_return_pct": summary.get("weighted_return_pct"),
+                "weighted_low_return_pct": summary.get("weighted_low_return_pct"),
+                "weighted_safety_score": summary.get("weighted_safety_score"),
+                "weighted_reliability_score": summary.get("weighted_reliability_score"),
+                "net_dividend_income_total": summary.get("net_dividend_income_total"),
+                "annual_cost_total": summary.get("annual_cost_total"),
+                "roundtrip_cost_total": summary.get("roundtrip_cost_total"),
+                "cash_reserve_amount": summary.get("cash_reserve_amount"),
+            }
+        )
+
+    if not rows:
+        return {"available": False, "rows": []}
+
+    best_return = max(
+        rows,
+        key=lambda row: Decimal(str(row.get("weighted_return_pct"))) if row.get("weighted_return_pct") is not None else Decimal("-9999"),
+    )
+    best_protection = max(
+        rows,
+        key=lambda row: Decimal(str(row.get("weighted_low_return_pct"))) if row.get("weighted_low_return_pct") is not None else Decimal("-9999"),
+    )
+    best_safety = max(
+        rows,
+        key=lambda row: Decimal(str(row.get("weighted_safety_score"))) if row.get("weighted_safety_score") is not None else Decimal("-9999"),
+    )
+    return {
+        "available": True,
+        "rows": rows,
+        "runs_count": len(rows),
+        "best_return": best_return,
+        "best_protection": best_protection,
+        "best_safety": best_safety,
+    }
+
+
 def build_report_entries(plan: dict, history_cards: list[dict], positions: list[EquityPosition], news_signals: dict[str, dict]) -> list[dict]:
     history_card_map = {
         card["position"].id: card

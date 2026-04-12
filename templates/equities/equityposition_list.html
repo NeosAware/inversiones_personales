@@ -1253,6 +1253,83 @@
             </div>
           {% endif %}
 
+          {% if optimization_comparison.available %}
+            <div class="equity-panel" style="margin-top:18px;">
+              <div class="equity-panel-head">
+                <div>
+                  <p class="section-title">Comparativa</p>
+                  <h3>Comparacion entre optimizaciones cerradas</h3>
+                  <p>Esta tabla junta las ejecuciones completadas para que compares de un vistazo restricciones, cartera elegida, rentabilidad esperada, peor escenario, seguridad y costes.</p>
+                </div>
+                <span class="pill">{{ optimization_comparison.runs_count }} optimizaciones comparables</span>
+              </div>
+              <div class="equity-grid-4" style="margin-top:18px;">
+                <div class="equity-box">
+                  <span>Mayor rentabilidad</span>
+                  <strong>{% if optimization_comparison.best_return.weighted_return_pct is not None %}{{ optimization_comparison.best_return.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong>
+                  <small>{{ optimization_comparison.best_return.display_label }}</small>
+                </div>
+                <div class="equity-box">
+                  <span>Mejor peor escenario</span>
+                  <strong class="{% if optimization_comparison.best_protection.weighted_low_return_pct is not None and optimization_comparison.best_protection.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if optimization_comparison.best_protection.weighted_low_return_pct is not None %}{{ optimization_comparison.best_protection.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong>
+                  <small>{{ optimization_comparison.best_protection.display_label }}</small>
+                </div>
+                <div class="equity-box">
+                  <span>Mayor seguridad</span>
+                  <strong>{% if optimization_comparison.best_safety.weighted_safety_score is not None %}{{ optimization_comparison.best_safety.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong>
+                  <small>{{ optimization_comparison.best_safety.display_label }}</small>
+                </div>
+                <div class="equity-box">
+                  <span>Lectura</span>
+                  <strong>Negocio</strong>
+                  <small>Compara carteras como si fueran propuestas de inversion completas, no como pruebas sueltas.</small>
+                </div>
+              </div>
+              <div class="equity-table-wrap" style="margin-top:18px;">
+                <table>
+                  <thead><tr><th>Optimizacion</th><th>Restricciones</th><th>Acciones elegidas</th><th>Rentabilidad esperada</th><th>Riesgo y robustez</th><th>Flujo y costes</th><th>Acciones</th></tr></thead>
+                  <tbody>
+                    {% for row in optimization_comparison.rows %}
+                      <tr>
+                        <td>
+                          <strong>{{ row.display_label }}</strong><br>
+                          <span class="metric-sub">{{ row.reference_code }}</span><br>
+                          <span class="metric-sub">Lanzada {{ row.created_at_label }}{% if row.completed_at_label %} | Cerrada {{ row.completed_at_label }}{% endif %}</span>
+                        </td>
+                        <td>
+                          Capital {{ row.total_investment|floatformat:0 }} EUR<br>
+                          <span class="metric-sub">Max empresa {% if row.max_company_pct is not None %}{{ row.max_company_pct|floatformat:1 }} %{% else %}-{% endif %} | Max total {% if row.max_total_positions %}{{ row.max_total_positions }}{% else %}sin limite{% endif %} | Max sector {% if row.max_sector_positions %}{{ row.max_sector_positions }}{% else %}sin limite{% endif %}</span>
+                          {% if row.restrictions_note %}<br><span class="metric-sub">{{ row.restrictions_note }}</span>{% endif %}
+                        </td>
+                        <td>
+                          <strong>{{ row.allocations_count }} valores</strong><br>
+                          <span class="metric-sub">{{ row.constituents_label|default:"Sin composicion guardada" }}</span><br>
+                          <span class="metric-sub">Sectores {{ row.sectors_count }} | Mejor idea {{ row.top_pick_name|default:"-" }}</span>
+                        </td>
+                        <td>
+                          <strong class="{% if row.weighted_return_pct is not None and row.weighted_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if row.weighted_return_pct is not None %}{{ row.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><br>
+                          <span class="metric-sub">Ganancia 12M {{ row.projected_gain_total|floatformat:0 }} EUR</span>
+                        </td>
+                        <td>
+                          <strong class="{% if row.weighted_low_return_pct is not None and row.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if row.weighted_low_return_pct is not None %}{{ row.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><br>
+                          <span class="metric-sub">Peor escenario | Seguridad {% if row.weighted_safety_score is not None %}{{ row.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %} | Fiabilidad {% if row.weighted_reliability_score is not None %}{{ row.weighted_reliability_score|floatformat:0 }}/100{% else %}-{% endif %}</span>
+                        </td>
+                        <td>
+                          Dividendos {{ row.net_dividend_income_total|floatformat:0 }} EUR<br>
+                          <span class="metric-sub">Mantenimiento {{ row.annual_cost_total|floatformat:0 }} EUR | Compra+venta {{ row.roundtrip_cost_total|floatformat:0 }} EUR | Caja {{ row.cash_reserve_amount|floatformat:0 }} EUR</span>
+                        </td>
+                        <td>
+                          <a class="button secondary" href="{% url 'equities:optimization_report' row.run.id %}" target="_blank" rel="noopener">Ver informe</a>
+                          <a class="button secondary" href="{% url 'equities:optimization_download' row.run.id %}">PDF</a>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          {% endif %}
+
           {% if latest_completed_optimization %}
             <div class="equity-panel" style="margin-top:18px;">
               <div class="equity-panel-head">
