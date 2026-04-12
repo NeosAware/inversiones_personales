@@ -2124,6 +2124,121 @@ def build_dual_axis_chart(
     }
 
 
+def build_stock_history_chart(history) -> dict:
+    if len(history) < 2:
+        return {"available": False}
+
+    stock_series = [{"date": point.price_date, "value": point.close_price} for point in history]
+    chart = build_dual_axis_chart(stock_series, [])
+    return {
+        "available": bool(chart.get("stock_line")),
+        "stock_line": chart.get("stock_line", ""),
+        "stock_min_label": chart.get("stock_min_label", "-"),
+        "stock_max_label": chart.get("stock_max_label", "-"),
+        "start_label": history[0].price_date.isoformat(),
+        "end_label": history[-1].price_date.isoformat(),
+        "points_count": len(stock_series),
+    }
+
+
+def build_best_correlation_chart(history, suggestions: list[dict], reference_cache: dict) -> dict:
+    best_suggestion = next(
+        (
+            suggestion
+            for suggestion in suggestions
+            if suggestion.get("correlation", {}).get("coefficient") is not None
+        ),
+        None,
+    )
+    if best_suggestion is None or len(history) < 2:
+        return {"available": False}
+
+    cache_key = (
+        best_suggestion["reference_profile"],
+        best_suggestion["benchmark_symbol"],
+        best_suggestion["benchmark_name"],
+    )
+    cached_value = reference_cache.get(cache_key)
+    if cached_value is None:
+        try:
+            cached_value = fetch_reference_series_for_choice(
+                best_suggestion["reference_profile"],
+                benchmark_symbol=best_suggestion["benchmark_symbol"],
+                benchmark_name=best_suggestion["benchmark_name"],
+            )
+            reference_cache[cache_key] = cached_value
+        except Exception as exc:
+            reference_cache[cache_key] = exc
+            cached_value = exc
+    if isinstance(cached_value, Exception):
+        return {"available": False}
+
+    stock_series = [{"date": point.price_date, "value": point.close_price} for point in history]
+    aligned_reference = align_reference_points(
+        [{"date": point.price_date} for point in history],
+        cached_value.points,
+    )
+    reference_series = [
+        {"date": point.price_date, "value": aligned_reference.get(point.price_date)}
+        for point in history
+        if aligned_reference.get(point.price_date) is not None
+    ]
+    chart = build_dual_axis_chart(stock_series, reference_series)
+    coefficient = best_suggestion["correlation"].get("coefficient")
+    return {
+        "available": bool(chart.get("stock_line") and chart.get("reference_line")),
+        "stock_line": chart.get("stock_line", ""),
+        "reference_line": chart.get("reference_line", ""),
+        "stock_min_label": chart.get("stock_min_label", "-"),
+        "stock_max_label": chart.get("stock_max_label", "-"),
+        "reference_min_label": chart.get("reference_min_label", "-"),
+        "reference_max_label": chart.get("reference_max_label", "-"),
+        "reference_label": best_suggestion["benchmark_name"],
+        "coefficient": coefficient,
+        "start_label": history[0].price_date.isoformat(),
+        "end_label": history[-1].price_date.isoformat(),
+        "points_count": len(stock_series),
+        "is_selected_reference": best_suggestion.get("is_selected", False),
+    }
+
+
+def build_projection_12m_chart(history, projection: dict) -> dict:
+    if len(history) < 2 or not projection.get("available"):
+        return {"available": False}
+
+    latest_date = history[-1].price_date
+    recent_history = filter_history_window(
+        history,
+        start_date=latest_date - timedelta(days=365 * 2),
+        end_date=latest_date,
+    )
+    if len(recent_history) < 2:
+        recent_history = history
+    stock_series = [{"date": point.price_date, "value": point.close_price} for point in recent_history]
+    projection_series = [{"date": latest_date, "value": recent_history[-1].close_price}]
+    projection_series.extend(
+        {
+            "date": step["projected_date"],
+            "value": step["projected_price"],
+        }
+        for step in projection.get("quarterly_path", [])
+        if step.get("projected_date") and step.get("projected_price") is not None
+    )
+    chart = build_dual_axis_chart(stock_series, [], projection_points=projection_series)
+    end_projection_step = projection.get("quarterly_path", [])[-1] if projection.get("quarterly_path") else None
+    return {
+        "available": bool(chart.get("stock_line") and chart.get("projection_line")),
+        "stock_line": chart.get("stock_line", ""),
+        "projection_line": chart.get("projection_line", ""),
+        "stock_min_label": chart.get("stock_min_label", "-"),
+        "stock_max_label": chart.get("stock_max_label", "-"),
+        "start_label": recent_history[0].price_date.isoformat(),
+        "end_label": latest_date.isoformat(),
+        "projection_end_label": end_projection_step.get("projected_date").isoformat() if end_projection_step and end_projection_step.get("projected_date") else "",
+        "points_count": len(stock_series),
+    }
+
+
 def average_decimal(values: list[Decimal]) -> Decimal | None:
     filtered = [value for value in values if value is not None]
     if not filtered:
@@ -3673,6 +3788,9 @@ def build_equity_history_card(
         "net_dividend_income": position.net_dividend_income,
     }
     suggested_references = build_suggested_reference_cards(history, position, reference_cache)
+    historical_chart = build_stock_history_chart(history)
+    best_correlation_chart = build_best_correlation_chart(history, suggested_references, reference_cache)
+    projection_12m_chart = build_projection_12m_chart(history, projection)
 
     card = {
         "position": position,
@@ -3712,6 +3830,9 @@ def build_equity_history_card(
         "relative_trend": relative_trend,
         "trade_alert": trade_alert,
         "suggested_references": suggested_references,
+        "historical_chart": historical_chart,
+        "best_correlation_chart": best_correlation_chart,
+        "projection_12m_chart": projection_12m_chart,
     }
     card["reference_playbook"] = build_reference_playbook_from_card(card)
     return card

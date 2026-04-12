@@ -11,6 +11,69 @@
     </div>
   </div>
 
+  {% if card.has_history %}
+    <div class="equity-chart-grid" style="margin-top:18px;">
+      {% if card.historical_chart.available %}
+        <div class="equity-chart-shell">
+          <strong style="display:block; color:#17384e; margin-bottom:8px;">Historico</strong>
+          <svg viewBox="0 0 640 220">
+            <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.historical_chart.stock_line }}" />
+            <text x="8" y="20" font-size="12" fill="#0d5d78">{{ card.historical_chart.stock_max_label }}</text>
+            <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.historical_chart.stock_min_label }}</text>
+          </svg>
+          <div class="equity-chart-foot">
+            <span>Precio historico de la accion</span>
+            <span>{{ card.historical_chart.points_count }} puntos</span>
+            <span>{{ card.historical_chart.start_label }} a {{ card.historical_chart.end_label }}</span>
+          </div>
+        </div>
+      {% endif %}
+
+      {% if card.best_correlation_chart.available %}
+        <div class="equity-chart-shell">
+          <strong style="display:block; color:#17384e; margin-bottom:8px;">Mejor correlacion</strong>
+          <svg viewBox="0 0 640 220">
+            <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <line x1="622" y1="18" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.best_correlation_chart.stock_line }}" />
+            <polyline fill="none" stroke="#7e8c97" stroke-width="3" points="{{ card.best_correlation_chart.reference_line }}" />
+            <text x="8" y="20" font-size="12" fill="#0d5d78">{{ card.best_correlation_chart.stock_max_label }}</text>
+            <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.best_correlation_chart.stock_min_label }}</text>
+            <text x="632" y="20" font-size="12" text-anchor="end" fill="#627380">{{ card.best_correlation_chart.reference_max_label }}</text>
+            <text x="632" y="214" font-size="12" text-anchor="end" fill="#627380">{{ card.best_correlation_chart.reference_min_label }}</text>
+          </svg>
+          <div class="equity-chart-foot">
+            <span>Accion</span>
+            <span>{{ card.best_correlation_chart.reference_label }}</span>
+            <span>Corr {% if card.best_correlation_chart.coefficient is not None %}{{ card.best_correlation_chart.coefficient|floatformat:2 }}{% else %}-{% endif %}</span>
+          </div>
+        </div>
+      {% endif %}
+
+      {% if card.projection_12m_chart.available %}
+        <div class="equity-chart-shell">
+          <strong style="display:block; color:#17384e; margin-bottom:8px;">Prevision 12M</strong>
+          <svg viewBox="0 0 640 220">
+            <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.projection_12m_chart.stock_line }}" />
+            <polyline fill="none" stroke="#b7642d" stroke-width="4" stroke-dasharray="10 8" points="{{ card.projection_12m_chart.projection_line }}" />
+            <text x="8" y="20" font-size="12" fill="#0d5d78">{{ card.projection_12m_chart.stock_max_label }}</text>
+            <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.projection_12m_chart.stock_min_label }}</text>
+          </svg>
+          <div class="equity-chart-foot">
+            <span>Azul: tramo historico reciente</span>
+            <span>Naranja: escenario central 12M</span>
+            <span>{{ card.projection_12m_chart.end_label }} a {{ card.projection_12m_chart.projection_end_label }}</span>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+
   {% if card.projection.available %}
     <div class="equity-detail-grid">
       <div class="equity-mini-stat">
@@ -107,34 +170,8 @@
   {% endif %}
 
   <details class="equity-inline-fold" style="margin-top:18px;">
-    <summary>Grafico, referencias y costes</summary>
+    <summary>Referencias, costes y backtest</summary>
     <div class="equity-inline-body">
-      {% if card.has_history %}
-        <div class="equity-chart-shell">
-          <svg viewBox="0 0 640 220">
-            <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-            <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-            <line x1="622" y1="18" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-            <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.stock_line }}" />
-            {% if card.benchmark_line %}
-              <polyline fill="none" stroke="#7e8c97" stroke-width="3" points="{{ card.benchmark_line }}" />
-            {% endif %}
-            {% if card.projection_line %}
-              <polyline fill="none" stroke="#b7642d" stroke-width="4" stroke-dasharray="10 8" points="{{ card.projection_line }}" />
-            {% endif %}
-            <text x="8" y="20" font-size="12" fill="#0d5d78">{{ card.dual_axis_chart.stock_max_label }}</text>
-            <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.dual_axis_chart.stock_min_label }}</text>
-            <text x="632" y="20" font-size="12" text-anchor="end" fill="#627380">{{ card.dual_axis_chart.reference_max_label }}</text>
-            <text x="632" y="214" font-size="12" text-anchor="end" fill="#627380">{{ card.dual_axis_chart.reference_min_label }}</text>
-          </svg>
-          <div class="equity-chart-foot">
-            <span>Accion</span>
-            <span>{{ card.reference_label }}</span>
-            <span>Tramo punteado: escenario central 12M</span>
-          </div>
-        </div>
-      {% endif %}
-
       <div class="equity-detail-grid">
         {% for snapshot in card.period_snapshots %}
           <div class="equity-mini-stat">

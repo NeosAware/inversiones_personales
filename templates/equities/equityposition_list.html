@@ -52,7 +52,7 @@
       font-weight:700;
       letter-spacing:.03em;
     }
-    .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid{
+    .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-chart-grid{
       display:grid;
       gap:16px;
     }
@@ -61,6 +61,7 @@
     .equity-grid-4{ grid-template-columns:repeat(4, minmax(0,1fr)); }
     .equity-board{ grid-template-columns:repeat(2, minmax(0,1fr)); }
     .equity-detail-grid{ grid-template-columns:repeat(4, minmax(0,1fr)); }
+    .equity-chart-grid{ grid-template-columns:repeat(3, minmax(0,1fr)); }
     .equity-kpi, .equity-box, .equity-board-card, .equity-detail-card, .equity-mini-stat{
       padding:18px;
       border-radius:22px;
@@ -324,7 +325,7 @@
       line-height:1.55;
     }
     @media (max-width: 1180px){
-      .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-candidate-grid{ grid-template-columns:1fr; }
+      .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-candidate-grid, .equity-chart-grid{ grid-template-columns:1fr; }
       .equity-hero-top, .equity-panel-head, .equity-toolbar, .equity-stock-summary, .equity-detail-head, .equity-section-head{ flex-direction:column; }
     }
   </style>

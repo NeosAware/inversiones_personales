@@ -301,6 +301,8 @@ class EquitiesServicesTests(TestCase):
 
         self.assertEqual(cards[0]["suggested_references"][0]["benchmark_name"], EURIBOR_REFERENCE_NAME)
         self.assertIsNotNone(cards[0]["suggested_references"][0]["correlation"]["coefficient"])
+        self.assertTrue(cards[0]["best_correlation_chart"]["available"])
+        self.assertEqual(cards[0]["best_correlation_chart"]["reference_label"], EURIBOR_REFERENCE_NAME)
 
     def test_history_cards_include_one_year_projection_from_six_months_and_reference(self):
         position = EquityPosition.objects.create(
@@ -339,6 +341,8 @@ class EquitiesServicesTests(TestCase):
         self.assertIsNotNone(projection["quarterly_path"][0]["projected_date"])
         self.assertIn("IBEX 35", projection["explanation"])
         self.assertTrue(cards[0]["projection_line"])
+        self.assertTrue(cards[0]["historical_chart"]["available"])
+        self.assertTrue(cards[0]["projection_12m_chart"]["available"])
 
     def test_projection_includes_dividends_and_broker_drag(self):
         position = EquityPosition.objects.create(
