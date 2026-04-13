@@ -525,11 +525,20 @@ class EquityOptimizationDownloadView(LoginRequiredMixin, View):
         if run.status != EquityOptimizationRun.Status.COMPLETED or not run.report_html:
             messages.info(request, f"La optimizacion {run.reference_code} todavia no esta lista para descargar.")
             return redirect(f"{reverse('equities:list')}#equity-optimizer")
-        try:
-            pdf_source = run.report_pdf_html or build_fallback_report_pdf_html(run)
-            pdf_bytes = render_report_pdf(pdf_source)
-        except Exception as exc:
-            messages.error(request, f"No se ha podido generar el PDF de {run.reference_code}: {exc}")
+        last_error = None
+        pdf_bytes = None
+        pdf_sources = []
+        if run.report_pdf_html:
+            pdf_sources.append(run.report_pdf_html)
+        pdf_sources.append(build_fallback_report_pdf_html(run))
+        for pdf_source in pdf_sources:
+            try:
+                pdf_bytes = render_report_pdf(pdf_source)
+                break
+            except Exception as exc:
+                last_error = exc
+        if pdf_bytes is None:
+            messages.error(request, f"No se ha podido generar el PDF de {run.reference_code}: {last_error}")
             return redirect(f"{reverse('equities:list')}#equity-optimizer")
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
         response["Content-Disposition"] = f'attachment; filename="{run.reference_code.lower()}.pdf"'

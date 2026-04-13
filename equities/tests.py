@@ -2576,6 +2576,30 @@ class EquitiesViewTests(TestCase):
         self.assertIn("attachment;", download_html_response.headers["Content-Disposition"])
         self.assertIn("opt-test-report.html", download_html_response.headers["Content-Disposition"])
 
+    def test_pdf_download_falls_back_to_simplified_template_when_rich_pdf_fails(self):
+        run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-TEST-PDF-FALLBACK",
+            label="Fallback PDF",
+            total_investment=Decimal("50000"),
+            max_company_pct=Decimal("20"),
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            report_html="<html><body>Informe optimizado</body></html>",
+            report_pdf_html="<html><body>Informe rico</body></html>",
+            summary_data={"available": True, "projected_gain_total": 5000},
+        )
+
+        with (
+            patch("equities.views.render_report_pdf", side_effect=[ValueError("rich failed"), b"%PDF-fallback"]),
+            patch("equities.views.build_fallback_report_pdf_html", return_value="<html><body>Fallback</body></html>") as mocked_fallback,
+        ):
+            response = self.client.get(reverse("equities:optimization_download", args=[run.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertTrue(response.content.startswith(b"%PDF"))
+        mocked_fallback.assert_called_once_with(run)
+
     def test_progress_endpoint_returns_live_payload(self):
         run = EquityOptimizationRun.objects.create(
             reference_code="OPT-TEST-PROGRESS",
