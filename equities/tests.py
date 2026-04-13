@@ -2516,6 +2516,39 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Electrica, Tecnologia y defensa")
         self.assertContains(response, "todos los del IBEX")
 
+    def test_optimization_history_table_shows_company_weights(self):
+        EquityOptimizationRun.objects.create(
+            reference_code="OPT-HIST-001",
+            label="Ticket visible",
+            total_investment=Decimal("250000"),
+            max_company_pct=Decimal("20"),
+            max_total_positions=5,
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            report_html="<html>hist</html>",
+            summary_data={
+                "available": True,
+                "projected_gain_total": 12000,
+                "weighted_return_pct": 8.4,
+                "allocations_count": 3,
+                "selected_sectors": ["Electrica", "Energia"],
+            },
+            allocations_data=[
+                {"company_name": "Iberdrola", "ticker": "IBE", "allocated_weight_pct": 35.0},
+                {"company_name": "Repsol", "ticker": "REP", "allocated_weight_pct": 25.0},
+                {"company_name": "Endesa", "ticker": "ELE", "allocated_weight_pct": 20.0},
+            ],
+        )
+
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Ticket propuesto")
+        self.assertContains(response, "Iberdrola")
+        self.assertContains(response, "35,0 %")
+        self.assertContains(response, "Repsol")
+        self.assertContains(response, "25,0 %")
+
     def test_completed_optimization_run_can_render_and_download_report(self):
         run = EquityOptimizationRun.objects.create(
             reference_code="OPT-TEST-REPORT",

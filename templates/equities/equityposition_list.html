@@ -1258,7 +1258,7 @@
           {% if optimization_runs %}
             <div class="equity-table-wrap" style="margin-top:18px;">
               <table>
-                <thead><tr><th>Referencia</th><th>Fecha</th><th>Estado</th><th>Restricciones</th><th>Resultado</th><th>Acciones</th></tr></thead>
+                <thead><tr><th>Referencia</th><th>Fecha</th><th>Estado</th><th>Restricciones</th><th>Ticket propuesto</th><th>Resultado</th><th>Acciones</th></tr></thead>
                 <tbody>
                   {% for run in optimization_runs %}
                     <tr>
@@ -1271,6 +1271,21 @@
                       <td>
                         {% if run.restrictions_note %}{{ run.restrictions_note }}{% else %}<span class="metric-sub">Sin nota adicional</span>{% endif %}
                         <br><span class="metric-sub">Sectores {% if run.summary_data.selected_sectors %}{{ run.summary_data.selected_sectors|join:", " }}{% elif run.selected_sectors %}{{ run.selected_sectors|join:", " }}{% else %}todos los del IBEX{% endif %}</span>
+                      </td>
+                      <td>
+                        {% if run.allocations_data %}
+                          {% for item in run.allocations_data|slice:":6" %}
+                            <span class="metric-sub">
+                              {% if item.company_name %}{{ item.company_name }}{% elif item.ticker %}{{ item.ticker }}{% else %}Valor sin nombre{% endif %}
+                              {% if item.allocated_weight_pct or item.allocated_weight_pct == 0 %} {{ item.allocated_weight_pct|floatformat:1 }} %{% endif %}
+                            </span>{% if not forloop.last %}<br>{% endif %}
+                          {% endfor %}
+                          {% if run.allocations_data|length > 6 %}<br><span class="metric-sub">+{{ run.allocations_data|length|add:"-6" }} valor(es) adicionales</span>{% endif %}
+                        {% elif run.summary_data.available %}
+                          <span class="metric-sub">Composicion pendiente de mostrar</span>
+                        {% else %}
+                          <span class="metric-sub">Se completara al cerrar la optimizacion.</span>
+                        {% endif %}
                       </td>
                       <td>
                         {% if run.summary_data.available %}
