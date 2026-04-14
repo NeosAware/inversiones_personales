@@ -398,6 +398,47 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(cards[0]["historical_chart"]["start_label"], "2024-01-31")
         self.assertGreater(cards[0]["historical_chart"]["points_count"], chart["points_count"])
 
+    def test_cycle_projection_5y_uses_last_five_years_on_chart_and_ten_years_for_model(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="REP",
+            quote_symbol="REP.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Repsol, S.A.",
+            shares=Decimal("25"),
+            average_cost_per_share=Decimal("12.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        stock_price = Decimal("12.00")
+        benchmark_price = Decimal("100.00")
+        pattern = [Decimal("1.025"), Decimal("0.985"), Decimal("1.030"), Decimal("0.992")]
+        benchmark_pattern = [Decimal("1.010"), Decimal("1.004"), Decimal("1.012"), Decimal("0.998")]
+        for index in range(120):
+            year = 2016 + (index // 12)
+            month = (index % 12) + 1
+            month_end = monthrange(year, month)[1]
+            stock_price = (stock_price * pattern[index % len(pattern)]).quantize(Decimal("0.0001"))
+            benchmark_price = (benchmark_price * benchmark_pattern[index % len(benchmark_pattern)]).quantize(Decimal("0.0001"))
+            position.price_history.create(
+                price_date=date(year, month, month_end),
+                close_price=stock_price,
+                benchmark_close=benchmark_price,
+            )
+
+        cards = build_equity_history_cards([position])
+
+        cycle_projection = cards[0]["cycle_projection_5y"]
+        cycle_chart = cards[0]["cycle_projection_5y_chart"]
+        self.assertTrue(cycle_projection["available"])
+        self.assertTrue(cycle_chart["available"])
+        self.assertEqual(cycle_chart["history_window_label"], "Ultimos 5 anos")
+        self.assertIn("10.0 anos", cycle_chart["model_window_label"])
+        self.assertEqual(cycle_chart["start_label"], "2021-01-31")
+        self.assertTrue(cycle_chart["projection_end_label"].startswith("2030-"))
+        self.assertEqual(cycle_projection["path"][-1]["label"], "5A")
+        self.assertIn("10.0 anos", cycle_projection["explanation"])
+
     def test_projection_includes_dividends_and_broker_drag(self):
         position = EquityPosition.objects.create(
             broker="Banco Santander",
@@ -1818,6 +1859,7 @@ class EquitiesServicesTests(TestCase):
         self.assertFalse(card["historical_chart"]["available"])
         self.assertFalse(card["best_correlation_chart"]["available"])
         self.assertFalse(card["projection_12m_chart"]["available"])
+        self.assertFalse(card["cycle_projection_5y_chart"]["available"])
         self.assertFalse(card["projection_backtest"]["monthly_chart"]["available"])
         self.assertEqual(card["suggested_references"], [])
 
@@ -3082,6 +3124,7 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Historico")
         self.assertContains(response, "Mejor correlacion")
         self.assertContains(response, "Prevision 12M")
+        self.assertContains(response, "Ciclo 5A")
 
     def test_can_store_same_ticker_as_owned_and_watchlist_without_collision(self):
         EquityPosition.objects.create(

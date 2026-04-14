@@ -179,6 +179,30 @@
           </div>
         </div>
       {% endif %}
+
+      {% if card.cycle_projection_5y_chart.available %}
+        <div class="equity-chart-shell">
+          <strong style="display:block; color:#17384e; margin-bottom:8px;">Ciclo 5A</strong>
+          <svg viewBox="0 0 640 220">
+            <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.cycle_projection_5y_chart.stock_line }}" />
+            <polyline fill="none" stroke="#b7642d" stroke-width="4" stroke-dasharray="10 8" points="{{ card.cycle_projection_5y_chart.projection_line }}" />
+            {% for marker in card.cycle_projection_5y_chart.x_markers %}
+              <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+              <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+            {% endfor %}
+            <text x="8" y="20" font-size="12" fill="#0d5d78">{{ card.cycle_projection_5y_chart.stock_max_label }}</text>
+            <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.cycle_projection_5y_chart.stock_min_label }}</text>
+          </svg>
+          <div class="equity-chart-foot">
+            <span>Azul: {{ card.cycle_projection_5y_chart.history_window_label|default:"Ultimos 5 anos" }}</span>
+            <span>Naranja: escenario de ciclo a 5 anos</span>
+            <span>Modelo: {{ card.cycle_projection_5y_chart.model_window_label }}</span>
+            <span>{{ card.cycle_projection_5y_chart.end_label }} a {{ card.cycle_projection_5y_chart.projection_end_label }}</span>
+          </div>
+        </div>
+      {% endif %}
     </div>
   {% endif %}
 
@@ -313,7 +337,7 @@
       </div>
     {% endif %}
 
-    <p class="equity-detail-note" style="margin-top:14px;">{{ card.trade_alert.note }} {% if card.coefficient_alert.available %}{{ card.coefficient_alert.note }} {% endif %}{{ card.projection.explanation }} {{ card.projection.confidence_note }}</p>
+    <p class="equity-detail-note" style="margin-top:14px;">{{ card.trade_alert.note }} {% if card.coefficient_alert.available %}{{ card.coefficient_alert.note }} {% endif %}{{ card.projection.explanation }} {% if card.cycle_projection_5y.available %}{{ card.cycle_projection_5y.explanation }} {% endif %}{{ card.projection.confidence_note }}</p>
     {% if card.broker_costs.analysis_value_source == "normalized_watchlist" %}
       <p class="metric-sub" style="margin-top:8px;">Seguimiento y radar IBEX usan un ticket analitico minimo de {{ card.broker_costs.analysis_value_amount|floatformat:0 }} EUR para que los costes fijos del broker no distorsionen la proyeccion por usar una sola accion de muestra.</p>
     {% endif %}

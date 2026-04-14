@@ -2522,6 +2522,171 @@ def build_projection_12m_chart(history, projection: dict) -> dict:
     }
 
 
+def build_five_year_cycle_projection(
+    history,
+    position: EquityPosition,
+    correlation: dict,
+    cycle_metrics: dict | None = None,
+) -> dict:
+    if len(history) < 2:
+        return {"available": False}
+
+    latest_date = history[-1].price_date
+    analysis_history = filter_history_window(
+        history,
+        start_date=latest_date - timedelta(days=LONG_ANALYSIS_DAYS),
+        end_date=latest_date,
+    )
+    monthly_history = collapse_history_to_frequency(analysis_history, "monthly")
+    if len(monthly_history) < 24:
+        return {"available": False}
+
+    cycle_metrics = cycle_metrics or build_cycle_metrics(analysis_history)
+    latest_price = monthly_history[-1].close_price
+    three_year_snapshot = build_period_snapshot(
+        analysis_history,
+        "3Y",
+        start_date=latest_date - timedelta(days=365 * 3),
+        end_date=latest_date,
+    )
+    five_year_snapshot = build_period_snapshot(
+        analysis_history,
+        "5Y",
+        start_date=latest_date - timedelta(days=365 * 5),
+        end_date=latest_date,
+    )
+    coefficient = correlation.get("coefficient")
+    annual_return_components = []
+
+    cagr_pct = cycle_metrics.get("cagr_pct")
+    if cagr_pct is not None:
+        annual_return_components.append(cagr_pct * Decimal("0.50"))
+    if five_year_snapshot.get("available") and five_year_snapshot.get("stock_return_pct") is not None:
+        five_year_signal = annualize_return_pct(five_year_snapshot["stock_return_pct"], 60)
+        if five_year_signal is not None:
+            annual_return_components.append(five_year_signal * Decimal("0.30"))
+    if three_year_snapshot.get("available") and three_year_snapshot.get("stock_return_pct") is not None:
+        three_year_signal = annualize_return_pct(three_year_snapshot["stock_return_pct"], 36)
+        if three_year_signal is not None:
+            annual_return_components.append(three_year_signal * Decimal("0.20"))
+    reference_five_year_return_pct = five_year_snapshot.get("benchmark_return_pct") if five_year_snapshot.get("available") else None
+    if coefficient is not None and reference_five_year_return_pct is not None:
+        reference_five_year_signal = annualize_return_pct(reference_five_year_return_pct, 60)
+        if reference_five_year_signal is not None:
+            annual_return_components.append(reference_five_year_signal * coefficient * Decimal("0.08"))
+
+    current_drawdown_pct = cycle_metrics.get("current_drawdown_pct")
+    if current_drawdown_pct is not None:
+        if current_drawdown_pct <= Decimal("-20.00"):
+            annual_return_components.append(Decimal("3.00"))
+        elif current_drawdown_pct <= Decimal("-8.00"):
+            annual_return_components.append(Decimal("1.50"))
+        elif current_drawdown_pct >= Decimal("-3.00"):
+            annual_return_components.append(Decimal("-1.20"))
+
+    annual_return_components.append(
+        {
+            "Correccion": Decimal("2.25"),
+            "Recuperacion": Decimal("1.25"),
+            "Expansion": Decimal("0.25"),
+            "Transicion": Decimal("-0.50"),
+        }.get(cycle_metrics.get("cycle_phase") or "Transicion", ZERO)
+    )
+
+    positive_year_ratio_pct = cycle_metrics.get("positive_year_ratio_pct")
+    if positive_year_ratio_pct is not None:
+        annual_return_components.append(
+            clamp_decimal((positive_year_ratio_pct - Decimal("50.00")) * Decimal("0.04"), Decimal("-0.80"), Decimal("0.80"))
+        )
+
+    if not annual_return_components:
+        return {"available": False}
+
+    annual_return_pct = sum(annual_return_components, ZERO)
+    years_covered = cycle_metrics.get("years_covered", ZERO)
+    if years_covered < Decimal("5.00"):
+        annual_return_pct *= Decimal("0.85")
+    elif years_covered >= Decimal("8.00"):
+        annual_return_pct *= Decimal("0.96")
+    annual_return_pct = clamp_decimal(annual_return_pct, Decimal("-10.00"), Decimal("16.00"))
+
+    path = build_cycle_projection_path(
+        latest_price,
+        annual_return_pct,
+        annualized_volatility_pct=cycle_metrics.get("annualized_volatility_pct"),
+        current_drawdown_pct=current_drawdown_pct,
+        cycle_phase=cycle_metrics.get("cycle_phase") or "Transicion",
+        anchor_date=latest_date,
+        years=5,
+        step_months=6,
+    )
+    if not path:
+        return {"available": False}
+
+    projected_price = path[-1]["projected_price"]
+    five_year_return_pct = percentage_change(projected_price, latest_price)
+    analysis_years_used = min(years_covered, Decimal(str(LONG_ANALYSIS_YEARS))) if years_covered else ZERO
+    if analysis_years_used >= Decimal(str(LONG_ANALYSIS_YEARS)) - Decimal("0.15"):
+        analysis_years_used = Decimal(str(LONG_ANALYSIS_YEARS))
+    explanation = (
+        f"Esta vista 5A usa los ultimos {analysis_years_used:.1f} anos para leer el ciclo de {position.company_name}. "
+        f"Combina CAGR del ciclo, ritmo a 3-5 anos, drawdown actual y fase {cycle_metrics.get('cycle_phase', 'sin ciclo').lower()} "
+        "para dibujar una senda larga de orientacion, separada de la decision a 12 meses."
+    )
+    return {
+        "available": True,
+        "annual_return_pct": quantize_decimal(annual_return_pct),
+        "projected_price": projected_price,
+        "five_year_return_pct": quantize_decimal(five_year_return_pct),
+        "path": path,
+        "cycle_phase": cycle_metrics.get("cycle_phase"),
+        "analysis_years_used": analysis_years_used,
+        "history_window_label": "Ultimos 5 anos",
+        "model_window_label": f"{analysis_years_used:.1f} anos de historico",
+        "explanation": explanation,
+    }
+
+
+def build_cycle_projection_5y_chart(history, cycle_projection: dict) -> dict:
+    if len(history) < 2 or not cycle_projection.get("available"):
+        return {"available": False}
+
+    latest_date = history[-1].price_date
+    recent_history = filter_history_window(
+        history,
+        start_date=latest_date - timedelta(days=365 * 5),
+        end_date=latest_date,
+    )
+    if len(recent_history) < 2:
+        recent_history = history
+    stock_series = [{"date": point.price_date, "value": point.close_price} for point in recent_history]
+    projection_series = [{"date": latest_date, "value": recent_history[-1].close_price}]
+    projection_series.extend(
+        {
+            "date": step["projected_date"],
+            "value": step["projected_price"],
+        }
+        for step in cycle_projection.get("path", [])
+        if step.get("projected_date") and step.get("projected_price") is not None
+    )
+    chart = build_dual_axis_chart(stock_series, [], projection_points=projection_series)
+    end_projection_step = cycle_projection.get("path", [])[-1] if cycle_projection.get("path") else None
+    return {
+        "available": bool(chart.get("stock_line") and chart.get("projection_line")),
+        "stock_line": chart.get("stock_line", ""),
+        "projection_line": chart.get("projection_line", ""),
+        "stock_min_label": chart.get("stock_min_label", "-"),
+        "stock_max_label": chart.get("stock_max_label", "-"),
+        "x_markers": chart.get("x_markers", []),
+        "start_label": recent_history[0].price_date.isoformat(),
+        "end_label": latest_date.isoformat(),
+        "projection_end_label": end_projection_step.get("projected_date").isoformat() if end_projection_step and end_projection_step.get("projected_date") else "",
+        "points_count": len(stock_series),
+        "history_window_label": cycle_projection.get("history_window_label", "Ultimos 5 anos"),
+        "model_window_label": cycle_projection.get("model_window_label", ""),
+    }
+
+
 def build_ticket_snapshot_projection_values(card: dict) -> dict:
     position = card["position"]
     projection = card.get("projection", {})
@@ -4515,6 +4680,65 @@ def build_projection_path(current_price: Decimal | None, annual_return_pct: Deci
     return path
 
 
+def build_cycle_projection_path(
+    current_price: Decimal | None,
+    annual_return_pct: Decimal | None,
+    annualized_volatility_pct: Decimal | None = None,
+    current_drawdown_pct: Decimal | None = None,
+    cycle_phase: str = "Transicion",
+    anchor_date: date | None = None,
+    years: int = 5,
+    step_months: int = 6,
+) -> list[dict]:
+    if current_price in {None, ZERO} or annual_return_pct is None or years <= 0 or step_months <= 0:
+        return []
+
+    annual_multiplier = max(0.01, 1 + (float(annual_return_pct) / 100))
+    base_step_multiplier = annual_multiplier ** (step_months / 12)
+    amplitude_pct = clamp_decimal(
+        (annualized_volatility_pct or Decimal("16.00")) * Decimal("0.18"),
+        Decimal("1.50"),
+        Decimal("5.50"),
+    )
+    phase_offset = {
+        "Correccion": -math.pi / 2,
+        "Recuperacion": -math.pi / 4,
+        "Expansion": math.pi / 6,
+        "Transicion": math.pi / 2,
+    }.get(cycle_phase or "Transicion", math.pi / 2)
+    cycle_length_steps = max(int(round((12 * 3) / step_months)), 4)
+    angle_increment = (2 * math.pi) / cycle_length_steps
+    steps = int((years * 12) / step_months)
+    projected_price = Decimal(str(current_price))
+    path = []
+
+    for step in range(1, steps + 1):
+        cycle_wave = Decimal(str(round(math.sin(phase_offset + ((step - 1) * angle_increment)), 4)))
+        cycle_adjustment_pct = cycle_wave * amplitude_pct * Decimal("0.40")
+        if current_drawdown_pct is not None and current_drawdown_pct <= Decimal("-8.00") and step <= 2:
+            rebound_bonus_pct = clamp_decimal(abs(current_drawdown_pct) * Decimal("0.08"), ZERO, Decimal("1.80"))
+            cycle_adjustment_pct += rebound_bonus_pct / Decimal(str(step))
+        elif current_drawdown_pct is not None and current_drawdown_pct >= Decimal("-3.00") and step == 1:
+            cycle_adjustment_pct -= Decimal("0.80")
+
+        step_multiplier = base_step_multiplier * max(0.85, 1 + (float(cycle_adjustment_pct) / 100))
+        projected_price = Decimal(str(round(float(projected_price) * step_multiplier, 4)))
+        months = step * step_months
+        if months % 12 == 0:
+            label = f"{months // 12}A"
+        else:
+            label = f"{months}M"
+        path.append(
+            {
+                "label": label,
+                "projected_date": anchor_date + timedelta(days=int(round((365 * months) / 12))) if anchor_date else None,
+                "projected_price": projected_price,
+            }
+        )
+
+    return path
+
+
 def build_backtest_monthly_chart(rows: list[dict], width: int = 640, height: int = 220, padding: int = 18, max_points: int = 60) -> dict:
     normalized_rows = []
     for row in rows[-max_points:]:
@@ -5413,6 +5637,7 @@ def build_equity_history_card(
             "has_history": False,
             "sale_preview": sale_preview,
             "projection": {"available": False},
+            "cycle_projection_5y": {"available": False},
             "projection_backtest": {"available": False, "monthly_chart": {"available": False}},
             "projection_reliability": {"label": "Baja", "score": Decimal("40.00")},
             "trade_alert": {
@@ -5433,6 +5658,9 @@ def build_equity_history_card(
             "fundamentals": fundamentals,
             "reference_playbook": {"available": False, "candidates": []},
             "suggested_references": [],
+            "historical_chart": {"available": False},
+            "projection_12m_chart": {"available": False},
+            "cycle_projection_5y_chart": {"available": False},
         }
 
     first_price = history[0].close_price
@@ -5471,6 +5699,7 @@ def build_equity_history_card(
     )
     cycle_metrics = build_cycle_metrics(history)
     projection = build_one_year_projection(history, position, correlation, six_month_snapshot, cycle_metrics=cycle_metrics)
+    cycle_projection_5y = build_five_year_cycle_projection(history, position, correlation, cycle_metrics=cycle_metrics)
     projection_backtest = build_projection_backtest(
         history,
         position,
@@ -5548,6 +5777,14 @@ def build_equity_history_card(
         "stock_max_label": "-",
         "x_markers": [],
     }
+    cycle_projection_5y_chart = {
+        "available": False,
+        "stock_line": "",
+        "projection_line": "",
+        "stock_min_label": "-",
+        "stock_max_label": "-",
+        "x_markers": [],
+    }
     if include_visuals:
         stock_series = [{"date": point.price_date, "value": point.close_price} for point in history]
         benchmark_series = [
@@ -5569,6 +5806,7 @@ def build_equity_history_card(
         dual_axis_chart = build_dual_axis_chart(stock_series, benchmark_series, projection_points=projection_series)
         historical_chart = build_stock_history_chart(history)
         projection_12m_chart = build_projection_12m_chart(history, projection)
+        cycle_projection_5y_chart = build_cycle_projection_5y_chart(history, cycle_projection_5y)
 
     suggested_references = []
     if include_reference_suggestions:
@@ -5610,6 +5848,7 @@ def build_equity_history_card(
         "cycle_metrics": cycle_metrics,
         "sale_preview": sale_preview,
         "projection": projection,
+        "cycle_projection_5y": cycle_projection_5y,
         "projection_backtest": projection_backtest,
         "projection_reliability": projection_reliability,
         "relative_trend": relative_trend,
@@ -5620,6 +5859,7 @@ def build_equity_history_card(
         "historical_chart": historical_chart,
         "best_correlation_chart": best_correlation_chart,
         "projection_12m_chart": projection_12m_chart,
+        "cycle_projection_5y_chart": cycle_projection_5y_chart,
     }
     card["reference_playbook"] = (
         build_reference_playbook_from_card(card)
