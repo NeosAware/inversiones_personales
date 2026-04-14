@@ -80,7 +80,7 @@
       padding:7px 12px; border-radius:999px; border:1px solid var(--line);
       background:#f7fafc; color:#244355; font-size:12px; font-weight:700;
     }
-    .mini-grid{ display:grid; gap:14px; grid-template-columns:repeat(5, minmax(0,1fr)); }
+    .mini-grid{ display:grid; gap:14px; grid-template-columns:repeat(6, minmax(0,1fr)); }
     .mini{
       border:1px solid var(--line); border-radius:18px; background:#fff; padding:16px;
     }
@@ -127,11 +127,12 @@
           <div class="card box"><span>Ganancia 12M</span><strong class="{% if plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ plan.projected_gain_total|floatformat:0 }} EUR</strong><small>Escenario central neto.</small></div>
           <div class="card box"><span>Rentabilidad neta</span><strong>{% if plan.weighted_return_pct is not None %}{{ plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Media ponderada de la propuesta.</small></div>
           <div class="card box"><span>Peor escenario</span><strong class="{% if plan.weighted_low_return_pct is not None and plan.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if plan.weighted_low_return_pct is not None %}{{ plan.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Lectura conservadora 12M.</small></div>
+          <div class="card box"><span>Ciclo 5A</span><strong>{% if plan.weighted_cycle_return_annual_pct is not None %}{{ plan.weighted_cycle_return_annual_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>{% if plan.weighted_cycle_return_5y_pct is not None %}Escenario acumulado {{ plan.weighted_cycle_return_5y_pct|floatformat:1 }} %.{% else %}Lectura larga usada como apoyo secundario.{% endif %}</small></div>
           <div class="card box"><span>Caja en reserva</span><strong>{{ plan.cash_reserve_amount|floatformat:0 }} EUR</strong><small>Capital no asignado por filtros de calidad.</small></div>
           <div class="card box"><span>Dividendos netos</span><strong>{{ plan.net_dividend_income_total|floatformat:0 }} EUR</strong><small>Flujo esperado menos comisiones de dividendo.</small></div>
           <div class="card box"><span>Coste anual</span><strong>{{ plan.annual_cost_total|floatformat:0 }} EUR</strong><small>Custodia y mantenimiento.</small></div>
           <div class="card box"><span>Compra + venta</span><strong>{{ plan.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Coste total de ida y vuelta.</small></div>
-          <div class="card box"><span>Top pick</span><strong>{% if plan.top_pick %}{{ plan.top_pick.position.company_name }}{% else %}-{% endif %}</strong><small>Mejor equilibrio actual entre retorno y seguridad.</small></div>
+          <div class="card box"><span>Top pick</span><strong>{% if plan.top_pick %}{{ plan.top_pick.position.company_name }}{% else %}-{% endif %}</strong><small>Mejor equilibrio actual con 12M como motor y 5A como contraste.</small></div>
         </div>
       {% else %}
         <div class="note">{{ plan.reason }}</div>
@@ -171,7 +172,7 @@
               {% for item in plan.allocations %}
                 <tr>
                   <td>{{ item.rank }}</td>
-                  <td><strong>{{ item.position.company_name }}</strong><br><span class="muted">{{ item.position.ticker }} | {{ item.cycle_phase }}</span></td>
+                  <td><strong>{{ item.position.company_name }}</strong><br><span class="muted">{{ item.position.ticker }} | {{ item.cycle_phase }}{% if item.cycle_return_annual_pct is not None %} | 5A anual {{ item.cycle_return_annual_pct|floatformat:2 }} %{% endif %}</span></td>
                   <td>{{ item.sector_label }}</td>
                   <td>{{ item.status_label }}</td>
                   <td>{{ item.trade_alert_label }}</td>
@@ -220,6 +221,7 @@
             <div class="mini"><span>Dividendos netos</span><strong>{{ entry.allocation.expected_net_dividend_income|floatformat:0 }} EUR</strong><small>Coste anual {{ entry.allocation.annual_cost_used|floatformat:0 }} EUR</small></div>
             <div class="mini"><span>Compra + venta</span><strong>{{ entry.allocation.roundtrip_total_cost|floatformat:0 }} EUR</strong><small>Entrada {{ entry.allocation.purchase_total_cost|floatformat:0 }} EUR</small></div>
             <div class="mini"><span>Seguridad / fiabilidad</span><strong>{{ entry.allocation.safety_score|floatformat:0 }}/100</strong><small>{{ entry.allocation.reliability_label }} | Vol {{ entry.allocation.annualized_volatility_pct|floatformat:1 }} %</small></div>
+            <div class="mini"><span>Ciclo 5A</span><strong>{% if entry.allocation.cycle_return_annual_pct is not None %}{{ entry.allocation.cycle_return_annual_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>{% if entry.allocation.cycle_return_5y_pct is not None %}Escenario acumulado {{ entry.allocation.cycle_return_5y_pct|floatformat:1 }} %.{% else %}Lectura larga orientativa.{% endif %}</small></div>
           </div>
 
           <div class="grid cols-3" style="margin-top:14px;">
@@ -351,6 +353,7 @@
             {{ entry.card.trade_alert.note }}
             {% if entry.external_signal.note %} {{ entry.external_signal.note }}{% endif %}
             {% if entry.card.projection.explanation %} {{ entry.card.projection.explanation }}{% endif %}
+            {% if entry.card.cycle_projection_5y.explanation %} {{ entry.card.cycle_projection_5y.explanation }}{% endif %}
           </div>
 
           {% if entry.external_signal.items %}

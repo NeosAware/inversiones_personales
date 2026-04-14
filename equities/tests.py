@@ -1113,6 +1113,93 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(plan["cash_reserve_amount"], Decimal("0"))
         self.assertGreater(plan["projected_gain_total"], Decimal("0"))
 
+    def test_allocation_plan_uses_five_year_cycle_as_secondary_signal(self):
+        near_term_only = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="LOG",
+                company_name="Logista",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("26"),
+            ),
+            "sector_label": "Distribucion",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Vigilar", "tone": "watch", "note": ""},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("14.40"),
+                "projected_price": Decimal("29.74"),
+                "confidence_label": "Alta",
+                "coefficient": Decimal("0.48"),
+                "safety_score": Decimal("74.00"),
+                "net_income_yield_pct": Decimal("2.10"),
+                "gross_dividend_yield_pct": Decimal("2.90"),
+                "transaction_drag_pct": Decimal("0.20"),
+                "annualized_volatility_pct": Decimal("13.00"),
+                "positive_year_ratio_pct": Decimal("67.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.00"),
+                "max_drawdown_pct": Decimal("-19.00"),
+            },
+            "projection_reliability": {"label": "Alta", "score": Decimal("82.00")},
+            "cycle_projection_5y": {
+                "available": True,
+                "annual_return_pct": Decimal("-4.50"),
+                "five_year_return_pct": Decimal("-20.00"),
+            },
+        }
+        balanced_cycle = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="IBE",
+                company_name="Iberdrola",
+                reference_profile=EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND,
+                benchmark_name="Demanda electrica Espana",
+                benchmark_symbol="REE:demand:es:peninsular",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("14"),
+            ),
+            "sector_label": "Energia",
+            "reference_label": "Demanda electrica Espana",
+            "trade_alert": {"label": "Vigilar", "tone": "watch", "note": ""},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("13.90"),
+                "projected_price": Decimal("15.95"),
+                "confidence_label": "Alta",
+                "coefficient": Decimal("0.52"),
+                "safety_score": Decimal("75.00"),
+                "net_income_yield_pct": Decimal("2.20"),
+                "gross_dividend_yield_pct": Decimal("3.10"),
+                "transaction_drag_pct": Decimal("0.20"),
+                "annualized_volatility_pct": Decimal("12.50"),
+                "positive_year_ratio_pct": Decimal("69.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.00"),
+                "max_drawdown_pct": Decimal("-18.00"),
+            },
+            "projection_reliability": {"label": "Alta", "score": Decimal("82.00")},
+            "cycle_projection_5y": {
+                "available": True,
+                "annual_return_pct": Decimal("6.20"),
+                "five_year_return_pct": Decimal("35.00"),
+            },
+        }
+
+        plan = build_equity_allocation_plan([near_term_only, balanced_cycle], Decimal("100000"), Decimal("60"))
+
+        self.assertTrue(plan["available"])
+        self.assertEqual(plan["allocations"][0]["position"].ticker, "IBE")
+        self.assertGreater(plan["allocations"][0]["cycle_support_score"], Decimal("0"))
+        self.assertGreater(plan["weighted_cycle_return_annual_pct"], Decimal("0"))
+
     def test_allocation_plan_can_limit_max_positions_per_sector(self):
         utility_best = {
             "position": EquityPosition(
@@ -1628,6 +1715,7 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(run.summary_data["max_total_positions"], 8)
         self.assertEqual(run.summary_data["selected_sectors"], ["Energia"])
         self.assertEqual(run.summary_data["top_pick_name"], "Iberdrola")
+        self.assertIsNone(run.summary_data["weighted_cycle_return_annual_pct"])
         self.assertEqual(run.progress_data["percent"], 100)
         self.assertEqual(run.progress_data["note"], "Optimizacion completada")
         self.assertEqual(run.progress_data["stage_key"], "report")

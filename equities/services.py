@@ -6644,6 +6644,9 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
     net_income_yield_pct = projection.get("net_income_yield_pct") or ZERO
     gross_dividend_yield_pct = projection.get("gross_dividend_yield_pct") or ZERO
     transaction_drag_pct = projection.get("transaction_drag_pct") or ZERO
+    cycle_projection = card.get("cycle_projection_5y") or {}
+    cycle_return_annual_pct = cycle_projection.get("annual_return_pct")
+    cycle_return_5y_pct = cycle_projection.get("five_year_return_pct")
     trade_alert = card.get("trade_alert") or {}
     trade_alert_label = trade_alert.get("label") or "Vigilar"
     external_signal = card.get("external_signal") or {}
@@ -6696,8 +6699,30 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
         - risk_penalty_pct
         + clamp_decimal(external_signal_score * Decimal("0.12"), Decimal("-1.20"), Decimal("1.20"))
     )
+    cycle_support_score = ZERO
+    if cycle_projection.get("available") and cycle_return_annual_pct is not None:
+        cycle_quality_multiplier = (
+            (Decimal("0.70") + (safety_score / Decimal("250")))
+            * (Decimal("0.70") + (reliability_score / Decimal("250")))
+            * history_depth_multiplier
+        )
+        cycle_risk_penalty_pct = (
+            (abs(current_drawdown_pct) * Decimal("0.03") if current_drawdown_pct < ZERO else ZERO)
+            + (abs(max_drawdown_pct) * Decimal("0.015") if max_drawdown_pct < ZERO else ZERO)
+        )
+        cycle_support_score = clamp_decimal(
+            (cycle_return_annual_pct * cycle_quality_multiplier) - cycle_risk_penalty_pct,
+            Decimal("-8.00"),
+            Decimal("10.00"),
+        )
+        if cycle_return_5y_pct is not None and cycle_return_5y_pct < ZERO:
+            cycle_support_score += clamp_decimal(cycle_return_5y_pct * Decimal("0.05"), Decimal("-3.00"), ZERO)
+    blended_return_signal_pct = (
+        (risk_adjusted_return_pct * Decimal("0.78"))
+        + (cycle_support_score * Decimal("0.22"))
+    )
     optimization_score = (
-        risk_adjusted_return_pct
+        blended_return_signal_pct
         + income_support_bonus_pct
         - cost_efficiency_penalty_pct
         + trade_signal_adjustment
@@ -6722,12 +6747,17 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
         "safety_score": safety_score,
         "base_return_pct": base_return_pct,
         "risk_adjusted_return_pct": risk_adjusted_return_pct,
+        "blended_return_signal_pct": blended_return_signal_pct,
         "optimization_score": optimization_score,
         "downside_return_pct": downside_return_pct,
         "annualized_volatility_pct": annualized_volatility_pct,
         "gross_dividend_yield_pct": gross_dividend_yield_pct,
         "net_income_yield_pct": net_income_yield_pct,
         "transaction_drag_pct": transaction_drag_pct,
+        "cycle_projection_available": bool(cycle_projection.get("available")),
+        "cycle_return_annual_pct": cycle_return_annual_pct,
+        "cycle_return_5y_pct": cycle_return_5y_pct,
+        "cycle_support_score": cycle_support_score,
         "years_covered": years_covered,
         "cycle_phase": projection.get("cycle_phase") or "Sin ciclo",
         "max_drawdown_pct": max_drawdown_pct,
@@ -7067,6 +7097,7 @@ def build_equity_allocation_plan(
         key=lambda item: (
             item["optimization_score"],
             item["risk_adjusted_return_pct"],
+            item.get("cycle_support_score") or ZERO,
             item["base_return_pct"],
             item["safety_score"],
         ),
@@ -7182,6 +7213,7 @@ def build_equity_allocation_plan(
                 "allocated_weight_pct": (allocated_amount / total_investment) * Decimal("100"),
                 "base_return_pct": candidate["base_return_pct"],
                 "adjusted_return_pct": candidate["risk_adjusted_return_pct"],
+                "blended_return_signal_pct": candidate["blended_return_signal_pct"],
                 "net_projected_return_pct": scenario["net_projected_return_pct"],
                 "low_return_pct": scenario["low_return_pct"],
                 "high_return_pct": scenario["high_return_pct"],
@@ -7211,6 +7243,10 @@ def build_equity_allocation_plan(
                 "annualized_volatility_pct": candidate["annualized_volatility_pct"],
                 "years_covered": candidate["years_covered"],
                 "cycle_phase": candidate["cycle_phase"],
+                "cycle_projection_available": candidate["cycle_projection_available"],
+                "cycle_return_annual_pct": candidate["cycle_return_annual_pct"],
+                "cycle_return_5y_pct": candidate["cycle_return_5y_pct"],
+                "cycle_support_score": candidate["cycle_support_score"],
                 "max_drawdown_pct": candidate["max_drawdown_pct"],
                 "current_drawdown_pct": candidate["current_drawdown_pct"],
                 "projected_price": candidate["projection"].get("projected_price"),
@@ -7237,6 +7273,36 @@ def build_equity_allocation_plan(
     weighted_reliability_score = (
         sum((item["reliability_score"] * item["allocated_amount"] for item in allocations), ZERO) / allocated_amount_total
         if allocated_amount_total
+        else None
+    )
+    cycle_allocated_amount_total = sum(
+        (item["allocated_amount"] for item in allocations if item.get("cycle_return_annual_pct") is not None),
+        ZERO,
+    )
+    weighted_cycle_return_annual_pct = (
+        sum(
+            (
+                (item["cycle_return_annual_pct"] * item["allocated_amount"])
+                for item in allocations
+                if item.get("cycle_return_annual_pct") is not None
+            ),
+            ZERO,
+        )
+        / cycle_allocated_amount_total
+        if cycle_allocated_amount_total
+        else None
+    )
+    weighted_cycle_return_5y_pct = (
+        sum(
+            (
+                (item["cycle_return_5y_pct"] * item["allocated_amount"])
+                for item in allocations
+                if item.get("cycle_return_5y_pct") is not None
+            ),
+            ZERO,
+        )
+        / cycle_allocated_amount_total
+        if cycle_allocated_amount_total
         else None
     )
     weighted_volatility_pct = (
@@ -7326,6 +7392,8 @@ def build_equity_allocation_plan(
         "weighted_low_return_pct": weighted_low_return_pct,
         "weighted_safety_score": weighted_safety_score,
         "weighted_reliability_score": weighted_reliability_score,
+        "weighted_cycle_return_annual_pct": weighted_cycle_return_annual_pct,
+        "weighted_cycle_return_5y_pct": weighted_cycle_return_5y_pct,
         "weighted_volatility_pct": weighted_volatility_pct,
         "net_dividend_income_total": net_dividend_income_total,
         "annual_cost_total": annual_cost_total,
@@ -7347,9 +7415,11 @@ def build_equity_allocation_plan(
         "reserve_reason": reserve_reason,
         "top_pick": top_pick,
         "methodology_note": (
-            "La optimizacion se decide a 12 meses: prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
+            "La optimizacion se decide principalmente a 12 meses: prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
             "seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa y riesgo historico. "
-            "El historico largo se usa para leer ciclos y penalizar riesgo, no para alargar el horizonte de decision, "
+            "Como contraste secundario incorpora la prevision de ciclo a 5 anos para reforzar o penalizar la jerarquia final cuando el ciclo largo acompana o flojea, "
+            "sin sustituir la decision principal a 12 meses. "
+            "El historico largo se usa para leer ciclos y penalizar riesgo, no para alargar por si solo el horizonte de decision, "
             "eficiencia real del ticket de compra y, si lo marcas, un maximo total de empresas y diversificacion maxima por sector. En la version robusta se "
             "analiza siempre todo el IBEX, no solo los valores que ya tienes en seguimiento."
         ),

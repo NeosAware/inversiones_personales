@@ -50,13 +50,13 @@
         <td><strong>Dividendos netos</strong><br>{{ plan.net_dividend_income_total|floatformat:0 }} EUR</td>
         <td><strong>Coste anual</strong><br>{{ plan.annual_cost_total|floatformat:0 }} EUR</td>
         <td><strong>Compra + venta</strong><br>{{ plan.roundtrip_cost_total|floatformat:0 }} EUR</td>
-        <td><strong>IBEX analizado</strong><br>{{ dashboard.ibex_universe_summary.analyzed_count }}</td>
+        <td><strong>Ciclo 5A</strong><br>{% if plan.weighted_cycle_return_annual_pct is not None %}{{ plan.weighted_cycle_return_annual_pct|floatformat:2 }} % anual{% else %}-{% endif %}{% if plan.weighted_cycle_return_5y_pct is not None %}<br><span class="small">{{ plan.weighted_cycle_return_5y_pct|floatformat:1 }} % acumulado</span>{% endif %}</td>
       </tr>
       <tr>
         <td><strong>Max peso por empresa</strong><br>{{ plan.max_company_pct|floatformat:1 }} %</td>
         <td><strong>Max total de empresas</strong><br>{% if plan.max_total_positions %}{{ plan.max_total_positions }}{% else %}Sin limite{% endif %}</td>
         <td><strong>Max por sector</strong><br>{% if plan.max_sector_positions %}{{ plan.max_sector_positions }}{% else %}Sin limite{% endif %}</td>
-        <td><strong>Valores elegidos</strong><br>{{ plan.allocations|length }}</td>
+        <td><strong>Valores elegidos</strong><br>{{ plan.allocations|length }}<br><span class="small">{{ dashboard.ibex_universe_summary.analyzed_count }} del IBEX analizados</span></td>
       </tr>
       <tr>
         <td colspan="4"><strong>Sectores permitidos</strong><br>{% if plan.selected_sectors %}{{ plan.selected_sectors|join:", " }}{% else %}Todos los sectores del IBEX{% endif %}</td>
@@ -116,7 +116,7 @@
         {% for item in plan.allocations %}
           <tr>
             <td>{{ item.rank }}</td>
-            <td><strong>{{ item.position.company_name }}</strong><br><span class="muted">{{ item.position.ticker }} | {{ item.trade_alert_label }}</span></td>
+            <td><strong>{{ item.position.company_name }}</strong><br><span class="muted">{{ item.position.ticker }} | {{ item.trade_alert_label }}{% if item.cycle_return_annual_pct is not None %} | 5A anual {{ item.cycle_return_annual_pct|floatformat:2 }} %{% endif %}</span></td>
             <td>{{ item.sector_label }}</td>
             <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>
             <td>{{ item.allocated_amount|floatformat:0 }} EUR</td>
@@ -140,7 +140,7 @@
             <td><span class="metric-label">Peso sugerido</span><span class="metric-value">{{ entry.allocation.allocated_weight_pct|floatformat:1 }} %</span><span class="small">{{ entry.allocation.allocated_amount|floatformat:0 }} EUR</span></td>
             <td><span class="metric-label">Retorno neto 12M</span><span class="metric-value {% if entry.allocation.net_projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ entry.allocation.net_projected_return_pct|floatformat:2 }} %</span><span class="small">Peor escenario {{ entry.allocation.low_return_pct|floatformat:2 }} %</span></td>
             <td><span class="metric-label">Dividendos netos</span><span class="metric-value">{{ entry.allocation.expected_net_dividend_income|floatformat:0 }} EUR</span><span class="small">Coste anual {{ entry.allocation.annual_cost_used|floatformat:0 }} EUR</span></td>
-            <td><span class="metric-label">Seguridad / fiabilidad</span><span class="metric-value">{{ entry.allocation.safety_score|floatformat:0 }}/100</span><span class="small">{{ entry.allocation.reliability_label }}</span></td>
+            <td><span class="metric-label">Seguridad / fiabilidad</span><span class="metric-value">{{ entry.allocation.safety_score|floatformat:0 }}/100</span><span class="small">{{ entry.allocation.reliability_label }}{% if entry.allocation.cycle_return_annual_pct is not None %} | Ciclo 5A {{ entry.allocation.cycle_return_annual_pct|floatformat:2 }} % anual{% endif %}</span></td>
           </tr>
         </table>
 
@@ -234,6 +234,7 @@
           {{ entry.card.trade_alert.note }}
           {% if entry.external_signal.note %} {{ entry.external_signal.note }}{% endif %}
           {% if entry.card.projection.explanation %} {{ entry.card.projection.explanation }}{% endif %}
+          {% if entry.card.cycle_projection_5y.explanation %} {{ entry.card.cycle_projection_5y.explanation }}{% endif %}
         </div>
       </div>
     {% endfor %}
