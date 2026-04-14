@@ -2490,7 +2490,7 @@ def build_projection_12m_chart(history, projection: dict) -> dict:
     latest_date = history[-1].price_date
     recent_history = filter_history_window(
         history,
-        start_date=latest_date - timedelta(days=365 * 2),
+        start_date=latest_date - timedelta(days=365),
         end_date=latest_date,
     )
     if len(recent_history) < 2:
@@ -2518,6 +2518,7 @@ def build_projection_12m_chart(history, projection: dict) -> dict:
         "end_label": latest_date.isoformat(),
         "projection_end_label": end_projection_step.get("projected_date").isoformat() if end_projection_step and end_projection_step.get("projected_date") else "",
         "points_count": len(stock_series),
+        "history_window_label": "Ultimo ano",
     }
 
 
@@ -6996,8 +6997,9 @@ def build_equity_allocation_plan(
         "reserve_reason": reserve_reason,
         "top_pick": top_pick,
         "methodology_note": (
-            "La optimizacion prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
-            "seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa, riesgo historico, "
+            "La optimizacion se decide a 12 meses: prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
+            "seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa y riesgo historico. "
+            "El historico largo se usa para leer ciclos y penalizar riesgo, no para alargar el horizonte de decision, "
             "eficiencia real del ticket de compra y, si lo marcas, un maximo total de empresas y diversificacion maxima por sector. En la version robusta se "
             "analiza siempre todo el IBEX, no solo los valores que ya tienes en seguimiento."
         ),

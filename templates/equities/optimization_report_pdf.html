@@ -146,8 +146,8 @@
 
         {% if entry.card.historical_chart.available %}
           <div class="chart-block">
-            <div class="chart-title">Historico</div>
-            <p class="small">Evolucion del precio a lo largo del tiempo.</p>
+            <div class="chart-title">Historico de ciclo</div>
+            <p class="small">Serie ampliada para estudiar ciclos del valor.</p>
             <svg viewBox="0 0 640 220">
               <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
               <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
@@ -181,7 +181,7 @@
         {% if entry.card.projection_12m_chart.available %}
           <div class="chart-block">
             <div class="chart-title">Prevision central a 12 meses</div>
-            <p class="small">Azul: tramo historico reciente. Naranja: escenario central del modelo.</p>
+            <p class="small">Azul: {{ entry.card.projection_12m_chart.history_window_label|default:"Ultimo ano" }}. Naranja: escenario central del modelo.</p>
             <svg viewBox="0 0 640 220">
               <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
               <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />

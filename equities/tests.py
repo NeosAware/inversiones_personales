@@ -363,6 +363,41 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(cards[0]["historical_chart"]["x_markers"])
         self.assertTrue(cards[0]["projection_12m_chart"]["x_markers"])
 
+    def test_projection_chart_uses_last_year_while_history_keeps_full_cycle(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola, S.A.",
+            shares=Decimal("20"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+        )
+        stock_price = Decimal("10.00")
+        benchmark_price = Decimal("100.00")
+        for index in range(30):
+            year = 2024 + (index // 12)
+            month = (index % 12) + 1
+            month_end = monthrange(year, month)[1]
+            stock_price = (stock_price * Decimal("1.015")).quantize(Decimal("0.0001"))
+            benchmark_price = (benchmark_price * Decimal("1.008")).quantize(Decimal("0.0001"))
+            position.price_history.create(
+                price_date=date(year, month, month_end),
+                close_price=stock_price,
+                benchmark_close=benchmark_price,
+            )
+
+        cards = build_equity_history_cards([position])
+
+        chart = cards[0]["projection_12m_chart"]
+        self.assertTrue(chart["available"])
+        self.assertEqual(chart["history_window_label"], "Ultimo ano")
+        self.assertEqual(chart["start_label"], "2025-06-30")
+        self.assertEqual(cards[0]["historical_chart"]["start_label"], "2024-01-31")
+        self.assertGreater(cards[0]["historical_chart"]["points_count"], chart["points_count"])
+
     def test_projection_includes_dividends_and_broker_drag(self):
         position = EquityPosition.objects.create(
             broker="Banco Santander",

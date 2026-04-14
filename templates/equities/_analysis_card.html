@@ -124,7 +124,7 @@
             <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.historical_chart.stock_min_label }}</text>
           </svg>
           <div class="equity-chart-foot">
-            <span>Precio historico de la accion</span>
+            <span>Historico ampliado para estudiar ciclos</span>
             <span>{{ card.historical_chart.points_count }} puntos</span>
             <span>{{ card.historical_chart.start_label }} a {{ card.historical_chart.end_label }}</span>
           </div>
@@ -173,7 +173,7 @@
             <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.projection_12m_chart.stock_min_label }}</text>
           </svg>
           <div class="equity-chart-foot">
-            <span>Azul: tramo historico reciente</span>
+            <span>Azul: {{ card.projection_12m_chart.history_window_label|default:"Ultimo ano" }} usado como base</span>
             <span>Naranja: escenario central 12M</span>
             <span>{{ card.projection_12m_chart.end_label }} a {{ card.projection_12m_chart.projection_end_label }}</span>
           </div>

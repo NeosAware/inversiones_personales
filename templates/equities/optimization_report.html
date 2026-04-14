@@ -225,7 +225,7 @@
           <div class="grid cols-3" style="margin-top:14px;">
             {% if entry.card.historical_chart.available %}
               <div class="chart-shell">
-                <strong>Historico</strong>
+                <strong>Historico de ciclo</strong>
                 <svg viewBox="0 0 640 220">
                   <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
                   <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
@@ -238,6 +238,7 @@
                   <text x="8" y="214" font-size="12" fill="#0d5d78">{{ entry.card.historical_chart.stock_min_label }}</text>
                 </svg>
                 <div class="chart-foot">
+                  <span>Serie ampliada para estudiar ciclos</span>
                   <span>{{ entry.card.historical_chart.start_label }} a {{ entry.card.historical_chart.end_label }}</span>
                   <span>{{ entry.card.historical_chart.points_count }} puntos</span>
                 </div>
@@ -285,6 +286,7 @@
                   <text x="8" y="214" font-size="12" fill="#0d5d78">{{ entry.card.projection_12m_chart.stock_min_label }}</text>
                 </svg>
                 <div class="chart-foot">
+                  <span>Azul: {{ entry.card.projection_12m_chart.history_window_label|default:"Ultimo ano" }}</span>
                   <span>{{ entry.card.projection_12m_chart.end_label }} a {{ entry.card.projection_12m_chart.projection_end_label }}</span>
                   <span>Objetivo {% if entry.card.projection.projected_price is not None %}{{ entry.card.projection.projected_price|floatformat:4 }}{% else %}-{% endif %}</span>
                 </div>
