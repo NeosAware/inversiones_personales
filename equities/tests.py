@@ -110,6 +110,7 @@ def build_compound_market_series(
     )
 
 
+@override_settings(EQUITIES_FETCH_FUNDAMENTALS=False)
 class EquitiesServicesTests(TestCase):
     def tearDown(self):
         load_ibex_reference_workbook_snapshot.cache_clear()
@@ -486,6 +487,78 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(backtest["monthly_chart"]["forecast_line"])
         self.assertTrue(backtest["monthly_chart"]["actual_line"])
 
+    def test_history_cards_include_fundamentals_summary_when_enabled(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Banco Santander, S.A.",
+            shares=Decimal("25"),
+            average_cost_per_share=Decimal("4.0000"),
+            current_price_per_share=Decimal("5.0000"),
+        )
+        for price_date, close_price, benchmark_close in (
+            (date(2025, 12, 31), Decimal("4.00"), Decimal("100.00")),
+            (date(2026, 1, 31), Decimal("4.20"), Decimal("101.20")),
+            (date(2026, 2, 28), Decimal("4.35"), Decimal("102.40")),
+            (date(2026, 3, 31), Decimal("4.55"), Decimal("104.10")),
+            (date(2026, 4, 30), Decimal("4.80"), Decimal("105.30")),
+            (date(2026, 5, 31), Decimal("5.00"), Decimal("107.00")),
+        ):
+            position.price_history.create(
+                price_date=price_date,
+                close_price=close_price,
+                benchmark_close=benchmark_close,
+            )
+
+        fundamentals_snapshot = {
+            "symbol": "SAN.MC",
+            "available": True,
+            "currency_code": "EUR",
+            "net_income_rows": [
+                {
+                    "as_of_date": date(2023, 12, 31),
+                    "period_type": "12M",
+                    "currency_code": "EUR",
+                    "value": Decimal("11076000000"),
+                },
+                {
+                    "as_of_date": date(2024, 12, 31),
+                    "period_type": "12M",
+                    "currency_code": "EUR",
+                    "value": Decimal("12574000000"),
+                },
+                {
+                    "as_of_date": date(2025, 12, 31),
+                    "period_type": "12M",
+                    "currency_code": "EUR",
+                    "value": Decimal("14101000000"),
+                },
+            ],
+            "market_cap_rows": [
+                {
+                    "as_of_date": date(2026, 4, 10),
+                    "period_type": "TTM",
+                    "currency_code": "EUR",
+                    "value": Decimal("151560161340"),
+                }
+            ],
+            "market_cap": Decimal("151560161340"),
+            "market_cap_as_of_date": date(2026, 4, 10),
+        }
+
+        with patch("equities.services.fetch_equity_fundamentals", return_value=fundamentals_snapshot):
+            cards = build_equity_history_cards([position], include_fundamentals=True)
+
+        fundamentals = cards[0]["fundamentals"]
+        self.assertTrue(fundamentals["available"])
+        self.assertEqual(fundamentals["trend_label"], "Mejora")
+        self.assertEqual(fundamentals["market_cap_label"], "151.6 mM EUR")
+        self.assertEqual(fundamentals["net_income_rows"][0]["year_label"], "2025")
+        self.assertEqual(fundamentals["net_income_rows"][-1]["year_label"], "2023")
+
     def test_history_cards_include_trade_alert_from_prolonged_relative_trend(self):
         buy_position = EquityPosition.objects.create(
             broker="Interactive Brokers",
@@ -545,6 +618,58 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(cards_by_ticker["TEF"]["trade_alert"]["label"], "Vender")
         self.assertGreater(cards_by_ticker["IDR"]["trade_alert"]["score"], Decimal("0"))
         self.assertLess(cards_by_ticker["TEF"]["trade_alert"]["score"], Decimal("0"))
+
+    def test_history_cards_flag_sell_when_reference_coefficient_breaks_down_for_months(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="REP",
+            quote_symbol="REP.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Repsol, S.A.",
+            shares=Decimal("30"),
+            average_cost_per_share=Decimal("12.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+
+        benchmark_price = Decimal("100.0000")
+        stock_price = Decimal("12.0000")
+        benchmark_return_pattern = [
+            Decimal("0.0060"),
+            Decimal("0.0120"),
+            Decimal("0.0080"),
+            Decimal("0.0150"),
+            Decimal("0.0070"),
+            Decimal("0.0110"),
+        ]
+        for index in range(36):
+            year = 2023 + (index // 12)
+            month = (index % 12) + 1
+            month_end = monthrange(year, month)[1]
+            benchmark_return = benchmark_return_pattern[index % len(benchmark_return_pattern)]
+            if index < 24:
+                stock_return = (benchmark_return * Decimal("1.30")) + Decimal("0.0010")
+            else:
+                stock_return = -(benchmark_return * Decimal("1.10"))
+            benchmark_price = (benchmark_price * (Decimal("1.00") + benchmark_return)).quantize(Decimal("0.0001"))
+            stock_price = (stock_price * (Decimal("1.00") + stock_return)).quantize(Decimal("0.0001"))
+            position.price_history.create(
+                price_date=date(year, month, month_end),
+                close_price=stock_price,
+                benchmark_close=benchmark_price,
+            )
+
+        position.current_price_per_share = stock_price
+        position.save(update_fields=["current_price_per_share"])
+
+        cards = build_equity_history_cards([position])
+
+        coefficient_alert = cards[0]["coefficient_alert"]
+        self.assertTrue(coefficient_alert["available"])
+        self.assertEqual(coefficient_alert["label"], "Vender")
+        self.assertEqual(coefficient_alert["tone"], "sell")
+        self.assertGreaterEqual(coefficient_alert["deterioration_streak"], 3)
+        self.assertIn("Reciente", coefficient_alert["trigger_label"])
 
     def test_trade_alert_stays_in_watch_when_trend_and_12m_net_diverge(self):
         position = EquityPosition(
@@ -1715,6 +1840,7 @@ class EquitiesServicesTests(TestCase):
         self.assertIsNot(first_series.points, second_series.points)
 
 @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=False, EQUITIES_IBEX_UNIVERSE_ANALYSIS=False)
+@override_settings(EQUITIES_FETCH_FUNDAMENTALS=False)
 class EquitiesViewTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(

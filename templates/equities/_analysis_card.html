@@ -215,9 +215,9 @@
         <small>{{ card.projection.confidence_label }} en modelo{% if card.projection_backtest.available %} | Comprobacion historica {{ card.projection_backtest.precision_label }}{% endif %}</small>
       </div>
       <div class="equity-mini-stat">
-        <span>Beneficio / riesgo</span>
-        <strong>{% if card.projection.benefit_risk_ratio is not None %}{{ card.projection.benefit_risk_ratio|floatformat:2 }}{% else %}-{% endif %}</strong>
-        <small>Retorno neto frente al rango esperado.</small>
+        <span>Alerta coef.</span>
+        <strong class="{% if card.coefficient_alert.tone == 'sell' %}warn{% endif %}">{{ card.coefficient_alert.label }}</strong>
+        <small>{{ card.coefficient_alert.trigger_label }}</small>
       </div>
     </div>
 
@@ -233,6 +233,11 @@
         <small>{{ card.reference_label }} | {{ card.correlation.stability_label }}</small>
       </div>
       <div class="equity-mini-stat">
+        <span>Corr reciente</span>
+        <strong>{% if card.projection.recent_coefficient is not None %}{{ card.projection.recent_coefficient|floatformat:2 }}{% else %}-{% endif %}</strong>
+        <small>{{ card.coefficient_alert.periods_label|default:"tramo reciente" }} | {{ card.coefficient_alert.windows_count|default:0 }} ventanas</small>
+      </div>
+      <div class="equity-mini-stat">
         <span>CAGR ciclo</span>
         <strong>{% if card.projection.cagr_pct is not None %}{{ card.projection.cagr_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
         <small>Ritmo anual del historico util.</small>
@@ -242,6 +247,14 @@
         <strong>{% if card.projection.annualized_volatility_pct is not None %}{{ card.projection.annualized_volatility_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
         <small>Drawdown actual {% if card.projection.current_drawdown_pct is not None %}{{ card.projection.current_drawdown_pct|floatformat:1 }} %{% else %}-{% endif %}</small>
       </div>
+      <div class="equity-mini-stat">
+        <span>Beneficio / riesgo</span>
+        <strong>{% if card.projection.benefit_risk_ratio is not None %}{{ card.projection.benefit_risk_ratio|floatformat:2 }}{% else %}-{% endif %}</strong>
+        <small>Retorno neto frente al rango esperado.</small>
+      </div>
+    </div>
+
+    <div class="equity-detail-grid" style="margin-top:14px;">
       <div class="equity-mini-stat">
         <span>Pendiente relativa</span>
         <strong class="{% if card.trade_alert.tone == 'buy' %}good{% elif card.trade_alert.tone == 'sell' %}warn{% endif %}">{{ card.trade_alert.trend_label }}</strong>
@@ -278,9 +291,34 @@
       </div>
     </div>
 
-    <p class="equity-detail-note" style="margin-top:14px;">{{ card.trade_alert.note }} {{ card.projection.explanation }} {{ card.projection.confidence_note }}</p>
+    {% if card.fundamentals.available %}
+      <div class="equity-detail-grid" style="margin-top:14px;">
+        <div class="equity-mini-stat">
+          <span>Capitalizacion</span>
+          <strong>{{ card.fundamentals.market_cap_label }}</strong>
+          <small>Ultima lectura {{ card.fundamentals.market_cap_date_label|default:"-" }}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Ciclo beneficio</span>
+          <strong>{{ card.fundamentals.trend_label }}</strong>
+          <small>{{ card.fundamentals.trend_note }}</small>
+        </div>
+        {% for row in card.fundamentals.net_income_rows %}
+          <div class="equity-mini-stat">
+            <span>Beneficio {{ row.year_label }}</span>
+            <strong>{{ row.value_label }}</strong>
+            <small>Cierre {{ row.as_of_date|date:"Y-m-d" }}</small>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <p class="equity-detail-note" style="margin-top:14px;">{{ card.trade_alert.note }} {% if card.coefficient_alert.available %}{{ card.coefficient_alert.note }} {% endif %}{{ card.projection.explanation }} {{ card.projection.confidence_note }}</p>
     {% if card.broker_costs.analysis_value_source == "normalized_watchlist" %}
       <p class="metric-sub" style="margin-top:8px;">Seguimiento y radar IBEX usan un ticket analitico minimo de {{ card.broker_costs.analysis_value_amount|floatformat:0 }} EUR para que los costes fijos del broker no distorsionen la proyeccion por usar una sola accion de muestra.</p>
+    {% endif %}
+    {% if not card.fundamentals.available and card.fundamentals.note %}
+      <p class="metric-sub" style="margin-top:8px;">{{ card.fundamentals.note }}</p>
     {% endif %}
   {% else %}
     <div class="message info" style="margin-top:18px;">

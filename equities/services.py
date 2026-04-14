@@ -506,6 +506,7 @@ def ibex_universe_max_workers() -> int:
 def clear_market_data_caches() -> None:
     _fetch_market_series_cached.cache_clear()
     _fetch_reference_series_for_choice_cached.cache_clear()
+    _fetch_equity_fundamentals_cached.cache_clear()
 
 
 @dataclass
@@ -1315,6 +1316,117 @@ def fetch_market_series(symbol: str, range_key: str = DEFAULT_MARKET_RANGE_KEY, 
             normalized_symbol,
             range_key,
             interval,
+            build_market_data_cache_bucket(),
+        )
+    )
+
+
+def should_fetch_equity_fundamentals() -> bool:
+    return bool(getattr(settings, "EQUITIES_FETCH_FUNDAMENTALS", True))
+
+
+def build_fundamentals_period_bounds(now: datetime | None = None) -> tuple[int, int]:
+    current = now or django_timezone.now()
+    period2 = int(current.timestamp())
+    period1 = int((current - timedelta(days=365 * 5)).timestamp())
+    return period1, period2
+
+
+def parse_yahoo_timeseries_metric_rows(rows: list[dict] | None) -> list[dict]:
+    parsed_rows = []
+    for row in rows or []:
+        as_of_date_raw = row.get("asOfDate")
+        reported_value = row.get("reportedValue", {})
+        raw_value = reported_value.get("raw")
+        if not as_of_date_raw or raw_value in {None, ""}:
+            continue
+        try:
+            as_of_date = date.fromisoformat(as_of_date_raw)
+            value = Decimal(str(raw_value))
+        except Exception:
+            continue
+        parsed_rows.append(
+            {
+                "as_of_date": as_of_date,
+                "period_type": row.get("periodType", ""),
+                "currency_code": row.get("currencyCode", ""),
+                "value": value,
+            }
+        )
+    parsed_rows.sort(key=lambda item: item["as_of_date"])
+    return parsed_rows
+
+
+def clone_equity_fundamentals_snapshot(snapshot: dict) -> dict:
+    return {
+        **snapshot,
+        "net_income_rows": [dict(row) for row in snapshot.get("net_income_rows", [])],
+        "market_cap_rows": [dict(row) for row in snapshot.get("market_cap_rows", [])],
+    }
+
+
+@lru_cache(maxsize=256)
+def _fetch_equity_fundamentals_cached(symbol: str, cache_bucket: int = 0) -> dict:
+    period1, period2 = build_fundamentals_period_bounds()
+    requested_types = ",".join(
+        (
+            "annualNetIncome",
+            "trailingMarketCap",
+            "annualMarketCap",
+            "quarterlyMarketCap",
+        )
+    )
+    url = (
+        "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/"
+        f"{symbol}?type={requested_types}&period1={period1}&period2={period2}"
+    )
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(request, timeout=market_request_timeout_seconds()) as response:
+        payload = json.load(response)
+
+    timeseries = payload.get("timeseries", {})
+    if timeseries.get("error"):
+        description = timeseries["error"].get("description") or f"No se han podido cargar los fundamentales de {symbol}."
+        raise MarketDataError(description)
+
+    parsed_metrics = {}
+    for item in timeseries.get("result", []):
+        metric_keys = [key for key in item.keys() if key not in {"meta", "timestamp"}]
+        for metric_key in metric_keys:
+            parsed_metrics[metric_key] = parse_yahoo_timeseries_metric_rows(item.get(metric_key))
+
+    net_income_rows = parsed_metrics.get("annualNetIncome", [])
+    market_cap_rows = (
+        parsed_metrics.get("trailingMarketCap")
+        or parsed_metrics.get("quarterlyMarketCap")
+        or parsed_metrics.get("annualMarketCap")
+        or []
+    )
+    if not net_income_rows and not market_cap_rows:
+        raise MarketDataError(f"No se han recibido fundamentales suficientes para {symbol}.")
+
+    latest_market_cap = market_cap_rows[-1] if market_cap_rows else {}
+    currency_code = (
+        latest_market_cap.get("currency_code")
+        or (net_income_rows[-1].get("currency_code") if net_income_rows else "")
+        or ""
+    )
+    return {
+        "symbol": symbol,
+        "available": True,
+        "currency_code": currency_code,
+        "net_income_rows": net_income_rows[-3:],
+        "market_cap_rows": market_cap_rows[-3:],
+        "market_cap": latest_market_cap.get("value"),
+        "market_cap_as_of_date": latest_market_cap.get("as_of_date"),
+    }
+
+
+def fetch_equity_fundamentals(symbol: str) -> dict:
+    normalized_symbol = clean_symbol(symbol)
+    return clone_equity_fundamentals_snapshot(
+        _fetch_equity_fundamentals_cached(
+            normalized_symbol,
             build_market_data_cache_bucket(),
         )
     )
@@ -3365,6 +3477,112 @@ def percentage_change(current: Decimal | None, reference: Decimal | None) -> Dec
     return ((current / reference) - Decimal("1")) * Decimal("100")
 
 
+def format_compact_currency_value(value: Decimal | None, currency_code: str = "") -> str:
+    if value is None:
+        return "-"
+
+    absolute = abs(value)
+    if absolute >= Decimal("1000000000"):
+        scaled_value = value / Decimal("1000000000")
+        label = f"{scaled_value:.1f} mM"
+    elif absolute >= Decimal("1000000"):
+        scaled_value = value / Decimal("1000000")
+        label = f"{scaled_value:.1f} M"
+    elif absolute >= Decimal("1000"):
+        scaled_value = value / Decimal("1000")
+        label = f"{scaled_value:.1f} k"
+    else:
+        label = f"{value:.0f}"
+    return f"{label} {currency_code}".strip()
+
+
+def describe_net_income_trend(net_income_rows: list[dict]) -> tuple[str, str]:
+    if len(net_income_rows) < 2:
+        return "Sin serie suficiente", "Todavia no hay tres cierres completos para leer la trayectoria del beneficio."
+
+    values = [row["value"] for row in net_income_rows]
+    latest_value = values[-1]
+    previous_value = values[-2]
+    oldest_value = values[0]
+
+    if latest_value > ZERO and all(current > previous for previous, current in zip(values, values[1:])):
+        return "Mejora", "Los beneficios netos encadenan varios ejercicios al alza."
+    if latest_value <= ZERO:
+        return "Presion", "El ultimo cierre entra en beneficio negativo y debilita la lectura del ciclo."
+    if all(current < previous for previous, current in zip(values, values[1:])):
+        return "Deterioro", "El beneficio neto viene enfriandose de forma continuada."
+    if latest_value > previous_value and previous_value <= oldest_value:
+        return "Recuperacion", "El beneficio habia flojeado, pero el ultimo ejercicio vuelve a mejorar."
+    if latest_value < previous_value and previous_value >= oldest_value:
+        return "Enfriamiento", "El ultimo ejercicio enfria una etapa de mejora previa."
+    return "Mixto", "La serie de beneficios no marca una direccion limpia todavia."
+
+
+def build_equity_fundamentals_summary(position: EquityPosition, force_live_fetch: bool = False) -> dict:
+    if not force_live_fetch and not should_fetch_equity_fundamentals():
+        return {
+            "available": False,
+            "note": "La carga de fundamentales en vivo esta desactivada.",
+            "net_income_rows": [],
+        }
+
+    if not position.quote_symbol:
+        return {
+            "available": False,
+            "note": "No hay simbolo de cotizacion para buscar los fundamentales.",
+            "net_income_rows": [],
+        }
+
+    try:
+        snapshot = fetch_equity_fundamentals(position.quote_symbol)
+    except Exception as exc:
+        return {
+            "available": False,
+            "note": f"No se han podido cargar los fundamentales recientes: {exc}",
+            "net_income_rows": [],
+        }
+
+    net_income_rows = list(snapshot.get("net_income_rows", []))
+    if not net_income_rows and snapshot.get("market_cap") is None:
+        return {
+            "available": False,
+            "note": "La fuente externa no ha devuelto beneficio neto ni capitalizacion reciente.",
+            "net_income_rows": [],
+        }
+
+    currency_code = snapshot.get("currency_code") or ""
+    trend_label, trend_note = describe_net_income_trend(net_income_rows)
+    net_income_delta_pct = None
+    if len(net_income_rows) >= 2:
+        net_income_delta_pct = percentage_change(net_income_rows[-1]["value"], net_income_rows[0]["value"])
+
+    prepared_rows = []
+    for row in reversed(net_income_rows):
+        prepared_rows.append(
+            {
+                **row,
+                "value_label": format_compact_currency_value(row.get("value"), row.get("currency_code") or currency_code),
+                "year_label": str(row["as_of_date"].year),
+            }
+        )
+
+    market_cap = snapshot.get("market_cap")
+    market_cap_as_of_date = snapshot.get("market_cap_as_of_date")
+    return {
+        "available": True,
+        "currency_code": currency_code,
+        "net_income_rows": prepared_rows,
+        "trend_label": trend_label,
+        "trend_note": trend_note,
+        "net_income_delta_pct": net_income_delta_pct,
+        "market_cap": market_cap,
+        "market_cap_label": format_compact_currency_value(market_cap, currency_code),
+        "market_cap_as_of_date": market_cap_as_of_date,
+        "market_cap_date_label": market_cap_as_of_date.isoformat() if market_cap_as_of_date else "",
+        "note": "Beneficio neto anual y capitalizacion segun la serie fundamental mas reciente disponible.",
+    }
+
+
 def infer_reference_frequency_from_profile(reference_profile: str) -> str:
     if reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
         return "quarterly"
@@ -3857,6 +4075,16 @@ def consecutive_tail_count(values: list[Decimal], positive: bool) -> int:
     return streak
 
 
+def consecutive_tail_matches(values: list, predicate) -> int:
+    streak = 0
+    for value in reversed(values):
+        if predicate(value):
+            streak += 1
+            continue
+        break
+    return streak
+
+
 def build_relative_strength_trend(
     history,
     position: EquityPosition,
@@ -3952,6 +4180,218 @@ def build_relative_strength_trend(
         "stock_slope_pct": stock_slope_pct,
         "prolonged_positive": prolonged_positive,
         "prolonged_negative": prolonged_negative,
+    }
+
+
+def build_reference_coefficient_alert(
+    history,
+    position: EquityPosition,
+    correlation: dict,
+) -> dict:
+    base_payload = {
+        "available": False,
+        "label": "Sin lectura",
+        "tone": "neutral",
+        "note": "Todavia no hay suficiente serie reciente para leer si el coeficiente de referencia se deteriora o se mantiene.",
+        "trigger_label": "Sin ventana reciente suficiente",
+        "long_term_coefficient": correlation.get("coefficient"),
+        "recent_coefficient": correlation.get("recent_coefficient"),
+        "coefficient_gap": None,
+        "deterioration_streak": 0,
+        "weak_streak": 0,
+        "negative_streak": 0,
+        "periods_label": "periodos",
+        "window_size": 0,
+        "windows_count": 0,
+        "trend_slope": None,
+    }
+    if not history:
+        return base_payload
+
+    frequency = infer_reference_frequency(position)
+    periods_label = "meses" if frequency == "monthly" else "trimestres"
+    rows = [
+        {
+            "date": point.price_date,
+            "stock_close": point.close_price,
+            "reference_close": point.benchmark_close,
+        }
+        for point in history
+        if point.benchmark_close is not None
+    ]
+    buckets = {}
+    for row in rows:
+        buckets[bucket_label_for_date(row["date"], frequency)] = row
+    collapsed = [buckets[label] for label in sorted(buckets.keys())]
+    stock_returns, reference_returns = build_return_series_from_collapsed_rows(
+        collapsed,
+        "stock_close",
+        "reference_close",
+    )
+    recent_window = recent_correlation_window_size(frequency)
+    if len(stock_returns) < recent_window + 2:
+        return {
+            **base_payload,
+            "periods_label": periods_label,
+            "window_size": recent_window,
+        }
+
+    rolling_rows = []
+    for end_index in range(recent_window, len(stock_returns) + 1):
+        rolling_coefficient = pearson_correlation(
+            stock_returns[end_index - recent_window : end_index],
+            reference_returns[end_index - recent_window : end_index],
+        )
+        if rolling_coefficient is None:
+            continue
+        rolling_rows.append(
+            {
+                "end_date": collapsed[end_index]["date"],
+                "coefficient": rolling_coefficient,
+            }
+        )
+
+    if len(rolling_rows) < 2:
+        return {
+            **base_payload,
+            "periods_label": periods_label,
+            "window_size": recent_window,
+            "windows_count": len(rolling_rows),
+        }
+
+    baseline = correlation.get("coefficient")
+    recent_coefficient = correlation.get("recent_coefficient") or rolling_rows[-1]["coefficient"]
+    coefficient_gap = (
+        baseline - recent_coefficient
+        if baseline is not None and recent_coefficient is not None
+        else None
+    )
+    coefficients = [row["coefficient"] for row in rolling_rows]
+    weak_streak = consecutive_tail_matches(
+        coefficients,
+        lambda value: value is not None and value <= Decimal("0.20"),
+    )
+    negative_streak = consecutive_tail_matches(
+        coefficients,
+        lambda value: value is not None and value < ZERO,
+    )
+    deterioration_streak = consecutive_tail_matches(
+        coefficients,
+        lambda value: (
+            value is not None
+            and (
+                value <= Decimal("0.20")
+                or (
+                    baseline is not None
+                    and value <= baseline - Decimal("0.18")
+                )
+            )
+        ),
+    )
+    trend_slope = decimal_linear_slope(coefficients[-4:])
+
+    sell_signal = (
+        (negative_streak >= 2)
+        or (
+            baseline is not None
+            and baseline >= Decimal("0.35")
+            and deterioration_streak >= 3
+            and recent_coefficient is not None
+            and recent_coefficient <= Decimal("0.20")
+            and (coefficient_gap or ZERO) >= Decimal("0.20")
+            and (trend_slope is None or trend_slope < ZERO)
+        )
+    )
+    watch_signal = (
+        not sell_signal
+        and (
+            weak_streak >= 2
+            or deterioration_streak >= 2
+            or (
+                coefficient_gap is not None
+                and coefficient_gap >= Decimal("0.12")
+                and recent_coefficient is not None
+                and recent_coefficient <= Decimal("0.30")
+            )
+            or correlation.get("stability_label") == "Cambiante"
+        )
+    )
+
+    trigger_label = (
+        f"Reciente {recent_coefficient:.2f} vs 10A {baseline:.2f}"
+        if baseline is not None and recent_coefficient is not None
+        else "Coeficiente reciente sin comparar"
+    )
+    if sell_signal:
+        note = (
+            f"El coeficiente frente a {position.analysis_reference_label} se debilita de forma continuada: "
+            f"{deterioration_streak} {periods_label} seguidos con peor lectura y ultimo tramo en {recent_coefficient:.2f}. "
+            f"Es una senal de venta si la posicion sigue en cartera."
+        )
+        return {
+            **base_payload,
+            "available": True,
+            "label": "Vender",
+            "tone": "sell",
+            "note": note,
+            "trigger_label": trigger_label,
+            "long_term_coefficient": baseline,
+            "recent_coefficient": recent_coefficient,
+            "coefficient_gap": coefficient_gap,
+            "deterioration_streak": deterioration_streak,
+            "weak_streak": weak_streak,
+            "negative_streak": negative_streak,
+            "periods_label": periods_label,
+            "window_size": recent_window,
+            "windows_count": len(rolling_rows),
+            "trend_slope": trend_slope,
+        }
+
+    if watch_signal:
+        note = (
+            f"El coeficiente frente a {position.analysis_reference_label} ha perdido consistencia en el tramo reciente. "
+            f"Todavia no fuerza venta inmediata, pero conviene vigilar si el deterioro se prolonga."
+        )
+        return {
+            **base_payload,
+            "available": True,
+            "label": "Vigilar",
+            "tone": "watch",
+            "note": note,
+            "trigger_label": trigger_label,
+            "long_term_coefficient": baseline,
+            "recent_coefficient": recent_coefficient,
+            "coefficient_gap": coefficient_gap,
+            "deterioration_streak": deterioration_streak,
+            "weak_streak": weak_streak,
+            "negative_streak": negative_streak,
+            "periods_label": periods_label,
+            "window_size": recent_window,
+            "windows_count": len(rolling_rows),
+            "trend_slope": trend_slope,
+        }
+
+    note = (
+        f"El coeficiente frente a {position.analysis_reference_label} sigue estable en el tramo reciente "
+        f"y no deja una senal continuada de venta."
+    )
+    return {
+        **base_payload,
+        "available": True,
+        "label": "Estable",
+        "tone": "neutral",
+        "note": note,
+        "trigger_label": trigger_label,
+        "long_term_coefficient": baseline,
+        "recent_coefficient": recent_coefficient,
+        "coefficient_gap": coefficient_gap,
+        "deterioration_streak": deterioration_streak,
+        "weak_streak": weak_streak,
+        "negative_streak": negative_streak,
+        "periods_label": periods_label,
+        "window_size": recent_window,
+        "windows_count": len(rolling_rows),
+        "trend_slope": trend_slope,
     }
 
 
@@ -4195,6 +4635,7 @@ def build_one_year_projection(
         end_date=latest_date,
     )
     coefficient = correlation.get("coefficient")
+    recent_coefficient = correlation.get("recent_coefficient")
     observations_count = correlation.get("observations_count", 0)
     price_return_components = []
 
@@ -4220,6 +4661,10 @@ def build_one_year_projection(
     reference_one_year_return_pct = one_year_snapshot.get("benchmark_return_pct") if one_year_snapshot.get("available") else None
     if coefficient is not None and reference_one_year_return_pct is not None:
         price_return_components.append(reference_one_year_return_pct * coefficient * Decimal("0.15"))
+    if coefficient is not None and recent_coefficient is not None:
+        price_return_components.append(
+            clamp_decimal((recent_coefficient - coefficient) * Decimal("8.00"), Decimal("-2.50"), Decimal("2.00"))
+        )
 
     if not price_return_components:
         return {"available": False}
@@ -4297,6 +4742,17 @@ def build_one_year_projection(
             f"y la referencia {position.analysis_reference_label} con correlacion 10A de {coefficient:.2f}. "
             f"El retorno total incluye dividendos netos y penaliza comisiones y custodia del broker."
         )
+    if coefficient is not None and recent_coefficient is not None:
+        if recent_coefficient <= coefficient - Decimal("0.15"):
+            explanation += (
+                f" El coeficiente reciente cae a {recent_coefficient:.2f}, por debajo del 10A, "
+                "asi que el modelo enfria la lectura de ciclo."
+            )
+        elif recent_coefficient >= coefficient + Decimal("0.15"):
+            explanation += (
+                f" El coeficiente reciente sube a {recent_coefficient:.2f}, por encima del 10A, "
+                "y refuerza la lectura de ciclo actual."
+            )
     if analysis_value_source == "normalized_watchlist":
         explanation += (
             f" Como es un valor en seguimiento, los costes y dividendos se normalizan sobre un ticket analitico de "
@@ -4330,6 +4786,7 @@ def build_one_year_projection(
         "stock_1y_return_pct": one_year_snapshot.get("stock_return_pct") if one_year_snapshot.get("available") else None,
         "reference_1y_return_pct": reference_one_year_return_pct,
         "coefficient": coefficient,
+        "recent_coefficient": recent_coefficient,
         "cycle_phase": cycle_metrics.get("cycle_phase"),
         "years_covered": years_covered,
         "cagr_pct": cycle_metrics.get("cagr_pct"),
@@ -4688,6 +5145,7 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
         best_candidate = card.get("reference_playbook", {}).get("best_candidate")
         projected_return_pct = projection.get("base_return_pct")
         trade_alert = card.get("trade_alert", {})
+        coefficient_alert = card.get("coefficient_alert", {})
         rows.append(
             {
                 "position": position,
@@ -4716,6 +5174,9 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
                 "trade_alert_note": trade_alert.get("note", ""),
                 "trade_alert_score": trade_alert.get("score", ZERO),
                 "trade_alert_trigger": trade_alert.get("trigger_label", ""),
+                "coefficient_alert_label": coefficient_alert.get("label", "Sin lectura"),
+                "coefficient_alert_tone": coefficient_alert.get("tone", "neutral"),
+                "coefficient_alert_trigger": coefficient_alert.get("trigger_label", ""),
                 "action_label": build_decision_action_label(
                     position,
                     projected_return_pct,
@@ -4919,6 +5380,7 @@ def build_equity_history_card(
     sector_label: str | None = None,
     include_visuals: bool = True,
     include_reference_suggestions: bool = True,
+    include_fundamentals: bool | None = None,
 ) -> dict:
     resolved_status_key = status_key or ("owned" if position.is_owned else "watchlist")
     resolved_status_label = status_label or position.get_position_kind_display()
@@ -4929,6 +5391,16 @@ def build_equity_history_card(
         quote_symbol=position.quote_symbol,
     )
     sale_preview = build_equity_sale_preview(position)
+    resolved_include_fundamentals = should_fetch_equity_fundamentals() if include_fundamentals is None else include_fundamentals
+    fundamentals = (
+        build_equity_fundamentals_summary(position, force_live_fetch=bool(include_fundamentals))
+        if resolved_include_fundamentals
+        else {
+            "available": False,
+            "note": "La lectura fundamental se ha omitido en esta vista para priorizar velocidad.",
+            "net_income_rows": [],
+        }
+    )
 
     if not history:
         return {
@@ -4950,6 +5422,14 @@ def build_equity_history_card(
                 "trend_label": "Sin tendencia relativa",
                 "trigger_label": "Sin historico suficiente",
             },
+            "coefficient_alert": {
+                "available": False,
+                "label": "Sin lectura",
+                "tone": "neutral",
+                "note": "Sin historico suficiente para leer el coeficiente de referencia.",
+                "trigger_label": "Sin historico suficiente",
+            },
+            "fundamentals": fundamentals,
             "reference_playbook": {"available": False, "candidates": []},
             "suggested_references": [],
         }
@@ -5001,6 +5481,7 @@ def build_equity_history_card(
         else {"label": "Baja", "score": Decimal("40.00")}
     )
     relative_trend = build_relative_strength_trend(history, position, correlation.get("coefficient"))
+    coefficient_alert = build_reference_coefficient_alert(history, position, correlation)
     trade_alert = build_trade_alert(
         position,
         projection,
@@ -5131,7 +5612,9 @@ def build_equity_history_card(
         "projection_backtest": projection_backtest,
         "projection_reliability": projection_reliability,
         "relative_trend": relative_trend,
+        "coefficient_alert": coefficient_alert,
         "trade_alert": trade_alert,
+        "fundamentals": fundamentals,
         "suggested_references": suggested_references,
         "historical_chart": historical_chart,
         "best_correlation_chart": best_correlation_chart,
@@ -5162,6 +5645,7 @@ def build_equity_history_cards(
     selected_start_date: date | None = None,
     selected_end_date: date | None = None,
     reference_cache: dict | None = None,
+    include_fundamentals: bool | None = None,
 ) -> list[dict]:
     cards = []
     reference_cache = reference_cache if reference_cache is not None else {}
@@ -5174,6 +5658,7 @@ def build_equity_history_cards(
                 reference_cache,
                 selected_start_date=selected_start_date,
                 selected_end_date=selected_end_date,
+                include_fundamentals=include_fundamentals,
             )
         )
     return cards
@@ -5325,6 +5810,7 @@ def build_ibex_universe_card(
     broker_profile: dict | None = None,
     include_visuals: bool = True,
     include_reference_suggestions: bool = True,
+    include_fundamentals: bool | None = None,
 ) -> dict:
     reference_cache = reference_cache if reference_cache is not None else {}
     workbook_snapshot = workbook_snapshot or load_ibex_reference_workbook_snapshot()
@@ -5369,6 +5855,7 @@ def build_ibex_universe_card(
         sector_label=company.get("sector", ""),
         include_visuals=include_visuals,
         include_reference_suggestions=include_reference_suggestions,
+        include_fundamentals=include_fundamentals,
     )
     if workbook_playbook and workbook_playbook.get("available"):
         card["reference_playbook"] = build_workbook_reference_playbook(company, workbook_snapshot, card=card)
@@ -5513,6 +6000,7 @@ def build_ibex_universe_analysis(
                         broker_profile=broker_profile,
                         include_visuals=False,
                         include_reference_suggestions=False,
+                        include_fundamentals=False,
                     )
                 except Exception as exc:
                     failures.append(f"{company.get('company_name') or company.get('ticker')}: {exc}")

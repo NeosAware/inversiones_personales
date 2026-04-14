@@ -506,7 +506,14 @@
                       <br><span class="metric-sub">Mejor ajuste: {{ row.best_reference_label }}</span>
                     {% endif %}
                   </td>
-                  <td>{% if row.correlation is not None %}{{ row.correlation|floatformat:2 }}<br><span class="metric-sub">{{ row.years_covered|floatformat:1 }}A</span>{% else %}-{% endif %}</td>
+                  <td>
+                    {% if row.correlation is not None %}
+                      {{ row.correlation|floatformat:2 }}<br><span class="metric-sub">{{ row.years_covered|floatformat:1 }}A</span>
+                      {% if row.coefficient_alert_label %}<br><span class="metric-sub">Coef {{ row.coefficient_alert_label }}</span>{% endif %}
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
                   <td class="{% if row.projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.projected_return_pct|floatformat:1 }} %</td>
                   <td><span class="equity-score-pill{% if row.safety_score >= 70 %} good{% elif row.safety_score < 55 %} warn{% endif %}">{{ row.safety_score|floatformat:0 }}/100</span></td>
                   <td><span class="equity-score-pill{% if row.reliability_label == 'Alta' %} good{% elif row.reliability_label == 'Baja' %} warn{% endif %}">{{ row.reliability_label }}</span></td>
@@ -592,7 +599,14 @@
                   </td>
                   <td><strong class="{% if row.trade_alert_tone == 'buy' %}good{% elif row.trade_alert_tone == 'sell' %}warn{% endif %}">{{ row.trade_alert_label }}</strong><br><span class="metric-sub">{{ row.trade_alert_trigger }}</span></td>
                   <td><strong>{{ row.reference_label }}</strong>{% if row.best_reference_label and row.best_reference_label != row.reference_label %}<br><span class="metric-sub">Mejor ajuste: {{ row.best_reference_label }}</span>{% endif %}</td>
-                  <td>{% if row.correlation is not None %}{{ row.correlation|floatformat:2 }}<br><span class="metric-sub">{{ row.years_covered|floatformat:1 }}A</span>{% else %}-{% endif %}</td>
+                  <td>
+                    {% if row.correlation is not None %}
+                      {{ row.correlation|floatformat:2 }}<br><span class="metric-sub">{{ row.years_covered|floatformat:1 }}A</span>
+                      {% if row.coefficient_alert_label %}<br><span class="metric-sub">Coef {{ row.coefficient_alert_label }}</span>{% endif %}
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
                   <td class="{% if row.projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.projected_return_pct|floatformat:1 }} %</td>
                   <td>{{ row.safety_score|floatformat:0 }}/100</td>
                   <td>{{ row.reliability_label }}</td>
