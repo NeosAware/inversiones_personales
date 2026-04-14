@@ -2610,6 +2610,100 @@ def build_five_year_cycle_projection(
         annual_return_pct *= Decimal("0.96")
     annual_return_pct = clamp_decimal(annual_return_pct, Decimal("-10.00"), Decimal("16.00"))
 
+    half_year_returns = []
+    for index in range(6, len(monthly_history), 6):
+        half_year_return = percentage_change(monthly_history[index].close_price, monthly_history[index - 6].close_price)
+        if half_year_return is not None:
+            half_year_returns.append(half_year_return)
+    positive_half_year_returns = [value for value in half_year_returns if value > ZERO]
+    negative_half_year_returns = [value for value in half_year_returns if value < ZERO]
+    base_half_year_return = Decimal(
+        str(round(((max(0.01, 1 + (float(annual_return_pct) / 100)) ** 0.5) - 1) * 100, 4))
+    )
+    upside_return = median_decimal(positive_half_year_returns)
+    if upside_return is None:
+        upside_return = clamp_decimal(base_half_year_return * Decimal("1.40"), Decimal("2.50"), Decimal("10.00"))
+    downside_return = median_decimal(negative_half_year_returns)
+    downside_floor = -clamp_decimal(
+        max(
+            abs(cycle_metrics.get("max_drawdown_pct") or ZERO) * Decimal("0.22"),
+            (cycle_metrics.get("annualized_volatility_pct") or Decimal("16.00")) * Decimal("0.32"),
+            Decimal("2.50"),
+        ),
+        Decimal("2.50"),
+        Decimal("10.00"),
+    )
+    if downside_return is None:
+        downside_return = downside_floor
+    else:
+        downside_return = min(downside_return, downside_floor)
+    mild_up = average_decimal([base_half_year_return, upside_return]) or base_half_year_return
+    mild_down = average_decimal([base_half_year_return, downside_return]) or downside_return
+    flat_return = base_half_year_return * Decimal("0.35")
+    recovery_return = average_decimal([upside_return, mild_up]) or mild_up
+    correction_return = average_decimal([downside_return, mild_down]) or mild_down
+    phase_sequence = {
+        "Expansion": [
+            recovery_return,
+            correction_return,
+            mild_up,
+            downside_return,
+            recovery_return,
+            mild_down,
+            upside_return,
+            correction_return,
+            mild_up,
+            flat_return,
+        ],
+        "Recuperacion": [
+            upside_return,
+            mild_up,
+            correction_return,
+            recovery_return,
+            mild_down,
+            upside_return,
+            correction_return,
+            mild_up,
+            flat_return,
+            mild_down,
+        ],
+        "Correccion": [
+            downside_return,
+            mild_up,
+            correction_return,
+            recovery_return,
+            mild_down,
+            upside_return,
+            downside_return,
+            mild_up,
+            correction_return,
+            recovery_return,
+        ],
+        "Transicion": [
+            correction_return,
+            mild_up,
+            flat_return,
+            downside_return,
+            recovery_return,
+            mild_down,
+            upside_return,
+            correction_return,
+            mild_up,
+            flat_return,
+        ],
+    }
+    step_return_pcts = list(phase_sequence.get(cycle_metrics.get("cycle_phase") or "Transicion", phase_sequence["Transicion"]))
+    schedule_average = average_decimal(step_return_pcts) or ZERO
+    schedule_shift = base_half_year_return - schedule_average
+    step_return_pcts = [
+        clamp_decimal(value + schedule_shift, Decimal("-12.00"), Decimal("12.00"))
+        for value in step_return_pcts
+    ]
+    if all(value >= ZERO for value in step_return_pcts):
+        step_return_pcts[3] = min(downside_return, Decimal("-1.50"))
+    if all(value <= ZERO for value in step_return_pcts):
+        step_return_pcts[1] = max(upside_return, Decimal("1.50"))
+
     path = build_cycle_projection_path(
         latest_price,
         annual_return_pct,
@@ -2619,6 +2713,7 @@ def build_five_year_cycle_projection(
         anchor_date=latest_date,
         years=5,
         step_months=6,
+        step_return_pcts=step_return_pcts,
     )
     if not path:
         return {"available": False}
@@ -2631,7 +2726,7 @@ def build_five_year_cycle_projection(
     explanation = (
         f"Esta vista 5A usa los ultimos {analysis_years_used:.1f} anos para leer el ciclo de {position.company_name}. "
         f"Combina CAGR del ciclo, ritmo a 3-5 anos, drawdown actual y fase {cycle_metrics.get('cycle_phase', 'sin ciclo').lower()} "
-        "para dibujar una senda larga de orientacion, separada de la decision a 12 meses."
+        "para dibujar una senda larga de orientacion con tramos de correccion y rebote inspirados en las ventanas bajistas y alcistas del historico, separada de la decision a 12 meses."
     )
     return {
         "available": True,
@@ -2643,6 +2738,7 @@ def build_five_year_cycle_projection(
         "analysis_years_used": analysis_years_used,
         "history_window_label": "Ultimos 5 anos",
         "model_window_label": f"{analysis_years_used:.1f} anos de historico",
+        "step_return_pcts": [quantize_decimal(value) or ZERO for value in step_return_pcts],
         "explanation": explanation,
     }
 
@@ -3635,6 +3731,16 @@ def average_decimal(values: list[Decimal]) -> Decimal | None:
     if not filtered:
         return None
     return sum(filtered, ZERO) / Decimal(len(filtered))
+
+
+def median_decimal(values: list[Decimal]) -> Decimal | None:
+    filtered = sorted(value for value in values if value is not None)
+    if not filtered:
+        return None
+    middle = len(filtered) // 2
+    if len(filtered) % 2:
+        return filtered[middle]
+    return (filtered[middle - 1] + filtered[middle]) / Decimal("2")
 
 
 def percentage_change(current: Decimal | None, reference: Decimal | None) -> Decimal | None:
@@ -4689,39 +4795,43 @@ def build_cycle_projection_path(
     anchor_date: date | None = None,
     years: int = 5,
     step_months: int = 6,
+    step_return_pcts: list[Decimal] | None = None,
 ) -> list[dict]:
     if current_price in {None, ZERO} or annual_return_pct is None or years <= 0 or step_months <= 0:
         return []
 
+    steps = int((years * 12) / step_months)
     annual_multiplier = max(0.01, 1 + (float(annual_return_pct) / 100))
     base_step_multiplier = annual_multiplier ** (step_months / 12)
-    amplitude_pct = clamp_decimal(
-        (annualized_volatility_pct or Decimal("16.00")) * Decimal("0.18"),
-        Decimal("1.50"),
-        Decimal("5.50"),
-    )
-    phase_offset = {
-        "Correccion": -math.pi / 2,
-        "Recuperacion": -math.pi / 4,
-        "Expansion": math.pi / 6,
-        "Transicion": math.pi / 2,
-    }.get(cycle_phase or "Transicion", math.pi / 2)
-    cycle_length_steps = max(int(round((12 * 3) / step_months)), 4)
-    angle_increment = (2 * math.pi) / cycle_length_steps
-    steps = int((years * 12) / step_months)
     projected_price = Decimal(str(current_price))
     path = []
 
     for step in range(1, steps + 1):
-        cycle_wave = Decimal(str(round(math.sin(phase_offset + ((step - 1) * angle_increment)), 4)))
-        cycle_adjustment_pct = cycle_wave * amplitude_pct * Decimal("0.40")
-        if current_drawdown_pct is not None and current_drawdown_pct <= Decimal("-8.00") and step <= 2:
-            rebound_bonus_pct = clamp_decimal(abs(current_drawdown_pct) * Decimal("0.08"), ZERO, Decimal("1.80"))
-            cycle_adjustment_pct += rebound_bonus_pct / Decimal(str(step))
-        elif current_drawdown_pct is not None and current_drawdown_pct >= Decimal("-3.00") and step == 1:
-            cycle_adjustment_pct -= Decimal("0.80")
-
-        step_multiplier = base_step_multiplier * max(0.85, 1 + (float(cycle_adjustment_pct) / 100))
+        if step_return_pcts and step <= len(step_return_pcts):
+            step_return_pct = step_return_pcts[step - 1]
+            step_multiplier = max(0.80, 1 + (float(step_return_pct) / 100))
+        else:
+            amplitude_pct = clamp_decimal(
+                (annualized_volatility_pct or Decimal("16.00")) * Decimal("0.18"),
+                Decimal("1.50"),
+                Decimal("5.50"),
+            )
+            phase_offset = {
+                "Correccion": -math.pi / 2,
+                "Recuperacion": -math.pi / 4,
+                "Expansion": math.pi / 6,
+                "Transicion": math.pi / 2,
+            }.get(cycle_phase or "Transicion", math.pi / 2)
+            cycle_length_steps = max(int(round((12 * 3) / step_months)), 4)
+            angle_increment = (2 * math.pi) / cycle_length_steps
+            cycle_wave = Decimal(str(round(math.sin(phase_offset + ((step - 1) * angle_increment)), 4)))
+            cycle_adjustment_pct = cycle_wave * amplitude_pct * Decimal("0.40")
+            if current_drawdown_pct is not None and current_drawdown_pct <= Decimal("-8.00") and step <= 2:
+                rebound_bonus_pct = clamp_decimal(abs(current_drawdown_pct) * Decimal("0.08"), ZERO, Decimal("1.80"))
+                cycle_adjustment_pct += rebound_bonus_pct / Decimal(str(step))
+            elif current_drawdown_pct is not None and current_drawdown_pct >= Decimal("-3.00") and step == 1:
+                cycle_adjustment_pct -= Decimal("0.80")
+            step_multiplier = base_step_multiplier * max(0.85, 1 + (float(cycle_adjustment_pct) / 100))
         projected_price = Decimal(str(round(float(projected_price) * step_multiplier, 4)))
         months = step * step_months
         if months % 12 == 0:

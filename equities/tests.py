@@ -438,6 +438,12 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(cycle_chart["projection_end_label"].startswith("2030-"))
         self.assertEqual(cycle_projection["path"][-1]["label"], "5A")
         self.assertIn("10.0 anos", cycle_projection["explanation"])
+        self.assertTrue(
+            any(
+                current["projected_price"] < previous["projected_price"]
+                for previous, current in zip(cycle_projection["path"], cycle_projection["path"][1:])
+            )
+        )
 
     def test_projection_includes_dividends_and_broker_drag(self):
         position = EquityPosition.objects.create(
