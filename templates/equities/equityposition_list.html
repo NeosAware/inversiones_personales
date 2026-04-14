@@ -266,6 +266,34 @@
       border-radius:18px;
       background:#fff;
     }
+    .equity-optimization-history{
+      max-height:560px;
+      scrollbar-gutter:stable;
+    }
+    .equity-optimization-history thead th{
+      position:sticky;
+      top:0;
+      z-index:1;
+      background:#f8fbfe;
+      box-shadow:inset 0 -1px 0 #dbe5ec;
+    }
+    .equity-action-stack{
+      display:grid;
+      gap:8px;
+      align-content:start;
+    }
+    .equity-action-stack form{
+      margin:0;
+    }
+    .equity-action-stack .button{
+      width:100%;
+      justify-content:center;
+    }
+    .equity-danger-button{
+      border-color:#ebd0c9;
+      background:#fff6f3;
+      color:#8a4135;
+    }
     .equity-row-link{
       cursor:pointer;
     }
@@ -1101,14 +1129,14 @@
     </details>
 
     <details class="equity-fold" id="equity-optimizer" open>
-      <summary>Optimizador 12M</summary>
+      <summary>Optimizador 12M + 5A</summary>
       <div class="equity-fold-body">
         <div class="equity-panel" style="padding:0; border:none; box-shadow:none; background:transparent;">
           <div class="equity-panel-head">
             <div>
               <p class="section-title">Optimizador robusto</p>
               <h3>Proceso completo en segundo plano</h3>
-              <p>Lanza una optimizacion persistente con referencia propia, fecha de ejecucion, costes de compra y mantenimiento, dividendos, riesgo historico, senal externa reciente de prensa y todo el universo del IBEX, no solo los valores que ya tienes en seguimiento. El resultado se guarda para consultarlo, compararlo y descargar el informe completo en HTML o PDF.</p>
+              <p>Lanza una optimizacion persistente con referencia propia, fecha de ejecucion, costes de compra y mantenimiento, dividendos, riesgo historico, senal externa reciente de prensa y todo el universo del IBEX, no solo los valores que ya tienes en seguimiento. Cada lanzamiento genera dos optimizaciones hermanas: una con 12M como prioridad y 5A como apoyo, y otra con 5A como prioridad y 12M como apoyo. Ambas se guardan para consultarlas, compararlas y descargar sus informes en HTML o PDF.</p>
             </div>
           </div>
           <form method="post" class="stack" style="margin-top:18px;">
@@ -1138,7 +1166,7 @@
               {% if optimizer_run_form.restrictions_note.help_text %}<div class="metric-sub">{{ optimizer_run_form.restrictions_note.help_text }}</div>{% endif %}
             </div>
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
-              <button class="button" type="submit">Lanzar optimizacion robusta</button>
+              <button class="button" type="submit">Lanzar doble optimizacion robusta</button>
               <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Restablecer formulario</a>
             </div>
           </form>
@@ -1149,7 +1177,7 @@
                 <div>
                   <p class="section-title">Seguimiento en vivo</p>
                   <h3>Evolucion de las optimizaciones activas</h3>
-                  <p>La tarjeta se refresca sola y te deja ver si el proceso avanza bien: fase, porcentaje, bloque actual, empresas ya cribadas y una cartera provisional antes del cierre final.</p>
+                  <p>La tarjeta se refresca sola y te deja ver si el proceso avanza bien: fase, porcentaje, bloque actual, empresas ya cribadas y una cartera provisional antes del cierre final. Cada lanzamiento puede enseñarte dos tarjetas, una por estrategia.</p>
                 </div>
               </div>
               <div class="stack" style="margin-top:18px;">
@@ -1270,134 +1298,80 @@
           {% endif %}
 
           {% if optimization_runs %}
-            <div class="equity-table-wrap" style="margin-top:18px;">
-              <table>
-                <thead><tr><th>Referencia</th><th>Fecha</th><th>Estado</th><th>Restricciones</th><th>Ticket propuesto</th><th>Resultado</th><th>Acciones</th></tr></thead>
-                <tbody>
-                  {% for run in optimization_runs %}
-                    <tr>
-                      <td><strong>{{ run.display_label }}</strong><br><span class="metric-sub">{{ run.reference_code }}</span></td>
-                      <td>{{ run.created_at|date:"Y-m-d H:i" }}{% if run.completed_at %}<br><span class="metric-sub">Finalizada {{ run.completed_at|date:"Y-m-d H:i" }}</span>{% endif %}</td>
-                      <td>
-                        <strong class="{% if run.status == 'completed' %}good{% elif run.status == 'failed' %}warn{% endif %}">{{ run.get_status_display }}</strong>
-                        {% if run.status_note %}<br><span class="metric-sub">{{ run.status_note }}</span>{% endif %}
-                      </td>
-                      <td>
-                        {% if run.restrictions_note %}{{ run.restrictions_note }}{% else %}<span class="metric-sub">Sin nota adicional</span>{% endif %}
-                        <br><span class="metric-sub">Sectores {% if run.summary_data.selected_sectors %}{{ run.summary_data.selected_sectors|join:", " }}{% elif run.selected_sectors %}{{ run.selected_sectors|join:", " }}{% else %}todos los del IBEX{% endif %}</span>
-                      </td>
-                      <td>
-                        {% if run.allocations_data %}
-                          {% for item in run.allocations_data|slice:":6" %}
-                            <span class="metric-sub">
-                              {% if item.company_name %}{{ item.company_name }}{% elif item.ticker %}{{ item.ticker }}{% else %}Valor sin nombre{% endif %}
-                              {% if item.allocated_weight_pct or item.allocated_weight_pct == 0 %} {{ item.allocated_weight_pct|floatformat:1 }} %{% endif %}
-                            </span>{% if not forloop.last %}<br>{% endif %}
-                          {% endfor %}
-                          {% if run.allocations_data|length > 6 %}<br><span class="metric-sub">+{{ run.allocations_data|length|add:"-6" }} valor(es) adicionales</span>{% endif %}
-                        {% elif run.summary_data.available %}
-                          <span class="metric-sub">Composicion pendiente de mostrar</span>
-                        {% else %}
-                          <span class="metric-sub">Se completara al cerrar la optimizacion.</span>
-                        {% endif %}
-                      </td>
-                      <td>
-                        {% if run.summary_data.available %}
-                          {{ run.summary_data.projected_gain_total|floatformat:0 }} EUR
-                          <br><span class="metric-sub">Retorno {% if run.summary_data.weighted_return_pct is not None %}{{ run.summary_data.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %} | {{ run.summary_data.allocations_count }} valores{% if run.summary_data.max_total_positions %} | max {{ run.summary_data.max_total_positions }}{% endif %}</span>
-                        {% elif run.summary_data.reason %}
-                          <span class="metric-sub">{{ run.summary_data.reason }}</span>
-                        {% elif run.error_message %}
-                          <span class="metric-sub">{{ run.error_message }}</span>
-                        {% else %}
-                          <span class="metric-sub">Pendiente de resultado</span>
-                        {% endif %}
-                      </td>
-                      <td>
-                        {% if run.status == 'completed' and run.report_html %}
-                          <a class="button secondary" href="{% url 'equities:optimization_report' run.id %}" target="_blank" rel="noopener">Ver informe</a>
-                          <a class="button secondary" href="{% url 'equities:optimization_download' run.id %}">PDF</a>
-                          <a class="button secondary" href="{% url 'equities:optimization_download_html' run.id %}">HTML</a>
-                        {% else %}
-                          <span class="metric-sub">Se actualiza al terminar.</span>
-                        {% endif %}
-                      </td>
-                    </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
-            </div>
-          {% endif %}
-
-          {% if optimization_comparison.available %}
             <div class="equity-panel" style="margin-top:18px;">
               <div class="equity-panel-head">
                 <div>
-                  <p class="section-title">Comparativa</p>
-                  <h3>Comparacion entre optimizaciones cerradas</h3>
-                  <p>Esta tabla junta las ejecuciones completadas para que compares de un vistazo restricciones, cartera elegida, rentabilidad esperada, peor escenario, seguridad y costes.</p>
+                  <p class="section-title">Historico guardado</p>
+                  <h3>Optimizaciones realizadas</h3>
+                  <p>Se mantiene una sola tabla de historico. Si acumulas muchas ejecuciones, podras recorrerlas con scroll dentro del bloque sin alargar toda la pantalla.</p>
                 </div>
-                <span class="pill">{{ optimization_comparison.runs_count }} optimizaciones comparables</span>
+                <span class="pill">{{ optimization_runs|length }} ultimas ejecuciones</span>
               </div>
-              <div class="equity-grid-4" style="margin-top:18px;">
-                <div class="equity-box">
-                  <span>Mayor rentabilidad</span>
-                  <strong>{% if optimization_comparison.best_return.weighted_return_pct is not None %}{{ optimization_comparison.best_return.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong>
-                  <small>{{ optimization_comparison.best_return.display_label }}</small>
-                </div>
-                <div class="equity-box">
-                  <span>Mejor peor escenario</span>
-                  <strong class="{% if optimization_comparison.best_protection.weighted_low_return_pct is not None and optimization_comparison.best_protection.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if optimization_comparison.best_protection.weighted_low_return_pct is not None %}{{ optimization_comparison.best_protection.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong>
-                  <small>{{ optimization_comparison.best_protection.display_label }}</small>
-                </div>
-                <div class="equity-box">
-                  <span>Mayor seguridad</span>
-                  <strong>{% if optimization_comparison.best_safety.weighted_safety_score is not None %}{{ optimization_comparison.best_safety.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong>
-                  <small>{{ optimization_comparison.best_safety.display_label }}</small>
-                </div>
-                <div class="equity-box">
-                  <span>Lectura</span>
-                  <strong>Negocio</strong>
-                  <small>Compara carteras como si fueran propuestas de inversion completas, no como pruebas sueltas.</small>
-                </div>
-              </div>
-              <div class="equity-table-wrap" style="margin-top:18px;">
+              <div class="equity-table-wrap equity-optimization-history" style="margin-top:18px;">
                 <table>
-                  <thead><tr><th>Optimizacion</th><th>Restricciones</th><th>Acciones elegidas</th><th>Rentabilidad esperada</th><th>Riesgo y robustez</th><th>Flujo y costes</th><th>Acciones</th></tr></thead>
+                  <thead><tr><th>Referencia</th><th>Fecha</th><th>Estado</th><th>Restricciones</th><th>Ticket propuesto</th><th>Resultado</th><th>Acciones</th></tr></thead>
                   <tbody>
-                    {% for row in optimization_comparison.rows %}
+                    {% for run in optimization_runs %}
                       <tr>
+                        <td><strong>{{ run.display_label }}</strong><br><span class="metric-sub">{{ run.reference_code }}</span></td>
+                        <td>{{ run.created_at|date:"Y-m-d H:i" }}{% if run.completed_at %}<br><span class="metric-sub">Finalizada {{ run.completed_at|date:"Y-m-d H:i" }}</span>{% endif %}</td>
                         <td>
-                          <strong>{{ row.display_label }}</strong><br>
-                          <span class="metric-sub">{{ row.reference_code }}</span><br>
-                          <span class="metric-sub">Lanzada {{ row.created_at_label }}{% if row.completed_at_label %} | Cerrada {{ row.completed_at_label }}{% endif %}</span>
+                          <strong class="{% if run.status == 'completed' %}good{% elif run.status == 'failed' %}warn{% endif %}">{{ run.get_status_display }}</strong>
+                          {% if run.status_note %}<br><span class="metric-sub">{{ run.status_note }}</span>{% endif %}
                         </td>
                         <td>
-                          Capital {{ row.total_investment|floatformat:0 }} EUR<br>
-                          <span class="metric-sub">Max empresa {% if row.max_company_pct is not None %}{{ row.max_company_pct|floatformat:1 }} %{% else %}-{% endif %} | Max total {% if row.max_total_positions %}{{ row.max_total_positions }}{% else %}sin limite{% endif %} | Max sector {% if row.max_sector_positions %}{{ row.max_sector_positions }}{% else %}sin limite{% endif %}</span>
-                          <br><span class="metric-sub">Sectores {% if row.selected_sectors_label %}{{ row.selected_sectors_label }}{% else %}todos los del IBEX{% endif %}</span>
-                          {% if row.restrictions_note %}<br><span class="metric-sub">{{ row.restrictions_note }}</span>{% endif %}
+                          {% if run.restrictions_note %}{{ run.restrictions_note }}{% else %}<span class="metric-sub">Sin nota adicional</span>{% endif %}
+                          <br><span class="metric-sub">Sectores {% if run.summary_data.selected_sectors %}{{ run.summary_data.selected_sectors|join:", " }}{% elif run.selected_sectors %}{{ run.selected_sectors|join:", " }}{% else %}todos los del IBEX{% endif %}</span>
                         </td>
                         <td>
-                          <strong>{{ row.allocations_count }} valores</strong><br>
-                          <span class="metric-sub">{{ row.constituents_label|default:"Sin composicion guardada" }}</span><br>
-                          <span class="metric-sub">Sectores {{ row.sectors_count }} | Mejor idea {{ row.top_pick_name|default:"-" }}</span>
+                          {% if run.allocations_data %}
+                            {% for item in run.allocations_data|slice:":6" %}
+                              <span class="metric-sub">
+                                {% if item.company_name %}{{ item.company_name }}{% elif item.ticker %}{{ item.ticker }}{% else %}Valor sin nombre{% endif %}
+                                {% if item.allocated_weight_pct or item.allocated_weight_pct == 0 %} {{ item.allocated_weight_pct|floatformat:1 }} %{% endif %}
+                              </span>{% if not forloop.last %}<br>{% endif %}
+                            {% endfor %}
+                            {% if run.allocations_data|length > 6 %}<br><span class="metric-sub">+{{ run.allocations_data|length|add:"-6" }} valor(es) adicionales</span>{% endif %}
+                          {% elif run.summary_data.available %}
+                            <span class="metric-sub">Composicion pendiente de mostrar</span>
+                          {% else %}
+                            <span class="metric-sub">Se completara al cerrar la optimizacion.</span>
+                          {% endif %}
                         </td>
                         <td>
-                          <strong class="{% if row.weighted_return_pct is not None and row.weighted_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if row.weighted_return_pct is not None %}{{ row.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><br>
-                          <span class="metric-sub">Ganancia 12M {{ row.projected_gain_total|floatformat:0 }} EUR</span>
+                          {% if run.summary_data.available %}
+                            {{ run.summary_data.projected_gain_total|floatformat:0 }} EUR
+                            <br><span class="metric-sub">Retorno {% if run.summary_data.weighted_return_pct is not None %}{{ run.summary_data.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %} | {{ run.summary_data.allocations_count }} valores{% if run.summary_data.max_total_positions %} | max {{ run.summary_data.max_total_positions }}{% endif %}</span>
+                          {% elif run.summary_data.reason %}
+                            <span class="metric-sub">{{ run.summary_data.reason }}</span>
+                          {% elif run.error_message %}
+                            <span class="metric-sub">{{ run.error_message }}</span>
+                          {% else %}
+                            <span class="metric-sub">Pendiente de resultado</span>
+                          {% endif %}
                         </td>
                         <td>
-                          <strong class="{% if row.weighted_low_return_pct is not None and row.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if row.weighted_low_return_pct is not None %}{{ row.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><br>
-                          <span class="metric-sub">Peor escenario | Seguridad {% if row.weighted_safety_score is not None %}{{ row.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %} | Fiabilidad {% if row.weighted_reliability_score is not None %}{{ row.weighted_reliability_score|floatformat:0 }}/100{% else %}-{% endif %}</span>
-                        </td>
-                        <td>
-                          Dividendos {{ row.net_dividend_income_total|floatformat:0 }} EUR<br>
-                          <span class="metric-sub">Mantenimiento {{ row.annual_cost_total|floatformat:0 }} EUR | Compra+venta {{ row.roundtrip_cost_total|floatformat:0 }} EUR | Caja {{ row.cash_reserve_amount|floatformat:0 }} EUR</span>
-                        </td>
-                        <td>
-                          <a class="button secondary" href="{% url 'equities:optimization_report' row.run.id %}" target="_blank" rel="noopener">Ver informe</a>
-                          <a class="button secondary" href="{% url 'equities:optimization_download' row.run.id %}">PDF</a>
+                          <div class="equity-action-stack">
+                            {% if run.status == 'completed' and run.report_html %}
+                              <a class="button secondary" href="{% url 'equities:optimization_report' run.id %}" target="_blank" rel="noopener">Ver informe</a>
+                              <a class="button secondary" href="{% url 'equities:optimization_download' run.id %}">PDF</a>
+                              <a class="button secondary" href="{% url 'equities:optimization_download_html' run.id %}">HTML</a>
+                            {% elif run.status == 'completed' %}
+                              <span class="metric-sub">Informe aun no disponible.</span>
+                            {% elif run.status == 'failed' %}
+                              <span class="metric-sub">Optimizacion cerrada con error.</span>
+                            {% else %}
+                              <span class="metric-sub">Se actualiza al terminar.</span>
+                            {% endif %}
+                            {% if run.status == 'completed' or run.status == 'failed' %}
+                              <form method="post" onsubmit="return confirm('Esta optimizacion se borrara del historico guardado.');">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="delete_optimization_run">
+                                <input type="hidden" name="run_id" value="{{ run.id }}">
+                                <button class="button secondary equity-danger-button" type="submit">Borrar</button>
+                              </form>
+                            {% endif %}
+                          </div>
                         </td>
                       </tr>
                     {% endfor %}
@@ -1413,7 +1387,7 @@
                 <div>
                   <p class="section-title">Ultima optimizacion guardada</p>
                   <h3>{{ latest_completed_optimization.display_label }}</h3>
-                  <p>Referencia {{ latest_completed_optimization.reference_code }}. Hecha el {{ latest_completed_optimization.created_at|date:"Y-m-d H:i" }}{% if latest_completed_optimization.completed_at %} y cerrada el {{ latest_completed_optimization.completed_at|date:"Y-m-d H:i" }}{% endif %}.</p>
+                  <p>Referencia {{ latest_completed_optimization.reference_code }}. Hecha el {{ latest_completed_optimization.created_at|date:"Y-m-d H:i" }}{% if latest_completed_optimization.completed_at %} y cerrada el {{ latest_completed_optimization.completed_at|date:"Y-m-d H:i" }}{% endif %}.{% if latest_completed_optimization.summary_data.strategy_label %} Estrategia {{ latest_completed_optimization.summary_data.strategy_label }}.{% endif %}</p>
                 </div>
                 <div class="equity-chip-row">
                   <a class="button secondary" href="{% url 'equities:optimization_report' latest_completed_optimization.id %}" target="_blank" rel="noopener">Abrir informe</a>

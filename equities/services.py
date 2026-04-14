@@ -6621,7 +6621,38 @@ def projection_reliability_score(label: str) -> Decimal:
     return score_map.get(label or "Baja", Decimal("42.00"))
 
 
-def build_equity_optimizer_candidate(card: dict) -> dict | None:
+OPTIMIZER_STRATEGY_12M_PRIMARY = "12m_primary"
+OPTIMIZER_STRATEGY_5Y_PRIMARY = "5y_primary"
+OPTIMIZER_STRATEGIES = {
+    OPTIMIZER_STRATEGY_12M_PRIMARY: {
+        "label": "12M principal",
+        "description": "Prioriza la prevision a 12 meses y usa el ciclo a 5 anos como contraste.",
+        "primary_horizon_label": "12 meses",
+        "secondary_horizon_label": "5 anos",
+        "primary_weight": Decimal("0.78"),
+        "secondary_weight": Decimal("0.22"),
+    },
+    OPTIMIZER_STRATEGY_5Y_PRIMARY: {
+        "label": "5A principal",
+        "description": "Prioriza el ciclo a 5 anos y usa la prevision a 12 meses como contraste de timing.",
+        "primary_horizon_label": "5 anos",
+        "secondary_horizon_label": "12 meses",
+        "primary_weight": Decimal("0.65"),
+        "secondary_weight": Decimal("0.35"),
+    },
+}
+
+
+def get_optimizer_strategy_config(strategy_mode: str | None = None) -> dict:
+    normalized_mode = str(strategy_mode or OPTIMIZER_STRATEGY_12M_PRIMARY).strip().lower()
+    strategy = OPTIMIZER_STRATEGIES.get(normalized_mode)
+    if strategy is None:
+        normalized_mode = OPTIMIZER_STRATEGY_12M_PRIMARY
+        strategy = OPTIMIZER_STRATEGIES[normalized_mode]
+    return {"mode": normalized_mode, **strategy}
+
+
+def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_STRATEGY_12M_PRIMARY) -> dict | None:
     projection = card.get("projection") or {}
     if not projection.get("available") or projection.get("projected_price") is None:
         return None
@@ -6717,9 +6748,16 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
         )
         if cycle_return_5y_pct is not None and cycle_return_5y_pct < ZERO:
             cycle_support_score += clamp_decimal(cycle_return_5y_pct * Decimal("0.05"), Decimal("-3.00"), ZERO)
+    strategy = get_optimizer_strategy_config(strategy_mode)
+    if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY:
+        primary_signal_pct = cycle_support_score
+        secondary_signal_pct = risk_adjusted_return_pct
+    else:
+        primary_signal_pct = risk_adjusted_return_pct
+        secondary_signal_pct = cycle_support_score
     blended_return_signal_pct = (
-        (risk_adjusted_return_pct * Decimal("0.78"))
-        + (cycle_support_score * Decimal("0.22"))
+        (primary_signal_pct * strategy["primary_weight"])
+        + (secondary_signal_pct * strategy["secondary_weight"])
     )
     optimization_score = (
         blended_return_signal_pct
@@ -6740,12 +6778,18 @@ def build_equity_optimizer_candidate(card: dict) -> dict | None:
             ticker=card["position"].ticker,
             quote_symbol=card["position"].quote_symbol,
         ) or "Sin sector",
+        "strategy_mode": strategy["mode"],
+        "strategy_label": strategy["label"],
+        "strategy_primary_horizon_label": strategy["primary_horizon_label"],
+        "strategy_secondary_horizon_label": strategy["secondary_horizon_label"],
         "reference_label": card["reference_label"],
         "confidence_label": confidence_label,
         "reliability_label": reliability_label,
         "reliability_score": reliability_score,
         "safety_score": safety_score,
         "base_return_pct": base_return_pct,
+        "primary_signal_pct": primary_signal_pct,
+        "secondary_signal_pct": secondary_signal_pct,
         "risk_adjusted_return_pct": risk_adjusted_return_pct,
         "blended_return_signal_pct": blended_return_signal_pct,
         "optimization_score": optimization_score,
@@ -7028,33 +7072,53 @@ def build_equity_allocation_plan(
     max_total_positions: int = 0,
     max_sector_positions: int = 0,
     selected_sectors: list[str] | None = None,
+    strategy_mode: str = OPTIMIZER_STRATEGY_12M_PRIMARY,
 ) -> dict:
+    strategy = get_optimizer_strategy_config(strategy_mode)
     if total_investment <= 0 or max_company_pct <= 0:
         return {
             "available": False,
             "reason": "Parametros insuficientes para calcular la propuesta.",
+            "strategy_mode": strategy["mode"],
+            "strategy_label": strategy["label"],
         }
 
     company_cap_amount = (total_investment * max_company_pct) / Decimal("100")
-    candidates = [candidate for candidate in (build_equity_optimizer_candidate(card) for card in history_cards) if candidate]
+    candidates = [candidate for candidate in (build_equity_optimizer_candidate(card, strategy["mode"]) for card in history_cards) if candidate]
 
     if not candidates:
         return {
             "available": False,
-            "reason": "Todavia no hay suficientes proyecciones para proponer una distribucion a 12M.",
+            "reason": f"Todavia no hay suficientes proyecciones para proponer una distribucion con foco en {strategy['primary_horizon_label']}.",
+            "strategy_mode": strategy["mode"],
+            "strategy_label": strategy["label"],
         }
 
-    positive_candidates = [
-        item
-        for item in candidates
-        if item["optimization_score"] > ZERO
-        and item["base_return_pct"] > ZERO
-        and item["trade_alert_label"] != "Vender"
-    ]
+    if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY:
+        positive_candidates = [
+            item
+            for item in candidates
+            if item["optimization_score"] > ZERO
+            and item["cycle_support_score"] > ZERO
+            and item["trade_alert_label"] != "Vender"
+        ]
+    else:
+        positive_candidates = [
+            item
+            for item in candidates
+            if item["optimization_score"] > ZERO
+            and item["base_return_pct"] > ZERO
+            and item["trade_alert_label"] != "Vender"
+        ]
     if not positive_candidates:
         return {
             "available": False,
-            "reason": "Ahora mismo ninguna accion supera el filtro de retorno neto y riesgo para una optimizacion equilibrada a 12M.",
+            "reason": (
+                "Ahora mismo ninguna accion supera el filtro de retorno neto y riesgo "
+                f"para una optimizacion equilibrada con prioridad en {strategy['primary_horizon_label']}."
+            ),
+            "strategy_mode": strategy["mode"],
+            "strategy_label": strategy["label"],
         }
 
     normalized_selected_sectors = []
@@ -7084,6 +7148,8 @@ def build_equity_allocation_plan(
                 "Con los sectores elegidos no quedan candidatas validas para construir la propuesta. "
                 "Prueba ampliando sectores o relajando otras restricciones."
             ),
+            "strategy_mode": strategy["mode"],
+            "strategy_label": strategy["label"],
             "selected_sectors": normalized_selected_sectors,
             "selected_sector_note": (
                 "La optimizacion se ha limitado a estos sectores: "
@@ -7096,8 +7162,8 @@ def build_equity_allocation_plan(
         positive_candidates,
         key=lambda item: (
             item["optimization_score"],
-            item["risk_adjusted_return_pct"],
-            item.get("cycle_support_score") or ZERO,
+            item["primary_signal_pct"],
+            item["secondary_signal_pct"],
             item["base_return_pct"],
             item["safety_score"],
         ),
@@ -7114,6 +7180,8 @@ def build_equity_allocation_plan(
         return {
             "available": False,
             "reason": "Con el limite por sector indicado no quedan suficientes candidatos validos para construir la propuesta.",
+            "strategy_mode": strategy["mode"],
+            "strategy_label": strategy["label"],
         }
 
     candidate_pool = ranked_candidates
@@ -7209,9 +7277,13 @@ def build_equity_allocation_plan(
                 "status_label": candidate["status_label"],
                 "sector_label": candidate["sector_label"],
                 "reference_label": candidate["reference_label"],
+                "strategy_mode": candidate["strategy_mode"],
+                "strategy_label": candidate["strategy_label"],
                 "allocated_amount": allocated_amount,
                 "allocated_weight_pct": (allocated_amount / total_investment) * Decimal("100"),
                 "base_return_pct": candidate["base_return_pct"],
+                "primary_signal_pct": candidate["primary_signal_pct"],
+                "secondary_signal_pct": candidate["secondary_signal_pct"],
                 "adjusted_return_pct": candidate["risk_adjusted_return_pct"],
                 "blended_return_signal_pct": candidate["blended_return_signal_pct"],
                 "net_projected_return_pct": scenario["net_projected_return_pct"],
@@ -7378,6 +7450,11 @@ def build_equity_allocation_plan(
     return {
         "available": bool(allocations),
         "reason": reason,
+        "strategy_mode": strategy["mode"],
+        "strategy_label": strategy["label"],
+        "strategy_description": strategy["description"],
+        "primary_horizon_label": strategy["primary_horizon_label"],
+        "secondary_horizon_label": strategy["secondary_horizon_label"],
         "allocations": allocations,
         "total_investment": total_investment,
         "max_company_pct": max_company_pct,
@@ -7415,11 +7492,10 @@ def build_equity_allocation_plan(
         "reserve_reason": reserve_reason,
         "top_pick": top_pick,
         "methodology_note": (
-            "La optimizacion se decide principalmente a 12 meses: prioriza retorno neto esperado a 12 meses, dividendos netos, costes de compra/venta y mantenimiento, "
-            "seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa y riesgo historico. "
-            "Como contraste secundario incorpora la prevision de ciclo a 5 anos para reforzar o penalizar la jerarquia final cuando el ciclo largo acompana o flojea, "
-            "sin sustituir la decision principal a 12 meses. "
-            "El historico largo se usa para leer ciclos y penalizar riesgo, no para alargar por si solo el horizonte de decision, "
+            f"Esta ejecucion usa la estrategia {strategy['label']}: "
+            f"prioriza la lectura de {strategy['primary_horizon_label']} y deja {strategy['secondary_horizon_label']} como contraste secundario para reforzar o penalizar la jerarquia final. "
+            "Sigue integrando dividendos netos, costes de compra/venta y mantenimiento, seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa y riesgo historico. "
+            "Las cifras monetarias del informe siguen expresadas a 12 meses para mantener comparables dividendos, costes, caja y peor escenario, aunque la jerarquia de seleccion pueda priorizar 5 anos. "
             "eficiencia real del ticket de compra y, si lo marcas, un maximo total de empresas y diversificacion maxima por sector. En la version robusta se "
             "analiza siempre todo el IBEX, no solo los valores que ya tienes en seguimiento."
         ),

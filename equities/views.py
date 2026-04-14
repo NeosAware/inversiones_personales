@@ -14,9 +14,8 @@ from django.views.generic import TemplateView, View
 from .forms import EquityAllocationOptimizerForm, EquityClosePositionForm, EquityDocumentImportForm, EquityOptimizationRunForm, EquityPositionForm
 from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition
 from .optimization_runs import (
-    build_optimization_comparison_context,
     build_fallback_report_pdf_html,
-    launch_equity_optimization_run,
+    launch_equity_optimization_run_pair,
     render_report_pdf,
     resume_equity_optimization_runs,
 )
@@ -89,7 +88,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         resume_equity_optimization_runs()
-        optimization_runs = list(EquityOptimizationRun.objects.select_related("requested_by")[:12])
+        optimization_runs = list(EquityOptimizationRun.objects.select_related("requested_by")[:40])
         active_optimization_runs = [
             run for run in optimization_runs if run.status in {EquityOptimizationRun.Status.PENDING, EquityOptimizationRun.Status.RUNNING}
         ]
@@ -183,7 +182,6 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["optimizer_plan"] = optimizer_plan
         context["optimization_runs"] = optimization_runs
         context["active_optimization_runs"] = active_optimization_runs
-        context["optimization_comparison"] = build_optimization_comparison_context(optimization_runs)
         context["latest_completed_optimization"] = next(
             (run for run in optimization_runs if run.status == EquityOptimizationRun.Status.COMPLETED and run.summary_data),
             None,
@@ -207,6 +205,8 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             return self._close_position(request)
         if action == "launch_optimizer_run":
             return self._launch_optimizer_run(request)
+        if action == "delete_optimization_run":
+            return self._delete_optimization_run(request)
         return self._save_position(request)
 
     def _sync_market_data(self, request):
@@ -462,7 +462,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             context = self.get_context_data(optimizer_run_form=form)
             return self.render_to_response(context, status=400)
 
-        run = launch_equity_optimization_run(
+        runs = launch_equity_optimization_run_pair(
             total_investment=form.cleaned_data["total_investment"],
             max_company_pct=form.cleaned_data["max_company_pct"],
             max_total_positions=form.cleaned_data["max_total_positions"],
@@ -472,11 +472,38 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             reference_label=form.cleaned_data["reference_label"],
             restrictions_note=form.cleaned_data["restrictions_note"],
         )
-        if run.status == EquityOptimizationRun.Status.COMPLETED:
-            messages.success(request, f"Optimizacion {run.reference_code} completada y guardada.")
+        if all(run.status == EquityOptimizationRun.Status.COMPLETED for run in runs):
+            messages.success(
+                request,
+                "Se han guardado dos optimizaciones hermanas: 12M principal y 5A principal.",
+            )
         else:
-            messages.success(request, f"Optimizacion {run.reference_code} lanzada en segundo plano.")
+            messages.success(
+                request,
+                "Se han lanzado dos optimizaciones en segundo plano: 12M principal y 5A principal.",
+            )
         return redirect(f"{reverse('equities:list')}?optimizer_status=1#equity-optimizer")
+
+    def _delete_optimization_run(self, request):
+        run_id = request.POST.get("run_id", "").strip()
+        if not run_id:
+            messages.error(request, "No se ha encontrado la optimizacion a borrar.")
+            return HttpResponseRedirect(f"{reverse('equities:list')}#equity-optimizer")
+
+        try:
+            run = EquityOptimizationRun.objects.get(pk=run_id)
+        except EquityOptimizationRun.DoesNotExist:
+            messages.info(request, "La optimizacion ya no existe en el historico.")
+            return HttpResponseRedirect(f"{reverse('equities:list')}#equity-optimizer")
+
+        if run.status not in {EquityOptimizationRun.Status.COMPLETED, EquityOptimizationRun.Status.FAILED}:
+            messages.error(request, "Solo puedes borrar optimizaciones ya cerradas.")
+            return HttpResponseRedirect(f"{reverse('equities:list')}#equity-optimizer")
+
+        run_label = run.display_label
+        run.delete()
+        messages.success(request, f"Optimizacion {run_label} eliminada del historico.")
+        return HttpResponseRedirect(f"{reverse('equities:list')}#equity-optimizer")
 
 
 class IbexEquityDetailView(LoginRequiredMixin, EquityPeriodBoundsMixin, TemplateView):

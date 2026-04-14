@@ -108,9 +108,10 @@
   <div class="shell">
     <section class="hero">
       <h1>{{ run.display_label }}</h1>
-      <p>Informe completo de optimizacion de cartera a 12 meses. Referencia {{ run.reference_code }} generada el {{ generated_at|date:"Y-m-d H:i" }}. Esta version robusta analiza todo el IBEX y no se limita a los valores que ya tenias en seguimiento.</p>
+      <p>Informe completo de optimizacion de cartera. Estrategia {{ plan.strategy_label|default:"12M principal" }}. Referencia {{ run.reference_code }} generada el {{ generated_at|date:"Y-m-d H:i" }}. Esta version robusta analiza todo el IBEX y no se limita a los valores que ya tenias en seguimiento.</p>
       <div class="meta">
         <span class="pill">{{ run.reference_code }}</span>
+        {% if plan.strategy_label %}<span class="pill">{{ plan.strategy_label }}</span>{% endif %}
         <span class="pill">Capital {{ plan.total_investment|floatformat:0 }} EUR</span>
         <span class="pill">Max empresa {{ plan.max_company_pct|floatformat:1 }} %</span>
         <span class="pill">{% if plan.max_total_positions %}Max total {{ plan.max_total_positions }} empresas{% else %}Sin tope total de empresas{% endif %}</span>
@@ -132,7 +133,7 @@
           <div class="card box"><span>Dividendos netos</span><strong>{{ plan.net_dividend_income_total|floatformat:0 }} EUR</strong><small>Flujo esperado menos comisiones de dividendo.</small></div>
           <div class="card box"><span>Coste anual</span><strong>{{ plan.annual_cost_total|floatformat:0 }} EUR</strong><small>Custodia y mantenimiento.</small></div>
           <div class="card box"><span>Compra + venta</span><strong>{{ plan.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Coste total de ida y vuelta.</small></div>
-          <div class="card box"><span>Top pick</span><strong>{% if plan.top_pick %}{{ plan.top_pick.position.company_name }}{% else %}-{% endif %}</strong><small>Mejor equilibrio actual con 12M como motor y 5A como contraste.</small></div>
+          <div class="card box"><span>Top pick</span><strong>{% if plan.top_pick %}{{ plan.top_pick.position.company_name }}{% else %}-{% endif %}</strong><small>Mejor equilibrio actual con {{ plan.primary_horizon_label|default:"12 meses" }} como motor y {{ plan.secondary_horizon_label|default:"5 anos" }} como contraste.</small></div>
         </div>
       {% else %}
         <div class="note">{{ plan.reason }}</div>

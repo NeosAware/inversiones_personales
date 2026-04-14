@@ -33,8 +33,8 @@
 <body>
   <div class="hero">
     <h1>{{ run.display_label }}</h1>
-    <p>Informe robusto de optimizacion a 12 meses. Referencia {{ run.reference_code }} generada el {{ generated_at|date:"Y-m-d H:i" }}.</p>
-    <p class="small">Esta version analiza siempre todo el IBEX, no solo los valores que ya estaban en seguimiento.</p>
+    <p>Informe robusto de optimizacion. Estrategia {{ plan.strategy_label|default:"12M principal" }}. Referencia {{ run.reference_code }} generada el {{ generated_at|date:"Y-m-d H:i" }}.</p>
+    <p class="small">Esta version analiza siempre todo el IBEX, no solo los valores que ya estaban en seguimiento. La jerarquia de seleccion prioriza {{ plan.primary_horizon_label|default:"12 meses" }} y usa {{ plan.secondary_horizon_label|default:"5 anos" }} como contraste.</p>
   </div>
 
   <h2>Resumen ejecutivo</h2>

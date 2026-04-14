@@ -23,12 +23,15 @@ except Exception:  # pragma: no cover - dependencia opcional en runtime
 
 from .models import EquityOptimizationRun, EquityPosition
 from .services import (
+    OPTIMIZER_STRATEGY_12M_PRIMARY,
+    OPTIMIZER_STRATEGY_5Y_PRIMARY,
     build_equity_allocation_plan,
     build_equity_analysis_dashboard,
     build_equity_optimizer_candidate,
     build_ibex_universe_card,
     clear_market_data_caches,
     find_ibex_universe_company,
+    get_optimizer_strategy_config,
     sync_all_equities_market_data,
 )
 
@@ -401,10 +404,49 @@ def build_svg_scatter_chart(allocations: list[dict], width: int = 760, height: i
     return "".join(fragments)
 
 
-def generate_optimization_reference_code() -> str:
+def generate_optimization_reference_family_code() -> str:
     prefix = timezone.localtime().strftime("OPT-%Y%m%d-%H%M%S")
-    similar_count = EquityOptimizationRun.objects.filter(reference_code__startswith=prefix).count() + 1
+    family_codes = set()
+    for code in EquityOptimizationRun.objects.filter(reference_code__startswith=prefix).values_list("reference_code", flat=True):
+        code_text = str(code or "")
+        if code_text.endswith("-12M") or code_text.endswith("-5A"):
+            family_codes.add(code_text.rsplit("-", 1)[0])
+        else:
+            family_codes.add(code_text)
+    similar_count = len(family_codes) + 1
     return f"{prefix}-{similar_count:02d}"
+
+
+def generate_optimization_reference_code(base_code: str | None = None, suffix: str = "") -> str:
+    base = base_code or generate_optimization_reference_family_code()
+    normalized_suffix = str(suffix or "").strip().upper()
+    return f"{base}-{normalized_suffix}" if normalized_suffix else base
+
+
+def build_optimizer_run_label(reference_label: str, strategy_mode: str) -> str:
+    strategy = get_optimizer_strategy_config(strategy_mode)
+    base_label = str(reference_label or "").strip() or "Optimizacion robusta"
+    return f"{base_label} - {strategy['label']}"
+
+
+def build_optimizer_progress_payload(strategy_mode: str, note: str, percent: int = 0) -> dict:
+    strategy = get_optimizer_strategy_config(strategy_mode)
+    return {
+        "strategy_mode": strategy["mode"],
+        "strategy_label": strategy["label"],
+        "percent": percent,
+        "stage_key": "sync",
+        "stage_label": dict(PROGRESS_STAGE_ORDER)["sync"],
+        "note": note,
+        "current_step": None,
+        "total_steps": None,
+        "current_label": "",
+        "stages": build_progress_stages(None if percent == 0 else "sync"),
+        "preview_candidates": [],
+        "preview_allocations": [],
+        "events": [],
+        "updated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 
 def build_news_overview(signals: dict[str, dict]) -> dict:
@@ -461,18 +503,22 @@ def serialize_candidate_preview(card: dict) -> dict:
     }
 
 
-def build_optimizer_candidate_preview(cards: list[dict], limit: int = 5) -> list[dict]:
+def build_optimizer_candidate_preview(
+    cards: list[dict],
+    limit: int = 5,
+    strategy_mode: str = OPTIMIZER_STRATEGY_12M_PRIMARY,
+) -> list[dict]:
     candidates = [
         candidate
-        for candidate in (build_equity_optimizer_candidate(card) for card in cards)
+        for candidate in (build_equity_optimizer_candidate(card, strategy_mode) for card in cards)
         if candidate and candidate.get("optimization_score") is not None
     ]
     ranked = sorted(
         candidates,
         key=lambda item: (
             item["optimization_score"],
-            item["risk_adjusted_return_pct"],
-            item["base_return_pct"],
+            item["primary_signal_pct"],
+            item["secondary_signal_pct"],
         ),
         reverse=True,
     )[:limit]
@@ -571,6 +617,10 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "status_note": run.status_note,
         "created_at_label": created_at.strftime("%Y-%m-%d %H:%M"),
         "completed_at_label": completed_at.strftime("%Y-%m-%d %H:%M") if completed_at else "",
+        "strategy_mode": plan.get("strategy_mode") or (run.progress_data or {}).get("strategy_mode"),
+        "strategy_label": plan.get("strategy_label") or (run.progress_data or {}).get("strategy_label", ""),
+        "primary_horizon_label": plan.get("primary_horizon_label", ""),
+        "secondary_horizon_label": plan.get("secondary_horizon_label", ""),
         "available": bool(plan.get("available")),
         "reason": plan.get("reason", ""),
         "total_investment": float(plan.get("total_investment", 0) or 0),
@@ -615,6 +665,7 @@ def serialize_allocations_data(plan: dict) -> list[dict]:
                 "status_label": item["status_label"],
                 "trade_alert_label": item["trade_alert_label"],
                 "reference_label": item["reference_label"],
+                "strategy_label": item.get("strategy_label", ""),
                 "optimization_score": float(item["optimization_score"]),
                 "allocated_weight_pct": float(item["allocated_weight_pct"]),
                 "allocated_amount": float(item["allocated_amount"]),
@@ -666,6 +717,7 @@ def build_optimization_comparison_context(runs: list[EquityOptimizationRun]) -> 
                 "max_sector_positions": summary.get("max_sector_positions") or 0,
                 "selected_sectors": list(summary.get("selected_sectors") or run.selected_sectors or []),
                 "selected_sectors_label": ", ".join(summary.get("selected_sectors") or run.selected_sectors or []),
+                "strategy_label": summary.get("strategy_label") or (run.progress_data or {}).get("strategy_label", ""),
                 "allocations_count": summary.get("allocations_count", len(allocations)),
                 "constituents_label": constituents_label,
                 "sectors_count": len(sectors),
@@ -851,23 +903,16 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
     run = EquityOptimizationRun.objects.get(pk=run_id)
     if run.status == EquityOptimizationRun.Status.COMPLETED and run.report_html:
         return run
+    strategy_mode = (run.progress_data or {}).get("strategy_mode") or OPTIMIZER_STRATEGY_12M_PRIMARY
+    strategy = get_optimizer_strategy_config(strategy_mode)
 
     EquityOptimizationRun.objects.filter(pk=run_id).update(
         status=EquityOptimizationRun.Status.RUNNING,
         status_note="Preparando analisis",
         progress_data={
-            "percent": 1,
-            "stage_key": "sync",
-            "stage_label": dict(PROGRESS_STAGE_ORDER)["sync"],
-            "note": "Preparando analisis",
-            "current_step": None,
-            "total_steps": None,
-            "current_label": "",
+            **build_optimizer_progress_payload(strategy_mode, "Preparando analisis", percent=1),
             "stages": build_progress_stages("sync"),
-            "preview_candidates": [],
-            "preview_allocations": [],
             "events": [{"label": "Preparando analisis", "stage_key": "sync", "recorded_at": timezone.localtime().strftime("%H:%M:%S")}],
-            "updated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
         },
         started_at=timezone.now(),
         completed_at=None,
@@ -918,7 +963,7 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
         )
 
         optimizer_cards = list(dashboard["optimizer_cards"])
-        preview_candidates = build_optimizer_candidate_preview(optimizer_cards)
+        preview_candidates = build_optimizer_candidate_preview(optimizer_cards, strategy_mode=strategy_mode)
         update_run_progress(
             run_id,
             percent=58,
@@ -955,8 +1000,8 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
             run_id,
             percent=84,
             stage_key="optimize",
-            note="Calculando la cartera optima",
-            preview_candidates=build_optimizer_candidate_preview(optimizer_cards),
+            note=f"Calculando la cartera optima ({strategy['label']})",
+            preview_candidates=build_optimizer_candidate_preview(optimizer_cards, strategy_mode=strategy_mode),
         )
         plan = build_equity_allocation_plan(
             optimizer_cards,
@@ -965,6 +1010,7 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
             run.max_total_positions,
             run.max_sector_positions,
             selected_sectors=run.selected_sectors,
+            strategy_mode=strategy_mode,
         )
         preview_allocations = build_allocation_preview(plan)
         update_run_progress(
@@ -972,7 +1018,7 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
             percent=92,
             stage_key="report",
             note="Generando informe descargable",
-            preview_candidates=build_optimizer_candidate_preview(optimizer_cards),
+            preview_candidates=build_optimizer_candidate_preview(optimizer_cards, strategy_mode=strategy_mode),
             preview_allocations=preview_allocations,
         )
 
@@ -992,7 +1038,7 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
             "stage_label": dict(PROGRESS_STAGE_ORDER)["report"],
             "note": "Optimizacion completada",
             "stages": build_progress_stages("report", finalized=True),
-            "preview_candidates": build_optimizer_candidate_preview(optimizer_cards),
+            "preview_candidates": build_optimizer_candidate_preview(optimizer_cards, strategy_mode=strategy_mode),
             "preview_allocations": preview_allocations,
             "updated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
             "current_step": None,
@@ -1048,10 +1094,13 @@ def launch_equity_optimization_run(
     reference_label: str = "",
     restrictions_note: str = "",
     run_inline: bool = False,
+    strategy_mode: str = OPTIMIZER_STRATEGY_12M_PRIMARY,
+    reference_code: str | None = None,
 ) -> EquityOptimizationRun:
+    strategy = get_optimizer_strategy_config(strategy_mode)
     run = EquityOptimizationRun.objects.create(
-        reference_code=generate_optimization_reference_code(),
-        label=reference_label,
+        reference_code=reference_code or generate_optimization_reference_code(suffix="12M" if strategy["mode"] == OPTIMIZER_STRATEGY_12M_PRIMARY else "5A"),
+        label=build_optimizer_run_label(reference_label, strategy["mode"]),
         requested_by=requested_by,
         status=EquityOptimizationRun.Status.PENDING,
         status_note="Pendiente de analisis",
@@ -1061,20 +1110,7 @@ def launch_equity_optimization_run(
         max_sector_positions=max_sector_positions,
         selected_sectors=selected_sectors,
         restrictions_note=restrictions_note,
-        progress_data={
-            "percent": 0,
-            "stage_key": "sync",
-            "stage_label": dict(PROGRESS_STAGE_ORDER)["sync"],
-            "note": "Pendiente de analisis",
-            "current_step": None,
-            "total_steps": None,
-            "current_label": "",
-            "stages": build_progress_stages(None),
-            "preview_candidates": [],
-            "preview_allocations": [],
-            "events": [],
-            "updated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
-        },
+        progress_data=build_optimizer_progress_payload(strategy["mode"], "Pendiente de analisis"),
     )
     if run_inline:
         process_equity_optimization_run(run.id)
@@ -1082,6 +1118,42 @@ def launch_equity_optimization_run(
     else:
         enqueue_equity_optimization_run(run.id)
     return run
+
+
+def launch_equity_optimization_run_pair(
+    *,
+    total_investment: Decimal,
+    max_company_pct: Decimal,
+    max_total_positions: int,
+    max_sector_positions: int,
+    selected_sectors: list[str],
+    requested_by=None,
+    reference_label: str = "",
+    restrictions_note: str = "",
+    run_inline: bool = False,
+) -> list[EquityOptimizationRun]:
+    family_code = generate_optimization_reference_family_code()
+    runs = []
+    for strategy_mode, suffix in (
+        (OPTIMIZER_STRATEGY_12M_PRIMARY, "12M"),
+        (OPTIMIZER_STRATEGY_5Y_PRIMARY, "5A"),
+    ):
+        runs.append(
+            launch_equity_optimization_run(
+                total_investment=total_investment,
+                max_company_pct=max_company_pct,
+                max_total_positions=max_total_positions,
+                max_sector_positions=max_sector_positions,
+                selected_sectors=selected_sectors,
+                requested_by=requested_by,
+                reference_label=reference_label,
+                restrictions_note=restrictions_note,
+                run_inline=run_inline,
+                strategy_mode=strategy_mode,
+                reference_code=generate_optimization_reference_code(family_code, suffix=suffix),
+            )
+        )
+    return runs
 
 
 def resume_equity_optimization_runs() -> None:

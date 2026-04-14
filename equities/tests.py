@@ -16,7 +16,7 @@ from portfolio.ownership import AssetOwnershipCategory
 
 from .broker_costs import estimate_broker_costs
 from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition, EquityTicketSnapshot
-from .optimization_runs import launch_equity_optimization_run, process_equity_optimization_run
+from .optimization_runs import launch_equity_optimization_run, launch_equity_optimization_run_pair, process_equity_optimization_run
 from .services import (
     EURIBOR_REFERENCE_NAME,
     EURIBOR_REFERENCE_SYMBOL,
@@ -1200,6 +1200,99 @@ class EquitiesServicesTests(TestCase):
         self.assertGreater(plan["allocations"][0]["cycle_support_score"], Decimal("0"))
         self.assertGreater(plan["weighted_cycle_return_annual_pct"], Decimal("0"))
 
+    def test_allocation_plan_can_prioritize_five_year_cycle(self):
+        short_term_better = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="REP",
+                company_name="Repsol",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("14"),
+            ),
+            "sector_label": "Energia",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Vigilar", "tone": "watch", "note": ""},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("18.50"),
+                "projected_price": Decimal("16.59"),
+                "confidence_label": "Alta",
+                "coefficient": Decimal("0.50"),
+                "safety_score": Decimal("68.00"),
+                "net_income_yield_pct": Decimal("1.80"),
+                "gross_dividend_yield_pct": Decimal("2.80"),
+                "transaction_drag_pct": Decimal("0.30"),
+                "annualized_volatility_pct": Decimal("18.00"),
+                "positive_year_ratio_pct": Decimal("58.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Transicion",
+                "current_drawdown_pct": Decimal("-5.00"),
+                "max_drawdown_pct": Decimal("-28.00"),
+            },
+            "projection_reliability": {"label": "Alta", "score": Decimal("80.00")},
+            "cycle_projection_5y": {
+                "available": True,
+                "annual_return_pct": Decimal("-2.20"),
+                "five_year_return_pct": Decimal("-10.50"),
+            },
+        }
+        long_term_better = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="IBE",
+                company_name="Iberdrola",
+                reference_profile=EquityPosition.ReferenceProfile.SPAIN_ELECTRICITY_DEMAND,
+                benchmark_name="Demanda electrica Espana",
+                benchmark_symbol="REE:demand:es:peninsular",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("14"),
+            ),
+            "sector_label": "Electrica",
+            "reference_label": "Demanda electrica Espana",
+            "trade_alert": {"label": "Vigilar", "tone": "watch", "note": ""},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("8.80"),
+                "projected_price": Decimal("15.23"),
+                "confidence_label": "Alta",
+                "coefficient": Decimal("0.52"),
+                "safety_score": Decimal("76.00"),
+                "net_income_yield_pct": Decimal("2.40"),
+                "gross_dividend_yield_pct": Decimal("3.20"),
+                "transaction_drag_pct": Decimal("0.20"),
+                "annualized_volatility_pct": Decimal("12.00"),
+                "positive_year_ratio_pct": Decimal("70.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.00"),
+                "max_drawdown_pct": Decimal("-18.00"),
+            },
+            "projection_reliability": {"label": "Alta", "score": Decimal("82.00")},
+            "cycle_projection_5y": {
+                "available": True,
+                "annual_return_pct": Decimal("6.60"),
+                "five_year_return_pct": Decimal("37.50"),
+            },
+        }
+
+        plan = build_equity_allocation_plan(
+            [short_term_better, long_term_better],
+            Decimal("100000"),
+            Decimal("60"),
+            strategy_mode="5y_primary",
+        )
+
+        self.assertTrue(plan["available"])
+        self.assertEqual(plan["strategy_mode"], "5y_primary")
+        self.assertEqual(plan["strategy_label"], "5A principal")
+        self.assertEqual(plan["allocations"][0]["position"].ticker, "IBE")
+        self.assertGreater(plan["allocations"][0]["cycle_return_annual_pct"], Decimal("0"))
+
     def test_allocation_plan_can_limit_max_positions_per_sector(self):
         utility_best = {
             "position": EquityPosition(
@@ -1739,6 +1832,29 @@ class EquitiesServicesTests(TestCase):
 
         self.assertEqual(run.status, EquityOptimizationRun.Status.PENDING)
         mocked_enqueue.assert_called_once_with(run.id)
+        mocked_process.assert_not_called()
+
+    @override_settings(EQUITIES_OPTIMIZATION_ASYNC=False)
+    def test_launch_optimization_run_pair_creates_two_strategy_runs(self):
+        with (
+            patch("equities.optimization_runs.enqueue_equity_optimization_run") as mocked_enqueue,
+            patch("equities.optimization_runs.process_equity_optimization_run") as mocked_process,
+        ):
+            runs = launch_equity_optimization_run_pair(
+                total_investment=Decimal("80000"),
+                max_company_pct=Decimal("20"),
+                max_total_positions=6,
+                max_sector_positions=1,
+                selected_sectors=["Banca"],
+                reference_label="Cartera dual",
+            )
+
+        self.assertEqual(len(runs), 2)
+        self.assertEqual({run.progress_data["strategy_mode"] for run in runs}, {"12m_primary", "5y_primary"})
+        self.assertEqual({run.progress_data["strategy_label"] for run in runs}, {"12M principal", "5A principal"})
+        self.assertTrue(any(run.reference_code.endswith("-12M") for run in runs))
+        self.assertTrue(any(run.reference_code.endswith("-5A") for run in runs))
+        self.assertEqual(mocked_enqueue.call_count, 2)
         mocked_process.assert_not_called()
 
     def test_dashboard_can_extend_optimizer_to_full_ibex_universe(self):
@@ -2647,16 +2763,28 @@ class EquitiesViewTests(TestCase):
         self.assertNotContains(response, "Acciones en seguimiento")
 
     def test_can_launch_background_optimizer_run_from_page(self):
-        run = EquityOptimizationRun.objects.create(
-            reference_code="OPT-TEST-LAUNCH",
-            total_investment=Decimal("100000"),
-            max_company_pct=Decimal("20"),
-            max_total_positions=0,
-            max_sector_positions=1,
-            status=EquityOptimizationRun.Status.PENDING,
-        )
+        runs = [
+            EquityOptimizationRun(
+                reference_code="OPT-TEST-LAUNCH-12M",
+                label="Cartera defensiva - 12M principal",
+                total_investment=Decimal("100000"),
+                max_company_pct=Decimal("20"),
+                max_total_positions=0,
+                max_sector_positions=1,
+                status=EquityOptimizationRun.Status.PENDING,
+            ),
+            EquityOptimizationRun(
+                reference_code="OPT-TEST-LAUNCH-5A",
+                label="Cartera defensiva - 5A principal",
+                total_investment=Decimal("100000"),
+                max_company_pct=Decimal("20"),
+                max_total_positions=0,
+                max_sector_positions=1,
+                status=EquityOptimizationRun.Status.PENDING,
+            ),
+        ]
 
-        with patch("equities.views.launch_equity_optimization_run", return_value=run) as mocked_launch:
+        with patch("equities.views.launch_equity_optimization_run_pair", return_value=runs) as mocked_launch:
             response = self.client.post(
                 reverse("equities:list"),
                 {
@@ -2728,7 +2856,7 @@ class EquitiesViewTests(TestCase):
         self.assertFalse(mocked_dashboard.call_args.kwargs["include_ibex_universe"])
         self.assertContains(response, "se aplaza temporalmente mientras hay optimizaciones activas")
 
-    def test_equities_page_renders_completed_optimization_comparison_table(self):
+    def test_equities_page_keeps_single_optimization_history_table(self):
         first = EquityOptimizationRun.objects.create(
             reference_code="OPT-COMP-001",
             label="Cartera defensiva",
@@ -2804,14 +2932,13 @@ class EquitiesViewTests(TestCase):
         response = self.client.get(reverse("equities:list"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Comparacion entre optimizaciones cerradas")
+        self.assertContains(response, "Optimizaciones realizadas")
+        self.assertContains(response, "equity-optimization-history")
         self.assertContains(response, first.display_label)
         self.assertContains(response, second.display_label)
-        self.assertContains(response, "IBE, IDR")
-        self.assertContains(response, "IDR, REP")
-        self.assertContains(response, "Mayor rentabilidad")
-        self.assertContains(response, "Electrica, Tecnologia y defensa")
-        self.assertContains(response, "todos los del IBEX")
+        self.assertContains(response, "Iberdrola")
+        self.assertContains(response, "Repsol")
+        self.assertNotContains(response, "Comparacion entre optimizaciones cerradas")
 
     def test_optimization_history_table_shows_company_weights(self):
         EquityOptimizationRun.objects.create(
@@ -2845,6 +2972,54 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "35,0 %")
         self.assertContains(response, "Repsol")
         self.assertContains(response, "25,0 %")
+
+    def test_completed_optimization_run_can_be_deleted_from_history(self):
+        run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-DELETE-001",
+            label="Borrar historico",
+            total_investment=Decimal("75000"),
+            max_company_pct=Decimal("20"),
+            max_total_positions=5,
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            report_html="<html>borrar</html>",
+            summary_data={"available": True, "projected_gain_total": 8200, "allocations_count": 2},
+        )
+
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "delete_optimization_run",
+                "run_id": str(run.id),
+            },
+        )
+
+        self.assertRedirects(response, f"{reverse('equities:list')}#equity-optimizer")
+        self.assertFalse(EquityOptimizationRun.objects.filter(pk=run.pk).exists())
+
+    def test_running_optimization_run_cannot_be_deleted_from_history(self):
+        run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-DELETE-002",
+            label="No borrar",
+            total_investment=Decimal("75000"),
+            max_company_pct=Decimal("20"),
+            max_total_positions=5,
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.RUNNING,
+        )
+
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "delete_optimization_run",
+                "run_id": str(run.id),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(EquityOptimizationRun.objects.filter(pk=run.pk).exists())
+        self.assertContains(response, "Solo puedes borrar optimizaciones ya cerradas.")
 
     def test_completed_optimization_run_can_render_and_download_report(self):
         run = EquityOptimizationRun.objects.create(
