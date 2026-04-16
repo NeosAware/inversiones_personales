@@ -169,7 +169,7 @@
     <div class="equity-section-head" style="margin-top:18px;">
       <div>
         <h5>Lectura rapida</h5>
-        <p>Estas son las seis cifras que conviene mirar antes de entrar al detalle tecnico.</p>
+        <p>Deja visibles solo las claves de decision. El resto queda recogido mas abajo en detalle tecnico.</p>
       </div>
     </div>
     <div class="equity-detail-grid" style="margin-top:14px;">
@@ -199,16 +199,6 @@
         <small>{{ card.trade_alert.trigger_label }}</small>
       </div>
       <div class="equity-mini-stat">
-        <span>Seguridad</span>
-        <strong>{{ card.projection.safety_score|floatformat:0 }}/100</strong>
-        <small>{{ card.projection.safety_label }} segun volatilidad, drawdown y consistencia.</small>
-      </div>
-      <div class="equity-mini-stat">
-        <span>Fiabilidad</span>
-        <strong>{{ card.projection_reliability.label }}</strong>
-        <small>{{ card.projection.confidence_label }} en modelo{% if card.projection_backtest.available %} | Comprobacion historica {{ card.projection_backtest.precision_label }}{% endif %}</small>
-      </div>
-      <div class="equity-mini-stat">
         {% if card.position.is_owned and card.sale_preview.available %}
           <span>Ano equivalente</span>
           <strong class="{% if card.sale_preview.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}">{{ card.sale_preview.annualized_margin_pct|floatformat:2 }} %</strong>
@@ -221,128 +211,15 @@
       </div>
     </div>
 
-    {% if card.projection_backtest.available %}
-      <div class="equity-detail-grid" style="margin-top:14px;">
-        <div class="equity-mini-stat">
-          <span>Comprobacion historica</span>
-          <strong>{{ card.projection_backtest.precision_label }}</strong>
-          <small>{{ card.projection_backtest.comparisons_count }} comparativas a 12M. Sirve para ver si el modelo habria sido util antes.</small>
-        </div>
-        <div class="equity-mini-stat">
-          <span>Error medio</span>
-          <strong>{{ card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %</strong>
-          <small>{{ card.projection_backtest.error_explanation }}</small>
-        </div>
-        <div class="equity-mini-stat">
-          <span>Acierto al subir o bajar</span>
-          <strong>{{ card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %</strong>
-          <small>{{ card.projection_backtest.direction_explanation }}</small>
-        </div>
-        <div class="equity-mini-stat">
-          <span>Dentro del rango previsto</span>
-          <strong>{{ card.projection_backtest.in_range_rate_pct|floatformat:0 }} %</strong>
-          <small>{{ card.projection_backtest.range_explanation }}</small>
-        </div>
-      </div>
-      <div class="equity-compact-note" style="margin-top:14px;">
-        {{ card.projection_backtest.plain_explanation }}
-      </div>
-    {% endif %}
-
-    <div class="equity-detail-grid" style="margin-top:14px;">
-      <div class="equity-mini-stat">
-        <span>Ciclo 10A</span>
-        <strong>{{ card.projection.cycle_phase }}</strong>
-        <small>{{ card.projection.years_covered|floatformat:1 }} anos de base.</small>
-      </div>
-      <div class="equity-mini-stat">
-        <span>Alerta coef.</span>
-        <strong class="{% if card.coefficient_alert.tone == 'sell' %}warn{% endif %}">{{ card.coefficient_alert.label }}</strong>
-        <small>{{ card.coefficient_alert.trigger_label }}</small>
-      </div>
-      <div class="equity-mini-stat">
-        <span>Corr reciente</span>
-        <strong>{% if card.projection.recent_coefficient is not None %}{{ card.projection.recent_coefficient|floatformat:2 }}{% else %}-{% endif %}</strong>
-        <small>{{ card.coefficient_alert.periods_label|default:"tramo reciente" }} | {{ card.coefficient_alert.windows_count|default:0 }} ventanas</small>
-      </div>
-      <div class="equity-mini-stat">
-        <span>CAGR ciclo</span>
-        <strong>{% if card.projection.cagr_pct is not None %}{{ card.projection.cagr_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
-        <small>Ritmo anual del historico util.</small>
-      </div>
-      <div class="equity-mini-stat">
-        <span>Volatilidad</span>
-        <strong>{% if card.projection.annualized_volatility_pct is not None %}{{ card.projection.annualized_volatility_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
-        <small>Drawdown actual {% if card.projection.current_drawdown_pct is not None %}{{ card.projection.current_drawdown_pct|floatformat:1 }} %{% else %}-{% endif %}</small>
-      </div>
-      <div class="equity-mini-stat">
-        <span>Beneficio / riesgo</span>
-        <strong>{% if card.projection.benefit_risk_ratio is not None %}{{ card.projection.benefit_risk_ratio|floatformat:2 }}{% else %}-{% endif %}</strong>
-        <small>Retorno neto frente al rango esperado.</small>
-      </div>
+    <div class="equity-compact-note" style="margin-top:14px;">
+      <strong style="display:block; color:#17384e; margin-bottom:6px;">Como leer esta ficha</strong>
+      Seguridad {{ card.projection.safety_score|floatformat:0 }}/100 y fiabilidad {{ card.projection_reliability.label|lower }}, con {{ card.projection.confidence_label|lower }} en el modelo.
+      {% if card.projection_backtest.available %}
+        La comprobacion historica es {{ card.projection_backtest.precision_label|lower }}, con error medio {{ card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %, acierto direccional {{ card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} % y {{ card.projection_backtest.in_range_rate_pct|floatformat:0 }} % dentro del rango previsto.
+      {% else %}
+        Todavia no hay contraste historico suficiente para validar la prediccion frente a resultados reales.
+      {% endif %}
     </div>
-
-    <div class="equity-detail-grid" style="margin-top:14px;">
-      <div class="equity-mini-stat">
-        <span>Pendiente relativa</span>
-        <strong class="{% if card.trade_alert.tone == 'buy' %}good{% elif card.trade_alert.tone == 'sell' %}warn{% endif %}">{{ card.trade_alert.trend_label }}</strong>
-        <small>
-          {% if card.relative_trend.available %}
-            Gap medio reciente {% if card.trade_alert.recent_gap_avg_pct is not None %}{{ card.trade_alert.recent_gap_avg_pct|floatformat:2 }} %{% else %}-{% endif %}
-          {% else %}
-            Sin suficiente base reciente
-          {% endif %}
-        </small>
-      </div>
-    </div>
-
-    <div class="equity-detail-grid" style="margin-top:14px;">
-      <div class="equity-mini-stat">
-        <span>Dividendos netos</span>
-        <strong>{{ card.broker_costs.net_dividend_income|floatformat:0 }} EUR</strong>
-        <small>Bruto {{ card.broker_costs.annual_dividend_income_used|floatformat:0 }} EUR{% if card.projection.gross_dividend_yield_pct is not None %} | Yield {{ card.projection.gross_dividend_yield_pct|floatformat:1 }} %{% endif %}</small>
-      </div>
-      <div class="equity-mini-stat">
-        <span>Coste anual usado</span>
-        <strong>{{ card.broker_costs.annual_cost_used|floatformat:0 }} EUR</strong>
-        <small>{% if card.broker_costs.annual_cost_source == "manual" %}Coste manual{% else %}Tarifa broker{% endif %}{% if card.broker_costs.analysis_value_source == "normalized_watchlist" %} | Ticket analitico {{ card.broker_costs.analysis_value_amount|floatformat:0 }} EUR{% endif %}</small>
-      </div>
-      <div class="equity-mini-stat">
-        <span>Compra + venta</span>
-        <strong>{{ card.broker_costs.roundtrip_total_cost|floatformat:0 }} EUR</strong>
-        <small>{{ card.broker_costs.profile_label }} | {{ card.broker_costs.market_scope_label }}{% if card.broker_costs.analysis_value_source == "normalized_watchlist" %} | Base normalizada{% endif %}</small>
-      </div>
-    </div>
-
-    {% if card.fundamentals.available %}
-      <div class="equity-detail-grid" style="margin-top:14px;">
-        <div class="equity-mini-stat">
-          <span>Capitalizacion</span>
-          <strong>{{ card.fundamentals.market_cap_label }}</strong>
-          <small>Ultima lectura {{ card.fundamentals.market_cap_date_label|default:"-" }}</small>
-        </div>
-        <div class="equity-mini-stat">
-          <span>Ciclo beneficio</span>
-          <strong>{{ card.fundamentals.trend_label }}</strong>
-          <small>{{ card.fundamentals.trend_note }}</small>
-        </div>
-        {% for row in card.fundamentals.net_income_rows %}
-          <div class="equity-mini-stat">
-            <span>Beneficio {{ row.year_label }}</span>
-            <strong>{{ row.value_label }}</strong>
-            <small>Cierre {{ row.as_of_date|date:"Y-m-d" }}</small>
-          </div>
-        {% endfor %}
-      </div>
-    {% endif %}
-
-    <p class="equity-detail-note" style="margin-top:14px;">{{ card.trade_alert.note }} {% if card.coefficient_alert.available %}{{ card.coefficient_alert.note }} {% endif %}{{ card.projection.explanation }} {% if card.cycle_projection_5y.available %}{{ card.cycle_projection_5y.explanation }} {% endif %}{{ card.projection.confidence_note }}</p>
-    {% if card.broker_costs.analysis_value_source == "normalized_watchlist" %}
-      <p class="metric-sub" style="margin-top:8px;">Seguimiento y radar IBEX usan un ticket analitico minimo de {{ card.broker_costs.analysis_value_amount|floatformat:0 }} EUR para que los costes fijos del broker no distorsionen la proyeccion por usar una sola accion de muestra.</p>
-    {% endif %}
-    {% if not card.fundamentals.available and card.fundamentals.note %}
-      <p class="metric-sub" style="margin-top:8px;">{{ card.fundamentals.note }}</p>
-    {% endif %}
   {% else %}
     <div class="message info" style="margin-top:18px;">
       Todavia no hay historico suficiente para generar una proyeccion fiable.
@@ -519,6 +396,143 @@
           </div>
         {% endfor %}
       </div>
+
+      {% if card.projection.available %}
+        {% if card.projection_backtest.available %}
+          <section class="equity-candidate-section" style="margin-top:16px;">
+            <div class="equity-section-head">
+              <div>
+                <h5>Validacion historica</h5>
+                <p>Estas cifras explican con mas detalle el grafico de prediccion frente a realidad.</p>
+              </div>
+            </div>
+            <div class="equity-detail-grid" style="margin-top:14px;">
+              <div class="equity-mini-stat">
+                <span>Comprobacion historica</span>
+                <strong>{{ card.projection_backtest.precision_label }}</strong>
+                <small>{{ card.projection_backtest.comparisons_count }} comparativas a 12M. Sirve para ver si el modelo habria sido util antes.</small>
+              </div>
+              <div class="equity-mini-stat">
+                <span>Error medio</span>
+                <strong>{{ card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %</strong>
+                <small>{{ card.projection_backtest.error_explanation }}</small>
+              </div>
+              <div class="equity-mini-stat">
+                <span>Acierto al subir o bajar</span>
+                <strong>{{ card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %</strong>
+                <small>{{ card.projection_backtest.direction_explanation }}</small>
+              </div>
+              <div class="equity-mini-stat">
+                <span>Dentro del rango previsto</span>
+                <strong>{{ card.projection_backtest.in_range_rate_pct|floatformat:0 }} %</strong>
+                <small>{{ card.projection_backtest.range_explanation }}</small>
+              </div>
+            </div>
+            <div class="equity-compact-note" style="margin-top:14px;">
+              {{ card.projection_backtest.plain_explanation }}
+            </div>
+          </section>
+        {% endif %}
+
+        <section class="equity-candidate-section" style="margin-top:16px;">
+          <div class="equity-section-head">
+            <div>
+              <h5>Metricas ampliadas</h5>
+              <p>Riesgo, ciclo, costes y fundamentos para profundizar solo cuando lo necesites.</p>
+            </div>
+          </div>
+          <div class="equity-detail-grid" style="margin-top:14px;">
+            <div class="equity-mini-stat">
+              <span>Ciclo 10A</span>
+              <strong>{{ card.projection.cycle_phase }}</strong>
+              <small>{{ card.projection.years_covered|floatformat:1 }} anos de base.</small>
+            </div>
+            <div class="equity-mini-stat">
+              <span>Alerta coef.</span>
+              <strong class="{% if card.coefficient_alert.tone == 'sell' %}warn{% endif %}">{{ card.coefficient_alert.label }}</strong>
+              <small>{{ card.coefficient_alert.trigger_label }}</small>
+            </div>
+            <div class="equity-mini-stat">
+              <span>Corr reciente</span>
+              <strong>{% if card.projection.recent_coefficient is not None %}{{ card.projection.recent_coefficient|floatformat:2 }}{% else %}-{% endif %}</strong>
+              <small>{{ card.coefficient_alert.periods_label|default:"tramo reciente" }} | {{ card.coefficient_alert.windows_count|default:0 }} ventanas</small>
+            </div>
+            <div class="equity-mini-stat">
+              <span>CAGR ciclo</span>
+              <strong>{% if card.projection.cagr_pct is not None %}{{ card.projection.cagr_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+              <small>Ritmo anual del historico util.</small>
+            </div>
+            <div class="equity-mini-stat">
+              <span>Volatilidad</span>
+              <strong>{% if card.projection.annualized_volatility_pct is not None %}{{ card.projection.annualized_volatility_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+              <small>Drawdown actual {% if card.projection.current_drawdown_pct is not None %}{{ card.projection.current_drawdown_pct|floatformat:1 }} %{% else %}-{% endif %}</small>
+            </div>
+            <div class="equity-mini-stat">
+              <span>Beneficio / riesgo</span>
+              <strong>{% if card.projection.benefit_risk_ratio is not None %}{{ card.projection.benefit_risk_ratio|floatformat:2 }}{% else %}-{% endif %}</strong>
+              <small>Retorno neto frente al rango esperado.</small>
+            </div>
+            <div class="equity-mini-stat">
+              <span>Pendiente relativa</span>
+              <strong class="{% if card.trade_alert.tone == 'buy' %}good{% elif card.trade_alert.tone == 'sell' %}warn{% endif %}">{{ card.trade_alert.trend_label }}</strong>
+              <small>
+                {% if card.relative_trend.available %}
+                  Gap medio reciente {% if card.trade_alert.recent_gap_avg_pct is not None %}{{ card.trade_alert.recent_gap_avg_pct|floatformat:2 }} %{% else %}-{% endif %}
+                {% else %}
+                  Sin suficiente base reciente
+                {% endif %}
+              </small>
+            </div>
+            <div class="equity-mini-stat">
+              <span>Dividendos netos</span>
+              <strong>{{ card.broker_costs.net_dividend_income|floatformat:0 }} EUR</strong>
+              <small>Bruto {{ card.broker_costs.annual_dividend_income_used|floatformat:0 }} EUR{% if card.projection.gross_dividend_yield_pct is not None %} | Yield {{ card.projection.gross_dividend_yield_pct|floatformat:1 }} %{% endif %}</small>
+            </div>
+            <div class="equity-mini-stat">
+              <span>Coste anual usado</span>
+              <strong>{{ card.broker_costs.annual_cost_used|floatformat:0 }} EUR</strong>
+              <small>{% if card.broker_costs.annual_cost_source == "manual" %}Coste manual{% else %}Tarifa broker{% endif %}{% if card.broker_costs.analysis_value_source == "normalized_watchlist" %} | Ticket analitico {{ card.broker_costs.analysis_value_amount|floatformat:0 }} EUR{% endif %}</small>
+            </div>
+            <div class="equity-mini-stat">
+              <span>Compra + venta</span>
+              <strong>{{ card.broker_costs.roundtrip_total_cost|floatformat:0 }} EUR</strong>
+              <small>{{ card.broker_costs.profile_label }} | {{ card.broker_costs.market_scope_label }}{% if card.broker_costs.analysis_value_source == "normalized_watchlist" %} | Base normalizada{% endif %}</small>
+            </div>
+          </div>
+
+          {% if card.fundamentals.available %}
+            <div class="equity-detail-grid" style="margin-top:14px;">
+              <div class="equity-mini-stat">
+                <span>Capitalizacion</span>
+                <strong>{{ card.fundamentals.market_cap_label }}</strong>
+                <small>Ultima lectura {{ card.fundamentals.market_cap_date_label|default:"-" }}</small>
+              </div>
+              <div class="equity-mini-stat">
+                <span>Ciclo beneficio</span>
+                <strong>{{ card.fundamentals.trend_label }}</strong>
+                <small>{{ card.fundamentals.trend_note }}</small>
+              </div>
+              {% for row in card.fundamentals.net_income_rows %}
+                <div class="equity-mini-stat">
+                  <span>Beneficio {{ row.year_label }}</span>
+                  <strong>{{ row.value_label }}</strong>
+                  <small>Cierre {{ row.as_of_date|date:"Y-m-d" }}</small>
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          <div class="equity-compact-note" style="margin-top:14px;">
+            {{ card.trade_alert.note }} {% if card.coefficient_alert.available %}{{ card.coefficient_alert.note }} {% endif %}{{ card.projection.explanation }} {% if card.cycle_projection_5y.available %}{{ card.cycle_projection_5y.explanation }} {% endif %}{{ card.projection.confidence_note }}
+          </div>
+          {% if card.broker_costs.analysis_value_source == "normalized_watchlist" %}
+            <p class="metric-sub" style="margin-top:8px;">Seguimiento y radar IBEX usan un ticket analitico minimo de {{ card.broker_costs.analysis_value_amount|floatformat:0 }} EUR para que los costes fijos del broker no distorsionen la proyeccion por usar una sola accion de muestra.</p>
+          {% endif %}
+          {% if not card.fundamentals.available and card.fundamentals.note %}
+            <p class="metric-sub" style="margin-top:8px;">{{ card.fundamentals.note }}</p>
+          {% endif %}
+        </section>
+      {% endif %}
 
       {% if card.reference_playbook.available %}
         <section class="equity-candidate-section">
