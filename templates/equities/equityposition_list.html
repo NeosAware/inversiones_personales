@@ -520,6 +520,10 @@
           {% if nightly_analysis.available %}
             <span class="equity-chip">Analisis exhaustivo {{ nightly_analysis.status_badge }}</span>
             <span class="equity-chip">Ultima ejecucion {{ nightly_analysis.completed_at_label }}</span>
+            {% if nightly_analysis.llm.enabled %}
+              <span class="equity-chip">IA {{ nightly_analysis.llm.completed_count }}/{{ nightly_analysis.llm.total_count }}</span>
+              <span class="equity-chip">Coste {{ nightly_analysis.llm.estimated_cost_usd }} USD</span>
+            {% endif %}
           {% else %}
             <span class="equity-chip">Analisis exhaustivo NO OK</span>
           {% endif %}
@@ -530,6 +534,13 @@
           Analisis exhaustivo {{ nightly_analysis.status_badge }}.
           {% if nightly_analysis.completed_at_label %}Ultima ejecucion {{ nightly_analysis.completed_at_label }}.{% endif %}
           {% if nightly_analysis.agent_label %} Motor {{ nightly_analysis.agent_label }}.{% endif %}
+          {% if nightly_analysis.llm.enabled %}
+            IA aplicada a {{ nightly_analysis.llm.completed_count }}/{{ nightly_analysis.llm.total_count }} valores con coste estimado {{ nightly_analysis.llm.estimated_cost_usd }} USD.
+            {% if nightly_analysis.llm.failed_count %} Hubo {{ nightly_analysis.llm.failed_count }} fallo(s) de API.{% endif %}
+            {% if nightly_analysis.llm.skipped_budget_count %} Se omitieron {{ nightly_analysis.llm.skipped_budget_count }} valores por presupuesto.{% endif %}
+          {% elif nightly_analysis.llm.reason %}
+            {{ nightly_analysis.llm.reason }}
+          {% endif %}
           {% if nightly_analysis.cache_available %} La web esta reutilizando ese analisis nocturno durante el dia.{% else %} La vista actual esta fuera del cache nocturno y puede recalcular en vivo si hace falta.{% endif %}
           {% if nightly_analysis.status_note %} {{ nightly_analysis.status_note }}.{% endif %}
           {% if nightly_analysis.status_key == "failed" and nightly_analysis.error_message %} Error: {{ nightly_analysis.error_message|truncatechars:160 }}{% endif %}

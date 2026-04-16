@@ -170,7 +170,24 @@ By default the command only runs from `00:00` onwards and stores:
 
 - the full analysis card for each tracked stock
 - the full analysis card for every IBEX company, including `12M`, `5A`, backtest and ratios
+- an optional IA synthesis per company using your `Claude` or `ChatGPT` API account
 - a reusable nightly cache so daytime dashboard views and optimizations do not need to rebuild the heavy analysis
+
+LLM provider selection is controlled with environment variables:
+
+```powershell
+AI_LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=...
+CLAUDE_DEFAULT_MODEL=claude-sonnet-4-20250514
+CLAUDE_MAX_TOKENS=1024
+CLAUDE_MONTHLY_BUDGET_USD=50.00
+
+# or
+AI_LLM_PROVIDER=openai
+OPENAI_API_KEY=...
+OPENAI_DEFAULT_MODEL=gpt-4o-mini
+OPENAI_MAX_TOKENS=2048
+```
 
 ## Production deployment
 

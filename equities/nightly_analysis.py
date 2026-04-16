@@ -9,6 +9,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from .llm_analysis import enrich_dashboard_with_ai_analysis, resolve_ai_provider_config
 from .models import (
     EquityNightlyAnalysisRun,
     EquityNightlyAnalysisSnapshot,
@@ -89,6 +90,13 @@ def nightly_analysis_max_age_hours() -> int:
 
 
 def resolve_nightly_analysis_agent() -> dict:
+    ai_config = resolve_ai_provider_config()
+    if ai_config.available:
+        return {
+            "provider": ai_config.provider,
+            "label": ai_config.label,
+            "model": ai_config.model,
+        }
     provider = str(getattr(settings, "EQUITIES_NIGHTLY_ANALYSIS_AGENT_PROVIDER", "core") or "core").strip() or "core"
     label = str(getattr(settings, "EQUITIES_NIGHTLY_ANALYSIS_AGENT_LABEL", "Analista nocturno") or "Analista nocturno").strip()
     return {
@@ -304,9 +312,11 @@ def build_nightly_analysis_status(
             "agent_provider": "",
             "cache_available": cache_available,
             "matches_positions": False,
+            "llm": {},
         }
 
     completed_at = run.completed_at or run.updated_at or run.created_at
+    summary_data = deserialize_cached_value(run.summary_data or {})
     matches_positions = nightly_analysis_matches_positions(run, positions) if run.status == EquityNightlyAnalysisRun.Status.COMPLETED else False
     status_map = {
         EquityNightlyAnalysisRun.Status.COMPLETED: ("ok", "OK", "good"),
@@ -332,6 +342,7 @@ def build_nightly_analysis_status(
         "error_message": run.error_message,
         "cache_available": cache_available,
         "matches_positions": matches_positions,
+        "llm": summary_data.get("llm") or {},
     }
 
 
@@ -425,8 +436,30 @@ def build_dashboard_from_nightly_cache(
             "completed_at": run.completed_at,
             "agent_provider": run.agent_provider,
             "agent_label": run.agent_label,
+            "llm": summary_data.get("llm") or {},
         },
     }
+
+
+def build_nightly_completion_note(llm_summary: dict | None) -> str:
+    if not llm_summary or not llm_summary.get("enabled"):
+        return "Analisis nocturno completado con motor cuantitativo."
+
+    total_count = int(llm_summary.get("total_count") or 0)
+    completed_count = int(llm_summary.get("completed_count") or 0)
+    failed_count = int(llm_summary.get("failed_count") or 0)
+    skipped_budget_count = int(llm_summary.get("skipped_budget_count") or 0)
+    cost_label = str(llm_summary.get("estimated_cost_usd") or "0")
+    note = f"Analisis nocturno completado. IA {llm_summary.get('label') or 'Analista IA'} en {completed_count}/{total_count} valores"
+    detail_bits = []
+    if failed_count:
+        detail_bits.append(f"{failed_count} fallo(s)")
+    if skipped_budget_count:
+        detail_bits.append(f"{skipped_budget_count} omitidos por presupuesto")
+    if detail_bits:
+        note += f" ({', '.join(detail_bits)})"
+    note += f". Coste estimado {cost_label} USD."
+    return note
 
 
 def load_cached_ibex_card(
@@ -460,6 +493,7 @@ def persist_nightly_analysis_dashboard(
     analysis_date: date,
     agent_provider: str,
     agent_label: str,
+    llm_summary: dict | None = None,
 ) -> EquityNightlyAnalysisRun:
     tracked_signature = build_positions_analysis_signature(positions)
     with transaction.atomic():
@@ -518,7 +552,7 @@ def persist_nightly_analysis_dashboard(
         EquityNightlyAnalysisSnapshot.objects.bulk_create(snapshot_rows)
 
         run.status = EquityNightlyAnalysisRun.Status.COMPLETED
-        run.status_note = "Analisis nocturno completado"
+        run.status_note = build_nightly_completion_note(llm_summary)
         run.completed_at = timezone.now()
         run.summary_data = serialize_cached_value(
             {
@@ -527,6 +561,7 @@ def persist_nightly_analysis_dashboard(
                 "ibex_count": len(dashboard["ibex_universe_cards"]),
                 "ibex_universe_summary": dashboard["ibex_universe_summary"],
                 "reference_guide_summary": dashboard["reference_guide_summary"],
+                "llm": llm_summary or {},
             }
         )
         run.save(
@@ -582,6 +617,10 @@ def run_nightly_equity_analysis(
             ibex_include_reference_suggestions=True,
             ibex_include_fundamentals=True,
         )
+        llm_summary = enrich_dashboard_with_ai_analysis(
+            dashboard,
+            analysis_date=analysis_date,
+        )
         capture_equity_ticket_snapshots(dashboard["owned_history_cards"], snapshot_date=analysis_date)
         return persist_nightly_analysis_dashboard(
             dashboard,
@@ -589,6 +628,7 @@ def run_nightly_equity_analysis(
             analysis_date=analysis_date,
             agent_provider=agent["provider"],
             agent_label=agent["label"],
+            llm_summary=llm_summary,
         )
     except Exception as exc:
         run.status = EquityNightlyAnalysisRun.Status.FAILED

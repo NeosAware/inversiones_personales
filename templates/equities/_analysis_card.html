@@ -220,6 +220,29 @@
         Todavia no hay contraste historico suficiente para validar la prediccion frente a resultados reales.
       {% endif %}
     </div>
+
+    {% if card.ai_analysis.available %}
+      <div class="equity-compact-note" style="margin-top:14px; border-color:#cfe0ea; background:#eff7fb; color:#17384e;">
+        <strong style="display:block; color:#17384e; margin-bottom:6px;">Lectura IA nocturna</strong>
+        <p style="margin:0 0 10px;">{{ card.ai_analysis.summary }}</p>
+        <div class="equity-meta-stack" style="margin-bottom:10px;">
+          <span>{{ card.ai_analysis.action_label }}</span>
+          <span>{{ card.ai_analysis.confidence_label }}</span>
+          <span>{{ card.ai_analysis.consistency_label }}</span>
+          <span>{{ card.ai_analysis.model_label }}</span>
+          <span>{{ card.ai_analysis.generated_at_label }}</span>
+        </div>
+        <p style="margin:0 0 8px;"><strong>Catalizadores:</strong> {{ card.ai_analysis.drivers|join:" | " }}</p>
+        <p style="margin:0 0 8px;"><strong>Riesgos:</strong> {{ card.ai_analysis.risks|join:" | " }}</p>
+        <p style="margin:0 0 8px;"><strong>Backtest:</strong> {{ card.ai_analysis.backtest_note }}</p>
+        <p style="margin:0;"><strong>Ciclo 5A:</strong> {{ card.ai_analysis.cycle_note }} <span style="color:#627380;">{{ card.ai_analysis.consistency_note }}</span></p>
+      </div>
+    {% elif card.ai_analysis.note %}
+      <div class="equity-compact-note" style="margin-top:14px;">
+        <strong style="display:block; color:#17384e; margin-bottom:6px;">Lectura IA nocturna</strong>
+        {{ card.ai_analysis.note }}
+      </div>
+    {% endif %}
   {% else %}
     <div class="message info" style="margin-top:18px;">
       Todavia no hay historico suficiente para generar una proyeccion fiable.

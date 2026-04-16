@@ -1,5 +1,6 @@
 import os
 import socket
+from decimal import Decimal
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -24,6 +25,12 @@ def parse_int(value, default=0):
     if value is None or value == "":
         return default
     return int(str(value).strip())
+
+
+def parse_decimal(value, default="0"):
+    if value is None or value == "":
+        value = default
+    return Decimal(str(value).strip())
 
 
 def parse_path(value, default):
@@ -271,3 +278,27 @@ EQUITIES_NIGHTLY_ANALYSIS_START_HOUR = parse_int(os.environ.get("APP_EQUITIES_NI
 EQUITIES_NIGHTLY_ANALYSIS_MAX_AGE_HOURS = parse_int(os.environ.get("APP_EQUITIES_NIGHTLY_ANALYSIS_MAX_AGE_HOURS"), 36)
 EQUITIES_NIGHTLY_ANALYSIS_AGENT_PROVIDER = os.environ.get("APP_EQUITIES_NIGHTLY_ANALYSIS_AGENT_PROVIDER", "core").strip() or "core"
 EQUITIES_NIGHTLY_ANALYSIS_AGENT_LABEL = os.environ.get("APP_EQUITIES_NIGHTLY_ANALYSIS_AGENT_LABEL", "Analista nocturno").strip() or "Analista nocturno"
+AI_LLM_PROVIDER = os.environ.get("AI_LLM_PROVIDER", "anthropic").strip().lower()
+AI_LLM_REQUEST_TIMEOUT_SECONDS = parse_int(os.environ.get("AI_LLM_REQUEST_TIMEOUT_SECONDS"), 45)
+AI_LLM_MONTHLY_BUDGET_USD = parse_decimal(os.environ.get("AI_LLM_MONTHLY_BUDGET_USD"), "0")
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+CLAUDE_PRICING = {
+    "claude-sonnet-4-20250514": {"input": Decimal("3.00"), "output": Decimal("15.00")},
+    "claude-haiku-4-5-20251001": {"input": Decimal("0.80"), "output": Decimal("4.00")},
+    "claude-opus-4-20250514": {"input": Decimal("15.00"), "output": Decimal("75.00")},
+}
+CLAUDE_DEFAULT_MODEL = os.environ.get("CLAUDE_DEFAULT_MODEL", "claude-sonnet-4-20250514").strip() or "claude-sonnet-4-20250514"
+CLAUDE_MAX_TOKENS = parse_int(os.environ.get("CLAUDE_MAX_TOKENS"), 1024)
+CLAUDE_MONTHLY_BUDGET_USD = parse_decimal(os.environ.get("CLAUDE_MONTHLY_BUDGET_USD"), "50.00")
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+OPENAI_DEFAULT_MODEL = os.environ.get("OPENAI_DEFAULT_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+OPENAI_MAX_TOKENS = parse_int(os.environ.get("OPENAI_MAX_TOKENS"), 2048)
+OPENAI_MONTHLY_BUDGET_USD = parse_decimal(
+    os.environ.get("OPENAI_MONTHLY_BUDGET_USD"),
+    str(AI_LLM_MONTHLY_BUDGET_USD),
+)
+OPENAI_PRICING = {
+    "gpt-4o-mini": {"input": Decimal("0.15"), "output": Decimal("0.60")},
+}
