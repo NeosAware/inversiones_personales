@@ -517,8 +517,26 @@
           {% if analysis_overview.best_decision %}<span class="equity-chip">Mejor lectura {{ analysis_overview.best_decision.ticker }}</span>{% endif %}
           {% if ibex_universe_summary.available %}<span class="equity-chip">Radar IBEX {{ ibex_universe_summary.analyzed_count }}</span>{% endif %}
           {% if reference_guide_summary.workbook_loaded %}<span class="equity-chip">{{ reference_guide_summary.source_label }}</span>{% endif %}
+          {% if nightly_analysis.available %}
+            <span class="equity-chip">Analisis exhaustivo {{ nightly_analysis.status_badge }}</span>
+            <span class="equity-chip">Ultima ejecucion {{ nightly_analysis.completed_at_label }}</span>
+          {% else %}
+            <span class="equity-chip">Analisis exhaustivo NO OK</span>
+          {% endif %}
         </div>
       </div>
+      <p style="margin:14px 0 0; color:rgba(255,255,255,.78);">
+        {% if nightly_analysis.available %}
+          Analisis exhaustivo {{ nightly_analysis.status_badge }}.
+          {% if nightly_analysis.completed_at_label %}Ultima ejecucion {{ nightly_analysis.completed_at_label }}.{% endif %}
+          {% if nightly_analysis.agent_label %} Motor {{ nightly_analysis.agent_label }}.{% endif %}
+          {% if nightly_analysis.cache_available %} La web esta reutilizando ese analisis nocturno durante el dia.{% else %} La vista actual esta fuera del cache nocturno y puede recalcular en vivo si hace falta.{% endif %}
+          {% if nightly_analysis.status_note %} {{ nightly_analysis.status_note }}.{% endif %}
+          {% if nightly_analysis.status_key == "failed" and nightly_analysis.error_message %} Error: {{ nightly_analysis.error_message|truncatechars:160 }}{% endif %}
+        {% else %}
+          Aun no hay un analisis exhaustivo nocturno disponible. La vista usa calculo en vivo hasta que corra la tarea de madrugada.
+        {% endif %}
+      </p>
       <div class="equity-kpis">
         <div class="equity-kpi"><span>Valor cartera</span><strong>{{ analysis_overview.current_value|floatformat:0 }} EUR</strong><small>Capital ya invertido.</small></div>
         <div class="equity-kpi"><span>Rentabilidad neta</span><strong class="{% if analysis_overview.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.unrealized_return_pct|floatformat:1 }} %</strong><small>{{ analysis_overview.unrealized_gain_total|floatformat:0 }} EUR tras compra y costes anuales.</small></div>

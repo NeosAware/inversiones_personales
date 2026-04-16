@@ -2565,6 +2565,68 @@ class EquitiesViewTests(TestCase):
         clear_market_data_caches()
         super().tearDown()
 
+    def test_equities_page_shows_nightly_analysis_status_in_hero(self):
+        analysis_day = timezone.localdate()
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2024, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position)
+        tracked_card = build_equity_history_cards([position])[0]
+        persist_nightly_analysis_dashboard(
+            {
+                "history_cards": [tracked_card],
+                "ibex_universe_cards": [],
+                "ibex_universe_summary": {
+                    "available": False,
+                    "analyzed_count": 0,
+                    "buy_alert_count": 0,
+                    "sell_alert_count": 0,
+                    "watch_alert_count": 0,
+                    "registered_count": 0,
+                    "registered_owned_count": 0,
+                    "registered_watchlist_count": 0,
+                    "radar_only_count": 0,
+                    "failed_count": 0,
+                    "failures": [],
+                    "broker_assumption": "",
+                    "trade_channel_label": "",
+                    "top_pick": None,
+                },
+                "reference_guide_summary": {
+                    "available": True,
+                    "workbook_loaded": False,
+                    "source_label": "",
+                    "tracked_count": 1,
+                    "owned_count": 1,
+                    "watchlist_count": 0,
+                    "guide_only_count": 0,
+                },
+            },
+            [position],
+            analysis_date=analysis_day,
+            agent_provider="core",
+            agent_label="Analista nocturno",
+        )
+
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertContains(response, "Analisis exhaustivo OK")
+        self.assertContains(response, "Ultima ejecucion")
+        self.assertContains(response, "Analista nocturno")
+
     def test_ibex_detail_view_uses_cached_nightly_snapshot(self):
         analysis_day = timezone.localdate()
         position = EquityPosition.objects.create(

@@ -271,12 +271,68 @@ def load_latest_completed_nightly_analysis_run() -> EquityNightlyAnalysisRun | N
     return run
 
 
+def load_latest_nightly_analysis_run() -> EquityNightlyAnalysisRun | None:
+    if not nightly_analysis_enabled():
+        return None
+    return EquityNightlyAnalysisRun.objects.order_by("-analysis_date", "-id").first()
+
+
 def nightly_analysis_matches_positions(run: EquityNightlyAnalysisRun, positions) -> bool:
     summary_data = deserialize_cached_value(run.summary_data or {})
     expected_signature = summary_data.get("tracked_signature")
     if not expected_signature:
         return False
     return expected_signature == build_positions_analysis_signature(positions)
+
+
+def build_nightly_analysis_status(
+    positions,
+    *,
+    cache_available: bool = False,
+) -> dict:
+    run = load_latest_nightly_analysis_run()
+    if run is None:
+        return {
+            "available": False,
+            "status_key": "missing",
+            "status_label": "Sin ejecutar",
+            "status_badge": "NO OK",
+            "status_tone": "warn",
+            "completed_at_label": "",
+            "analysis_date_label": "",
+            "agent_label": "",
+            "agent_provider": "",
+            "cache_available": cache_available,
+            "matches_positions": False,
+        }
+
+    completed_at = run.completed_at or run.updated_at or run.created_at
+    matches_positions = nightly_analysis_matches_positions(run, positions) if run.status == EquityNightlyAnalysisRun.Status.COMPLETED else False
+    status_map = {
+        EquityNightlyAnalysisRun.Status.COMPLETED: ("ok", "OK", "good"),
+        EquityNightlyAnalysisRun.Status.FAILED: ("failed", "NO OK", "warn"),
+        EquityNightlyAnalysisRun.Status.RUNNING: ("running", "EN CURSO", ""),
+        EquityNightlyAnalysisRun.Status.PENDING: ("pending", "PENDIENTE", ""),
+    }
+    status_key, status_badge, status_tone = status_map.get(run.status, ("unknown", "NO OK", "warn"))
+    return {
+        "available": True,
+        "status": run.status,
+        "status_key": status_key,
+        "status_label": run.get_status_display(),
+        "status_badge": status_badge,
+        "status_tone": status_tone,
+        "status_note": run.status_note,
+        "completed_at": completed_at,
+        "completed_at_label": timezone.localtime(completed_at).strftime("%Y-%m-%d %H:%M") if completed_at else "",
+        "analysis_date": run.analysis_date,
+        "analysis_date_label": run.analysis_date.isoformat() if run.analysis_date else "",
+        "agent_label": run.agent_label,
+        "agent_provider": run.agent_provider,
+        "error_message": run.error_message,
+        "cache_available": cache_available,
+        "matches_positions": matches_positions,
+    }
 
 
 def build_dashboard_from_nightly_cache(

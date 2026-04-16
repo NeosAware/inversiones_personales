@@ -13,7 +13,7 @@ from django.views.generic import TemplateView, View
 
 from .forms import EquityAllocationOptimizerForm, EquityClosePositionForm, EquityDocumentImportForm, EquityOptimizationRunForm, EquityPositionForm
 from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition
-from .nightly_analysis import build_dashboard_from_nightly_cache, load_cached_ibex_card
+from .nightly_analysis import build_dashboard_from_nightly_cache, build_nightly_analysis_status, load_cached_ibex_card
 from .optimization_runs import (
     build_fallback_report_pdf_html,
     launch_equity_optimization_run_pair,
@@ -152,7 +152,10 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["reference_guide_rows"] = dashboard["reference_guide_rows"]
         context["reference_guide_summary"] = dashboard["reference_guide_summary"]
         context["analysis_overview"] = dashboard["overview"]
-        context["nightly_analysis"] = dashboard.get("nightly_analysis", {"available": False})
+        context["nightly_analysis"] = build_nightly_analysis_status(
+            positions,
+            cache_available=bool(dashboard.get("nightly_analysis", {}).get("available")),
+        )
         context["auto_sync"] = auto_sync
         context["selected_period_start"] = selected_start_date
         context["selected_period_end"] = selected_end_date
