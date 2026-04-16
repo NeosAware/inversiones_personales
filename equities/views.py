@@ -13,6 +13,7 @@ from django.views.generic import TemplateView, View
 
 from .forms import EquityAllocationOptimizerForm, EquityClosePositionForm, EquityDocumentImportForm, EquityOptimizationRunForm, EquityPositionForm
 from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition
+from .nightly_analysis import build_dashboard_from_nightly_cache, load_cached_ibex_card
 from .optimization_runs import (
     build_fallback_report_pdf_html,
     launch_equity_optimization_run_pair,
@@ -98,21 +99,29 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         selected_start_date, selected_end_date = self._selected_period_bounds()
         optimizer_requested = self._optimizer_requested()
         defer_ibex_analysis = bool(active_optimization_runs) and not optimizer_requested
-        dashboard = build_equity_analysis_dashboard(
+        include_ibex_universe = (
+            False
+            if defer_ibex_analysis
+            else (True if optimizer_requested else getattr(settings, "EQUITIES_IBEX_UNIVERSE_ANALYSIS", True))
+        )
+        dashboard = build_dashboard_from_nightly_cache(
             positions,
+            include_ibex_universe=include_ibex_universe,
             selected_start_date=selected_start_date,
             selected_end_date=selected_end_date,
-            include_ibex_universe=(
-                False
-                if defer_ibex_analysis
-                else (True if optimizer_requested else getattr(settings, "EQUITIES_IBEX_UNIVERSE_ANALYSIS", True))
-            ),
-            ibex_company_limit=(
-                None
-                if optimizer_requested
-                else (getattr(settings, "EQUITIES_IBEX_UNIVERSE_LIMIT", 0) or None)
-            ),
         )
+        if dashboard is None:
+            dashboard = build_equity_analysis_dashboard(
+                positions,
+                selected_start_date=selected_start_date,
+                selected_end_date=selected_end_date,
+                include_ibex_universe=include_ibex_universe,
+                ibex_company_limit=(
+                    None
+                    if optimizer_requested
+                    else (getattr(settings, "EQUITIES_IBEX_UNIVERSE_LIMIT", 0) or None)
+                ),
+            )
         context["page_title"] = "Acciones cotizadas"
         context["positions"] = positions
         context["summary"] = {
@@ -136,8 +145,6 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             }
             for row in dashboard["ibex_universe_rows"]
         ]
-        capture_equity_ticket_snapshots(dashboard["owned_history_cards"])
-        context["ticket_tracking"] = build_equity_ticket_tracking_context(dashboard["owned_history_cards"])
         context["investment_journey"] = build_equity_investment_journey_context(positions, closed_positions)
         context["ibex_universe_summary"] = dashboard["ibex_universe_summary"]
         context["ibex_analysis_deferred"] = defer_ibex_analysis
@@ -145,6 +152,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["reference_guide_rows"] = dashboard["reference_guide_rows"]
         context["reference_guide_summary"] = dashboard["reference_guide_summary"]
         context["analysis_overview"] = dashboard["overview"]
+        context["nightly_analysis"] = dashboard.get("nightly_analysis", {"available": False})
         context["auto_sync"] = auto_sync
         context["selected_period_start"] = selected_start_date
         context["selected_period_end"] = selected_end_date
@@ -189,6 +197,9 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["prefill_source_filename"] = kwargs.get("prefill_source_filename")
         context["equity_company_catalog"] = get_equity_company_catalog()
         context["today"] = timezone.localdate()
+        if not context["nightly_analysis"]["available"]:
+            capture_equity_ticket_snapshots(dashboard["owned_history_cards"])
+        context["ticket_tracking"] = build_equity_ticket_tracking_context(dashboard["owned_history_cards"])
         return context
 
     def post(self, request, *args, **kwargs):
@@ -517,16 +528,23 @@ class IbexEquityDetailView(LoginRequiredMixin, EquityPeriodBoundsMixin, Template
         if not company:
             raise Http404("No se ha encontrado ese valor del IBEX.")
 
-        try:
-            card = build_ibex_universe_card(
-                company,
-                positions,
-                selected_start_date=selected_start_date,
-                selected_end_date=selected_end_date,
-                workbook_snapshot=workbook_snapshot,
-            )
-        except Exception as exc:
-            raise Http404(f"No se ha podido construir el analisis de {company.get('company_name') or company.get('ticker')}: {exc}") from exc
+        card = load_cached_ibex_card(
+            self.kwargs.get("ticker", ""),
+            positions,
+            selected_start_date=selected_start_date,
+            selected_end_date=selected_end_date,
+        )
+        if card is None:
+            try:
+                card = build_ibex_universe_card(
+                    company,
+                    positions,
+                    selected_start_date=selected_start_date,
+                    selected_end_date=selected_end_date,
+                    workbook_snapshot=workbook_snapshot,
+                )
+            except Exception as exc:
+                raise Http404(f"No se ha podido construir el analisis de {company.get('company_name') or company.get('ticker')}: {exc}") from exc
 
         context["page_title"] = card["position"].company_name
         context["card"] = card

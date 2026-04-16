@@ -193,6 +193,70 @@ class EquityTicketSnapshot(models.Model):
         return f"{self.position.ticker} snapshot {self.snapshot_date}"
 
 
+class EquityNightlyAnalysisRun(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pendiente"
+        RUNNING = "running", "En proceso"
+        COMPLETED = "completed", "Completada"
+        FAILED = "failed", "Fallida"
+
+    analysis_date = models.DateField(unique=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    status_note = models.CharField(max_length=255, blank=True)
+    agent_provider = models.CharField(max_length=32, default="core")
+    agent_label = models.CharField(max_length=120, default="Analista nocturno")
+    summary_data = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-analysis_date", "-id"]
+
+    def __str__(self):
+        return f"Analisis nocturno {self.analysis_date}"
+
+
+class EquityNightlyAnalysisSnapshot(models.Model):
+    class Scope(models.TextChoices):
+        TRACKED = "tracked", "Seguimiento guardado"
+        IBEX = "ibex", "Radar IBEX"
+
+    run = models.ForeignKey(
+        EquityNightlyAnalysisRun,
+        on_delete=models.CASCADE,
+        related_name="snapshots",
+    )
+    analysis_date = models.DateField()
+    scope = models.CharField(max_length=16, choices=Scope.choices)
+    analysis_key = models.CharField(max_length=80)
+    position = models.ForeignKey(
+        EquityPosition,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="nightly_analysis_snapshots",
+    )
+    ticker = models.CharField(max_length=20)
+    quote_symbol = models.CharField(max_length=40, blank=True)
+    company_name = models.CharField(max_length=160)
+    status_key = models.CharField(max_length=24, blank=True)
+    sector_label = models.CharField(max_length=120, blank=True)
+    agent_provider = models.CharField(max_length=32, default="core")
+    analysis_payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["scope", "company_name", "ticker"]
+        unique_together = ("run", "analysis_key")
+
+    def __str__(self):
+        return f"{self.analysis_date} {self.scope} {self.ticker}"
+
+
 class EquityClosedPosition(models.Model):
     ownership_category = models.CharField(
         max_length=12,

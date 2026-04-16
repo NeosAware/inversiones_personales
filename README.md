@@ -81,14 +81,20 @@ Share the HTTPS URL printed by `cloudflared` with Monica.
 
 ### Daily maintenance
 
-This script captures the daily household snapshot and creates a backup:
+This script now:
+
+- runs the full nightly equities analysis if the clock is already past `00:00`
+- captures the daily household snapshot
+- creates a backup
+
+Command:
 
 ```powershell
 cd C:\Users\Gerencia\Documents\inversiones_personales
 .\scripts\daily_household_maintenance.ps1
 ```
 
-You can schedule it daily with Windows Task Scheduler.
+You can schedule it daily with Windows Task Scheduler just after midnight, for example at `00:05`.
 
 ### PostgreSQL mode
 
@@ -144,6 +150,7 @@ The script:
 The dashboard now stores and shows:
 
 - daily portfolio value snapshots
+- nightly full-stock analysis snapshots for tracked positions and the whole IBEX
 - historical evolution of current portfolio value
 - spending alerts when monthly expenses exceed the cap or spike versus recent months
 
@@ -152,6 +159,18 @@ You can also capture a snapshot manually from the dashboard or with:
 ```powershell
 python manage.py capture_portfolio_snapshot
 ```
+
+Nightly equities analysis can also be launched manually:
+
+```powershell
+python manage.py run_equity_nightly_analysis --force
+```
+
+By default the command only runs from `00:00` onwards and stores:
+
+- the full analysis card for each tracked stock
+- the full analysis card for every IBEX company, including `12M`, `5A`, backtest and ratios
+- a reusable nightly cache so daytime dashboard views and optimizations do not need to rebuild the heavy analysis
 
 ## Production deployment
 

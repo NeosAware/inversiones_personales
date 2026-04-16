@@ -6477,6 +6477,9 @@ def build_ibex_universe_analysis(
     reference_cache: dict | None = None,
     company_limit: int | None = None,
     progress_callback=None,
+    include_visuals: bool = False,
+    include_reference_suggestions: bool = False,
+    include_fundamentals: bool = False,
 ) -> dict:
     reference_cache = reference_cache if reference_cache is not None else {}
     workbook_snapshot = load_ibex_reference_workbook_snapshot()
@@ -6538,9 +6541,9 @@ def build_ibex_universe_analysis(
                         reference_cache={},
                         workbook_snapshot=workbook_snapshot,
                         broker_profile=broker_profile,
-                        include_visuals=False,
-                        include_reference_suggestions=False,
-                        include_fundamentals=False,
+                        include_visuals=include_visuals,
+                        include_reference_suggestions=include_reference_suggestions,
+                        include_fundamentals=include_fundamentals,
                     )
                 except Exception as exc:
                     failures.append(f"{company.get('company_name') or company.get('ticker')}: {exc}")
@@ -6564,8 +6567,9 @@ def build_ibex_universe_analysis(
                         reference_cache={},
                         workbook_snapshot=workbook_snapshot,
                         broker_profile=broker_profile,
-                        include_visuals=False,
-                        include_reference_suggestions=False,
+                        include_visuals=include_visuals,
+                        include_reference_suggestions=include_reference_suggestions,
+                        include_fundamentals=include_fundamentals,
                     ): (index, company)
                     for index, company in enumerate(candidate_companies)
                 }
@@ -6709,21 +6713,29 @@ def build_owned_positions_comparable_summary(history_cards: list[dict]) -> dict:
     }
 
 
-def build_equity_analysis_dashboard(
-    positions,
+def build_selected_period_label(
     selected_start_date: date | None = None,
     selected_end_date: date | None = None,
-    include_ibex_universe: bool = False,
-    ibex_company_limit: int | None = None,
-    ibex_progress_callback=None,
+) -> str:
+    if selected_start_date and selected_end_date:
+        return f"{selected_start_date:%Y-%m-%d} a {selected_end_date:%Y-%m-%d}"
+    if selected_start_date:
+        return f"Desde {selected_start_date:%Y-%m-%d}"
+    if selected_end_date:
+        return f"Hasta {selected_end_date:%Y-%m-%d}"
+    return "Ultimos 90 dias"
+
+
+def build_equity_analysis_overview(
+    positions,
+    history_cards: list[dict],
+    decision_rows: list[dict],
+    ibex_universe_summary: dict | None = None,
+    *,
+    selected_start_date: date | None = None,
+    selected_end_date: date | None = None,
 ) -> dict:
-    reference_cache: dict = {}
-    history_cards = build_equity_history_cards(
-        positions,
-        selected_start_date=selected_start_date,
-        selected_end_date=selected_end_date,
-        reference_cache=reference_cache,
-    )
+    ibex_universe_summary = ibex_universe_summary or {}
     owned_positions = [position for position in positions if position.is_owned]
     watchlist_positions = [position for position in positions if not position.is_owned]
     current_value_total = sum((position.current_value for position in owned_positions), ZERO)
@@ -6735,34 +6747,6 @@ def build_equity_analysis_dashboard(
     net_annual_income_total = sum((position.net_annual_income for position in owned_positions), ZERO)
     unrealized_gain_total = sum((position.unrealized_gain_after_costs for position in owned_positions), ZERO)
     comparable_summary = build_owned_positions_comparable_summary(history_cards)
-    reference_guide = build_equity_reference_guide(history_cards)
-    decision_rows = build_equity_decision_rows(history_cards)
-    ibex_universe = {
-        "cards": [],
-        "rows": [],
-        "summary": {
-            "available": False,
-            "analyzed_count": 0,
-            "buy_alert_count": 0,
-            "sell_alert_count": 0,
-            "watch_alert_count": 0,
-            "failed_count": 0,
-            "failures": [],
-            "broker_assumption": "",
-            "trade_channel_label": "",
-            "top_pick": None,
-        },
-    }
-    if include_ibex_universe:
-        ibex_universe = build_ibex_universe_analysis(
-            history_cards,
-            positions,
-            selected_start_date=selected_start_date,
-            selected_end_date=selected_end_date,
-            reference_cache=reference_cache,
-            company_limit=ibex_company_limit,
-            progress_callback=ibex_progress_callback,
-        )
 
     weighted_periods = []
     for label in ("1Y", "3Y", "5Y", "10Y"):
@@ -6805,15 +6789,6 @@ def build_equity_analysis_dashboard(
         if denominator:
             weighted_selected_return = numerator / denominator
 
-    if selected_start_date and selected_end_date:
-        selected_period_label = f"{selected_start_date:%Y-%m-%d} a {selected_end_date:%Y-%m-%d}"
-    elif selected_start_date:
-        selected_period_label = f"Desde {selected_start_date:%Y-%m-%d}"
-    elif selected_end_date:
-        selected_period_label = f"Hasta {selected_end_date:%Y-%m-%d}"
-    else:
-        selected_period_label = "Ultimos 90 dias"
-
     weighted_projected_return_12m = None
     weighted_safety_score = None
     owned_projection_cards = [
@@ -6833,7 +6808,7 @@ def build_equity_analysis_dashboard(
                 for card in owned_projection_cards
             ) / projection_weight_total
 
-    overview = {
+    return {
         "positions_count": len(positions),
         "owned_positions_count": len(owned_positions),
         "watchlist_positions_count": len(watchlist_positions),
@@ -6856,11 +6831,72 @@ def build_equity_analysis_dashboard(
         "weighted_periods": weighted_periods,
         "weighted_projected_return_12m": weighted_projected_return_12m,
         "weighted_safety_score": weighted_safety_score,
-        "selected_period_label": selected_period_label,
+        "selected_period_label": build_selected_period_label(selected_start_date, selected_end_date),
         "watchlist_latest_price_count": sum(1 for position in watchlist_positions if position.current_price_per_share),
-        "best_decision": decision_rows[0] if decision_rows else ibex_universe["summary"].get("top_pick"),
+        "best_decision": decision_rows[0] if decision_rows else ibex_universe_summary.get("top_pick"),
         "comparable_summary": comparable_summary,
     }
+
+
+def build_equity_analysis_dashboard(
+    positions,
+    selected_start_date: date | None = None,
+    selected_end_date: date | None = None,
+    include_ibex_universe: bool = False,
+    ibex_company_limit: int | None = None,
+    ibex_progress_callback=None,
+    ibex_include_visuals: bool = False,
+    ibex_include_reference_suggestions: bool = False,
+    ibex_include_fundamentals: bool = False,
+) -> dict:
+    reference_cache: dict = {}
+    history_cards = build_equity_history_cards(
+        positions,
+        selected_start_date=selected_start_date,
+        selected_end_date=selected_end_date,
+        reference_cache=reference_cache,
+    )
+    owned_positions = [position for position in positions if position.is_owned]
+    watchlist_positions = [position for position in positions if not position.is_owned]
+    reference_guide = build_equity_reference_guide(history_cards)
+    decision_rows = build_equity_decision_rows(history_cards)
+    ibex_universe = {
+        "cards": [],
+        "rows": [],
+        "summary": {
+            "available": False,
+            "analyzed_count": 0,
+            "buy_alert_count": 0,
+            "sell_alert_count": 0,
+            "watch_alert_count": 0,
+            "failed_count": 0,
+            "failures": [],
+            "broker_assumption": "",
+            "trade_channel_label": "",
+            "top_pick": None,
+        },
+    }
+    if include_ibex_universe:
+        ibex_universe = build_ibex_universe_analysis(
+            history_cards,
+            positions,
+            selected_start_date=selected_start_date,
+            selected_end_date=selected_end_date,
+            reference_cache=reference_cache,
+            company_limit=ibex_company_limit,
+            progress_callback=ibex_progress_callback,
+            include_visuals=ibex_include_visuals,
+            include_reference_suggestions=ibex_include_reference_suggestions,
+            include_fundamentals=ibex_include_fundamentals,
+        )
+    overview = build_equity_analysis_overview(
+        positions,
+        history_cards,
+        decision_rows,
+        ibex_universe["summary"],
+        selected_start_date=selected_start_date,
+        selected_end_date=selected_end_date,
+    )
 
     return {
         "overview": overview,

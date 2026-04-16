@@ -69,6 +69,11 @@ APP_CSRF_COOKIE_SECURE=1
 APP_SECURE_HSTS_SECONDS=31536000
 APP_SECURE_HSTS_INCLUDE_SUBDOMAINS=1
 APP_SECURE_HSTS_PRELOAD=1
+APP_EQUITIES_NIGHTLY_ANALYSIS_ENABLED=1
+APP_EQUITIES_NIGHTLY_ANALYSIS_START_HOUR=0
+APP_EQUITIES_NIGHTLY_ANALYSIS_MAX_AGE_HOURS=36
+APP_EQUITIES_NIGHTLY_ANALYSIS_AGENT_PROVIDER=core
+APP_EQUITIES_NIGHTLY_ANALYSIS_AGENT_LABEL=Analista nocturno
 ```
 
 Importante: la aplicacion ya no cae a SQLite en produccion. Si este `.env` no se carga en el servicio, Django fallara al arrancar para evitar usar una base equivocada.
@@ -113,6 +118,27 @@ WorkingDirectory=/var/www/personal.neosaware.ai/app
 EnvironmentFile=/var/www/personal.neosaware.ai/.env
 ExecStart=/var/www/personal.neosaware.ai/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8000
 ```
+
+## 7.1. Analisis nocturno de acciones
+
+El analisis pesado de acciones debe ejecutarse por la noche, a partir de `00:00`, y dejar snapshots reutilizables para el dia. El comando es:
+
+```bash
+cd /var/www/personal.neosaware.ai/app
+source ../venv/bin/activate
+set -a
+. ../.env
+set +a
+python manage.py run_equity_nightly_analysis
+```
+
+Ejemplo de `cron` diario a las `00:05`:
+
+```cron
+5 0 * * * cd /var/www/personal.neosaware.ai/app && . ../venv/bin/activate && set -a && . ../.env && set +a && python manage.py run_equity_nightly_analysis >> /var/www/personal.neosaware.ai/nightly-equities.log 2>&1
+```
+
+Durante el dia, la web y las optimizaciones reutilizan este cache nocturno siempre que siga siendo valido.
 
 Healthcheck publico:
 

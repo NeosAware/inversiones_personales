@@ -21,6 +21,7 @@ try:
 except Exception:  # pragma: no cover - dependencia opcional en runtime
     pisa = None
 
+from .nightly_analysis import build_dashboard_from_nightly_cache
 from .models import EquityOptimizationRun, EquityPosition
 from .services import (
     OPTIMIZER_STRATEGY_12M_PRIMARY,
@@ -941,26 +942,38 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
             note="Construyendo base de mercado y cartera actual",
         )
         preview_candidates: list[dict] = []
-
-        def ibex_progress_callback(completed_count, total_count, company, completed_cards, failures_count):
-            percent = 22 + int((completed_count / max(total_count, 1)) * 34)
-            update_run_progress(
-                run_id,
-                percent=percent,
-                stage_key="ibex",
-                note=f"Analizando el IBEX: {completed_count}/{total_count}",
-                current_step=completed_count,
-                total_steps=total_count,
-                current_label=company.get("company_name") or company.get("ticker", ""),
-                preview_candidates=preview_candidates,
-            )
-
-        dashboard = build_equity_analysis_dashboard(
+        dashboard = build_dashboard_from_nightly_cache(
             positions,
             include_ibex_universe=True,
-            ibex_company_limit=None,
-            ibex_progress_callback=ibex_progress_callback,
         )
+        if dashboard is not None:
+            update_run_progress(
+                run_id,
+                percent=56,
+                stage_key="dashboard",
+                note="Usando analisis nocturno guardado",
+                preview_candidates=preview_candidates,
+            )
+        else:
+            def ibex_progress_callback(completed_count, total_count, company, completed_cards, failures_count):
+                percent = 22 + int((completed_count / max(total_count, 1)) * 34)
+                update_run_progress(
+                    run_id,
+                    percent=percent,
+                    stage_key="ibex",
+                    note=f"Analizando el IBEX: {completed_count}/{total_count}",
+                    current_step=completed_count,
+                    total_steps=total_count,
+                    current_label=company.get("company_name") or company.get("ticker", ""),
+                    preview_candidates=preview_candidates,
+                )
+
+            dashboard = build_equity_analysis_dashboard(
+                positions,
+                include_ibex_universe=True,
+                ibex_company_limit=None,
+                ibex_progress_callback=ibex_progress_callback,
+            )
 
         optimizer_cards = list(dashboard["optimizer_cards"])
         preview_candidates = build_optimizer_candidate_preview(optimizer_cards, strategy_mode=strategy_mode)

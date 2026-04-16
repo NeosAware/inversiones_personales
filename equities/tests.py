@@ -11,11 +11,21 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from portfolio.ownership import AssetOwnershipCategory
 
 from .broker_costs import estimate_broker_costs
-from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition, EquityTicketSnapshot
+from .models import (
+    EquityClosedPosition,
+    EquityNightlyAnalysisRun,
+    EquityNightlyAnalysisSnapshot,
+    EquityOptimizationRun,
+    EquityPosition,
+    EquityPriceHistory,
+    EquityTicketSnapshot,
+)
+from .nightly_analysis import build_dashboard_from_nightly_cache, persist_nightly_analysis_dashboard, run_nightly_equity_analysis
 from .optimization_runs import launch_equity_optimization_run, launch_equity_optimization_run_pair, process_equity_optimization_run
 from .services import (
     EURIBOR_REFERENCE_NAME,
@@ -108,6 +118,47 @@ def build_compound_market_series(
         latest_date=points[-1]["date"],
         points=points,
     )
+
+
+def populate_position_history(
+    position: EquityPosition,
+    *,
+    growth: Decimal = Decimal("1.0150"),
+    benchmark_growth: Decimal = Decimal("1.0080"),
+    months: int = 60,
+):
+    stock_series = build_compound_market_series(
+        position.quote_symbol or f"{position.ticker}.MC",
+        position.company_name,
+        growth,
+        months=months,
+        start_year=2021,
+        start_month=1,
+        start_price=position.average_cost_per_share or Decimal("10.0000"),
+    )
+    benchmark_series = build_compound_market_series(
+        position.benchmark_symbol or "^IBEX",
+        position.benchmark_name or "IBEX 35",
+        benchmark_growth,
+        months=months,
+        start_year=2021,
+        start_month=1,
+        start_price=Decimal("100.0000"),
+    )
+    for stock_point, benchmark_point in zip(stock_series.points, benchmark_series.points):
+        EquityPriceHistory.objects.create(
+            position=position,
+            price_date=stock_point["date"],
+            open_price=stock_point["open"],
+            high_price=stock_point["high"],
+            low_price=stock_point["low"],
+            close_price=stock_point["close"],
+            benchmark_close=benchmark_point["close"],
+        )
+    position.current_price_per_share = stock_series.latest_price
+    position.latest_price_date = stock_series.latest_date
+    position.save(update_fields=["current_price_per_share", "latest_price_date"])
+    return stock_series
 
 
 @override_settings(EQUITIES_FETCH_FUNDAMENTALS=False)
@@ -2229,6 +2280,276 @@ class EquitiesServicesTests(TestCase):
         self.assertIsNot(first_series, second_series)
         self.assertIsNot(first_series.points, second_series.points)
 
+    def test_run_nightly_equity_analysis_persists_full_ibex_cache(self):
+        analysis_day = timezone.localdate()
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2024, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position)
+        tracked_card = build_equity_history_cards([position])[0]
+        ibex_position = EquityPosition(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            shares=Decimal("1.0000"),
+            average_cost_per_share=Decimal("34.0000"),
+            current_price_per_share=Decimal("34.0000"),
+            annual_dividend_income=Decimal("0.50"),
+        )
+        ibex_card = {
+            **tracked_card,
+            "position": ibex_position,
+            "status_key": "ibex",
+            "status_label": "Solo radar",
+            "detail_anchor": "",
+            "sector_label": "Construccion",
+        }
+        dashboard = {
+            "history_cards": [tracked_card],
+            "owned_history_cards": [tracked_card],
+            "ibex_universe_cards": [ibex_card],
+            "ibex_universe_summary": {
+                "available": True,
+                "analyzed_count": 1,
+                "buy_alert_count": 1,
+                "sell_alert_count": 0,
+                "watch_alert_count": 0,
+                "registered_count": 0,
+                "registered_owned_count": 0,
+                "registered_watchlist_count": 0,
+                "radar_only_count": 1,
+                "failed_count": 0,
+                "failures": [],
+                "broker_assumption": "Interactive Brokers",
+                "trade_channel_label": "App",
+                "top_pick": {"ticker": "ACS", "company_name": "ACS"},
+            },
+            "reference_guide_summary": {
+                "available": True,
+                "workbook_loaded": False,
+                "source_label": "",
+                "tracked_count": 1,
+                "owned_count": 1,
+                "watchlist_count": 0,
+                "guide_only_count": 0,
+            },
+        }
+
+        with (
+            patch("equities.nightly_analysis.sync_all_equities_market_data", return_value=[]),
+            patch("equities.nightly_analysis.build_equity_analysis_dashboard", return_value=dashboard) as mocked_dashboard,
+        ):
+            run = run_nightly_equity_analysis(
+                analysis_date=analysis_day,
+                force=True,
+            )
+
+        self.assertIsNotNone(run)
+        self.assertEqual(run.status, EquityNightlyAnalysisRun.Status.COMPLETED)
+        self.assertEqual(run.snapshots.count(), 2)
+        self.assertEqual(
+            mocked_dashboard.call_args.kwargs,
+            {
+                "include_ibex_universe": True,
+                "ibex_company_limit": None,
+                "ibex_include_visuals": True,
+                "ibex_include_reference_suggestions": True,
+                "ibex_include_fundamentals": True,
+            },
+        )
+        self.assertTrue(
+            EquityNightlyAnalysisSnapshot.objects.filter(
+                run=run,
+                scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
+                ticker="ACS",
+            ).exists()
+        )
+
+    def test_build_dashboard_from_nightly_cache_uses_live_position_values(self):
+        analysis_day = timezone.localdate()
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2024, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position)
+        tracked_card = build_equity_history_cards([position])[0]
+        ibex_position = EquityPosition(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            shares=Decimal("1.0000"),
+            average_cost_per_share=Decimal("34.0000"),
+            current_price_per_share=Decimal("34.0000"),
+            annual_dividend_income=Decimal("0.50"),
+        )
+        ibex_card = {
+            **tracked_card,
+            "position": ibex_position,
+            "status_key": "ibex",
+            "status_label": "Solo radar",
+            "detail_anchor": "",
+            "sector_label": "Construccion",
+        }
+        dashboard = {
+            "history_cards": [tracked_card],
+            "ibex_universe_cards": [ibex_card],
+            "ibex_universe_summary": {
+                "available": True,
+                "analyzed_count": 1,
+                "buy_alert_count": 1,
+                "sell_alert_count": 0,
+                "watch_alert_count": 0,
+                "registered_count": 0,
+                "registered_owned_count": 0,
+                "registered_watchlist_count": 0,
+                "radar_only_count": 1,
+                "failed_count": 0,
+                "failures": [],
+                "broker_assumption": "Interactive Brokers",
+                "trade_channel_label": "App",
+                "top_pick": {"ticker": "ACS", "company_name": "ACS"},
+            },
+            "reference_guide_summary": {
+                "available": True,
+                "workbook_loaded": False,
+                "source_label": "",
+                "tracked_count": 1,
+                "owned_count": 1,
+                "watchlist_count": 0,
+                "guide_only_count": 0,
+            },
+        }
+        persist_nightly_analysis_dashboard(
+            dashboard,
+            [position],
+            analysis_date=analysis_day,
+            agent_provider="core",
+            agent_label="Analista nocturno",
+        )
+
+        position.current_price_per_share = Decimal("19.5000")
+        position.latest_price_date = date(2026, 4, 16)
+        position.save(update_fields=["current_price_per_share", "latest_price_date"])
+
+        cached_dashboard = build_dashboard_from_nightly_cache(
+            [position],
+            include_ibex_universe=True,
+        )
+
+        self.assertIsNotNone(cached_dashboard)
+        self.assertEqual(cached_dashboard["history_cards"][0]["position"].current_price_per_share, Decimal("19.5000"))
+        self.assertTrue(cached_dashboard["history_cards"][0]["projection_12m_chart"]["available"])
+        self.assertEqual(cached_dashboard["ibex_universe_cards"][0]["position"].ticker, "ACS")
+        self.assertTrue(cached_dashboard["nightly_analysis"]["available"])
+
+    def test_process_equity_optimization_run_uses_nightly_cache_when_available(self):
+        run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-CACHE-001",
+            label="Cartera cacheada",
+            total_investment=Decimal("100000"),
+            max_company_pct=Decimal("20"),
+            max_total_positions=8,
+            max_sector_positions=1,
+            selected_sectors=["Energia"],
+        )
+        position = EquityPosition(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("1.0000"),
+            average_cost_per_share=Decimal("11.0000"),
+            current_price_per_share=Decimal("11.0000"),
+        )
+        card = {
+            "position": position,
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "sector_label": "Energia",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": "Tendencia favorable."},
+            "projection_reliability": {"label": "Alta", "score": Decimal("82.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("8.50"),
+                "price_return_pct": Decimal("6.20"),
+                "price_low_return_pct": Decimal("-4.00"),
+                "price_high_return_pct": Decimal("13.00"),
+                "projected_price": Decimal("11.6800"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("74.00"),
+                "gross_dividend_yield_pct": Decimal("4.10"),
+                "net_income_yield_pct": Decimal("3.30"),
+                "transaction_drag_pct": Decimal("0.90"),
+                "annualized_volatility_pct": Decimal("13.00"),
+                "positive_year_ratio_pct": Decimal("68.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-3.00"),
+                "max_drawdown_pct": Decimal("-20.00"),
+            },
+            "cycle_projection_5y": {"available": False},
+        }
+        dashboard = {
+            "optimizer_cards": [card],
+            "history_cards": [],
+            "ibex_universe_summary": {"analyzed_count": 35},
+        }
+
+        with (
+            patch("equities.optimization_runs.sync_all_equities_market_data", return_value=[]),
+            patch("equities.optimization_runs.build_dashboard_from_nightly_cache", return_value=dashboard) as mocked_cached_dashboard,
+            patch("equities.optimization_runs.build_equity_analysis_dashboard") as mocked_live_dashboard,
+            patch("equities.optimization_runs.build_news_signal_map", return_value={"IBE": {"label": "Prensa favorable", "score": Decimal("2.10"), "items_count": 2, "items": [], "note": "Buen tono", "available": True, "positive_count": 2, "negative_count": 0, "neutral_count": 0}}),
+            patch("equities.optimization_runs.build_report_entries", return_value=[]),
+            patch("equities.optimization_runs.build_report_html", return_value="<html>informe</html>"),
+            patch("equities.optimization_runs.build_report_pdf_html", return_value="<html>pdf</html>"),
+        ):
+            process_equity_optimization_run(run.id)
+
+        run.refresh_from_db()
+        self.assertEqual(run.status, EquityOptimizationRun.Status.COMPLETED)
+        mocked_cached_dashboard.assert_called_once()
+        mocked_live_dashboard.assert_not_called()
+
 @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=False, EQUITIES_IBEX_UNIVERSE_ANALYSIS=False)
 @override_settings(EQUITIES_FETCH_FUNDAMENTALS=False)
 class EquitiesViewTests(TestCase):
@@ -2243,6 +2564,105 @@ class EquitiesViewTests(TestCase):
         load_ibex_reference_workbook_snapshot.cache_clear()
         clear_market_data_caches()
         super().tearDown()
+
+    def test_ibex_detail_view_uses_cached_nightly_snapshot(self):
+        analysis_day = timezone.localdate()
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2024, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position)
+        tracked_card = build_equity_history_cards([position])[0]
+        ibex_position = EquityPosition(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            shares=Decimal("1.0000"),
+            average_cost_per_share=Decimal("34.0000"),
+            current_price_per_share=Decimal("34.0000"),
+            annual_dividend_income=Decimal("0.50"),
+        )
+        ibex_card = {
+            **tracked_card,
+            "position": ibex_position,
+            "status_key": "ibex",
+            "status_label": "Solo radar",
+            "detail_anchor": "",
+            "sector_label": "Construccion",
+        }
+        persist_nightly_analysis_dashboard(
+            {
+                "history_cards": [tracked_card],
+                "ibex_universe_cards": [ibex_card],
+                "ibex_universe_summary": {
+                    "available": True,
+                    "analyzed_count": 1,
+                    "buy_alert_count": 1,
+                    "sell_alert_count": 0,
+                    "watch_alert_count": 0,
+                    "registered_count": 0,
+                    "registered_owned_count": 0,
+                    "registered_watchlist_count": 0,
+                    "radar_only_count": 1,
+                    "failed_count": 0,
+                    "failures": [],
+                    "broker_assumption": "Interactive Brokers",
+                    "trade_channel_label": "App",
+                    "top_pick": {"ticker": "ACS", "company_name": "ACS"},
+                },
+                "reference_guide_summary": {
+                    "available": True,
+                    "workbook_loaded": False,
+                    "source_label": "",
+                    "tracked_count": 1,
+                    "owned_count": 1,
+                    "watchlist_count": 0,
+                    "guide_only_count": 0,
+                },
+            },
+            [position],
+            analysis_date=analysis_day,
+            agent_provider="core",
+            agent_label="Analista nocturno",
+        )
+
+        company = {
+            "ticker": "ACS",
+            "company_name": "ACS",
+            "quote_symbol": "ACS.MC",
+            "sector": "Construccion",
+        }
+        workbook_snapshot = {
+            "available": False,
+            "path": "",
+            "companies": [],
+        }
+
+        with (
+            patch("equities.views.find_ibex_universe_company", return_value=(company, workbook_snapshot)),
+            patch("equities.views.build_ibex_universe_card", side_effect=AssertionError("no deberia recalcular en vivo")),
+        ):
+            response = self.client.get(reverse("equities:ibex_detail", kwargs={"ticker": "ACS"}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "ACS")
 
     def test_can_create_equity_position_from_page_form(self):
         response = self.client.post(

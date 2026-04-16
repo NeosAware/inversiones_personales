@@ -1,6 +1,13 @@
 from django.contrib import admin
 
-from .models import EquityOptimizationRun, EquityPosition, EquityPriceHistory, EquityTicketSnapshot
+from .models import (
+    EquityNightlyAnalysisRun,
+    EquityNightlyAnalysisSnapshot,
+    EquityOptimizationRun,
+    EquityPosition,
+    EquityPriceHistory,
+    EquityTicketSnapshot,
+)
 
 
 @admin.register(EquityPosition)
@@ -62,3 +69,32 @@ class EquityOptimizationRunAdmin(admin.ModelAdmin):
     )
     search_fields = ("reference_code", "label", "requested_by__username")
     list_filter = ("status", "created_at", "requested_by")
+
+
+@admin.register(EquityNightlyAnalysisRun)
+class EquityNightlyAnalysisRunAdmin(admin.ModelAdmin):
+    list_display = (
+        "analysis_date",
+        "status",
+        "agent_provider",
+        "agent_label",
+        "started_at",
+        "completed_at",
+    )
+    search_fields = ("analysis_date", "agent_provider", "agent_label")
+    list_filter = ("status", "agent_provider", "analysis_date")
+
+
+@admin.register(EquityNightlyAnalysisSnapshot)
+class EquityNightlyAnalysisSnapshotAdmin(admin.ModelAdmin):
+    list_display = (
+        "analysis_date",
+        "scope",
+        "ticker",
+        "company_name",
+        "status_key",
+        "position",
+        "agent_provider",
+    )
+    search_fields = ("ticker", "company_name", "quote_symbol", "analysis_key")
+    list_filter = ("analysis_date", "scope", "status_key", "agent_provider")
