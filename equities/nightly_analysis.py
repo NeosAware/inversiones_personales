@@ -360,6 +360,7 @@ def build_current_dashboard_llm_summary(
     skipped_budget_count: int = 0,
     refresh_failed_count: int = 0,
     retained_previous_count: int = 0,
+    pending_count: int = 0,
     latest_llm_run: EquityNightlyAnalysisRun | None = None,
     refresh_performed: bool,
 ) -> dict:
@@ -411,6 +412,7 @@ def build_current_dashboard_llm_summary(
         "failed_count": failed_count,
         "refresh_failed_count": refresh_failed_count,
         "retained_previous_count": retained_previous_count,
+        "pending_count": pending_count,
         "skipped_budget_count": skipped_budget_count,
         "input_tokens": int(input_tokens or 0),
         "output_tokens": int(output_tokens or 0),
@@ -900,6 +902,7 @@ def run_nightly_equity_analysis(
                 skipped_budget_count=int(raw_llm_summary.get("skipped_budget_count") or 0),
                 refresh_failed_count=int(raw_llm_summary.get("failed_count") or 0),
                 retained_previous_count=int(carry_forward_stats.get("retained_previous_count") or 0),
+                pending_count=int(carry_forward_stats.get("pending_count") or 0),
                 latest_llm_run=latest_llm_run,
                 refresh_performed=True,
             )
@@ -917,6 +920,7 @@ def run_nightly_equity_analysis(
                 analysis_date=analysis_date,
                 estimated_cost_usd="0",
                 retained_previous_count=int(carry_forward_stats.get("retained_previous_count") or 0),
+                pending_count=int(carry_forward_stats.get("pending_count") or 0),
                 latest_llm_run=latest_llm_run,
                 refresh_performed=False,
             )

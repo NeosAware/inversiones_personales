@@ -536,7 +536,8 @@
           {% if nightly_analysis.agent_label %} Motor {{ nightly_analysis.agent_label }}.{% endif %}
           {% if nightly_analysis.llm.enabled %}
             IA aplicada a {{ nightly_analysis.llm.completed_count }}/{{ nightly_analysis.llm.total_count }} valores con coste estimado {{ nightly_analysis.llm.estimated_cost_usd }} USD.
-            {% if nightly_analysis.llm.failed_count %} Hubo {{ nightly_analysis.llm.failed_count }} fallo(s) de API.{% endif %}
+            {% if nightly_analysis.llm.refresh_performed and nightly_analysis.llm.refresh_failed_count %} Hubo {{ nightly_analysis.llm.refresh_failed_count }} fallo(s) de API.{% endif %}
+            {% if nightly_analysis.llm.pending_count %} Quedan {{ nightly_analysis.llm.pending_count }} valores sin lectura IA previa.{% endif %}
             {% if nightly_analysis.llm.skipped_budget_count %} Se omitieron {{ nightly_analysis.llm.skipped_budget_count }} valores por presupuesto.{% endif %}
           {% elif nightly_analysis.llm.reason %}
             {{ nightly_analysis.llm.reason }}

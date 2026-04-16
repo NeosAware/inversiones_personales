@@ -3357,6 +3357,113 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Claude claude-sonnet-4-20250514")
         self.assertContains(response, "IA 1/1")
 
+    def test_equities_page_reused_ai_status_does_not_label_pending_as_api_failures(self):
+        analysis_day = timezone.localdate()
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2024, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position)
+        tracked_card = build_equity_history_cards([position])[0]
+        tracked_card["ai_analysis"] = {
+            "available": True,
+            "provider": "anthropic",
+            "label": "Claude claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-20250514",
+            "model_label": "Claude claude-sonnet-4-20250514",
+            "summary": "Lectura Claude reutilizada desde la ultima actualizacion valida.",
+            "action_label": "Mantener",
+            "action_note": "Mantener si no cambia la tesis.",
+            "confidence_label": "Media",
+            "drivers": ["Retorno esperado positivo"],
+            "risks": ["Backtest mejorable"],
+            "backtest_note": "La validacion historica sigue siendo util.",
+            "cycle_note": "El ciclo largo sigue acompasado.",
+            "consistency_label": "Alineado",
+            "consistency_note": "La IA coincide con el motor cuantitativo.",
+            "generated_at": timezone.now().isoformat(),
+            "generated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M"),
+            "usage": {"input_tokens": 400, "output_tokens": 120, "estimated_cost_usd": "0.0030"},
+        }
+        persist_nightly_analysis_dashboard(
+            {
+                "history_cards": [tracked_card],
+                "ibex_universe_cards": [],
+                "ibex_universe_summary": {
+                    "available": False,
+                    "analyzed_count": 0,
+                    "buy_alert_count": 0,
+                    "sell_alert_count": 0,
+                    "watch_alert_count": 0,
+                    "registered_count": 0,
+                    "registered_owned_count": 0,
+                    "registered_watchlist_count": 0,
+                    "radar_only_count": 0,
+                    "failed_count": 0,
+                    "failures": [],
+                    "broker_assumption": "",
+                    "trade_channel_label": "",
+                    "top_pick": None,
+                },
+                "reference_guide_summary": {
+                    "available": True,
+                    "workbook_loaded": False,
+                    "source_label": "",
+                    "tracked_count": 1,
+                    "owned_count": 1,
+                    "watchlist_count": 0,
+                    "guide_only_count": 0,
+                },
+            },
+            [position],
+            analysis_date=analysis_day,
+            agent_provider="anthropic",
+            agent_label="Claude claude-sonnet-4-20250514",
+            llm_summary={
+                "enabled": True,
+                "provider": "anthropic",
+                "label": "Claude claude-sonnet-4-20250514",
+                "model": "claude-sonnet-4-20250514",
+                "completed_count": 1,
+                "failed_count": 11,
+                "refresh_failed_count": 0,
+                "retained_previous_count": 1,
+                "pending_count": 11,
+                "skipped_budget_count": 0,
+                "total_count": 12,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "estimated_cost_usd": "0.0000",
+                "monthly_budget_usd": "50.0000",
+                "monthly_cost_before_run_usd": "0.0030",
+                "monthly_cost_after_run_usd": "0.0030",
+                "failures": [],
+                "reused": True,
+                "refresh_performed": False,
+                "source_analysis_date": "2026-04-16",
+                "source_analysis_date_label": "2026-04-16",
+                "next_refresh_date": "2026-04-21",
+                "next_refresh_date_label": "2026-04-21",
+            },
+        )
+
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertContains(response, "Quedan 11 valores sin lectura IA previa.")
+        self.assertNotContains(response, "Hubo 11 fallo(s) de API.")
+
     def test_ibex_detail_view_uses_cached_nightly_snapshot(self):
         analysis_day = timezone.localdate()
         position = EquityPosition.objects.create(
