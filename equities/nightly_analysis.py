@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -9,7 +10,12 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from .llm_analysis import enrich_dashboard_with_ai_analysis, resolve_ai_provider_config
+from .llm_analysis import (
+    build_ai_unavailable_payload,
+    current_month_llm_usage,
+    enrich_dashboard_with_ai_analysis,
+    resolve_ai_provider_config,
+)
 from .models import (
     EquityNightlyAnalysisRun,
     EquityNightlyAnalysisSnapshot,
@@ -75,6 +81,15 @@ POSITION_CACHE_FIELDS = (
     "last_synced_at",
     "notes",
 )
+WEEKDAY_LABELS = {
+    1: "lunes",
+    2: "martes",
+    3: "miercoles",
+    4: "jueves",
+    5: "viernes",
+    6: "sabado",
+    7: "domingo",
+}
 
 
 def nightly_analysis_enabled() -> bool:
@@ -87,6 +102,46 @@ def nightly_analysis_start_hour() -> int:
 
 def nightly_analysis_max_age_hours() -> int:
     return max(int(getattr(settings, "EQUITIES_NIGHTLY_ANALYSIS_MAX_AGE_HOURS", 36) or 36), 1)
+
+
+def nightly_llm_refresh_iso_weekdays() -> tuple[int, ...]:
+    return tuple(
+        weekday
+        for weekday in getattr(settings, "EQUITIES_NIGHTLY_LLM_REFRESH_ISO_WEEKDAYS", (2, 4))
+        if 1 <= int(weekday) <= 7
+    )
+
+
+def build_refresh_weekdays_label(weekdays: tuple[int, ...] | list[int]) -> str:
+    labels = [WEEKDAY_LABELS.get(int(weekday), str(weekday)) for weekday in weekdays if 1 <= int(weekday) <= 7]
+    if not labels:
+        return "sin dias configurados"
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} y {labels[1]}"
+    return f"{', '.join(labels[:-1])} y {labels[-1]}"
+
+
+def resolve_next_llm_refresh_date(analysis_date: date, weekdays: tuple[int, ...], *, include_today: bool = True) -> date | None:
+    if not weekdays:
+        return None
+    start_offset = 0 if include_today else 1
+    for offset in range(start_offset, start_offset + 14):
+        candidate = analysis_date + timedelta(days=offset)
+        if candidate.isoweekday() in weekdays:
+            return candidate
+    return None
+
+
+def should_refresh_nightly_llm(*, analysis_date: date | None = None, force: bool = False) -> bool:
+    if force:
+        return True
+    analysis_date = analysis_date or timezone.localdate()
+    weekdays = nightly_llm_refresh_iso_weekdays()
+    if not weekdays:
+        return False
+    return analysis_date.isoweekday() in weekdays
 
 
 def resolve_nightly_analysis_agent() -> dict:
@@ -196,6 +251,182 @@ def build_cached_analysis_key(card: dict, scope: str) -> str:
     if scope == EquityNightlyAnalysisSnapshot.Scope.TRACKED and position.id:
         return f"tracked:{position.id}"
     return f"{scope}:{clean_ticker(position.ticker)}"
+
+
+def iter_dashboard_cards(dashboard: dict):
+    for card in dashboard.get("history_cards") or []:
+        yield EquityNightlyAnalysisSnapshot.Scope.TRACKED, card
+    for card in dashboard.get("ibex_universe_cards") or []:
+        yield EquityNightlyAnalysisSnapshot.Scope.IBEX, card
+
+
+def load_latest_completed_llm_run(provider: str | None = None) -> EquityNightlyAnalysisRun | None:
+    queryset = EquityNightlyAnalysisRun.objects.filter(
+        status=EquityNightlyAnalysisRun.Status.COMPLETED,
+    ).order_by("-analysis_date", "-id")
+    for run in queryset:
+        summary_data = deserialize_cached_value(run.summary_data or {})
+        llm_summary = summary_data.get("llm") or {}
+        if not llm_summary:
+            continue
+        if provider and llm_summary.get("provider") != provider:
+            continue
+        if llm_summary.get("enabled") or llm_summary.get("completed_count") or llm_summary.get("retained_previous_count"):
+            return run
+    return None
+
+
+def load_latest_successful_ai_analysis_by_key(provider: str | None = None) -> dict[str, dict]:
+    analysis_by_key: dict[str, dict] = {}
+    queryset = (
+        EquityNightlyAnalysisRun.objects.filter(status=EquityNightlyAnalysisRun.Status.COMPLETED)
+        .prefetch_related("snapshots")
+        .order_by("-analysis_date", "-id")
+    )
+    for run in queryset:
+        summary_data = deserialize_cached_value(run.summary_data or {})
+        llm_summary = summary_data.get("llm") or {}
+        if provider and llm_summary.get("provider") != provider:
+            continue
+        if not llm_summary.get("enabled") and not llm_summary.get("completed_count"):
+            continue
+        for snapshot in run.snapshots.all():
+            if snapshot.analysis_key in analysis_by_key:
+                continue
+            payload = deserialize_cached_value(snapshot.analysis_payload or {})
+            ai_analysis = payload.get("ai_analysis") or {}
+            if not ai_analysis.get("available"):
+                continue
+            analysis_by_key[snapshot.analysis_key] = {
+                "ai_analysis": deepcopy(ai_analysis),
+                "analysis_date": run.analysis_date.isoformat(),
+            }
+    return analysis_by_key
+
+
+def build_pending_llm_note(config, *, analysis_date: date) -> str:
+    refresh_weekdays = nightly_llm_refresh_iso_weekdays()
+    weekdays_label = build_refresh_weekdays_label(refresh_weekdays)
+    next_refresh = resolve_next_llm_refresh_date(analysis_date, refresh_weekdays)
+    note = f"Lectura IA pendiente hasta la proxima actualizacion programada de {config.label or 'Claude'}"
+    if weekdays_label != "sin dias configurados":
+        note += f" ({weekdays_label})"
+    if next_refresh:
+        note += f", prevista para {next_refresh.isoformat()}."
+    else:
+        note += "."
+    return note
+
+
+def apply_ai_analysis_carry_forward(
+    dashboard: dict,
+    *,
+    config,
+    analysis_date: date,
+    latest_available_ai_by_key: dict[str, dict],
+    replace_unavailable: bool,
+) -> dict:
+    retained_previous_count = 0
+    pending_count = 0
+    pending_note = build_pending_llm_note(config, analysis_date=analysis_date)
+    for scope, card in iter_dashboard_cards(dashboard):
+        current_ai = card.get("ai_analysis") or {}
+        if current_ai.get("available"):
+            continue
+        if current_ai and not replace_unavailable:
+            continue
+        carried = latest_available_ai_by_key.get(build_cached_analysis_key(card, scope))
+        if carried:
+            card["ai_analysis"] = deepcopy(carried["ai_analysis"])
+            retained_previous_count += 1
+            continue
+        if not current_ai:
+            card["ai_analysis"] = build_ai_unavailable_payload(config, pending_note)
+            pending_count += 1
+    return {
+        "retained_previous_count": retained_previous_count,
+        "pending_count": pending_count,
+    }
+
+
+def build_current_dashboard_llm_summary(
+    dashboard: dict,
+    *,
+    config,
+    analysis_date: date,
+    estimated_cost_usd: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    skipped_budget_count: int = 0,
+    refresh_failed_count: int = 0,
+    retained_previous_count: int = 0,
+    latest_llm_run: EquityNightlyAnalysisRun | None = None,
+    refresh_performed: bool,
+) -> dict:
+    cards = [card for _, card in iter_dashboard_cards(dashboard)]
+    completed_count = 0
+    failed_count = 0
+    failures = []
+    for card in cards:
+        ai_analysis = card.get("ai_analysis") or {}
+        if ai_analysis.get("available"):
+            completed_count += 1
+            continue
+        failed_count += 1
+        failure_note = str(ai_analysis.get("note") or "Lectura IA no disponible.").strip()
+        if len(failures) < 8:
+            failures.append(
+                {
+                    "ticker": card["position"].ticker,
+                    "company_name": card["position"].company_name,
+                    "error": failure_note,
+                }
+            )
+
+    refresh_weekdays = nightly_llm_refresh_iso_weekdays()
+    source_analysis_date = analysis_date.isoformat() if refresh_performed else ""
+    if latest_llm_run is not None and not refresh_performed:
+        latest_summary = deserialize_cached_value(latest_llm_run.summary_data or {}).get("llm") or {}
+        source_analysis_date = str(latest_summary.get("source_analysis_date") or latest_llm_run.analysis_date.isoformat())
+    next_refresh = resolve_next_llm_refresh_date(
+        analysis_date,
+        refresh_weekdays,
+        include_today=not refresh_performed,
+    )
+    month_usage = current_month_llm_usage(config.provider, analysis_date) if config.provider else {
+        "estimated_cost_usd": ZERO
+    }
+    monthly_cost_before = Decimal(str(month_usage.get("estimated_cost_usd") or "0"))
+    current_cost = Decimal(str(estimated_cost_usd or "0"))
+    monthly_cost_after = (monthly_cost_before + current_cost).quantize(Decimal("0.0001"))
+
+    return {
+        "enabled": bool(cards),
+        "provider": config.provider,
+        "label": config.label,
+        "model": config.model,
+        "reason": "",
+        "total_count": len(cards),
+        "completed_count": completed_count,
+        "failed_count": failed_count,
+        "refresh_failed_count": refresh_failed_count,
+        "retained_previous_count": retained_previous_count,
+        "skipped_budget_count": skipped_budget_count,
+        "input_tokens": int(input_tokens or 0),
+        "output_tokens": int(output_tokens or 0),
+        "estimated_cost_usd": str(current_cost.quantize(Decimal("0.0001"))),
+        "monthly_budget_usd": str(config.monthly_budget_usd.quantize(Decimal("0.0001")) if config.monthly_budget_usd > ZERO else ZERO),
+        "monthly_cost_before_run_usd": str(monthly_cost_before.quantize(Decimal("0.0001"))),
+        "monthly_cost_after_run_usd": str(monthly_cost_after),
+        "failures": failures,
+        "reused": bool(not refresh_performed or retained_previous_count),
+        "refresh_performed": refresh_performed,
+        "source_analysis_date": source_analysis_date,
+        "source_analysis_date_label": source_analysis_date,
+        "refresh_weekdays_label": build_refresh_weekdays_label(refresh_weekdays),
+        "next_refresh_date": next_refresh.isoformat() if next_refresh else "",
+        "next_refresh_date_label": next_refresh.isoformat() if next_refresh else "",
+    }
 
 
 def build_fallback_ibex_summary(cards: list[dict], rows: list[dict], positions) -> dict:
@@ -445,20 +676,41 @@ def build_nightly_completion_note(llm_summary: dict | None) -> str:
     if not llm_summary or not llm_summary.get("enabled"):
         return "Analisis nocturno completado con motor cuantitativo."
 
+    if llm_summary.get("reused") and not llm_summary.get("refresh_performed"):
+        note = (
+            f"Analisis nocturno completado reutilizando la ultima lectura IA {llm_summary.get('label') or 'Analista IA'} "
+            f"en {int(llm_summary.get('completed_count') or 0)}/{int(llm_summary.get('total_count') or 0)} valores."
+        )
+        if llm_summary.get("source_analysis_date_label"):
+            note += f" Ultima actualizacion IA {llm_summary['source_analysis_date_label']}."
+        if llm_summary.get("next_refresh_date_label"):
+            note += f" Proxima actualizacion programada {llm_summary['next_refresh_date_label']}."
+        note += f" Coste estimado {llm_summary.get('estimated_cost_usd') or '0'} USD."
+        return note
+
     total_count = int(llm_summary.get("total_count") or 0)
     completed_count = int(llm_summary.get("completed_count") or 0)
     failed_count = int(llm_summary.get("failed_count") or 0)
+    refresh_failed_count = int(llm_summary.get("refresh_failed_count") or 0)
     skipped_budget_count = int(llm_summary.get("skipped_budget_count") or 0)
     cost_label = str(llm_summary.get("estimated_cost_usd") or "0")
     note = f"Analisis nocturno completado. IA {llm_summary.get('label') or 'Analista IA'} en {completed_count}/{total_count} valores"
     detail_bits = []
     if failed_count:
         detail_bits.append(f"{failed_count} fallo(s)")
+    if refresh_failed_count and refresh_failed_count != failed_count:
+        detail_bits.append(f"{refresh_failed_count} incidencia(s) de API con respaldo previo")
     if skipped_budget_count:
         detail_bits.append(f"{skipped_budget_count} omitidos por presupuesto")
     if detail_bits:
         note += f" ({', '.join(detail_bits)})"
     note += f". Coste estimado {cost_label} USD."
+    if llm_summary.get("retained_previous_count"):
+        note += f" Se han conservado {int(llm_summary.get('retained_previous_count') or 0)} lectura(s) previas de Claude hasta la siguiente actualizacion."
+    if llm_summary.get("next_refresh_date_label"):
+        note += f" Proxima actualizacion programada {llm_summary['next_refresh_date_label']}."
+    if len(note) > 255:
+        return note[:252].rstrip() + "..."
     return note
 
 
@@ -587,6 +839,14 @@ def run_nightly_equity_analysis(
         return None
 
     analysis_date = analysis_date or timezone.localdate()
+    ai_config = resolve_ai_provider_config()
+    llm_source_provider = ai_config.provider if ai_config.available else None
+    latest_llm_run = load_latest_completed_llm_run(provider=llm_source_provider)
+    latest_available_ai_by_key = (
+        load_latest_successful_ai_analysis_by_key(provider=llm_source_provider)
+        if latest_llm_run is not None
+        else {}
+    )
     agent = resolve_nightly_analysis_agent()
     started_at = timezone.now()
     run, _ = EquityNightlyAnalysisRun.objects.update_or_create(
@@ -617,10 +877,49 @@ def run_nightly_equity_analysis(
             ibex_include_reference_suggestions=True,
             ibex_include_fundamentals=True,
         )
-        llm_summary = enrich_dashboard_with_ai_analysis(
-            dashboard,
-            analysis_date=analysis_date,
-        )
+        refresh_llm = bool(ai_config.available and should_refresh_nightly_llm(analysis_date=analysis_date, force=force))
+        if refresh_llm:
+            raw_llm_summary = enrich_dashboard_with_ai_analysis(
+                dashboard,
+                analysis_date=analysis_date,
+            )
+            carry_forward_stats = apply_ai_analysis_carry_forward(
+                dashboard,
+                config=ai_config,
+                analysis_date=analysis_date,
+                latest_available_ai_by_key=latest_available_ai_by_key,
+                replace_unavailable=True,
+            )
+            llm_summary = build_current_dashboard_llm_summary(
+                dashboard,
+                config=ai_config,
+                analysis_date=analysis_date,
+                estimated_cost_usd=str(raw_llm_summary.get("estimated_cost_usd") or "0"),
+                input_tokens=int(raw_llm_summary.get("input_tokens") or 0),
+                output_tokens=int(raw_llm_summary.get("output_tokens") or 0),
+                skipped_budget_count=int(raw_llm_summary.get("skipped_budget_count") or 0),
+                refresh_failed_count=int(raw_llm_summary.get("failed_count") or 0),
+                retained_previous_count=int(carry_forward_stats.get("retained_previous_count") or 0),
+                latest_llm_run=latest_llm_run,
+                refresh_performed=True,
+            )
+        else:
+            carry_forward_stats = apply_ai_analysis_carry_forward(
+                dashboard,
+                config=ai_config,
+                analysis_date=analysis_date,
+                latest_available_ai_by_key=latest_available_ai_by_key,
+                replace_unavailable=True,
+            )
+            llm_summary = build_current_dashboard_llm_summary(
+                dashboard,
+                config=ai_config,
+                analysis_date=analysis_date,
+                estimated_cost_usd="0",
+                retained_previous_count=int(carry_forward_stats.get("retained_previous_count") or 0),
+                latest_llm_run=latest_llm_run,
+                refresh_performed=False,
+            )
         capture_equity_ticket_snapshots(dashboard["owned_history_cards"], snapshot_date=analysis_date)
         return persist_nightly_analysis_dashboard(
             dashboard,

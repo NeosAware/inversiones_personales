@@ -27,6 +27,23 @@ def parse_int(value, default=0):
     return int(str(value).strip())
 
 
+def parse_int_set(value, default=None):
+    items = parse_csv(value)
+    if not items:
+        if default is None:
+            return tuple()
+        if isinstance(default, str):
+            items = parse_csv(default)
+        else:
+            items = [str(item).strip() for item in default if str(item).strip()]
+    values = []
+    for item in items:
+        parsed = int(str(item).strip())
+        if parsed not in values:
+            values.append(parsed)
+    return tuple(values)
+
+
 def parse_decimal(value, default="0"):
     if value is None or value == "":
         value = default
@@ -276,10 +293,16 @@ EQUITIES_OPTIMIZATION_ASYNC = parse_bool(os.environ.get("APP_EQUITIES_OPTIMIZATI
 EQUITIES_NIGHTLY_ANALYSIS_ENABLED = parse_bool(os.environ.get("APP_EQUITIES_NIGHTLY_ANALYSIS_ENABLED"), True)
 EQUITIES_NIGHTLY_ANALYSIS_START_HOUR = parse_int(os.environ.get("APP_EQUITIES_NIGHTLY_ANALYSIS_START_HOUR"), 0)
 EQUITIES_NIGHTLY_ANALYSIS_MAX_AGE_HOURS = parse_int(os.environ.get("APP_EQUITIES_NIGHTLY_ANALYSIS_MAX_AGE_HOURS"), 36)
+EQUITIES_NIGHTLY_LLM_REFRESH_ISO_WEEKDAYS = parse_int_set(
+    os.environ.get("APP_EQUITIES_NIGHTLY_LLM_REFRESH_ISO_WEEKDAYS"),
+    (2, 4),
+)
 EQUITIES_NIGHTLY_ANALYSIS_AGENT_PROVIDER = os.environ.get("APP_EQUITIES_NIGHTLY_ANALYSIS_AGENT_PROVIDER", "core").strip() or "core"
 EQUITIES_NIGHTLY_ANALYSIS_AGENT_LABEL = os.environ.get("APP_EQUITIES_NIGHTLY_ANALYSIS_AGENT_LABEL", "Analista nocturno").strip() or "Analista nocturno"
 AI_LLM_PROVIDER = os.environ.get("AI_LLM_PROVIDER", "anthropic").strip().lower()
 AI_LLM_REQUEST_TIMEOUT_SECONDS = parse_int(os.environ.get("AI_LLM_REQUEST_TIMEOUT_SECONDS"), 45)
+AI_LLM_RETRY_ATTEMPTS = parse_int(os.environ.get("AI_LLM_RETRY_ATTEMPTS"), 4)
+AI_LLM_RATE_LIMIT_RETRY_SECONDS = parse_int(os.environ.get("AI_LLM_RATE_LIMIT_RETRY_SECONDS"), 15)
 AI_LLM_MONTHLY_BUDGET_USD = parse_decimal(os.environ.get("AI_LLM_MONTHLY_BUDGET_USD"), "0")
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -27,6 +28,8 @@ class ProviderConfig:
     api_key: str
     max_tokens: int
     timeout_seconds: int
+    retry_attempts: int
+    rate_limit_retry_seconds: int
     monthly_budget_usd: Decimal
     pricing: dict[str, dict[str, Decimal]]
     available: bool
@@ -60,6 +63,8 @@ def normalize_pricing(raw_pricing: dict | None) -> dict[str, dict[str, Decimal]]
 def resolve_ai_provider_config() -> ProviderConfig:
     provider = str(getattr(settings, "AI_LLM_PROVIDER", "anthropic") or "anthropic").strip().lower()
     timeout_seconds = max(int(getattr(settings, "AI_LLM_REQUEST_TIMEOUT_SECONDS", 45) or 45), 10)
+    retry_attempts = max(int(getattr(settings, "AI_LLM_RETRY_ATTEMPTS", 4) or 4), 1)
+    rate_limit_retry_seconds = max(int(getattr(settings, "AI_LLM_RATE_LIMIT_RETRY_SECONDS", 15) or 15), 1)
 
     if provider == "anthropic":
         model = str(getattr(settings, "CLAUDE_DEFAULT_MODEL", "claude-sonnet-4-20250514") or "claude-sonnet-4-20250514").strip()
@@ -74,6 +79,8 @@ def resolve_ai_provider_config() -> ProviderConfig:
             api_key=api_key,
             max_tokens=max(int(getattr(settings, "CLAUDE_MAX_TOKENS", 1024) or 1024), 256),
             timeout_seconds=timeout_seconds,
+            retry_attempts=retry_attempts,
+            rate_limit_retry_seconds=rate_limit_retry_seconds,
             monthly_budget_usd=monthly_budget_usd,
             pricing=pricing,
             available=bool(api_key and model),
@@ -102,6 +109,8 @@ def resolve_ai_provider_config() -> ProviderConfig:
             api_key=api_key,
             max_tokens=max(int(getattr(settings, "OPENAI_MAX_TOKENS", 2048) or 2048), 256),
             timeout_seconds=timeout_seconds,
+            retry_attempts=retry_attempts,
+            rate_limit_retry_seconds=rate_limit_retry_seconds,
             monthly_budget_usd=monthly_budget_usd,
             pricing=pricing,
             available=bool(api_key and model),
@@ -115,6 +124,8 @@ def resolve_ai_provider_config() -> ProviderConfig:
         api_key="",
         max_tokens=0,
         timeout_seconds=timeout_seconds,
+        retry_attempts=retry_attempts,
+        rate_limit_retry_seconds=rate_limit_retry_seconds,
         monthly_budget_usd=ZERO,
         pricing={},
         available=False,
@@ -357,21 +368,54 @@ def parse_agent_json(text: str) -> dict:
         raise
 
 
-def post_json(url: str, payload: dict, *, headers: dict[str, str], timeout_seconds: int) -> dict:
-    request = Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=timeout_seconds) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"HTTP {exc.code}: {trim_text(body or exc.reason, 240)}") from exc
-    except URLError as exc:
-        raise RuntimeError(f"Error de red: {exc.reason}") from exc
+def resolve_rate_limit_delay_seconds(exc: HTTPError, *, attempt: int, base_delay_seconds: int) -> int:
+    delay_seconds = max(base_delay_seconds * max(attempt, 1), 1)
+    headers = getattr(exc, "headers", None) or getattr(exc, "hdrs", None)
+    if hasattr(headers, "get"):
+        retry_after = str(headers.get("Retry-After", "") or headers.get("retry-after", "")).strip()
+        if retry_after:
+            try:
+                delay_seconds = max(delay_seconds, int(float(retry_after)))
+            except ValueError:
+                pass
+    return min(delay_seconds, 300)
+
+
+def post_json(
+    url: str,
+    payload: dict,
+    *,
+    headers: dict[str, str],
+    timeout_seconds: int,
+    retry_attempts: int = 1,
+    rate_limit_retry_seconds: int = 15,
+) -> dict:
+    total_attempts = max(int(retry_attempts or 1), 1)
+    for attempt in range(1, total_attempts + 1):
+        request = Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="ignore")
+            if exc.code == 429 and attempt < total_attempts:
+                time.sleep(
+                    resolve_rate_limit_delay_seconds(
+                        exc,
+                        attempt=attempt,
+                        base_delay_seconds=rate_limit_retry_seconds,
+                    )
+                )
+                continue
+            raise RuntimeError(f"HTTP {exc.code}: {trim_text(body or exc.reason, 240)}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Error de red: {exc.reason}") from exc
+    raise RuntimeError("No se ha podido completar la peticion IA.")
 
 
 def call_openai_agent(config: ProviderConfig, *, system_prompt: str, user_prompt: str) -> tuple[dict, dict]:
@@ -393,6 +437,8 @@ def call_openai_agent(config: ProviderConfig, *, system_prompt: str, user_prompt
             "Content-Type": "application/json",
         },
         timeout_seconds=config.timeout_seconds,
+        retry_attempts=config.retry_attempts,
+        rate_limit_retry_seconds=config.rate_limit_retry_seconds,
     )
     usage = response_payload.get("usage") or {}
     input_tokens = int(usage.get("prompt_tokens") or 0)
@@ -426,6 +472,8 @@ def call_anthropic_agent(config: ProviderConfig, *, system_prompt: str, user_pro
             "Content-Type": "application/json",
         },
         timeout_seconds=config.timeout_seconds,
+        retry_attempts=config.retry_attempts,
+        rate_limit_retry_seconds=config.rate_limit_retry_seconds,
     )
     usage = response_payload.get("usage") or {}
     input_tokens = int(usage.get("input_tokens") or 0)

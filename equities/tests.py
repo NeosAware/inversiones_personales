@@ -6,6 +6,7 @@ from calendar import monthrange
 from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
@@ -2439,6 +2440,98 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(history_card["ai_analysis"]["confidence_label"], "Alta")
         self.assertIn("Claude", history_card["ai_analysis"]["model_label"])
 
+    @override_settings(
+        AI_LLM_PROVIDER="anthropic",
+        ANTHROPIC_API_KEY="test-anthropic-key",
+        CLAUDE_DEFAULT_MODEL="claude-sonnet-4-20250514",
+        AI_LLM_RETRY_ATTEMPTS=3,
+        AI_LLM_RATE_LIMIT_RETRY_SECONDS=15,
+    )
+    def test_enrich_dashboard_with_ai_analysis_retries_rate_limited_claude_calls(self):
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="LOG",
+            quote_symbol="LOG.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Logista",
+            shares=Decimal("1.0000"),
+            average_cost_per_share=Decimal("24.0000"),
+            current_price_per_share=Decimal("24.0000"),
+            annual_dividend_income=Decimal("0.50"),
+            annual_maintenance_cost=Decimal("0.00"),
+        )
+        populate_position_history(position)
+        history_card = build_equity_history_cards([position])[0]
+        dashboard = {
+            "history_cards": [],
+            "ibex_universe_cards": [history_card],
+        }
+        success_payload = {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(
+                        {
+                            "summary": "La lectura cuantitativa vuelve a ser util tras el reintento.",
+                            "action_label": "Mantener",
+                            "action_note": "Mantener mientras no empeore la fiabilidad.",
+                            "confidence_label": "Media",
+                            "drivers": [
+                                "La rentabilidad esperada sigue positiva",
+                            ],
+                            "risks": [
+                                "La volatilidad sigue presente",
+                            ],
+                            "backtest_note": "El backtest sigue siendo razonable.",
+                            "cycle_note": "El ciclo no se ha roto.",
+                        }
+                    ),
+                }
+            ],
+            "usage": {
+                "input_tokens": 900,
+                "output_tokens": 180,
+            },
+        }
+        rate_limit_body = json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "type": "rate_limit_error",
+                    "message": "This request would exceed your organization's rate limit.",
+                },
+            }
+        ).encode("utf-8")
+        rate_limit_error = HTTPError(
+            url="https://api.anthropic.com/v1/messages",
+            code=429,
+            msg="Too Many Requests",
+            hdrs={"Retry-After": "1"},
+            fp=io.BytesIO(rate_limit_body),
+        )
+
+        with (
+            patch(
+                "equities.llm_analysis.urlopen",
+                side_effect=[rate_limit_error, FakeHTTPResponse(json.dumps(success_payload).encode("utf-8"))],
+            ) as mocked_urlopen,
+            patch("equities.llm_analysis.time.sleep") as mocked_sleep,
+        ):
+            summary = enrich_dashboard_with_ai_analysis(
+                dashboard,
+                analysis_date=timezone.localdate(),
+            )
+
+        self.assertEqual(mocked_urlopen.call_count, 2)
+        mocked_sleep.assert_called_once_with(15)
+        self.assertEqual(summary["completed_count"], 1)
+        self.assertEqual(summary["failed_count"], 0)
+        self.assertTrue(history_card["ai_analysis"]["available"])
+        self.assertEqual(history_card["ai_analysis"]["action_label"], "Mantener")
+
     def test_run_nightly_equity_analysis_persists_full_ibex_cache(self):
         analysis_day = timezone.localdate()
         position = EquityPosition.objects.create(
@@ -2480,6 +2573,46 @@ class EquitiesServicesTests(TestCase):
             "status_label": "Solo radar",
             "detail_anchor": "",
             "sector_label": "Construccion",
+        }
+        tracked_card["ai_analysis"] = {
+            "available": True,
+            "provider": "anthropic",
+            "label": "Claude claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-20250514",
+            "model_label": "Claude claude-sonnet-4-20250514",
+            "summary": "Lectura Claude para posicion en cartera.",
+            "action_label": "Mantener",
+            "action_note": "Mantener mientras no cambie la tesis.",
+            "confidence_label": "Media",
+            "drivers": ["Retorno esperado positivo"],
+            "risks": ["Backtest mejorable"],
+            "backtest_note": "El backtest sigue siendo util.",
+            "cycle_note": "El ciclo 5A sigue acompasado.",
+            "consistency_label": "Alineado",
+            "consistency_note": "La IA coincide con el motor cuantitativo.",
+            "generated_at": timezone.now().isoformat(),
+            "generated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M"),
+            "usage": {"input_tokens": 1100, "output_tokens": 320, "estimated_cost_usd": "0.0081"},
+        }
+        ibex_card["ai_analysis"] = {
+            "available": True,
+            "provider": "anthropic",
+            "label": "Claude claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-20250514",
+            "model_label": "Claude claude-sonnet-4-20250514",
+            "summary": "Lectura Claude para radar IBEX.",
+            "action_label": "Comprar",
+            "action_note": "Comprar con disciplina si aguanta la tendencia.",
+            "confidence_label": "Media",
+            "drivers": ["Rentabilidad 12M positiva"],
+            "risks": ["Ciclo todavia sensible"],
+            "backtest_note": "La validacion historica acompana.",
+            "cycle_note": "El ciclo largo sigue favorable.",
+            "consistency_label": "Alineado",
+            "consistency_note": "La IA coincide con el motor cuantitativo.",
+            "generated_at": timezone.now().isoformat(),
+            "generated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M"),
+            "usage": {"input_tokens": 1100, "output_tokens": 320, "estimated_cost_usd": "0.0081"},
         }
         dashboard = {
             "history_cards": [tracked_card],
@@ -2525,6 +2658,7 @@ class EquitiesServicesTests(TestCase):
                         "provider": "anthropic",
                         "label": "Claude claude-sonnet-4-20250514",
                         "model": "claude-sonnet-4-20250514",
+                        "monthly_budget_usd": Decimal("50.00"),
                     },
                 )(),
             ),
@@ -2579,6 +2713,350 @@ class EquitiesServicesTests(TestCase):
                 ticker="ACS",
             ).exists()
         )
+
+    @override_settings(
+        AI_LLM_PROVIDER="anthropic",
+        ANTHROPIC_API_KEY="test-anthropic-key",
+        CLAUDE_DEFAULT_MODEL="claude-sonnet-4-20250514",
+        EQUITIES_NIGHTLY_LLM_REFRESH_ISO_WEEKDAYS=(2, 4),
+    )
+    def test_run_nightly_equity_analysis_reuses_last_claude_refresh_outside_scheduled_days(self):
+        refresh_day = date(2026, 4, 16)
+        analysis_day = date(2026, 4, 17)
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2024, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position)
+        previous_card = build_equity_history_cards([position])[0]
+        previous_card["ai_analysis"] = {
+            "available": True,
+            "provider": "anthropic",
+            "label": "Claude claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-20250514",
+            "model_label": "Claude claude-sonnet-4-20250514",
+            "summary": "Lectura Claude guardada para reutilizar entre semana.",
+            "action_label": "Mantener",
+            "action_note": "Mantener con disciplina.",
+            "confidence_label": "Media",
+            "drivers": ["Retorno esperado positivo"],
+            "risks": ["Volatilidad controlable"],
+            "backtest_note": "El backtest sigue razonable.",
+            "cycle_note": "El ciclo aun acompana.",
+            "consistency_label": "Alineado",
+            "consistency_note": "La IA coincide con el motor cuantitativo.",
+            "generated_at": timezone.now().isoformat(),
+            "generated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M"),
+            "usage": {"input_tokens": 300, "output_tokens": 120, "estimated_cost_usd": "0.0030"},
+        }
+        persist_nightly_analysis_dashboard(
+            {
+                "history_cards": [previous_card],
+                "ibex_universe_cards": [],
+                "ibex_universe_summary": {
+                    "available": False,
+                    "analyzed_count": 0,
+                    "buy_alert_count": 0,
+                    "sell_alert_count": 0,
+                    "watch_alert_count": 0,
+                    "registered_count": 0,
+                    "registered_owned_count": 0,
+                    "registered_watchlist_count": 0,
+                    "radar_only_count": 0,
+                    "failed_count": 0,
+                    "failures": [],
+                    "broker_assumption": "",
+                    "trade_channel_label": "",
+                    "top_pick": None,
+                },
+                "reference_guide_summary": {
+                    "available": True,
+                    "workbook_loaded": False,
+                    "source_label": "",
+                    "tracked_count": 1,
+                    "owned_count": 1,
+                    "watchlist_count": 0,
+                    "guide_only_count": 0,
+                },
+            },
+            [position],
+            analysis_date=refresh_day,
+            agent_provider="anthropic",
+            agent_label="Claude claude-sonnet-4-20250514",
+            llm_summary={
+                "enabled": True,
+                "provider": "anthropic",
+                "label": "Claude claude-sonnet-4-20250514",
+                "model": "claude-sonnet-4-20250514",
+                "completed_count": 1,
+                "failed_count": 0,
+                "skipped_budget_count": 0,
+                "total_count": 1,
+                "input_tokens": 300,
+                "output_tokens": 120,
+                "estimated_cost_usd": "0.0030",
+                "monthly_budget_usd": "50.0000",
+                "monthly_cost_before_run_usd": "0.0000",
+                "monthly_cost_after_run_usd": "0.0030",
+                "failures": [],
+                "refresh_performed": True,
+                "source_analysis_date": refresh_day.isoformat(),
+                "source_analysis_date_label": refresh_day.isoformat(),
+            },
+        )
+
+        fresh_card = build_equity_history_cards([position])[0]
+        dashboard = {
+            "history_cards": [fresh_card],
+            "owned_history_cards": [fresh_card],
+            "ibex_universe_cards": [],
+            "ibex_universe_summary": {
+                "available": False,
+                "analyzed_count": 0,
+                "buy_alert_count": 0,
+                "sell_alert_count": 0,
+                "watch_alert_count": 0,
+                "registered_count": 0,
+                "registered_owned_count": 0,
+                "registered_watchlist_count": 0,
+                "radar_only_count": 0,
+                "failed_count": 0,
+                "failures": [],
+                "broker_assumption": "",
+                "trade_channel_label": "",
+                "top_pick": None,
+            },
+            "reference_guide_summary": {
+                "available": True,
+                "workbook_loaded": False,
+                "source_label": "",
+                "tracked_count": 1,
+                "owned_count": 1,
+                "watchlist_count": 0,
+                "guide_only_count": 0,
+            },
+        }
+
+        with (
+            patch("equities.nightly_analysis.sync_all_equities_market_data", return_value=[]),
+            patch("equities.nightly_analysis.build_equity_analysis_dashboard", return_value=dashboard),
+            patch("equities.nightly_analysis.enrich_dashboard_with_ai_analysis") as mocked_llm,
+        ):
+            run = run_nightly_equity_analysis(
+                analysis_date=analysis_day,
+                force=False,
+            )
+
+        self.assertIsNotNone(run)
+        mocked_llm.assert_not_called()
+        self.assertTrue(run.summary_data["llm"]["reused"])
+        self.assertEqual(run.summary_data["llm"]["source_analysis_date"], refresh_day.isoformat())
+        self.assertEqual(run.summary_data["llm"]["next_refresh_date"], "2026-04-21")
+        snapshot = run.snapshots.get(scope=EquityNightlyAnalysisSnapshot.Scope.TRACKED, ticker="IBE")
+        self.assertTrue(snapshot.analysis_payload["ai_analysis"]["available"])
+        self.assertEqual(
+            snapshot.analysis_payload["ai_analysis"]["summary"],
+            "Lectura Claude guardada para reutilizar entre semana.",
+        )
+        self.assertIn("reutilizando la ultima lectura IA", run.status_note)
+
+    @override_settings(
+        AI_LLM_PROVIDER="anthropic",
+        ANTHROPIC_API_KEY="test-anthropic-key",
+        CLAUDE_DEFAULT_MODEL="claude-sonnet-4-20250514",
+        EQUITIES_NIGHTLY_LLM_REFRESH_ISO_WEEKDAYS=(2, 4),
+    )
+    def test_run_nightly_equity_analysis_keeps_previous_claude_when_refresh_fails(self):
+        previous_day = date(2026, 4, 16)
+        analysis_day = date(2026, 4, 21)
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2024, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position)
+        previous_card = build_equity_history_cards([position])[0]
+        previous_card["ai_analysis"] = {
+            "available": True,
+            "provider": "anthropic",
+            "label": "Claude claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-20250514",
+            "model_label": "Claude claude-sonnet-4-20250514",
+            "summary": "Lectura Claude anterior que no debe perderse.",
+            "action_label": "Mantener",
+            "action_note": "Mantener mientras no cambie la tesis.",
+            "confidence_label": "Alta",
+            "drivers": ["Retorno esperado positivo"],
+            "risks": ["Backtest mejorable"],
+            "backtest_note": "El backtest sigue siendo util.",
+            "cycle_note": "El ciclo sigue constructivo.",
+            "consistency_label": "Alineado",
+            "consistency_note": "La IA coincide con el motor cuantitativo.",
+            "generated_at": timezone.now().isoformat(),
+            "generated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M"),
+            "usage": {"input_tokens": 320, "output_tokens": 110, "estimated_cost_usd": "0.0031"},
+        }
+        persist_nightly_analysis_dashboard(
+            {
+                "history_cards": [previous_card],
+                "ibex_universe_cards": [],
+                "ibex_universe_summary": {
+                    "available": False,
+                    "analyzed_count": 0,
+                    "buy_alert_count": 0,
+                    "sell_alert_count": 0,
+                    "watch_alert_count": 0,
+                    "registered_count": 0,
+                    "registered_owned_count": 0,
+                    "registered_watchlist_count": 0,
+                    "radar_only_count": 0,
+                    "failed_count": 0,
+                    "failures": [],
+                    "broker_assumption": "",
+                    "trade_channel_label": "",
+                    "top_pick": None,
+                },
+                "reference_guide_summary": {
+                    "available": True,
+                    "workbook_loaded": False,
+                    "source_label": "",
+                    "tracked_count": 1,
+                    "owned_count": 1,
+                    "watchlist_count": 0,
+                    "guide_only_count": 0,
+                },
+            },
+            [position],
+            analysis_date=previous_day,
+            agent_provider="anthropic",
+            agent_label="Claude claude-sonnet-4-20250514",
+            llm_summary={
+                "enabled": True,
+                "provider": "anthropic",
+                "label": "Claude claude-sonnet-4-20250514",
+                "model": "claude-sonnet-4-20250514",
+                "completed_count": 1,
+                "failed_count": 0,
+                "skipped_budget_count": 0,
+                "total_count": 1,
+                "input_tokens": 320,
+                "output_tokens": 110,
+                "estimated_cost_usd": "0.0031",
+                "monthly_budget_usd": "50.0000",
+                "monthly_cost_before_run_usd": "0.0000",
+                "monthly_cost_after_run_usd": "0.0031",
+                "failures": [],
+                "refresh_performed": True,
+                "source_analysis_date": previous_day.isoformat(),
+                "source_analysis_date_label": previous_day.isoformat(),
+            },
+        )
+
+        fresh_card = build_equity_history_cards([position])[0]
+        dashboard = {
+            "history_cards": [fresh_card],
+            "owned_history_cards": [fresh_card],
+            "ibex_universe_cards": [],
+            "ibex_universe_summary": {
+                "available": False,
+                "analyzed_count": 0,
+                "buy_alert_count": 0,
+                "sell_alert_count": 0,
+                "watch_alert_count": 0,
+                "registered_count": 0,
+                "registered_owned_count": 0,
+                "registered_watchlist_count": 0,
+                "radar_only_count": 0,
+                "failed_count": 0,
+                "failures": [],
+                "broker_assumption": "",
+                "trade_channel_label": "",
+                "top_pick": None,
+            },
+            "reference_guide_summary": {
+                "available": True,
+                "workbook_loaded": False,
+                "source_label": "",
+                "tracked_count": 1,
+                "owned_count": 1,
+                "watchlist_count": 0,
+                "guide_only_count": 0,
+            },
+        }
+
+        def failing_refresh(current_dashboard, analysis_date):
+            current_dashboard["history_cards"][0]["ai_analysis"] = {
+                "available": False,
+                "provider": "anthropic",
+                "label": "Claude claude-sonnet-4-20250514",
+                "model": "claude-sonnet-4-20250514",
+                "model_label": "Claude claude-sonnet-4-20250514",
+                "note": "Analisis IA no disponible: HTTP 429",
+            }
+            return {
+                "enabled": True,
+                "provider": "anthropic",
+                "label": "Claude claude-sonnet-4-20250514",
+                "model": "claude-sonnet-4-20250514",
+                "completed_count": 0,
+                "failed_count": 1,
+                "skipped_budget_count": 0,
+                "total_count": 1,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "estimated_cost_usd": "0.0000",
+                "monthly_budget_usd": "50.0000",
+                "monthly_cost_before_run_usd": "0.0031",
+                "monthly_cost_after_run_usd": "0.0031",
+                "failures": [{"ticker": "IBE", "company_name": "Iberdrola", "error": "HTTP 429"}],
+            }
+
+        with (
+            patch("equities.nightly_analysis.sync_all_equities_market_data", return_value=[]),
+            patch("equities.nightly_analysis.build_equity_analysis_dashboard", return_value=dashboard),
+            patch("equities.nightly_analysis.enrich_dashboard_with_ai_analysis", side_effect=failing_refresh) as mocked_llm,
+        ):
+            run = run_nightly_equity_analysis(
+                analysis_date=analysis_day,
+                force=False,
+            )
+
+        self.assertIsNotNone(run)
+        mocked_llm.assert_called_once()
+        self.assertEqual(run.summary_data["llm"]["completed_count"], 1)
+        self.assertEqual(run.summary_data["llm"]["failed_count"], 0)
+        self.assertEqual(run.summary_data["llm"]["refresh_failed_count"], 1)
+        self.assertEqual(run.summary_data["llm"]["retained_previous_count"], 1)
+        snapshot = run.snapshots.get(scope=EquityNightlyAnalysisSnapshot.Scope.TRACKED, ticker="IBE")
+        self.assertTrue(snapshot.analysis_payload["ai_analysis"]["available"])
+        self.assertEqual(
+            snapshot.analysis_payload["ai_analysis"]["summary"],
+            "Lectura Claude anterior que no debe perderse.",
+        )
+        self.assertIn("respaldo previo", run.status_note)
 
     def test_management_command_invokes_nightly_analysis_runner(self):
         with patch("equities.management.commands.run_equity_nightly_analysis.run_nightly_equity_analysis") as mocked_runner:
