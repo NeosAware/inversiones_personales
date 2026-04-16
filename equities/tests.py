@@ -8,6 +8,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -2382,6 +2383,23 @@ class EquitiesServicesTests(TestCase):
                 ticker="ACS",
             ).exists()
         )
+
+    def test_management_command_invokes_nightly_analysis_runner(self):
+        with patch("equities.management.commands.run_equity_nightly_analysis.run_nightly_equity_analysis") as mocked_runner:
+            mocked_run = type(
+                "NightlyRun",
+                (),
+                {
+                    "analysis_date": timezone.localdate(),
+                    "snapshots": type("Snapshots", (), {"count": staticmethod(lambda: 3)})(),
+                    "agent_label": "Analista nocturno",
+                    "agent_provider": "core",
+                },
+            )()
+            mocked_runner.return_value = mocked_run
+            call_command("run_equity_nightly_analysis", "--force")
+
+        mocked_runner.assert_called_once()
 
     def test_build_dashboard_from_nightly_cache_uses_live_position_values(self):
         analysis_day = timezone.localdate()

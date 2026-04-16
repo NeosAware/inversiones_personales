@@ -26,7 +26,7 @@ class Command(BaseCommand):
             if analysis_date is None:
                 raise CommandError("La fecha indicada no es valida. Usa YYYY-MM-DD.")
 
-        run = run_equity_nightly_analysis(
+        run = run_nightly_equity_analysis(
             analysis_date=analysis_date,
             force=bool(options.get("force")),
         )
