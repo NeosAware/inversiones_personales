@@ -60,71 +60,107 @@
       </div>
     </div>
   {% endif %}
-  <div class="equity-grid-2" style="margin-top:18px;">
-    {% for ticket in ticket_tracking.tickets %}
-      <article class="equity-detail-card">
-        <div class="equity-section-head">
-          <div>
-            <h4>{{ ticket.position.company_name }}</h4>
-            <p>{{ ticket.position.ticker }} | {{ ticket.position.broker }} | {{ ticket.snapshot_count }} foto(s)</p>
-          </div>
-          <div class="equity-meta-stack">
-            <span>{{ ticket.card.trade_alert.label }}</span>
-            <span>{{ ticket.card.reference_label }}</span>
-          </div>
+  {% if ticket_tracking.tickets %}
+    <div class="equity-stock-tabs-shell" data-equity-tabs style="margin-top:18px;">
+      <div class="equity-section-head">
+        <div>
+          <h3 style="margin:0;">Acciones compradas</h3>
+          <p style="margin:6px 0 0; color:#627380;">Debajo del grafico general puedes ir pasando de una accion comprada a otra con una pestana por empresa.</p>
         </div>
-        <div class="equity-grid-4" style="margin-top:14px;">
-          <div class="equity-mini-stat">
-            <span>Base</span>
-            <strong>{{ ticket.baseline_snapshot.current_value|floatformat:0 }} EUR</strong>
-            <small>{{ ticket.baseline_snapshot.snapshot_date|date:"Y-m-d" }}</small>
-          </div>
-          <div class="equity-mini-stat">
-            <span>Valor actual</span>
-            <strong>{{ ticket.latest_snapshot.current_value|floatformat:0 }} EUR</strong>
-            <small>{% if ticket.daily_change_pct is not None %}Cambio diario {{ ticket.daily_change_pct|floatformat:2 }} %{% else %}Esperando nuevo cierre{% endif %}</small>
-          </div>
-          <div class="equity-mini-stat">
-            <span>Esperado hoy</span>
-            <strong>{% if ticket.current_expected_value is not None %}{{ ticket.current_expected_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-            <small>{% if ticket.expected_change_pct is not None %}{{ ticket.expected_change_pct|floatformat:2 }} % desde la base{% else %}Sin senda prevista{% endif %}</small>
-          </div>
-          <div class="equity-mini-stat">
-            <span>Gap</span>
-            <strong class="{% if ticket.gap_tone == 'good' %}good{% else %}warn{% endif %}">{% if ticket.gap_value is not None %}{{ ticket.gap_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-            <small>{% if ticket.gap_pct is not None %}{{ ticket.gap_pct|floatformat:2 }} % frente a lo esperado{% else %}Sin comparativa{% endif %}</small>
-          </div>
-        </div>
-        {% if ticket.chart.available %}
-          <div class="equity-chart-shell" style="margin-top:16px;">
-            <strong style="display:block; color:#17384e; margin-bottom:8px;">Ticket {{ ticket.position.ticker }} desde {{ ticket.chart.start_label }}</strong>
-            <svg viewBox="0 0 640 220">
-              <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-              <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-              <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ ticket.chart.expected_line }}" />
-              {% if ticket.chart.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ ticket.chart.actual_line }}" />{% endif %}
-              {% for marker in ticket.chart.x_markers %}
-                <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
-                <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
-              {% endfor %}
-              {% for point in ticket.chart.actual_points %}
-                <circle cx="{{ point.x }}" cy="{{ point.y }}" r="4.5" fill="#0d5d78">
-                  <title>{{ point.date_label }} | {{ point.value_label }}</title>
-                </circle>
-              {% endfor %}
-              <text x="8" y="20" font-size="12" fill="#17384e">{{ ticket.chart.max_label }}</text>
-              <text x="8" y="214" font-size="12" fill="#17384e">{{ ticket.chart.min_label }}</text>
-            </svg>
-            <div class="equity-chart-foot">
-              <span>Azul: valor real del ticket</span>
-              <span>Naranja: senda esperada de mercado</span>
-              <span>{{ ticket.chart.latest_label }} a {{ ticket.chart.projection_end_label }}</span>
-              <span>{% if ticket.expected_total_value_12m is not None %}Escenario total 12M {{ ticket.expected_total_value_12m|floatformat:0 }} EUR{% endif %}</span>
-            </div>
-          </div>
-        {% endif %}
-        <p class="equity-detail-note">{{ ticket.card.projection.explanation }} {{ ticket.card.projection.confidence_note }}</p>
-      </article>
-    {% endfor %}
-  </div>
+      </div>
+      <div class="equity-stock-tabs" role="tablist" aria-label="Tickets comprados">
+        {% for ticket in ticket_tracking.tickets %}
+          <button
+            type="button"
+            class="equity-stock-tab"
+            id="tracked-ticket-tab-{{ ticket.position.id }}"
+            data-stock-tab="tracked-{{ ticket.position.id }}"
+            role="tab"
+            aria-selected="{% if forloop.first %}true{% else %}false{% endif %}"
+            aria-controls="tracked-ticket-{{ ticket.position.id }}"
+          >
+            <strong>{{ ticket.position.company_name }}</strong>
+            <span>{{ ticket.position.ticker }} | {{ ticket.position.broker }}</span>
+            <span class="equity-stock-tab-note">{{ ticket.card.reference_label }} | {{ ticket.card.trade_alert.label }}</span>
+          </button>
+        {% endfor %}
+      </div>
+      <div class="equity-stock-panels">
+        {% for ticket in ticket_tracking.tickets %}
+          <section
+            class="equity-stock-panel"
+            id="tracked-ticket-{{ ticket.position.id }}"
+            data-stock-panel="tracked-{{ ticket.position.id }}"
+            role="tabpanel"
+            aria-labelledby="tracked-ticket-tab-{{ ticket.position.id }}"
+            {% if not forloop.first %}hidden{% endif %}
+          >
+            <article class="equity-detail-card">
+              <div class="equity-section-head">
+                <div>
+                  <h4>{{ ticket.position.company_name }}</h4>
+                  <p>{{ ticket.position.ticker }} | {{ ticket.position.broker }} | {{ ticket.snapshot_count }} foto(s)</p>
+                </div>
+                <div class="equity-meta-stack">
+                  <span>{{ ticket.card.trade_alert.label }}</span>
+                  <span>{{ ticket.card.reference_label }}</span>
+                </div>
+              </div>
+              <div class="equity-grid-4" style="margin-top:14px;">
+                <div class="equity-mini-stat">
+                  <span>Base</span>
+                  <strong>{{ ticket.baseline_snapshot.current_value|floatformat:0 }} EUR</strong>
+                  <small>{{ ticket.baseline_snapshot.snapshot_date|date:"Y-m-d" }}</small>
+                </div>
+                <div class="equity-mini-stat">
+                  <span>Valor actual</span>
+                  <strong>{{ ticket.latest_snapshot.current_value|floatformat:0 }} EUR</strong>
+                  <small>{% if ticket.daily_change_pct is not None %}Cambio diario {{ ticket.daily_change_pct|floatformat:2 }} %{% else %}Esperando nuevo cierre{% endif %}</small>
+                </div>
+                <div class="equity-mini-stat">
+                  <span>Esperado hoy</span>
+                  <strong>{% if ticket.current_expected_value is not None %}{{ ticket.current_expected_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
+                  <small>{% if ticket.expected_change_pct is not None %}{{ ticket.expected_change_pct|floatformat:2 }} % desde la base{% else %}Sin senda prevista{% endif %}</small>
+                </div>
+                <div class="equity-mini-stat">
+                  <span>Gap</span>
+                  <strong class="{% if ticket.gap_tone == 'good' %}good{% else %}warn{% endif %}">{% if ticket.gap_value is not None %}{{ ticket.gap_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
+                  <small>{% if ticket.gap_pct is not None %}{{ ticket.gap_pct|floatformat:2 }} % frente a lo esperado{% else %}Sin comparativa{% endif %}</small>
+                </div>
+              </div>
+              {% if ticket.chart.available %}
+                <div class="equity-chart-shell" style="margin-top:16px;">
+                  <strong style="display:block; color:#17384e; margin-bottom:8px;">Ticket {{ ticket.position.ticker }} desde {{ ticket.chart.start_label }}</strong>
+                  <svg viewBox="0 0 640 220">
+                    <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                    <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                    <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ ticket.chart.expected_line }}" />
+                    {% if ticket.chart.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ ticket.chart.actual_line }}" />{% endif %}
+                    {% for marker in ticket.chart.x_markers %}
+                      <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                      <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                    {% endfor %}
+                    {% for point in ticket.chart.actual_points %}
+                      <circle cx="{{ point.x }}" cy="{{ point.y }}" r="4.5" fill="#0d5d78">
+                        <title>{{ point.date_label }} | {{ point.value_label }}</title>
+                      </circle>
+                    {% endfor %}
+                    <text x="8" y="20" font-size="12" fill="#17384e">{{ ticket.chart.max_label }}</text>
+                    <text x="8" y="214" font-size="12" fill="#17384e">{{ ticket.chart.min_label }}</text>
+                  </svg>
+                  <div class="equity-chart-foot">
+                    <span>Azul: valor real del ticket</span>
+                    <span>Naranja: senda esperada de mercado</span>
+                    <span>{{ ticket.chart.latest_label }} a {{ ticket.chart.projection_end_label }}</span>
+                    <span>{% if ticket.expected_total_value_12m is not None %}Escenario total 12M {{ ticket.expected_total_value_12m|floatformat:0 }} EUR{% endif %}</span>
+                  </div>
+                </div>
+              {% endif %}
+              <p class="equity-detail-note">{{ ticket.card.projection.explanation }} {{ ticket.card.projection.confidence_note }}</p>
+            </article>
+          </section>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
 </section>

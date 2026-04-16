@@ -331,6 +331,7 @@
     .equity-fold-body{ padding:0 22px 22px; display:grid; gap:18px; }
     .equity-stock-list{ display:grid; gap:18px; }
     .equity-stock-tabs-shell{ display:grid; gap:18px; }
+    .equity-stock-panels{ display:grid; gap:18px; }
     .equity-stock-tabs{
       display:flex;
       flex-wrap:wrap;
@@ -502,10 +503,6 @@
   </style>
 
   <div class="equity-page">
-    {% if ticket_tracking.available %}
-      {% include "equities/_ticket_tracking_panel.html" %}
-    {% endif %}
-
     <section class="equity-hero">
       <div class="equity-hero-top">
         <div>
@@ -529,6 +526,10 @@
         <div class="equity-kpi"><span>Seguridad media</span><strong>{% if analysis_overview.weighted_safety_score is not None %}{{ analysis_overview.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong><small>{% if auto_sync.attempted %}Auto-sync {{ auto_sync.updated_count }} OK{% else %}Auto-sync inactivo{% endif %}</small></div>
       </div>
     </section>
+
+    {% if ticket_tracking.available %}
+      {% include "equities/_ticket_tracking_panel.html" %}
+    {% endif %}
 
     <section class="equity-panel">
       <div class="equity-panel-head">
@@ -1750,6 +1751,10 @@
         return;
       }
 
+      const findTabByPanelId = (container, panelId) => Array.from(container.querySelectorAll("[data-stock-tab]")).find(
+        (tab) => tab.getAttribute("aria-controls") === panelId
+      );
+
       const activateTab = (container, stockId, options = {}) => {
         const { focus = false, updateHash = false } = options;
         const tabs = Array.from(container.querySelectorAll("[data-stock-tab]"));
@@ -1772,17 +1777,25 @@
           nextTab.focus();
         }
         if (updateHash && window.history?.replaceState) {
-          window.history.replaceState(null, "", `#stock-${nextId}`);
+          const panelId = nextTab.getAttribute("aria-controls");
+          if (panelId) {
+            window.history.replaceState(null, "", `#${panelId}`);
+          }
         }
       };
 
       const syncFromHash = () => {
         const hash = window.location.hash || "";
-        if (!hash.startsWith("#stock-")) {
+        if (!hash || hash === "#") {
           return;
         }
-        const stockId = hash.slice("#stock-".length);
-        tabShells.forEach((container) => activateTab(container, stockId));
+        const targetPanelId = hash.slice(1);
+        tabShells.forEach((container) => {
+          const targetTab = findTabByPanelId(container, targetPanelId);
+          if (targetTab) {
+            activateTab(container, targetTab.dataset.stockTab);
+          }
+        });
       };
 
       tabShells.forEach((container) => {
@@ -1797,9 +1810,9 @@
           });
         });
 
-        const initialHash = (window.location.hash || "").startsWith("#stock-")
-          ? window.location.hash.slice("#stock-".length)
-          : tabs[0].dataset.stockTab;
+        const targetPanelId = (window.location.hash || "").replace(/^#/, "");
+        const initialTab = targetPanelId ? findTabByPanelId(container, targetPanelId) : null;
+        const initialHash = initialTab ? initialTab.dataset.stockTab : tabs[0].dataset.stockTab;
         activateTab(container, initialHash);
       });
 

@@ -3275,12 +3275,17 @@ class EquitiesViewTests(TestCase):
             response = self.client.get(reverse("equities:list"))
 
         self.assertEqual(response.status_code, 200)
+        page = response.content.decode("utf-8")
         self.assertContains(response, "Seguimiento desde")
         self.assertContains(response, "Cartera global")
         self.assertContains(response, "IBEX 35 normalizado")
+        self.assertContains(response, "Acciones compradas")
         self.assertContains(response, "Ticket IBE")
         self.assertContains(response, "Ticket ENG")
-        self.assertContains(response, 'data-stock-tab="', html=False)
+        self.assertContains(response, 'id="tracked-ticket-tab-', html=False)
+        self.assertContains(response, 'aria-label="Tickets comprados"', html=False)
+        self.assertLess(page.index('class="equity-hero"'), page.index('id="equity-ticket-tracking"'))
+        self.assertLess(page.index("Cartera global"), page.index("Acciones compradas"))
         self.assertEqual(EquityTicketSnapshot.objects.count(), 2)
 
     def test_equities_page_renders_investment_journey_section(self):
