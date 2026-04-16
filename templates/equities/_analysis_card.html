@@ -12,157 +12,77 @@
     </div>
   </div>
 
-  <div style="margin-top:10px;">
-    {% if card.position.is_owned and card.sale_preview.available %}
-      <section class="equity-panel" style="margin:0; padding:18px; background:#f7fbfd; border:1px solid #d8e3ea;">
-        <div class="equity-panel-head" style="margin-bottom:12px;">
-          <div>
-            <p class="section-title">Venta y rentabilidad</p>
-            <h3 style="margin:0;">Si vendes esta posicion, aqui ves el neto real</h3>
-            <p style="margin:6px 0 0;">Introduce el precio de venta y la fecha. La simulacion descuenta compra, venta, mantenimiento y suma dividendos netos acumulados.</p>
-          </div>
-          <span class="pill">{{ card.sale_preview.cost_profile_label }} | {{ card.sale_preview.trade_channel_label }}</span>
+  {% if tracking_ticket %}
+    <section class="equity-panel" style="margin-top:16px; padding:18px; background:#f7fbfd; border:1px solid #d8e3ea;">
+      <div class="equity-panel-head" style="margin-bottom:12px;">
+        <div>
+          <p class="section-title">Seguimiento desde compra</p>
+          <h3 style="margin:0;">Valor real frente al escenario esperado</h3>
+          <p style="margin:6px 0 0;">Aqui ves la evolucion de esta compra desde su base comun actualizada, sin separar la accion en otra pestana distinta.</p>
         </div>
-        <div
-          class="equity-grid-4"
-          data-sale-calculator
-          data-start-date="{{ card.sale_preview.start_date_label }}"
-          data-shares="{{ card.sale_preview.shares }}"
-          data-invested-amount="{{ card.sale_preview.invested_amount }}"
-          data-purchase-cost="{{ card.sale_preview.purchase_cost }}"
-          data-annual-recurring-cost="{{ card.sale_preview.annual_recurring_cost }}"
-          data-annual-net-dividend-income="{{ card.sale_preview.annual_net_dividend_income }}"
-          data-trade-channel="{{ card.position.trade_channel }}"
-          data-quote-symbol="{{ card.position.quote_symbol }}"
-          style="margin-bottom:12px;"
-        >
-          <div class="equity-box">
-            <span>Cobro neto estimado</span>
-            <strong><span data-sale-preview="net_exit_value">{{ card.sale_preview.net_exit_value|floatformat:2 }}</span> EUR</strong>
-            <small>Bruto <span data-sale-preview="gross_sale_value">{{ card.sale_preview.gross_sale_value|floatformat:2 }}</span> EUR - venta <span data-sale-preview="sale_total_cost">{{ card.sale_preview.sale_total_cost|floatformat:2 }}</span> EUR.</small>
-          </div>
-          <div class="equity-box">
-            <span>Resultado neto</span>
-            <strong class="{% if card.sale_preview.net_result >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="net_result">{{ card.sale_preview.net_result|floatformat:2 }}</span> EUR</strong>
-            <small>Capital comprometido {{ card.sale_preview.committed_capital|floatformat:2 }} EUR.</small>
-          </div>
-          <div class="equity-box">
-            <span>Margen acumulado</span>
-            <strong class="{% if card.sale_preview.cumulative_margin_pct >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="cumulative_margin_pct">{{ card.sale_preview.cumulative_margin_pct|floatformat:2 }}</span> %</strong>
-            <small>Desde {{ card.sale_preview.start_date_label }}.</small>
-          </div>
-          <div class="equity-box">
-            <span>Mes equivalente</span>
-            <strong class="{% if card.sale_preview.monthly_equivalent_return_pct >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="monthly_equivalent_return_pct">{{ card.sale_preview.monthly_equivalent_return_pct|floatformat:2 }}</span> %</strong>
-            <small>Mismo patron mensual aunque otra accion lleve mas tiempo en cartera.</small>
-          </div>
-          <div class="equity-box">
-            <span>Ano equivalente</span>
-            <strong class="{% if card.sale_preview.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="annualized_margin_pct">{{ card.sale_preview.annualized_margin_pct|floatformat:2 }}</span> %</strong>
-            <small><span data-sale-preview="holding_days">{{ card.sale_preview.holding_days }}</span> dias de tenencia llevados al mismo patron anual.</small>
-          </div>
+        <span class="pill">{{ tracking_ticket.snapshot_count }} foto(s) | {{ tracking_ticket.card.reference_label }}</span>
+      </div>
+      <div class="equity-grid-4">
+        <div class="equity-mini-stat">
+          <span>Base</span>
+          <strong>{{ tracking_ticket.baseline_snapshot.current_value|floatformat:0 }} EUR</strong>
+          <small>{{ tracking_ticket.baseline_snapshot.snapshot_date|date:"Y-m-d" }}</small>
         </div>
-        <div class="equity-compact-note" style="margin-bottom:14px;">
-          Compra {{ card.sale_preview.purchase_cost|floatformat:2 }} EUR |
-          mantenimiento acumulado <span data-sale-preview="maintenance_total">{{ card.sale_preview.maintenance_total|floatformat:2 }}</span> EUR |
-          dividendos netos acumulados <span data-sale-preview="dividend_total">{{ card.sale_preview.dividend_total|floatformat:2 }}</span> EUR |
-          costes totales <span data-sale-preview="total_costs">{{ card.sale_preview.total_costs|floatformat:2 }}</span> EUR.
-          Las columnas equivalente mensual y anual usan rentabilidad compuesta sobre el capital comprometido neto.
-          {% if card.sale_preview.start_date_is_estimated %} La fecha inicial es aproximada: {{ card.sale_preview.start_date_source_label }}.{% endif %}
+        <div class="equity-mini-stat">
+          <span>Valor actual</span>
+          <strong>{{ tracking_ticket.latest_snapshot.current_value|floatformat:0 }} EUR</strong>
+          <small>{% if tracking_ticket.daily_change_pct is not None %}Cambio diario {{ tracking_ticket.daily_change_pct|floatformat:2 }} %{% else %}Esperando nuevo cierre{% endif %}</small>
         </div>
-        <form method="post" class="stack">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="close_position">
-          <input type="hidden" name="position_id" value="{{ card.position.id }}">
-          <div class="equity-grid-4">
-            <div>
-              <label for="close-date-{{ card.position.id }}">Fecha venta</label>
-              <input id="close-date-{{ card.position.id }}" type="date" name="closed_on" value="{{ today|date:'Y-m-d' }}" data-sale-input="closed_on">
-            </div>
-            <div>
-              <label for="close-price-{{ card.position.id }}">Precio venta por accion</label>
-              <input id="close-price-{{ card.position.id }}" type="text" name="sale_price_per_share" value="{{ card.position.current_price_per_share }}" data-sale-input="sale_price_per_share">
-            </div>
-            <div style="grid-column:span 2;">
-              <label for="close-notes-{{ card.position.id }}">Notas</label>
-              <textarea id="close-notes-{{ card.position.id }}" name="notes" rows="2" placeholder="Motivo de venta o recordatorio"></textarea>
-            </div>
-          </div>
-          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-            <button class="button" type="submit">Registrar venta y guardar resultado</button>
-            <span class="metric-sub">Al confirmar, la posicion desaparece de cartera y pasa a Ventas dentro del cuadro de gestion.</span>
-          </div>
-        </form>
-      </section>
-    {% else %}
-      <section class="equity-panel" style="margin:0; padding:18px; background:#f7fbfd; border:1px solid #d8e3ea;">
-        <div class="equity-panel-head" style="margin-bottom:12px;">
-          <div>
-            <p class="section-title">Seguimiento guardado</p>
-            <h3 style="margin:0;">Dejar de seguir este valor</h3>
-            <p style="margin:6px 0 0;">Si ya no quieres tenerlo guardado, quitalo de tu seguimiento. Seguiras viendolo en el radar IBEX como un valor mas del indice.</p>
+        <div class="equity-mini-stat">
+          <span>Esperado hoy</span>
+          <strong>{% if tracking_ticket.current_expected_value is not None %}{{ tracking_ticket.current_expected_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
+          <small>{% if tracking_ticket.expected_change_pct is not None %}{{ tracking_ticket.expected_change_pct|floatformat:2 }} % desde la base{% else %}Sin senda prevista{% endif %}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Gap</span>
+          <strong class="{% if tracking_ticket.gap_tone == 'good' %}good{% else %}warn{% endif %}">{% if tracking_ticket.gap_value is not None %}{{ tracking_ticket.gap_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
+          <small>{% if tracking_ticket.gap_pct is not None %}{{ tracking_ticket.gap_pct|floatformat:2 }} % frente a lo esperado{% else %}Sin comparativa{% endif %}</small>
+        </div>
+      </div>
+      {% if tracking_ticket.chart.available %}
+        <div class="equity-chart-shell" style="margin-top:16px;">
+          <strong style="display:block; color:#17384e; margin-bottom:8px;">Ticket {{ tracking_ticket.position.ticker }} desde {{ tracking_ticket.chart.start_label }}</strong>
+          <svg viewBox="0 0 640 220">
+            <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ tracking_ticket.chart.expected_line }}" />
+            {% if tracking_ticket.chart.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ tracking_ticket.chart.actual_line }}" />{% endif %}
+            {% for marker in tracking_ticket.chart.x_markers %}
+              <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+              <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+            {% endfor %}
+            {% for point in tracking_ticket.chart.actual_points %}
+              <circle cx="{{ point.x }}" cy="{{ point.y }}" r="4.5" fill="#0d5d78">
+                <title>{{ point.date_label }} | {{ point.value_label }}</title>
+              </circle>
+            {% endfor %}
+            <text x="8" y="20" font-size="12" fill="#17384e">{{ tracking_ticket.chart.max_label }}</text>
+            <text x="8" y="214" font-size="12" fill="#17384e">{{ tracking_ticket.chart.min_label }}</text>
+          </svg>
+          <div class="equity-chart-foot">
+            <span>Azul: valor real desde compra</span>
+            <span>Naranja: senda esperada de mercado</span>
+            <span>{{ tracking_ticket.chart.latest_label }} a {{ tracking_ticket.chart.projection_end_label }}</span>
+            <span>{% if tracking_ticket.expected_total_value_12m is not None %}Escenario total 12M {{ tracking_ticket.expected_total_value_12m|floatformat:0 }} EUR{% endif %}</span>
           </div>
         </div>
-        <form method="post">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="delete_position">
-          <input type="hidden" name="position_id" value="{{ card.position.id }}">
-          <button class="button secondary" type="submit">Dejar de seguir y volver al radar</button>
-        </form>
-      </section>
-    {% endif %}
-  </div>
+      {% endif %}
+    </section>
+  {% endif %}
 
   {% if card.has_history %}
-    <div class="equity-chart-grid" style="margin-top:18px;">
-      {% if card.historical_chart.available %}
-        <div class="equity-chart-shell">
-          <strong style="display:block; color:#17384e; margin-bottom:8px;">Historico</strong>
-          <svg viewBox="0 0 640 220">
-            <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-            <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-            <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.historical_chart.stock_line }}" />
-            {% for marker in card.historical_chart.x_markers %}
-              <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
-              <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
-            {% endfor %}
-            <text x="8" y="20" font-size="12" fill="#0d5d78">{{ card.historical_chart.stock_max_label }}</text>
-            <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.historical_chart.stock_min_label }}</text>
-          </svg>
-          <div class="equity-chart-foot">
-            <span>Historico ampliado para estudiar ciclos</span>
-            <span>{{ card.historical_chart.points_count }} puntos</span>
-            <span>{{ card.historical_chart.start_label }} a {{ card.historical_chart.end_label }}</span>
-          </div>
-        </div>
-      {% endif %}
-
-      {% if card.best_correlation_chart.available %}
-        <div class="equity-chart-shell">
-          <strong style="display:block; color:#17384e; margin-bottom:8px;">Mejor correlacion</strong>
-          <svg viewBox="0 0 640 220">
-            <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-            <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-            <line x1="622" y1="18" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-            <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.best_correlation_chart.stock_line }}" />
-            <polyline fill="none" stroke="#7e8c97" stroke-width="3" points="{{ card.best_correlation_chart.reference_line }}" />
-            {% for marker in card.best_correlation_chart.x_markers %}
-              <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
-              <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
-            {% endfor %}
-            <text x="8" y="20" font-size="12" fill="#0d5d78">{{ card.best_correlation_chart.stock_max_label }}</text>
-            <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.best_correlation_chart.stock_min_label }}</text>
-            <text x="632" y="20" font-size="12" text-anchor="end" fill="#627380">{{ card.best_correlation_chart.reference_max_label }}</text>
-            <text x="632" y="214" font-size="12" text-anchor="end" fill="#627380">{{ card.best_correlation_chart.reference_min_label }}</text>
-          </svg>
-          <div class="equity-chart-foot">
-            <span>Accion</span>
-            <span>{{ card.best_correlation_chart.reference_label }}</span>
-            <span>Corr {% if card.best_correlation_chart.coefficient is not None %}{{ card.best_correlation_chart.coefficient|floatformat:2 }}{% else %}-{% endif %}</span>
-          </div>
-        </div>
-      {% endif %}
-
+    <div class="equity-section-head" style="margin-top:18px;">
+      <div>
+        <h5>Graficos clave</h5>
+        <p>Empieza por estos tres: 12 meses, 5 anos y la comparacion historica entre lo que el modelo habria dicho y lo que paso de verdad.</p>
+      </div>
+    </div>
+    <div style="display:grid; gap:16px; grid-template-columns:repeat(auto-fit, minmax(280px,1fr)); margin-top:14px;">
       {% if card.projection_12m_chart.available %}
         <div class="equity-chart-shell">
           <strong style="display:block; color:#17384e; margin-bottom:8px;">Prevision 12M</strong>
@@ -209,11 +129,50 @@
           </div>
         </div>
       {% endif %}
+
+      {% if card.projection_backtest.available and card.projection_backtest.monthly_chart.available %}
+        <div class="equity-chart-shell" style="grid-column:1 / -1;">
+          <strong style="display:block; color:#17384e; margin-bottom:8px;">Prediccion frente a realidad</strong>
+          <svg viewBox="0 0 640 220">
+            <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+            <polyline fill="none" stroke="#b7642d" stroke-width="3" stroke-dasharray="8 6" points="{{ card.projection_backtest.monthly_chart.forecast_line }}" />
+            <polyline fill="none" stroke="#0d5d78" stroke-width="3" points="{{ card.projection_backtest.monthly_chart.actual_line }}" />
+            {% for marker in card.projection_backtest.monthly_chart.x_markers %}
+              <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+              <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+            {% endfor %}
+            {% for point in card.projection_backtest.monthly_chart.forecast_points %}
+              <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3.2" fill="#b7642d">
+                <title>{{ point.forecast_date_label }} -> {{ point.target_date_label }} | Proyectado {{ point.value_label }}</title>
+              </circle>
+            {% endfor %}
+            {% for point in card.projection_backtest.monthly_chart.actual_points %}
+              <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3.2" fill="#0d5d78">
+                <title>{{ point.forecast_date_label }} -> {{ point.target_date_label }} | Real {{ point.value_label }}</title>
+              </circle>
+            {% endfor %}
+            <text x="8" y="20" font-size="12" fill="#17384e">{{ card.projection_backtest.monthly_chart.max_label }}</text>
+            <text x="8" y="214" font-size="12" fill="#17384e">{{ card.projection_backtest.monthly_chart.min_label }}</text>
+          </svg>
+          <div class="equity-chart-foot">
+            <span>Naranja: lo que el modelo habria proyectado en cada mes</span>
+            <span>Azul: lo que ocurrio realmente 12 meses despues</span>
+            <span>{{ card.projection_backtest.monthly_chart.points_count }} puntos mensuales | {{ card.projection_backtest.monthly_chart.start_label }} a {{ card.projection_backtest.monthly_chart.end_label }}</span>
+          </div>
+        </div>
+      {% endif %}
     </div>
   {% endif %}
 
   {% if card.projection.available %}
-    <div class="equity-detail-grid">
+    <div class="equity-section-head" style="margin-top:18px;">
+      <div>
+        <h5>Lectura rapida</h5>
+        <p>Estas son las seis cifras que conviene mirar antes de entrar al detalle tecnico.</p>
+      </div>
+    </div>
+    <div class="equity-detail-grid" style="margin-top:14px;">
       <div class="equity-mini-stat">
         <span>Retorno total 12M</span>
         <strong class="{% if card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">
@@ -228,6 +187,11 @@
             - compra/venta {{ card.projection.transaction_drag_pct|floatformat:1 }} %
           {% endif %}
         </small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Precio objetivo</span>
+        <strong>{% if card.projection.projected_price is not None %}{{ card.projection.projected_price|floatformat:4 }}{% else %}-{% endif %}</strong>
+        <small>Rango {% if card.projection.low_return_pct is not None and card.projection.high_return_pct is not None %}{{ card.projection.low_return_pct|floatformat:1 }} / {{ card.projection.high_return_pct|floatformat:1 }} %{% else %}-{% endif %}</small>
       </div>
       <div class="equity-mini-stat">
         <span>Alerta</span>
@@ -245,11 +209,45 @@
         <small>{{ card.projection.confidence_label }} en modelo{% if card.projection_backtest.available %} | Comprobacion historica {{ card.projection_backtest.precision_label }}{% endif %}</small>
       </div>
       <div class="equity-mini-stat">
-        <span>Alerta coef.</span>
-        <strong class="{% if card.coefficient_alert.tone == 'sell' %}warn{% endif %}">{{ card.coefficient_alert.label }}</strong>
-        <small>{{ card.coefficient_alert.trigger_label }}</small>
+        {% if card.position.is_owned and card.sale_preview.available %}
+          <span>Ano equivalente</span>
+          <strong class="{% if card.sale_preview.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}">{{ card.sale_preview.annualized_margin_pct|floatformat:2 }} %</strong>
+          <small>{{ card.sale_preview.holding_days }} dias de tenencia llevados al mismo patron anual.</small>
+        {% else %}
+          <span>Corr 10A</span>
+          <strong>{% if card.correlation.coefficient is not None %}{{ card.correlation.coefficient|floatformat:2 }}{% else %}-{% endif %}</strong>
+          <small>{{ card.reference_label }} | {{ card.correlation.stability_label }}</small>
+        {% endif %}
       </div>
     </div>
+
+    {% if card.projection_backtest.available %}
+      <div class="equity-detail-grid" style="margin-top:14px;">
+        <div class="equity-mini-stat">
+          <span>Comprobacion historica</span>
+          <strong>{{ card.projection_backtest.precision_label }}</strong>
+          <small>{{ card.projection_backtest.comparisons_count }} comparativas a 12M. Sirve para ver si el modelo habria sido util antes.</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Error medio</span>
+          <strong>{{ card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %</strong>
+          <small>{{ card.projection_backtest.error_explanation }}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Acierto al subir o bajar</span>
+          <strong>{{ card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %</strong>
+          <small>{{ card.projection_backtest.direction_explanation }}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Dentro del rango previsto</span>
+          <strong>{{ card.projection_backtest.in_range_rate_pct|floatformat:0 }} %</strong>
+          <small>{{ card.projection_backtest.range_explanation }}</small>
+        </div>
+      </div>
+      <div class="equity-compact-note" style="margin-top:14px;">
+        {{ card.projection_backtest.plain_explanation }}
+      </div>
+    {% endif %}
 
     <div class="equity-detail-grid" style="margin-top:14px;">
       <div class="equity-mini-stat">
@@ -258,9 +256,9 @@
         <small>{{ card.projection.years_covered|floatformat:1 }} anos de base.</small>
       </div>
       <div class="equity-mini-stat">
-        <span>Corr 10A</span>
-        <strong>{% if card.correlation.coefficient is not None %}{{ card.correlation.coefficient|floatformat:2 }}{% else %}-{% endif %}</strong>
-        <small>{{ card.reference_label }} | {{ card.correlation.stability_label }}</small>
+        <span>Alerta coef.</span>
+        <strong class="{% if card.coefficient_alert.tone == 'sell' %}warn{% endif %}">{{ card.coefficient_alert.label }}</strong>
+        <small>{{ card.coefficient_alert.trigger_label }}</small>
       </div>
       <div class="equity-mini-stat">
         <span>Corr reciente</span>
@@ -314,11 +312,6 @@
         <strong>{{ card.broker_costs.roundtrip_total_cost|floatformat:0 }} EUR</strong>
         <small>{{ card.broker_costs.profile_label }} | {{ card.broker_costs.market_scope_label }}{% if card.broker_costs.analysis_value_source == "normalized_watchlist" %} | Base normalizada{% endif %}</small>
       </div>
-      <div class="equity-mini-stat">
-        <span>Precio objetivo</span>
-        <strong>{% if card.projection.projected_price is not None %}{{ card.projection.projected_price|floatformat:4 }}{% else %}-{% endif %}</strong>
-        <small>Rango {% if card.projection.low_return_pct is not None and card.projection.high_return_pct is not None %}{{ card.projection.low_return_pct|floatformat:1 }} / {{ card.projection.high_return_pct|floatformat:1 }} %{% else %}-{% endif %}</small>
-      </div>
     </div>
 
     {% if card.fundamentals.available %}
@@ -357,8 +350,164 @@
   {% endif %}
 
   <details class="equity-inline-fold" style="margin-top:18px;">
-    <summary>Referencias, costes y backtest</summary>
+    <summary>{% if card.position.is_owned and card.sale_preview.available %}Venta y rentabilidad{% else %}Gestionar seguimiento{% endif %}</summary>
     <div class="equity-inline-body">
+      {% if card.position.is_owned and card.sale_preview.available %}
+        <section class="equity-panel" style="margin:0; padding:18px; background:#f7fbfd; border:1px solid #d8e3ea;">
+          <div class="equity-panel-head" style="margin-bottom:12px;">
+            <div>
+              <p class="section-title">Venta y rentabilidad</p>
+              <h3 style="margin:0;">Si vendes esta posicion, aqui ves el neto real</h3>
+              <p style="margin:6px 0 0;">Introduce el precio de venta y la fecha. La simulacion descuenta compra, venta, mantenimiento y suma dividendos netos acumulados.</p>
+            </div>
+            <span class="pill">{{ card.sale_preview.cost_profile_label }} | {{ card.sale_preview.trade_channel_label }}</span>
+          </div>
+          <div
+            class="equity-grid-4"
+            data-sale-calculator
+            data-start-date="{{ card.sale_preview.start_date_label }}"
+            data-shares="{{ card.sale_preview.shares }}"
+            data-invested-amount="{{ card.sale_preview.invested_amount }}"
+            data-purchase-cost="{{ card.sale_preview.purchase_cost }}"
+            data-annual-recurring-cost="{{ card.sale_preview.annual_recurring_cost }}"
+            data-annual-net-dividend-income="{{ card.sale_preview.annual_net_dividend_income }}"
+            data-trade-channel="{{ card.position.trade_channel }}"
+            data-quote-symbol="{{ card.position.quote_symbol }}"
+            style="margin-bottom:12px;"
+          >
+            <div class="equity-box">
+              <span>Cobro neto estimado</span>
+              <strong><span data-sale-preview="net_exit_value">{{ card.sale_preview.net_exit_value|floatformat:2 }}</span> EUR</strong>
+              <small>Bruto <span data-sale-preview="gross_sale_value">{{ card.sale_preview.gross_sale_value|floatformat:2 }}</span> EUR - venta <span data-sale-preview="sale_total_cost">{{ card.sale_preview.sale_total_cost|floatformat:2 }}</span> EUR.</small>
+            </div>
+            <div class="equity-box">
+              <span>Resultado neto</span>
+              <strong class="{% if card.sale_preview.net_result >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="net_result">{{ card.sale_preview.net_result|floatformat:2 }}</span> EUR</strong>
+              <small>Capital comprometido {{ card.sale_preview.committed_capital|floatformat:2 }} EUR.</small>
+            </div>
+            <div class="equity-box">
+              <span>Margen acumulado</span>
+              <strong class="{% if card.sale_preview.cumulative_margin_pct >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="cumulative_margin_pct">{{ card.sale_preview.cumulative_margin_pct|floatformat:2 }}</span> %</strong>
+              <small>Desde {{ card.sale_preview.start_date_label }}.</small>
+            </div>
+            <div class="equity-box">
+              <span>Mes equivalente</span>
+              <strong class="{% if card.sale_preview.monthly_equivalent_return_pct >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="monthly_equivalent_return_pct">{{ card.sale_preview.monthly_equivalent_return_pct|floatformat:2 }}</span> %</strong>
+              <small>Mismo patron mensual aunque otra accion lleve mas tiempo en cartera.</small>
+            </div>
+            <div class="equity-box">
+              <span>Ano equivalente</span>
+              <strong class="{% if card.sale_preview.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="annualized_margin_pct">{{ card.sale_preview.annualized_margin_pct|floatformat:2 }}</span> %</strong>
+              <small><span data-sale-preview="holding_days">{{ card.sale_preview.holding_days }}</span> dias de tenencia llevados al mismo patron anual.</small>
+            </div>
+          </div>
+          <div class="equity-compact-note" style="margin-bottom:14px;">
+            Compra {{ card.sale_preview.purchase_cost|floatformat:2 }} EUR |
+            mantenimiento acumulado <span data-sale-preview="maintenance_total">{{ card.sale_preview.maintenance_total|floatformat:2 }}</span> EUR |
+            dividendos netos acumulados <span data-sale-preview="dividend_total">{{ card.sale_preview.dividend_total|floatformat:2 }}</span> EUR |
+            costes totales <span data-sale-preview="total_costs">{{ card.sale_preview.total_costs|floatformat:2 }}</span> EUR.
+            Las columnas equivalente mensual y anual usan rentabilidad compuesta sobre el capital comprometido neto.
+            {% if card.sale_preview.start_date_is_estimated %} La fecha inicial es aproximada: {{ card.sale_preview.start_date_source_label }}.{% endif %}
+          </div>
+          <form method="post" class="stack">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="close_position">
+            <input type="hidden" name="position_id" value="{{ card.position.id }}">
+            <div class="equity-grid-4">
+              <div>
+                <label for="close-date-{{ card.position.id }}">Fecha venta</label>
+                <input id="close-date-{{ card.position.id }}" type="date" name="closed_on" value="{{ today|date:'Y-m-d' }}" data-sale-input="closed_on">
+              </div>
+              <div>
+                <label for="close-price-{{ card.position.id }}">Precio venta por accion</label>
+                <input id="close-price-{{ card.position.id }}" type="text" name="sale_price_per_share" value="{{ card.position.current_price_per_share }}" data-sale-input="sale_price_per_share">
+              </div>
+              <div style="grid-column:span 2;">
+                <label for="close-notes-{{ card.position.id }}">Notas</label>
+                <textarea id="close-notes-{{ card.position.id }}" name="notes" rows="2" placeholder="Motivo de venta o recordatorio"></textarea>
+              </div>
+            </div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+              <button class="button" type="submit">Registrar venta y guardar resultado</button>
+              <span class="metric-sub">Al confirmar, la posicion desaparece de cartera y pasa a Ventas dentro del cuadro de gestion.</span>
+            </div>
+          </form>
+        </section>
+      {% else %}
+        <section class="equity-panel" style="margin:0; padding:18px; background:#f7fbfd; border:1px solid #d8e3ea;">
+          <div class="equity-panel-head" style="margin-bottom:12px;">
+            <div>
+              <p class="section-title">Seguimiento guardado</p>
+              <h3 style="margin:0;">Dejar de seguir este valor</h3>
+              <p style="margin:6px 0 0;">Si ya no quieres tenerlo guardado, quitalo de tu seguimiento. Seguiras viendolo en el radar IBEX como un valor mas del indice.</p>
+            </div>
+          </div>
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="delete_position">
+            <input type="hidden" name="position_id" value="{{ card.position.id }}">
+            <button class="button secondary" type="submit">Dejar de seguir y volver al radar</button>
+          </form>
+        </section>
+      {% endif %}
+    </div>
+  </details>
+
+  <details class="equity-inline-fold" style="margin-top:18px;">
+    <summary>Detalle tecnico, historico y referencias</summary>
+    <div class="equity-inline-body">
+      {% if card.historical_chart.available or card.best_correlation_chart.available %}
+        <div class="equity-chart-grid" style="margin-top:0;">
+          {% if card.historical_chart.available %}
+            <div class="equity-chart-shell">
+              <strong style="display:block; color:#17384e; margin-bottom:8px;">Historico</strong>
+              <svg viewBox="0 0 640 220">
+                <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.historical_chart.stock_line }}" />
+                {% for marker in card.historical_chart.x_markers %}
+                  <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                  <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                {% endfor %}
+                <text x="8" y="20" font-size="12" fill="#0d5d78">{{ card.historical_chart.stock_max_label }}</text>
+                <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.historical_chart.stock_min_label }}</text>
+              </svg>
+              <div class="equity-chart-foot">
+                <span>Historico ampliado para estudiar ciclos</span>
+                <span>{{ card.historical_chart.points_count }} puntos</span>
+                <span>{{ card.historical_chart.start_label }} a {{ card.historical_chart.end_label }}</span>
+              </div>
+            </div>
+          {% endif %}
+
+          {% if card.best_correlation_chart.available %}
+            <div class="equity-chart-shell">
+              <strong style="display:block; color:#17384e; margin-bottom:8px;">Mejor correlacion</strong>
+              <svg viewBox="0 0 640 220">
+                <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                <line x1="622" y1="18" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.best_correlation_chart.stock_line }}" />
+                <polyline fill="none" stroke="#7e8c97" stroke-width="3" points="{{ card.best_correlation_chart.reference_line }}" />
+                {% for marker in card.best_correlation_chart.x_markers %}
+                  <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                  <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                {% endfor %}
+                <text x="8" y="20" font-size="12" fill="#0d5d78">{{ card.best_correlation_chart.stock_max_label }}</text>
+                <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.best_correlation_chart.stock_min_label }}</text>
+                <text x="632" y="20" font-size="12" text-anchor="end" fill="#627380">{{ card.best_correlation_chart.reference_max_label }}</text>
+                <text x="632" y="214" font-size="12" text-anchor="end" fill="#627380">{{ card.best_correlation_chart.reference_min_label }}</text>
+              </svg>
+              <div class="equity-chart-foot">
+                <span>Accion</span>
+                <span>{{ card.best_correlation_chart.reference_label }}</span>
+                <span>Corr {% if card.best_correlation_chart.coefficient is not None %}{{ card.best_correlation_chart.coefficient|floatformat:2 }}{% else %}-{% endif %}</span>
+              </div>
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
+
       <div class="equity-detail-grid">
         {% for snapshot in card.period_snapshots %}
           <div class="equity-mini-stat">
@@ -444,66 +593,6 @@
           <small>{% if card.broker_costs.transaction_tax_cost %}Incluido en compra nacional{% else %}No aplicable o no estimado{% endif %}</small>
         </div>
       </div>
-
-      {% if card.projection_backtest.available %}
-        {% if card.projection_backtest.monthly_chart.available %}
-          <div class="equity-chart-shell">
-            <strong style="display:block; color:#17384e; margin-bottom:8px;">Comprobacion historica mes a mes</strong>
-            <svg viewBox="0 0 640 220">
-              <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-              <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-              <polyline fill="none" stroke="#b7642d" stroke-width="3" stroke-dasharray="8 6" points="{{ card.projection_backtest.monthly_chart.forecast_line }}" />
-              <polyline fill="none" stroke="#0d5d78" stroke-width="3" points="{{ card.projection_backtest.monthly_chart.actual_line }}" />
-              {% for marker in card.projection_backtest.monthly_chart.x_markers %}
-                <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
-                <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
-              {% endfor %}
-              {% for point in card.projection_backtest.monthly_chart.forecast_points %}
-                <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3.2" fill="#b7642d">
-                  <title>{{ point.forecast_date_label }} -> {{ point.target_date_label }} | Proyectado {{ point.value_label }}</title>
-                </circle>
-              {% endfor %}
-              {% for point in card.projection_backtest.monthly_chart.actual_points %}
-                <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3.2" fill="#0d5d78">
-                  <title>{{ point.forecast_date_label }} -> {{ point.target_date_label }} | Real {{ point.value_label }}</title>
-                </circle>
-              {% endfor %}
-              <text x="8" y="20" font-size="12" fill="#17384e">{{ card.projection_backtest.monthly_chart.max_label }}</text>
-              <text x="8" y="214" font-size="12" fill="#17384e">{{ card.projection_backtest.monthly_chart.min_label }}</text>
-            </svg>
-            <div class="equity-chart-foot">
-              <span>Linea naranja: lo que el modelo habria proyectado en cada mes</span>
-              <span>Linea azul: lo que ocurrio realmente 12 meses despues</span>
-              <span>{{ card.projection_backtest.monthly_chart.points_count }} puntos mensuales | {{ card.projection_backtest.monthly_chart.start_label }} a {{ card.projection_backtest.monthly_chart.end_label }}</span>
-            </div>
-          </div>
-        {% endif %}
-        <div class="equity-compact-note" style="margin-top:14px;">
-          {{ card.projection_backtest.plain_explanation }}
-        </div>
-        <div class="equity-detail-grid">
-          <div class="equity-mini-stat">
-            <span>Comprobacion historica</span>
-            <strong>{{ card.projection_backtest.precision_label }}</strong>
-            <small>{{ card.projection_backtest.comparisons_count }} comparativas a 12M. Sirve para medir si el modelo habria sido util antes, no para garantizar el futuro.</small>
-          </div>
-          <div class="equity-mini-stat">
-            <span>Error medio</span>
-            <strong>{{ card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %</strong>
-            <small>{{ card.projection_backtest.error_explanation }}</small>
-          </div>
-          <div class="equity-mini-stat">
-            <span>Acierto al subir o bajar</span>
-            <strong>{{ card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} %</strong>
-            <small>{{ card.projection_backtest.direction_explanation }}</small>
-          </div>
-          <div class="equity-mini-stat">
-            <span>Dentro del rango previsto</span>
-            <strong>{{ card.projection_backtest.in_range_rate_pct|floatformat:0 }} %</strong>
-            <small>{{ card.projection_backtest.range_explanation }}</small>
-          </div>
-        </div>
-      {% endif %}
     </div>
   </details>
 </article>

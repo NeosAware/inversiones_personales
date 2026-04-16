@@ -5906,7 +5906,9 @@ def build_equity_history_card(
 ) -> dict:
     resolved_status_key = status_key or ("owned" if position.is_owned else "watchlist")
     resolved_status_label = status_label or position.get_position_kind_display()
-    resolved_detail_anchor = detail_anchor if detail_anchor is not None else (f"stock-{position.id}" if position.id else "")
+    resolved_detail_anchor = detail_anchor if detail_anchor is not None else (
+        (f"tracked-ticket-{position.id}" if position.is_owned else f"stock-{position.id}") if position.id else ""
+    )
     resolved_sector_label = sector_label or resolve_equity_sector_label(
         company_name=position.company_name,
         ticker=position.ticker,

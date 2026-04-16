@@ -3281,21 +3281,94 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "IBEX 35 normalizado")
         self.assertContains(response, "Acciones compradas")
         self.assertContains(response, "Resumen cartera y tablas")
-        self.assertContains(response, "Analisis por valor")
+        self.assertContains(response, "Prevision 12M")
+        self.assertContains(response, "Ciclo 5A")
+        self.assertContains(response, "Prediccion frente a realidad")
         self.assertContains(response, "Ticket IBE")
         self.assertContains(response, "Ticket ENG")
         self.assertContains(response, 'id="tracked-ticket-tab-', html=False)
         self.assertContains(response, 'aria-label="Tickets comprados"', html=False)
         self.assertContains(response, 'id="equity-portfolio-summary"', html=False)
-        self.assertContains(response, 'id="equity-analysis"', html=False)
         self.assertContains(response, 'id="equity-decision"', html=False)
+        self.assertNotContains(response, 'id="equity-analysis"', html=False)
+        self.assertContains(response, 'href="#tracked-ticket-', html=False)
         self.assertLess(page.index('class="equity-hero"'), page.index('id="equity-ticket-tracking"'))
         self.assertLess(page.index("Cartera global"), page.index("Acciones compradas"))
         self.assertLess(page.index('id="equity-ticket-tracking"'), page.index('id="equity-portfolio-summary"'))
-        self.assertLess(page.index('id="equity-portfolio-summary"'), page.index('id="equity-analysis"'))
-        self.assertLess(page.index('id="equity-analysis"'), page.index('id="equity-decision"'))
+        self.assertLess(page.index('id="equity-portfolio-summary"'), page.index('id="equity-decision"'))
         self.assertLess(page.index('id="equity-decision"'), page.index('id="equity-ibex"'))
         self.assertEqual(EquityTicketSnapshot.objects.count(), 2)
+
+    def test_equities_page_keeps_watchlist_analysis_separate_from_owned_tabs(self):
+        owned = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        watchlist = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            shares=Decimal("0.0000"),
+            average_cost_per_share=Decimal("38.0000"),
+            current_price_per_share=Decimal("40.0000"),
+        )
+
+        for position, company_name, start_price, growth in (
+            (owned, "Iberdrola", Decimal("10.0000"), Decimal("1.0180")),
+            (watchlist, "ACS", Decimal("38.0000"), Decimal("1.0150")),
+        ):
+            stock_series = build_compound_market_series(
+                position.quote_symbol,
+                company_name,
+                growth=growth,
+                start_price=start_price,
+            )
+            reference_series = build_compound_market_series(
+                "^IBEX",
+                "IBEX 35",
+                growth=Decimal("1.0070"),
+                start_price=Decimal("100.0000"),
+            )
+            for stock_point, reference_point in zip(stock_series.points, reference_series.points):
+                position.price_history.create(
+                    price_date=stock_point["date"],
+                    open_price=stock_point["open"],
+                    high_price=stock_point["high"],
+                    low_price=stock_point["low"],
+                    close_price=stock_point["close"],
+                    benchmark_close=reference_point["close"],
+                )
+
+        benchmark_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+        with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        page = response.content.decode("utf-8")
+        self.assertContains(response, "Seguimientos guardados")
+        self.assertContains(response, 'id="equity-analysis"', html=False)
+        self.assertContains(response, 'aria-label="Seguimientos guardados"', html=False)
+        self.assertContains(response, f'id="stock-tab-{watchlist.id}"', html=False)
+        self.assertNotContains(response, f'id="stock-tab-{owned.id}"', html=False)
+        self.assertIn(f'href="#tracked-ticket-{owned.id}"', page)
 
     def test_equities_page_renders_investment_journey_section(self):
         active = EquityPosition.objects.create(
