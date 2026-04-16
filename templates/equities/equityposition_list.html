@@ -329,20 +329,57 @@
     }
     .equity-fold summary::-webkit-details-marker, .equity-inline-fold summary::-webkit-details-marker{ display:none; }
     .equity-fold-body{ padding:0 22px 22px; display:grid; gap:18px; }
-    .equity-stock-list{ display:grid; gap:14px; }
-    .equity-stock-fold{
-      border:1px solid var(--line);
-      border-radius:20px;
-      overflow:hidden;
+    .equity-stock-list{ display:grid; gap:18px; }
+    .equity-stock-tabs-shell{ display:grid; gap:18px; }
+    .equity-stock-tabs{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+    }
+    .equity-stock-tab{
+      min-width:220px;
+      padding:14px 16px;
+      border-radius:18px;
+      border:1px solid #d7e3ea;
       background:#fff;
+      color:#17384e;
+      text-align:left;
+      cursor:pointer;
+      display:grid;
+      gap:6px;
+      box-shadow:0 10px 24px rgba(18,37,53,.05);
+      transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
     }
-    .equity-stock-fold summary{
-      padding:18px 20px;
-      background:linear-gradient(180deg, #ffffff 0%, #f6fafc 100%);
+    .equity-stock-tab:hover{
+      transform:translateY(-1px);
+      box-shadow:0 14px 28px rgba(18,37,53,.08);
     }
-    .equity-stock-summary strong{ display:block; font-size:18px; }
-    .equity-stock-summary span{ display:block; margin-top:4px; color:var(--muted); font-size:13px; }
-    .equity-stock-body{ padding:0 20px 20px; }
+    .equity-stock-tab[aria-selected="true"]{
+      border-color:#10384d;
+      background:linear-gradient(135deg, #10384d 0%, #1b556e 100%);
+      color:#fff;
+      box-shadow:0 18px 34px rgba(16,56,77,.18);
+    }
+    .equity-stock-tab strong{
+      display:block;
+      font-size:17px;
+      line-height:1.2;
+    }
+    .equity-stock-tab span{
+      display:block;
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.4;
+    }
+    .equity-stock-tab[aria-selected="true"] span{ color:rgba(255,255,255,.82); }
+    .equity-stock-tab-note{
+      font-weight:700;
+      letter-spacing:.01em;
+    }
+    .equity-stock-panel{
+      scroll-margin-top:24px;
+    }
+    .equity-stock-panel[hidden]{ display:none; }
     .equity-inline-fold{
       border:1px solid var(--line);
       border-radius:18px;
@@ -465,6 +502,10 @@
   </style>
 
   <div class="equity-page">
+    {% if ticket_tracking.available %}
+      {% include "equities/_ticket_tracking_panel.html" %}
+    {% endif %}
+
     <section class="equity-hero">
       <div class="equity-hero-top">
         <div>
@@ -697,9 +738,9 @@
             <small>Margen {{ investment_journey.cumulative_margin_pct|floatformat:2 }} %.</small>
           </div>
           <div class="equity-box">
-            <span>Margen anualizado</span>
+            <span>Ano equivalente</span>
             <strong class="{% if investment_journey.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}">{{ investment_journey.annualized_margin_pct|floatformat:2 }} %</strong>
-            <small>Realizado {{ investment_journey.realized_net_result|floatformat:0 }} EUR | Vivo {{ investment_journey.live_net_result|floatformat:0 }} EUR.</small>
+            <small>Mes equivalente {{ investment_journey.monthly_equivalent_return_pct|floatformat:2 }} % | Realizado {{ investment_journey.realized_net_result|floatformat:0 }} EUR.</small>
           </div>
         </div>
         <div class="equity-grid-4" style="margin-top:16px;">
@@ -768,7 +809,8 @@
             <div class="equity-chart-foot">
               <span>Incluye compra, mantenimiento y venta real o estimada</span>
               <span>Margen acumulado {{ investment_journey.cumulative_margin_pct|floatformat:2 }} %</span>
-              <span>Anualizado {{ investment_journey.annualized_margin_pct|floatformat:2 }} %</span>
+              <span>Mes equivalente {{ investment_journey.monthly_equivalent_return_pct|floatformat:2 }} %</span>
+              <span>Ano equivalente {{ investment_journey.annualized_margin_pct|floatformat:2 }} %</span>
             </div>
           </div>
         {% endif %}
@@ -831,12 +873,12 @@
             <div class="equity-panel-head">
               <div>
                 <p class="section-title">En cartera</p>
-                <h3>Margen neto por ticket abierto</h3>
+                <h3>Rentabilidad comparable por ticket abierto</h3>
               </div>
             </div>
             <div class="equity-table-wrap">
               <table>
-                <thead><tr><th>Valor</th><th>Periodo</th><th>Valor neto</th><th>Beneficio</th><th>Margen acum.</th><th>Margen anual</th></tr></thead>
+                <thead><tr><th>Valor</th><th>Periodo</th><th>Valor neto</th><th>Beneficio</th><th>Rent. total</th><th>Mes eq.</th><th>Ano eq.</th></tr></thead>
                 <tbody>
                   {% for ticket in investment_journey.active_tickets %}
                     <tr>
@@ -845,10 +887,11 @@
                       <td>{{ ticket.net_exit_value|floatformat:0 }} EUR<br><span class="metric-sub">Salida neta si cerraras hoy</span></td>
                       <td class="{% if ticket.net_result >= 0 %}good{% else %}warn{% endif %}">{{ ticket.net_result|floatformat:0 }} EUR</td>
                       <td class="{% if ticket.cumulative_margin_pct >= 0 %}good{% else %}warn{% endif %}">{{ ticket.cumulative_margin_pct|floatformat:2 }} %</td>
+                      <td class="{% if ticket.monthly_equivalent_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ ticket.monthly_equivalent_return_pct|floatformat:2 }} %</td>
                       <td class="{% if ticket.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}">{{ ticket.annualized_margin_pct|floatformat:2 }} %</td>
                     </tr>
                   {% empty %}
-                    <tr><td colspan="6" class="muted">No hay posiciones abiertas.</td></tr>
+                    <tr><td colspan="7" class="muted">No hay posiciones abiertas.</td></tr>
                   {% endfor %}
                 </tbody>
               </table>
@@ -858,12 +901,12 @@
             <div class="equity-panel-head">
               <div>
                 <p class="section-title">Ventas</p>
-                <h3>Resultado neto de las posiciones cerradas</h3>
+                <h3>Resultado neto comparable de las posiciones cerradas</h3>
               </div>
             </div>
             <div class="equity-table-wrap">
               <table>
-                <thead><tr><th>Valor</th><th>Venta</th><th>Resultado</th><th>Margen acum.</th><th>Margen anual</th><th>Costes</th></tr></thead>
+                <thead><tr><th>Valor</th><th>Venta</th><th>Resultado</th><th>Rent. total</th><th>Mes eq.</th><th>Ano eq.</th><th>Costes</th></tr></thead>
                 <tbody>
                   {% for ticket in investment_journey.closed_tickets %}
                     <tr>
@@ -871,11 +914,12 @@
                       <td>{{ ticket.end_date_label }}<br><span class="metric-sub">Bruto {{ ticket.current_or_sale_value|floatformat:0 }} EUR</span></td>
                       <td class="{% if ticket.net_result >= 0 %}good{% else %}warn{% endif %}">{{ ticket.net_result|floatformat:0 }} EUR</td>
                       <td class="{% if ticket.cumulative_margin_pct >= 0 %}good{% else %}warn{% endif %}">{{ ticket.cumulative_margin_pct|floatformat:2 }} %</td>
+                      <td class="{% if ticket.monthly_equivalent_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ ticket.monthly_equivalent_return_pct|floatformat:2 }} %</td>
                       <td class="{% if ticket.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}">{{ ticket.annualized_margin_pct|floatformat:2 }} %</td>
                       <td>{{ ticket.costs_total|floatformat:0 }} EUR</td>
                     </tr>
                   {% empty %}
-                    <tr><td colspan="6" class="muted">Todavia no hay ventas registradas.</td></tr>
+                    <tr><td colspan="7" class="muted">Todavia no hay ventas registradas.</td></tr>
                   {% endfor %}
                 </tbody>
               </table>
@@ -885,139 +929,43 @@
       </section>
     {% endif %}
 
-    {% if ticket_tracking.available %}
-      <section class="equity-panel" id="equity-ticket-tracking">
-        <div class="equity-panel-head">
-          <div>
-            <p class="section-title">Seguimiento Desde Hoy</p>
-            <h2>Valor diario real frente al escenario esperado</h2>
-            <p>La primera foto se guarda hoy y, a partir de ahi, veras como cambia cada ticket comprado y la cartera global frente a la senda esperada a 12 meses.</p>
-          </div>
-          <span class="pill">{{ ticket_tracking.tracked_ticket_count }} tickets | {{ ticket_tracking.snapshot_days_count }} dias capturados</span>
-        </div>
-        <div class="equity-grid-4">
-          <div class="equity-box">
-            <span>Cartera base</span>
-            <strong>{{ ticket_tracking.global.baseline_value|floatformat:0 }} EUR</strong>
-            <small>Foto inicial del seguimiento.</small>
-          </div>
-          <div class="equity-box">
-            <span>Valor actual</span>
-            <strong>{{ ticket_tracking.global.latest_value|floatformat:0 }} EUR</strong>
-            <small>{% if ticket_tracking.global.daily_change_pct is not None %}Cambio diario {{ ticket_tracking.global.daily_change_pct|floatformat:2 }} %{% else %}Esperando una segunda foto diaria{% endif %}</small>
-          </div>
-          <div class="equity-box">
-            <span>Esperado hoy</span>
-            <strong>{% if ticket_tracking.global.expected_today_value is not None %}{{ ticket_tracking.global.expected_today_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-            <small>Escenario de mercado desde la foto inicial.</small>
-          </div>
-          <div class="equity-box">
-            <span>Gap vs esperado</span>
-            <strong class="{% if ticket_tracking.global.gap_tone == 'good' %}good{% else %}warn{% endif %}">{% if ticket_tracking.global.gap_value is not None %}{{ ticket_tracking.global.gap_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-            <small>{% if ticket_tracking.global.gap_pct is not None %}{{ ticket_tracking.global.gap_pct|floatformat:2 }} %{% else %}Sin comparativa aun{% endif %}</small>
-          </div>
-        </div>
-        {% if ticket_tracking.global.chart.available %}
-          <div class="equity-chart-shell" style="margin-top:18px;">
-            <strong style="display:block; color:#17384e; margin-bottom:8px;">Cartera global desde {{ ticket_tracking.global.chart.start_label }}</strong>
-            <svg viewBox="0 0 640 220">
-              <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-              <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-              <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ ticket_tracking.global.chart.expected_line }}" />
-              {% if ticket_tracking.global.chart.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ ticket_tracking.global.chart.actual_line }}" />{% endif %}
-              {% for marker in ticket_tracking.global.chart.x_markers %}
-                <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
-                <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
-              {% endfor %}
-              {% for point in ticket_tracking.global.chart.actual_points %}
-                <circle cx="{{ point.x }}" cy="{{ point.y }}" r="4.5" fill="#0d5d78">
-                  <title>{{ point.date_label }} | {{ point.value_label }}</title>
-                </circle>
-              {% endfor %}
-              <text x="8" y="20" font-size="12" fill="#17384e">{{ ticket_tracking.global.chart.max_label }}</text>
-              <text x="8" y="214" font-size="12" fill="#17384e">{{ ticket_tracking.global.chart.min_label }}</text>
-            </svg>
-            <div class="equity-chart-foot">
-              <span>Azul: valor real total</span>
-              <span>Naranja: senda esperada de mercado</span>
-              <span>{{ ticket_tracking.global.chart.latest_label }} a {{ ticket_tracking.global.chart.projection_end_label }}</span>
-              <span>{% if ticket_tracking.global.expected_total_value_12m is not None %}Escenario total 12M {{ ticket_tracking.global.expected_total_value_12m|floatformat:0 }} EUR{% endif %}</span>
-            </div>
-          </div>
-        {% endif %}
-        <div class="equity-grid-2" style="margin-top:18px;">
-          {% for ticket in ticket_tracking.tickets %}
-            <article class="equity-detail-card">
-              <div class="equity-section-head">
-                <div>
-                  <h4>{{ ticket.position.company_name }}</h4>
-                  <p>{{ ticket.position.ticker }} | {{ ticket.position.broker }} | {{ ticket.snapshot_count }} foto(s)</p>
-                </div>
-                <div class="equity-meta-stack">
-                  <span>{{ ticket.card.trade_alert.label }}</span>
-                  <span>{{ ticket.card.reference_label }}</span>
-                </div>
-              </div>
-              <div class="equity-grid-4" style="margin-top:14px;">
-                <div class="equity-mini-stat">
-                  <span>Base</span>
-                  <strong>{{ ticket.baseline_snapshot.current_value|floatformat:0 }} EUR</strong>
-                  <small>{{ ticket.baseline_snapshot.snapshot_date|date:"Y-m-d" }}</small>
-                </div>
-                <div class="equity-mini-stat">
-                  <span>Valor actual</span>
-                  <strong>{{ ticket.latest_snapshot.current_value|floatformat:0 }} EUR</strong>
-                  <small>{% if ticket.daily_change_pct is not None %}Cambio diario {{ ticket.daily_change_pct|floatformat:2 }} %{% else %}Esperando nuevo cierre{% endif %}</small>
-                </div>
-                <div class="equity-mini-stat">
-                  <span>Esperado hoy</span>
-                  <strong>{% if ticket.current_expected_value is not None %}{{ ticket.current_expected_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-                  <small>{% if ticket.expected_change_pct is not None %}{{ ticket.expected_change_pct|floatformat:2 }} % desde la base{% else %}Sin senda prevista{% endif %}</small>
-                </div>
-                <div class="equity-mini-stat">
-                  <span>Gap</span>
-                  <strong class="{% if ticket.gap_tone == 'good' %}good{% else %}warn{% endif %}">{% if ticket.gap_value is not None %}{{ ticket.gap_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-                  <small>{% if ticket.gap_pct is not None %}{{ ticket.gap_pct|floatformat:2 }} % frente a lo esperado{% else %}Sin comparativa{% endif %}</small>
-                </div>
-              </div>
-              {% if ticket.chart.available %}
-                <div class="equity-chart-shell" style="margin-top:16px;">
-                  <strong style="display:block; color:#17384e; margin-bottom:8px;">Ticket {{ ticket.position.ticker }} desde {{ ticket.chart.start_label }}</strong>
-                  <svg viewBox="0 0 640 220">
-                    <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-                    <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-                    <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ ticket.chart.expected_line }}" />
-                    {% if ticket.chart.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ ticket.chart.actual_line }}" />{% endif %}
-                    {% for marker in ticket.chart.x_markers %}
-                      <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
-                      <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
-                    {% endfor %}
-                    {% for point in ticket.chart.actual_points %}
-                      <circle cx="{{ point.x }}" cy="{{ point.y }}" r="4.5" fill="#0d5d78">
-                        <title>{{ point.date_label }} | {{ point.value_label }}</title>
-                      </circle>
-                    {% endfor %}
-                    <text x="8" y="20" font-size="12" fill="#17384e">{{ ticket.chart.max_label }}</text>
-                    <text x="8" y="214" font-size="12" fill="#17384e">{{ ticket.chart.min_label }}</text>
-                  </svg>
-                  <div class="equity-chart-foot">
-                    <span>Azul: valor real del ticket</span>
-                    <span>Naranja: senda esperada de mercado</span>
-                    <span>{{ ticket.chart.latest_label }} a {{ ticket.chart.projection_end_label }}</span>
-                    <span>{% if ticket.expected_total_value_12m is not None %}Escenario total 12M {{ ticket.expected_total_value_12m|floatformat:0 }} EUR{% endif %}</span>
-                  </div>
-                </div>
-              {% endif %}
-              <p class="equity-detail-note">{{ ticket.card.projection.explanation }} {{ ticket.card.projection.confidence_note }}</p>
-            </article>
-          {% endfor %}
-        </div>
-      </section>
-    {% endif %}
-
     <details class="equity-fold">
       <summary>Resumen cartera y tablas</summary>
       <div class="equity-fold-body">
+        {% if analysis_overview.comparable_summary.available %}
+          <section class="equity-panel">
+            <div class="equity-panel-head">
+              <div>
+                <p class="section-title">Comparador Temporal</p>
+                <h3>Rentabilidad llevada al mismo patron</h3>
+                <p>{{ analysis_overview.comparable_summary.method_label }}</p>
+              </div>
+            </div>
+            <div class="equity-grid-4">
+              <div class="equity-box">
+                <span>Rentabilidad total</span>
+                <strong class="{% if analysis_overview.comparable_summary.weighted_total_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.comparable_summary.weighted_total_return_pct|floatformat:2 }} %</strong>
+                <small>Media ponderada por capital comprometido.</small>
+              </div>
+              <div class="equity-box">
+                <span>Mes equivalente</span>
+                <strong class="{% if analysis_overview.comparable_summary.weighted_monthly_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.comparable_summary.weighted_monthly_return_pct|floatformat:2 }} %</strong>
+                <small>{{ analysis_overview.comparable_summary.positions_count }} posiciones comparables en el mismo patron mensual.</small>
+              </div>
+              <div class="equity-box">
+                <span>Ano equivalente</span>
+                <strong class="{% if analysis_overview.comparable_summary.weighted_annual_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.comparable_summary.weighted_annual_return_pct|floatformat:2 }} %</strong>
+                <small>Sirve para comparar compras de 5 anos frente a compras de 3 meses.</small>
+              </div>
+              <div class="equity-box">
+                <span>Mejor / peor</span>
+                <strong>{{ analysis_overview.comparable_summary.best_ticker }} / {{ analysis_overview.comparable_summary.worst_ticker }}</strong>
+                <small>{{ analysis_overview.comparable_summary.best_annual_return_pct|floatformat:2 }} % frente a {{ analysis_overview.comparable_summary.worst_annual_return_pct|floatformat:2 }} % anual equivalente.</small>
+              </div>
+            </div>
+          </section>
+        {% endif %}
+
         <section class="equity-panel">
         <div class="equity-panel-head">
           <div>
@@ -1067,12 +1015,12 @@
           <div>
             <p class="section-title">Cartera real</p>
             <h3>Acciones compradas</h3>
-            <p>Vista patrimonial con el broker y la proyeccion neta. Desde aqui puedes localizar rapido que pasaria si vendieras hoy y abrir la ficha donde introducir el precio exacto de salida.</p>
+            <p>Vista patrimonial con comparador temporal. Las columnas equivalente mensual y anual convierten cada posicion al mismo patron aunque se compraran en fechas distintas.</p>
           </div>
         </div>
         <div class="equity-table-wrap">
           <table>
-            <thead><tr><th>Ticker</th><th>Empresa</th><th>Broker</th><th>Invertido</th><th>Valor actual</th><th>Rent. neta</th><th>Si vendo hoy</th><th>Margen si vendo hoy</th><th></th></tr></thead>
+            <thead><tr><th>Ticker</th><th>Empresa</th><th>Broker</th><th>Invertido</th><th>Valor actual</th><th>Rent. total</th><th>Mes eq.</th><th>Ano eq.</th><th>Si vendo hoy</th><th></th></tr></thead>
             <tbody>
               {% for card in owned_history_cards %}
                 <tr>
@@ -1081,19 +1029,20 @@
                   <td>{{ card.position.broker }}</td>
                   <td>{{ card.position.invested_amount|floatformat:2 }} EUR</td>
                   <td>{{ card.position.current_value|floatformat:2 }} EUR</td>
-                  <td class="{% if card.position.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ card.position.unrealized_return_pct|floatformat:2 }} %</td>
-                  <td class="{% if card.sale_preview.net_result >= 0 %}good{% else %}warn{% endif %}">{% if card.sale_preview.available %}{{ card.sale_preview.net_result|floatformat:2 }} EUR{% else %}-{% endif %}</td>
                   <td class="{% if card.sale_preview.cumulative_margin_pct >= 0 %}good{% else %}warn{% endif %}">{% if card.sale_preview.available %}{{ card.sale_preview.cumulative_margin_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+                  <td class="{% if card.sale_preview.monthly_equivalent_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if card.sale_preview.available %}{{ card.sale_preview.monthly_equivalent_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+                  <td class="{% if card.sale_preview.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}">{% if card.sale_preview.available %}{{ card.sale_preview.annualized_margin_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+                  <td class="{% if card.sale_preview.net_result >= 0 %}good{% else %}warn{% endif %}">{% if card.sale_preview.available %}{{ card.sale_preview.net_result|floatformat:2 }} EUR{% else %}-{% endif %}</td>
                   <td><a class="button secondary" href="#stock-{{ card.position.id }}">Calcular / vender</a></td>
                 </tr>
               {% empty %}
-                <tr><td colspan="9" class="muted">Todavia no hay acciones compradas.</td></tr>
+                <tr><td colspan="10" class="muted">Todavia no hay acciones compradas.</td></tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
         <div class="equity-compact-note" style="margin-top:14px;">
-          La columna <strong>Si vendo hoy</strong> ya descuenta compra, venta y mantenimiento acumulado, y suma dividendos netos acumulados. Si quieres usar otro precio de salida, entra en <strong>Calcular / vender</strong>.
+          La columna <strong>Si vendo hoy</strong> ya descuenta compra, venta y mantenimiento acumulado, y suma dividendos netos acumulados. Las columnas <strong>Mes eq.</strong> y <strong>Ano eq.</strong> usan rentabilidad compuesta para comparar tickets comprados hace 5 anos con otros de hace solo unos meses.
         </div>
         </section>
       </div>
@@ -1102,28 +1051,45 @@
     <details class="equity-fold" open>
       <summary>Analisis por valor</summary>
       <div class="equity-fold-body">
-        <p class="equity-note">El detalle queda agrupado por accion y solo se abre cuando te interesa.</p>
+        <p class="equity-note">Cada valor vive en su propia pestana para que puedas saltar rapido entre acciones sin recorrer una lista larga.</p>
         <div class="equity-stock-list">
-          {% for card in history_cards %}
-            <details class="equity-stock-fold" id="stock-{{ card.position.id }}">
-              <summary>
-                <div class="equity-stock-summary">
-                  <div>
-                    <strong>{{ card.position.company_name }}</strong>
-                    <span>{{ card.position.ticker }} | {{ card.reference_label }}</span>
-                  </div>
-                  <div class="equity-summary-tags">
-                    <span class="equity-summary-tag" style="border-color:#d8e3ea; background:#eef4f7; color:#244355;">{{ card.position.get_position_kind_display }}</span>
-                    {% if card.reference_playbook.best_candidate %}<span class="equity-summary-tag" style="border-color:#d8e3ea; background:#eef4f7; color:#244355;">Mejor {{ card.reference_playbook.best_candidate.short_name }}</span>{% endif %}
-                    {% if card.correlation.coefficient is not None %}<span class="equity-summary-tag" style="border-color:#d8e3ea; background:#eef4f7; color:#244355;">Corr {{ card.correlation.coefficient|floatformat:2 }}</span>{% endif %}
-                  </div>
-                </div>
-              </summary>
-              <div class="equity-stock-body">{% include "equities/_analysis_card.html" with card=card %}</div>
-            </details>
-          {% empty %}
+          {% if history_cards %}
+            <div class="equity-stock-tabs-shell" data-equity-tabs>
+              <div class="equity-stock-tabs" role="tablist" aria-label="Analisis por accion">
+                {% for card in history_cards %}
+                  <button
+                    type="button"
+                    class="equity-stock-tab"
+                    id="stock-tab-{{ card.position.id }}"
+                    data-stock-tab="{{ card.position.id }}"
+                    role="tab"
+                    aria-selected="{% if forloop.first %}true{% else %}false{% endif %}"
+                    aria-controls="stock-{{ card.position.id }}"
+                  >
+                    <strong>{{ card.position.ticker }}</strong>
+                    <span>{{ card.position.company_name }}</span>
+                    <span class="equity-stock-tab-note">{{ card.reference_label }} | {{ card.position.get_position_kind_display }}</span>
+                  </button>
+                {% endfor %}
+              </div>
+              <div class="equity-stock-panels">
+                {% for card in history_cards %}
+                  <section
+                    class="equity-stock-panel"
+                    id="stock-{{ card.position.id }}"
+                    data-stock-panel="{{ card.position.id }}"
+                    role="tabpanel"
+                    aria-labelledby="stock-tab-{{ card.position.id }}"
+                    {% if not forloop.first %}hidden{% endif %}
+                  >
+                    {% include "equities/_analysis_card.html" with card=card %}
+                  </section>
+                {% endfor %}
+              </div>
+            </div>
+          {% else %}
             <div class="message info">Todavia no hay posiciones para analizar.</div>
-          {% endfor %}
+          {% endif %}
         </div>
       </div>
     </details>
@@ -1692,6 +1658,16 @@
           toneNode.classList.remove("good", "warn");
           toneNode.classList.add(value >= 0 ? "good" : "warn");
         };
+        const equivalentReturnPct = (returnPct, elapsedDays, targetDays) => {
+          if (!elapsedDays || targetDays <= 0) {
+            return 0;
+          }
+          const base = 1 + (returnPct / 100);
+          if (base <= 0) {
+            return -100;
+          }
+          return ((base ** (targetDays / elapsedDays)) - 1) * 100;
+        };
 
         const recalculate = () => {
           const salePrice = Math.max(parseDecimal(priceInput.value), 0);
@@ -1708,7 +1684,8 @@
           const netExitValue = Math.round(((grossSaleValue - saleTotalCost) + Number.EPSILON) * 100) / 100;
           const netResult = Math.round(((netExitValue - investedAmount - purchaseCost - maintenanceTotal + dividendTotal) + Number.EPSILON) * 100) / 100;
           const cumulativeMarginPct = committedCapital ? (netResult / committedCapital) * 100 : 0;
-          const annualizedMarginPct = committedCapital ? cumulativeMarginPct * (365 / Math.max(holdingDays, 1)) : 0;
+          const monthlyEquivalentReturnPct = committedCapital ? equivalentReturnPct(cumulativeMarginPct, Math.max(holdingDays, 1), 30.4375) : 0;
+          const annualizedMarginPct = committedCapital ? equivalentReturnPct(cumulativeMarginPct, Math.max(holdingDays, 1), 365) : 0;
 
           renderValue("gross_sale_value", grossSaleValue);
           renderValue("sale_total_cost", saleTotalCost);
@@ -1718,10 +1695,12 @@
           renderValue("net_exit_value", netExitValue);
           renderValue("net_result", netResult);
           renderValue("cumulative_margin_pct", cumulativeMarginPct, formatPercent);
+          renderValue("monthly_equivalent_return_pct", monthlyEquivalentReturnPct, formatPercent);
           renderValue("annualized_margin_pct", annualizedMarginPct, formatPercent);
           renderValue("holding_days", holdingDays, (value) => String(Math.max(Math.round(value || 0), 0)));
           renderTone("net_result", netResult);
           renderTone("cumulative_margin_pct", cumulativeMarginPct);
+          renderTone("monthly_equivalent_return_pct", monthlyEquivalentReturnPct);
           renderTone("annualized_margin_pct", annualizedMarginPct);
         };
 
@@ -1762,6 +1741,69 @@
           openRow(row);
         });
       });
+    })();
+  </script>
+  <script>
+    (() => {
+      const tabShells = Array.from(document.querySelectorAll("[data-equity-tabs]"));
+      if (!tabShells.length) {
+        return;
+      }
+
+      const activateTab = (container, stockId, options = {}) => {
+        const { focus = false, updateHash = false } = options;
+        const tabs = Array.from(container.querySelectorAll("[data-stock-tab]"));
+        const panels = Array.from(container.querySelectorAll("[data-stock-panel]"));
+        if (!tabs.length || !panels.length) {
+          return;
+        }
+
+        const nextTab = tabs.find((tab) => tab.dataset.stockTab === stockId) || tabs[0];
+        const nextId = nextTab.dataset.stockTab;
+        tabs.forEach((tab) => {
+          const isActive = tab.dataset.stockTab === nextId;
+          tab.setAttribute("aria-selected", isActive ? "true" : "false");
+        });
+        panels.forEach((panel) => {
+          panel.hidden = panel.dataset.stockPanel !== nextId;
+        });
+
+        if (focus) {
+          nextTab.focus();
+        }
+        if (updateHash && window.history?.replaceState) {
+          window.history.replaceState(null, "", `#stock-${nextId}`);
+        }
+      };
+
+      const syncFromHash = () => {
+        const hash = window.location.hash || "";
+        if (!hash.startsWith("#stock-")) {
+          return;
+        }
+        const stockId = hash.slice("#stock-".length);
+        tabShells.forEach((container) => activateTab(container, stockId));
+      };
+
+      tabShells.forEach((container) => {
+        const tabs = Array.from(container.querySelectorAll("[data-stock-tab]"));
+        if (!tabs.length) {
+          return;
+        }
+
+        tabs.forEach((tab) => {
+          tab.addEventListener("click", () => {
+            activateTab(container, tab.dataset.stockTab, { updateHash: true });
+          });
+        });
+
+        const initialHash = (window.location.hash || "").startsWith("#stock-")
+          ? window.location.hash.slice("#stock-".length)
+          : tabs[0].dataset.stockTab;
+        activateTab(container, initialHash);
+      });
+
+      window.addEventListener("hashchange", syncFromHash);
     })();
   </script>
   <script>

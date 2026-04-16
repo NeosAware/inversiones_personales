@@ -38,6 +38,7 @@ MONTHLY_RECENT_WINDOW = 12
 QUARTERLY_RECENT_WINDOW = 4
 TRACKING_HORIZON_DAYS = 365
 TRACKING_FORECAST_MARKERS = (91, 182, 273, TRACKING_HORIZON_DAYS)
+COMPARABLE_MONTH_DAYS = Decimal("30.4375")
 OPTIMIZER_MAX_ENTRY_DRAG_PCT = Decimal("1.00")
 OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT = Decimal("2.00")
 OPTIMIZER_MIN_GAIN_TO_ROUNDTRIP_MULTIPLE = Decimal("1.80")
@@ -2852,6 +2853,7 @@ def project_expected_value_on_date(
 def build_value_tracking_chart(
     actual_series: list[dict],
     expected_series: list[dict],
+    benchmark_series: list[dict] | None = None,
     width: int = 640,
     height: int = 220,
     padding: int = 18,
@@ -2868,13 +2870,16 @@ def build_value_tracking_chart(
 
     actual_points = normalize_series(actual_series)
     expected_points = normalize_series(expected_series)
+    benchmark_points = normalize_series(benchmark_series or [])
     if not actual_points or not expected_points:
         return {
             "available": False,
             "actual_line": "",
             "expected_line": "",
+            "benchmark_line": "",
             "actual_points": [],
             "expected_points": [],
+            "benchmark_points": [],
             "min_label": "-",
             "max_label": "-",
             "start_label": "",
@@ -2883,7 +2888,11 @@ def build_value_tracking_chart(
             "points_count": 0,
         }
 
-    all_values = [point["value"] for point in actual_points] + [point["value"] for point in expected_points]
+    all_values = (
+        [point["value"] for point in actual_points]
+        + [point["value"] for point in expected_points]
+        + [point["value"] for point in benchmark_points]
+    )
     series_min = min(all_values)
     series_max = max(all_values)
     if series_min == series_max:
@@ -2920,12 +2929,15 @@ def build_value_tracking_chart(
 
     actual_line, actual_point_rows = build_series(actual_points, "actual")
     expected_line, expected_point_rows = build_series(expected_points, "expected")
+    benchmark_line, benchmark_point_rows = build_series(benchmark_points, "benchmark")
     return {
         "available": True,
         "actual_line": actual_line,
         "expected_line": expected_line,
+        "benchmark_line": benchmark_line,
         "actual_points": actual_point_rows,
         "expected_points": expected_point_rows,
+        "benchmark_points": benchmark_point_rows,
         "min_label": f"{format_axis_value(series_min)} EUR",
         "max_label": f"{format_axis_value(series_max)} EUR",
         "start_label": min_date.isoformat(),
@@ -2974,22 +2986,138 @@ def build_ticket_expected_series(
     return series, latest_expected_value, projected_end_date
 
 
+def filter_ticket_tracking_snapshots(
+    snapshots: list[EquityTicketSnapshot],
+    tracking_anchor_date: date | None = None,
+) -> list[EquityTicketSnapshot]:
+    if not snapshots or tracking_anchor_date is None:
+        return snapshots
+    filtered = [snapshot for snapshot in snapshots if snapshot.snapshot_date >= tracking_anchor_date]
+    return filtered or snapshots
+
+
+def resolve_ticket_tracking_anchor_date(grouped_snapshots: dict[int, list[EquityTicketSnapshot]]) -> date | None:
+    earliest_dates = [snapshots[0].snapshot_date for snapshots in grouped_snapshots.values() if snapshots]
+    return max(earliest_dates) if earliest_dates else None
+
+
+def build_normalized_reference_tracking_series(
+    reference_points: list[dict],
+    tracking_dates: list[date],
+    baseline_value: Decimal,
+) -> list[dict]:
+    normalized_points = [
+        {
+            "date": point.get("date"),
+            "close": Decimal(str(point.get("close"))),
+        }
+        for point in reference_points
+        if point.get("date") is not None and point.get("close") is not None
+    ]
+    requested_dates = sorted({point_date for point_date in tracking_dates if point_date is not None})
+    if not normalized_points or not requested_dates:
+        return []
+
+    normalized_points.sort(key=lambda item: item["date"])
+    point_index = 0
+    last_close = None
+    baseline_reference_close = None
+    series = []
+
+    for point_date in requested_dates:
+        while point_index < len(normalized_points) and normalized_points[point_index]["date"] <= point_date:
+            last_close = normalized_points[point_index]["close"]
+            point_index += 1
+
+        if baseline_reference_close is None:
+            baseline_reference_close = last_close
+            if baseline_reference_close is None:
+                future_point = next(
+                    (point for point in normalized_points if point["date"] >= point_date),
+                    None,
+                )
+                if future_point is None:
+                    continue
+                baseline_reference_close = future_point["close"]
+                last_close = future_point["close"]
+
+        current_close = last_close or baseline_reference_close
+        if current_close is None or baseline_reference_close in {None, ZERO}:
+            continue
+
+        normalized_value = quantize_decimal(
+            baseline_value * (current_close / baseline_reference_close),
+            "0.01",
+        ) or ZERO
+        series.append({"date": point_date, "value": normalized_value})
+
+    return series
+
+
+def build_tracking_benchmark_context(
+    tracking_dates: list[date],
+    baseline_value: Decimal,
+) -> dict:
+    if not tracking_dates:
+        return {
+            "available": False,
+            "label": DEFAULT_BENCHMARK_NAME,
+            "series": [],
+            "latest_value": None,
+            "actual_change_pct": None,
+        }
+
+    try:
+        benchmark_series = fetch_reference_series_for_choice(
+            EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol=DEFAULT_BENCHMARK_SYMBOL,
+            benchmark_name=DEFAULT_BENCHMARK_NAME,
+        )
+    except Exception:
+        benchmark_series = None
+
+    if benchmark_series is None:
+        return {
+            "available": False,
+            "label": DEFAULT_BENCHMARK_NAME,
+            "series": [],
+            "latest_value": None,
+            "actual_change_pct": None,
+        }
+
+    series = build_normalized_reference_tracking_series(
+        benchmark_series.points,
+        tracking_dates,
+        baseline_value,
+    )
+    latest_value = series[-1]["value"] if series else None
+    return {
+        "available": bool(series),
+        "label": benchmark_series.name or DEFAULT_BENCHMARK_NAME,
+        "series": series,
+        "latest_value": latest_value,
+        "actual_change_pct": percentage_change(latest_value, series[0]["value"]) if series else None,
+    }
+
+
 def build_equity_ticket_tracking_item(
     card: dict,
     snapshots: list[EquityTicketSnapshot],
+    tracking_anchor_date: date | None = None,
 ) -> dict | None:
-    if not snapshots:
+    relevant_snapshots = filter_ticket_tracking_snapshots(snapshots, tracking_anchor_date)
+    if not relevant_snapshots:
         return None
 
     position = card["position"]
-    baseline = snapshots[0]
-    latest = snapshots[-1]
-    previous = snapshots[-2] if len(snapshots) >= 2 else None
+    baseline = relevant_snapshots[0]
+    latest = relevant_snapshots[-1]
+    previous = relevant_snapshots[-2] if len(relevant_snapshots) >= 2 else None
     expected_market_value_12m = baseline.projected_market_value_12m or baseline.current_value
     expected_total_value_12m = baseline.projected_total_value_12m or expected_market_value_12m
-    actual_series = [{"date": snapshot.snapshot_date, "value": snapshot.current_value} for snapshot in snapshots]
+    actual_series = [{"date": snapshot.snapshot_date, "value": snapshot.current_value} for snapshot in relevant_snapshots]
     expected_series, current_expected_value, projected_end_date = build_ticket_expected_series(
-        snapshots,
+        relevant_snapshots,
         expected_market_value_12m,
     )
     chart = build_value_tracking_chart(actual_series, expected_series)
@@ -3009,7 +3137,7 @@ def build_equity_ticket_tracking_item(
         "card": card,
         "baseline_snapshot": baseline,
         "latest_snapshot": latest,
-        "snapshot_count": len(snapshots),
+        "snapshot_count": len(relevant_snapshots),
         "days_tracked": max((latest.snapshot_date - baseline.snapshot_date).days, 0),
         "actual_series": actual_series,
         "expected_series": expected_series,
@@ -3081,8 +3209,16 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
             }
         )
 
-    chart = build_value_tracking_chart(actual_series, expected_series)
     baseline_value = actual_series[0]["value"]
+    benchmark = build_tracking_benchmark_context(
+        [point["date"] for point in actual_series],
+        baseline_value,
+    )
+    chart = build_value_tracking_chart(
+        actual_series,
+        expected_series,
+        benchmark_series=benchmark["series"],
+    )
     latest_actual = actual_series[-1]["value"]
     latest_date = actual_series[-1]["date"]
     current_expected_value = next(
@@ -3111,6 +3247,7 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         "expected_change_pct": percentage_change(current_expected_value, baseline_value)
         if current_expected_value is not None
         else None,
+        "benchmark": benchmark,
         "gap_value": gap_value,
         "gap_pct": percentage_change(latest_actual, current_expected_value) if current_expected_value is not None else None,
         "gap_tone": "good" if gap_value is not None and gap_value >= ZERO else "warn",
@@ -3140,12 +3277,17 @@ def build_equity_ticket_tracking_context(history_cards: list[dict]) -> dict:
     for snapshot in snapshots:
         grouped_snapshots[snapshot.position_id].append(snapshot)
 
+    tracking_anchor_date = resolve_ticket_tracking_anchor_date(grouped_snapshots)
     ticket_items = []
     for card in owned_cards:
         position_id = card["position"].id
         if not position_id:
             continue
-        item = build_equity_ticket_tracking_item(card, grouped_snapshots.get(position_id, []))
+        item = build_equity_ticket_tracking_item(
+            card,
+            grouped_snapshots.get(position_id, []),
+            tracking_anchor_date=tracking_anchor_date,
+        )
         if item:
             ticket_items.append(item)
 
@@ -3155,12 +3297,19 @@ def build_equity_ticket_tracking_context(history_cards: list[dict]) -> dict:
             item["position"].company_name,
         )
     )
-    snapshot_days = sorted({snapshot.snapshot_date for snapshot in snapshots})
+    snapshot_days = sorted(
+        {
+            point["date"]
+            for item in ticket_items
+            for point in item.get("actual_series", [])
+        }
+    )
     return {
         "available": bool(ticket_items),
         "tickets": ticket_items,
         "tracked_ticket_count": len(ticket_items),
         "snapshot_days_count": len(snapshot_days),
+        "anchor_date": tracking_anchor_date,
         "global": build_global_equity_ticket_tracking_item(ticket_items) if ticket_items else {"available": False},
     }
 
@@ -3354,11 +3503,9 @@ def build_equity_sale_preview(
         if committed_capital
         else ZERO
     ) or ZERO
-    annualized_margin_pct = (
-        quantize_decimal(cumulative_margin_pct * (Decimal("365") / Decimal(str(max(holding_days, 1)))), "0.01")
-        if committed_capital
-        else ZERO
-    ) or ZERO
+    comparable_returns = build_comparable_return_metrics(cumulative_margin_pct, holding_days)
+    annualized_margin_pct = quantize_decimal(comparable_returns["annual_equivalent_return_pct"], "0.01") or ZERO
+    monthly_equivalent_return_pct = quantize_decimal(comparable_returns["monthly_equivalent_return_pct"], "0.01") or ZERO
 
     return {
         "available": True,
@@ -3384,6 +3531,7 @@ def build_equity_sale_preview(
         "net_result": net_result,
         "committed_capital": committed_capital,
         "cumulative_margin_pct": cumulative_margin_pct,
+        "monthly_equivalent_return_pct": monthly_equivalent_return_pct,
         "annualized_margin_pct": annualized_margin_pct,
         "cost_profile_label": sale_costs.get("profile_label") or position.broker,
         "market_scope_label": sale_costs.get("market_scope_label") or "",
@@ -3435,11 +3583,9 @@ def build_active_equity_investment_ticket(position: EquityPosition) -> dict | No
     net_exit_value = quantize_decimal(latest_live_value - sale_cost_estimate, "0.01") or ZERO
     net_result = quantize_decimal(net_exit_value - position.invested_amount, "0.01") or ZERO
     cumulative_margin_pct = ((net_result / committed_capital) * ONE_HUNDRED) if committed_capital else ZERO
-    annualized_margin_pct = (
-        cumulative_margin_pct * (Decimal("365") / Decimal(str(max(holding_days, 1))))
-        if committed_capital
-        else ZERO
-    )
+    comparable_returns = build_comparable_return_metrics(cumulative_margin_pct, holding_days)
+    annualized_margin_pct = comparable_returns["annual_equivalent_return_pct"] or ZERO
+    monthly_equivalent_return_pct = comparable_returns["monthly_equivalent_return_pct"] or ZERO
     return {
         "status": "active",
         "status_label": "En cartera",
@@ -3464,6 +3610,7 @@ def build_active_equity_investment_ticket(position: EquityPosition) -> dict | No
         "net_exit_value": net_exit_value,
         "net_result": net_result,
         "cumulative_margin_pct": quantize_decimal(cumulative_margin_pct, "0.01") or ZERO,
+        "monthly_equivalent_return_pct": quantize_decimal(monthly_equivalent_return_pct, "0.01") or ZERO,
         "annualized_margin_pct": quantize_decimal(annualized_margin_pct, "0.01") or ZERO,
         "holding_days": holding_days,
         "value_series": live_series,
@@ -3509,7 +3656,9 @@ def build_closed_equity_investment_ticket(position: EquityClosedPosition) -> dic
     committed_capital = quantize_decimal(position.committed_capital, "0.01") or ZERO
     net_result = quantize_decimal(position.net_result, "0.01") or ZERO
     cumulative_margin_pct = quantize_decimal(position.cumulative_margin_pct, "0.01") or ZERO
-    annualized_margin_pct = quantize_decimal(position.annualized_margin_pct, "0.01") or ZERO
+    comparable_returns = build_comparable_return_metrics(cumulative_margin_pct, max((end_date - start_date).days, 0))
+    annualized_margin_pct = quantize_decimal(comparable_returns["annual_equivalent_return_pct"], "0.01") or ZERO
+    monthly_equivalent_return_pct = quantize_decimal(comparable_returns["monthly_equivalent_return_pct"], "0.01") or ZERO
     return {
         "status": "closed",
         "status_label": "Vendida",
@@ -3534,6 +3683,7 @@ def build_closed_equity_investment_ticket(position: EquityClosedPosition) -> dic
         "net_exit_value": net_sale_value,
         "net_result": net_result,
         "cumulative_margin_pct": cumulative_margin_pct,
+        "monthly_equivalent_return_pct": monthly_equivalent_return_pct,
         "annualized_margin_pct": annualized_margin_pct,
         "holding_days": max((end_date - start_date).days, 0),
         "value_series": live_series,
@@ -3596,7 +3746,9 @@ def build_equity_investment_journey_context(
     total_days = max((latest_end - earliest_start).days, 1)
     years_operating = Decimal(str(total_days)) / Decimal("365")
     cumulative_margin_pct = ((total_net_result / total_committed_capital) * ONE_HUNDRED) if total_committed_capital else ZERO
-    annualized_margin_pct = cumulative_margin_pct * (Decimal("365") / Decimal(str(total_days))) if total_committed_capital else ZERO
+    comparable_returns = build_comparable_return_metrics(cumulative_margin_pct, total_days)
+    monthly_equivalent_return_pct = comparable_returns["monthly_equivalent_return_pct"] or ZERO
+    annualized_margin_pct = comparable_returns["annual_equivalent_return_pct"] or ZERO
     annual_rows = []
     previous_profit = ZERO
     for year in sorted(yearly_snapshot_buckets):
@@ -3655,6 +3807,7 @@ def build_equity_investment_journey_context(
         "current_net_value": aggregated_value_series[-1]["value"] if aggregated_value_series else ZERO,
         "cumulative_net_result": quantize_decimal(total_net_result, "0.01") or ZERO,
         "cumulative_margin_pct": quantize_decimal(cumulative_margin_pct, "0.01") or ZERO,
+        "monthly_equivalent_return_pct": quantize_decimal(monthly_equivalent_return_pct, "0.01") or ZERO,
         "annualized_margin_pct": quantize_decimal(annualized_margin_pct, "0.01") or ZERO,
         "years_operating": quantize_decimal(years_operating, "0.01") or ZERO,
         "average_annual_result": average_annual_result,
@@ -4278,6 +4431,40 @@ def annualize_return_pct(return_pct: Decimal | None, months: int) -> Decimal | N
         return Decimal("-100.00")
     annualized = (base ** (12 / months) - 1) * 100
     return Decimal(str(round(annualized, 4)))
+
+
+def calculate_equivalent_return_pct(
+    cumulative_return_pct: Decimal | None,
+    elapsed_days: int,
+    target_days: Decimal,
+) -> Decimal | None:
+    if cumulative_return_pct is None or elapsed_days <= 0 or target_days <= 0:
+        return None
+    base = 1 + (float(cumulative_return_pct) / 100)
+    if base <= 0:
+        return Decimal("-100.00")
+    exponent = float(target_days / Decimal(str(elapsed_days)))
+    equivalent = (base ** exponent - 1) * 100
+    return Decimal(str(round(equivalent, 4)))
+
+
+def build_comparable_return_metrics(
+    cumulative_return_pct: Decimal | None,
+    holding_days: int,
+) -> dict:
+    return {
+        "holding_days": holding_days,
+        "monthly_equivalent_return_pct": calculate_equivalent_return_pct(
+            cumulative_return_pct,
+            holding_days,
+            COMPARABLE_MONTH_DAYS,
+        ),
+        "annual_equivalent_return_pct": calculate_equivalent_return_pct(
+            cumulative_return_pct,
+            holding_days,
+            Decimal("365"),
+        ),
+    }
 
 
 def build_projection_signal(return_pct: Decimal | None, months: int) -> Decimal | None:
@@ -6434,6 +6621,92 @@ def build_ibex_universe_analysis(
     }
 
 
+def build_owned_positions_comparable_summary(history_cards: list[dict]) -> dict:
+    comparable_cards = [
+        card
+        for card in history_cards
+        if card["position"].is_owned and card.get("sale_preview", {}).get("available")
+    ]
+    if not comparable_cards:
+        return {
+            "available": False,
+            "positions_count": 0,
+        }
+
+    total_committed_capital = sum(
+        (card["sale_preview"].get("committed_capital") or ZERO)
+        for card in comparable_cards
+    )
+    weighted_total_return_pct = (
+        sum(
+            (
+                (card["sale_preview"].get("cumulative_margin_pct") or ZERO)
+                * (card["sale_preview"].get("committed_capital") or ZERO)
+            )
+            for card in comparable_cards
+        )
+        / total_committed_capital
+        if total_committed_capital
+        else None
+    )
+
+    comparable_weight = sum(
+        (
+            card["sale_preview"].get("committed_capital") or ZERO
+        )
+        for card in comparable_cards
+        if card["sale_preview"].get("monthly_equivalent_return_pct") is not None
+    )
+    weighted_monthly_return_pct = (
+        sum(
+            (
+                card["sale_preview"]["monthly_equivalent_return_pct"]
+                * (card["sale_preview"].get("committed_capital") or ZERO)
+            )
+            for card in comparable_cards
+            if card["sale_preview"].get("monthly_equivalent_return_pct") is not None
+        )
+        / comparable_weight
+        if comparable_weight
+        else None
+    )
+    weighted_annual_return_pct = (
+        sum(
+            (
+                card["sale_preview"]["annualized_margin_pct"]
+                * (card["sale_preview"].get("committed_capital") or ZERO)
+            )
+            for card in comparable_cards
+            if card["sale_preview"].get("annualized_margin_pct") is not None
+        )
+        / comparable_weight
+        if comparable_weight
+        else None
+    )
+
+    best_card = max(
+        comparable_cards,
+        key=lambda card: card["sale_preview"].get("annualized_margin_pct") or Decimal("-9999"),
+    )
+    worst_card = min(
+        comparable_cards,
+        key=lambda card: card["sale_preview"].get("annualized_margin_pct") or Decimal("9999"),
+    )
+    return {
+        "available": True,
+        "positions_count": len(comparable_cards),
+        "total_committed_capital": quantize_decimal(total_committed_capital, "0.01") or ZERO,
+        "weighted_total_return_pct": quantize_decimal(weighted_total_return_pct, "0.01"),
+        "weighted_monthly_return_pct": quantize_decimal(weighted_monthly_return_pct, "0.01"),
+        "weighted_annual_return_pct": quantize_decimal(weighted_annual_return_pct, "0.01"),
+        "best_ticker": best_card["position"].ticker,
+        "best_annual_return_pct": quantize_decimal(best_card["sale_preview"].get("annualized_margin_pct"), "0.01"),
+        "worst_ticker": worst_card["position"].ticker,
+        "worst_annual_return_pct": quantize_decimal(worst_card["sale_preview"].get("annualized_margin_pct"), "0.01"),
+        "method_label": "Rentabilidad equivalente compuesta sobre capital comprometido neto si cerraras hoy.",
+    }
+
+
 def build_equity_analysis_dashboard(
     positions,
     selected_start_date: date | None = None,
@@ -6459,6 +6732,7 @@ def build_equity_analysis_dashboard(
     purchase_cost_total = sum((position.purchase_total_cost for position in owned_positions), ZERO)
     net_annual_income_total = sum((position.net_annual_income for position in owned_positions), ZERO)
     unrealized_gain_total = sum((position.unrealized_gain_after_costs for position in owned_positions), ZERO)
+    comparable_summary = build_owned_positions_comparable_summary(history_cards)
     reference_guide = build_equity_reference_guide(history_cards)
     decision_rows = build_equity_decision_rows(history_cards)
     ibex_universe = {
@@ -6583,6 +6857,7 @@ def build_equity_analysis_dashboard(
         "selected_period_label": selected_period_label,
         "watchlist_latest_price_count": sum(1 for position in watchlist_positions if position.current_price_per_share),
         "best_decision": decision_rows[0] if decision_rows else ibex_universe["summary"].get("top_pick"),
+        "comparable_summary": comparable_summary,
     }
 
     return {

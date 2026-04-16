@@ -52,9 +52,14 @@
             <small>Desde {{ card.sale_preview.start_date_label }}.</small>
           </div>
           <div class="equity-box">
-            <span>Margen anualizado</span>
+            <span>Mes equivalente</span>
+            <strong class="{% if card.sale_preview.monthly_equivalent_return_pct >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="monthly_equivalent_return_pct">{{ card.sale_preview.monthly_equivalent_return_pct|floatformat:2 }}</span> %</strong>
+            <small>Mismo patron mensual aunque otra accion lleve mas tiempo en cartera.</small>
+          </div>
+          <div class="equity-box">
+            <span>Ano equivalente</span>
             <strong class="{% if card.sale_preview.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}"><span data-sale-preview="annualized_margin_pct">{{ card.sale_preview.annualized_margin_pct|floatformat:2 }}</span> %</strong>
-            <small><span data-sale-preview="holding_days">{{ card.sale_preview.holding_days }}</span> dias de tenencia.</small>
+            <small><span data-sale-preview="holding_days">{{ card.sale_preview.holding_days }}</span> dias de tenencia llevados al mismo patron anual.</small>
           </div>
         </div>
         <div class="equity-compact-note" style="margin-bottom:14px;">
@@ -62,6 +67,7 @@
           mantenimiento acumulado <span data-sale-preview="maintenance_total">{{ card.sale_preview.maintenance_total|floatformat:2 }}</span> EUR |
           dividendos netos acumulados <span data-sale-preview="dividend_total">{{ card.sale_preview.dividend_total|floatformat:2 }}</span> EUR |
           costes totales <span data-sale-preview="total_costs">{{ card.sale_preview.total_costs|floatformat:2 }}</span> EUR.
+          Las columnas equivalente mensual y anual usan rentabilidad compuesta sobre el capital comprometido neto.
           {% if card.sale_preview.start_date_is_estimated %} La fecha inicial es aproximada: {{ card.sale_preview.start_date_source_label }}.{% endif %}
         </div>
         <form method="post" class="stack">
