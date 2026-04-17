@@ -44,6 +44,57 @@
           <small>{% if tracking_ticket.gap_pct is not None %}{{ tracking_ticket.gap_pct|floatformat:2 }} % frente a lo esperado{% else %}Sin comparativa{% endif %}</small>
         </div>
       </div>
+      {% if tracking_ticket.trade_plan.available %}
+        <div style="display:grid; gap:16px; grid-template-columns:repeat(auto-fit, minmax(220px,1fr)); margin-top:16px;">
+          <div class="equity-mini-stat">
+            <span>Venta sugerida</span>
+            <strong>{% if tracking_ticket.trade_plan.sale_date_label %}{{ tracking_ticket.trade_plan.sale_date_label }}{% else %}-{% endif %}</strong>
+            <small>
+              {% if tracking_ticket.trade_plan.mode == "hold" and tracking_ticket.trade_plan.sale_year_number %}
+                Mantener y revisar al cierre del A&Ntilde;O {{ tracking_ticket.trade_plan.sale_year_number }}.
+              {% elif tracking_ticket.trade_plan.sale_year_number and tracking_ticket.trade_plan.drawdown_year_number %}
+                Cierre A&Ntilde;O {{ tracking_ticket.trade_plan.sale_year_number }} antes del tramo A&Ntilde;O {{ tracking_ticket.trade_plan.drawdown_year_number }}.
+              {% else %}
+                Sin ventana sugerida.
+              {% endif %}
+            </small>
+          </div>
+          <div class="equity-mini-stat">
+            <span>{% if tracking_ticket.trade_plan.reentry_date_label %}Reentrada sugerida{% else %}Lectura tactica{% endif %}</span>
+            <strong>
+              {% if tracking_ticket.trade_plan.reentry_date_label %}
+                {{ tracking_ticket.trade_plan.reentry_date_label }}
+              {% elif tracking_ticket.trade_plan.mode == "hold" %}
+                Mantener
+              {% else %}
+                Revisar radar
+              {% endif %}
+            </strong>
+            <small>
+              {% if tracking_ticket.trade_plan.reentry_year_number %}
+                Inicio A&Ntilde;O {{ tracking_ticket.trade_plan.reentry_year_number }} si la tesis sigue viva.
+              {% elif tracking_ticket.trade_plan.mode == "hold" %}
+                No hay una caida anual fuerte que justifique salir y recomprar.
+              {% else %}
+                No hay reentrada clara; conviene contrastarlo con el radar actual.
+              {% endif %}
+            </small>
+          </div>
+          <div class="equity-mini-stat">
+            <span>Lectura 1-5 A&Ntilde;OS</span>
+            <strong>
+              {% if tracking_ticket.trade_plan.drawdown_margin_pct is not None %}
+                {{ tracking_ticket.trade_plan.drawdown_margin_pct|floatformat:1 }} %
+              {% elif tracking_ticket.trade_plan.sale_year_number %}
+                A&Ntilde;O {{ tracking_ticket.trade_plan.sale_year_number }}
+              {% else %}
+                Estable
+              {% endif %}
+            </strong>
+            <small>{{ tracking_ticket.trade_plan.summary }}</small>
+          </div>
+        </div>
+      {% endif %}
       {% if tracking_ticket.chart.available %}
         <div class="equity-chart-shell" style="margin-top:16px;">
           <strong style="display:block; color:#17384e; margin-bottom:8px;">Ticket {{ tracking_ticket.position.ticker }} desde {{ tracking_ticket.chart.start_label }}</strong>

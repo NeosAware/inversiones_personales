@@ -23,7 +23,13 @@ from banking.services import load_rows_from_workbook
 from portfolio.ownership import AssetOwnershipCategory
 
 from .broker_costs import estimate_broker_costs, resolve_recurring_cost_used
-from .models import EquityClosedPosition, EquityPosition, EquityPriceHistory, EquityTicketSnapshot
+from .models import (
+    EquityClosedPosition,
+    EquityPosition,
+    EquityPriceHistory,
+    EquityPurchaseForecastBaseline,
+    EquityTicketSnapshot,
+)
 
 
 ZERO = Decimal("0.00")
@@ -3100,10 +3106,169 @@ def build_tracking_benchmark_context(
     }
 
 
+def add_calendar_years(value: date | None, years: int) -> date | None:
+    if value is None:
+        return None
+    try:
+        return value.replace(year=value.year + years)
+    except ValueError:
+        return value.replace(month=2, day=28, year=value.year + years)
+
+
+def build_purchase_baseline_yearly_rows(
+    purchase_baseline: EquityPurchaseForecastBaseline | None,
+) -> list[dict]:
+    if purchase_baseline is None or purchase_baseline.baseline_date is None:
+        return []
+
+    rows = []
+    previous_price = purchase_baseline.baseline_price
+    previous_cumulative_return = ZERO
+
+    for year_number in range(1, 6):
+        projected_price = getattr(purchase_baseline, f"projected_price_{year_number}y", None)
+        cumulative_return_pct = getattr(
+            purchase_baseline,
+            f"projected_return_pct_{year_number}y",
+            None,
+        )
+        if projected_price is None and cumulative_return_pct is None:
+            continue
+
+        margin_pct = None
+        if projected_price not in {None, ZERO} and previous_price not in {None, ZERO}:
+            if year_number == 1 and cumulative_return_pct is not None:
+                margin_pct = cumulative_return_pct
+            else:
+                margin_pct = percentage_change(projected_price, previous_price)
+        elif cumulative_return_pct is not None:
+            if year_number == 1:
+                margin_pct = cumulative_return_pct
+            else:
+                margin_pct = quantize_decimal(cumulative_return_pct - previous_cumulative_return)
+
+        rows.append(
+            {
+                "year_number": year_number,
+                "projected_date": add_calendar_years(purchase_baseline.baseline_date, year_number),
+                "reentry_date": add_calendar_years(purchase_baseline.baseline_date, year_number - 1),
+                "projected_price": projected_price,
+                "cumulative_return_pct": cumulative_return_pct,
+                "margin_pct": quantize_decimal(margin_pct),
+            }
+        )
+        if projected_price is not None:
+            previous_price = projected_price
+        if cumulative_return_pct is not None:
+            previous_cumulative_return = cumulative_return_pct
+
+    return rows
+
+
+def build_purchase_forecast_trade_plan(
+    purchase_baseline: EquityPurchaseForecastBaseline | None,
+) -> dict:
+    yearly_rows = build_purchase_baseline_yearly_rows(purchase_baseline)
+    if not yearly_rows:
+        return {"available": False}
+
+    best_row = max(
+        yearly_rows,
+        key=lambda item: (
+            item["cumulative_return_pct"]
+            if item["cumulative_return_pct"] is not None
+            else Decimal("-9999"),
+            -item["year_number"],
+        ),
+    )
+    sale_row = None
+    drawdown_row = None
+    for row in yearly_rows:
+        if row["year_number"] <= 1:
+            continue
+        margin_pct = row.get("margin_pct")
+        previous_row = next(
+            (item for item in yearly_rows if item["year_number"] == row["year_number"] - 1),
+            None,
+        )
+        previous_return_pct = previous_row.get("cumulative_return_pct") if previous_row else None
+        if (
+            margin_pct is not None
+            and margin_pct <= -OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT
+            and previous_row is not None
+            and previous_return_pct is not None
+            and previous_return_pct >= OPTIMIZER_MAX_ENTRY_DRAG_PCT
+        ):
+            sale_row = previous_row
+            drawdown_row = row
+            break
+
+    if sale_row is None:
+        return {
+            "available": True,
+            "mode": "hold",
+            "sale_year_number": best_row["year_number"],
+            "sale_date": best_row["projected_date"],
+            "sale_date_label": best_row["projected_date"].isoformat() if best_row.get("projected_date") else "",
+            "reentry_year_number": None,
+            "reentry_date": None,
+            "reentry_date_label": "",
+            "summary": (
+                "La foto de compra no muestra un retroceso anual lo bastante fuerte como para justificar "
+                f"una salida tactica. Mantener hasta {best_row['projected_date'].isoformat()} sigue siendo "
+                "la lectura base."
+            )
+            if best_row.get("projected_date")
+            else "La foto de compra no muestra un retroceso anual fuerte y la lectura base sigue siendo mantener.",
+            "yearly_rows": yearly_rows,
+            "drawdown_year_number": None,
+            "drawdown_margin_pct": None,
+        }
+
+    reentry_row = next(
+        (
+            item
+            for item in yearly_rows
+            if item["year_number"] > drawdown_row["year_number"]
+            and item.get("margin_pct") is not None
+            and item["margin_pct"] >= OPTIMIZER_MAX_ENTRY_DRAG_PCT
+        ),
+        None,
+    )
+    reentry_date = reentry_row.get("reentry_date") if reentry_row else None
+    if reentry_row and reentry_date:
+        summary = (
+            f"Se propone vender el {sale_row['projected_date'].isoformat()} antes de una caida prevista "
+            f"del {drawdown_row['margin_pct']:.1f} %. Si la tesis sigue viva, la reentrada sugerida "
+            f"arranca el {reentry_date.isoformat()}."
+        )
+    else:
+        summary = (
+            f"Se propone vender el {sale_row['projected_date'].isoformat()} antes de una caida prevista "
+            f"del {drawdown_row['margin_pct']:.1f} %. Despues conviene revisar de nuevo el radar antes de volver."
+        )
+
+    return {
+        "available": True,
+        "mode": "sale_reentry" if reentry_row else "sale_review",
+        "sale_year_number": sale_row["year_number"],
+        "sale_date": sale_row["projected_date"],
+        "sale_date_label": sale_row["projected_date"].isoformat() if sale_row.get("projected_date") else "",
+        "reentry_year_number": reentry_row["year_number"] if reentry_row else None,
+        "reentry_date": reentry_date,
+        "reentry_date_label": reentry_date.isoformat() if reentry_date else "",
+        "summary": summary,
+        "yearly_rows": yearly_rows,
+        "drawdown_year_number": drawdown_row["year_number"] if drawdown_row else None,
+        "drawdown_margin_pct": drawdown_row["margin_pct"] if drawdown_row else None,
+    }
+
+
 def build_equity_ticket_tracking_item(
     card: dict,
     snapshots: list[EquityTicketSnapshot],
     tracking_anchor_date: date | None = None,
+    purchase_baseline: EquityPurchaseForecastBaseline | None = None,
 ) -> dict | None:
     relevant_snapshots = filter_ticket_tracking_snapshots(snapshots, tracking_anchor_date)
     if not relevant_snapshots:
@@ -3132,6 +3297,7 @@ def build_equity_ticket_tracking_item(
         if previous and previous.current_value
         else None
     )
+    trade_plan = build_purchase_forecast_trade_plan(purchase_baseline)
     return {
         "position": position,
         "card": card,
@@ -3154,6 +3320,7 @@ def build_equity_ticket_tracking_item(
         "gap_tone": "good" if gap_value is not None and gap_value >= ZERO else "warn",
         "daily_change_pct": daily_change_pct,
         "projection_end_date": projected_end_date,
+        "trade_plan": trade_plan,
     }
 
 
@@ -3273,6 +3440,10 @@ def build_equity_ticket_tracking_context(history_cards: list[dict]) -> dict:
         .select_related("position")
         .order_by("snapshot_date", "position__company_name", "position__ticker")
     )
+    purchase_baselines = {
+        baseline.position_id: baseline
+        for baseline in EquityPurchaseForecastBaseline.objects.filter(position_id__in=cards_by_id.keys())
+    }
     grouped_snapshots: dict[int, list[EquityTicketSnapshot]] = defaultdict(list)
     for snapshot in snapshots:
         grouped_snapshots[snapshot.position_id].append(snapshot)
@@ -3287,6 +3458,7 @@ def build_equity_ticket_tracking_context(history_cards: list[dict]) -> dict:
             card,
             grouped_snapshots.get(position_id, []),
             tracking_anchor_date=tracking_anchor_date,
+            purchase_baseline=purchase_baselines.get(position_id),
         )
         if item:
             ticket_items.append(item)

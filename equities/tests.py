@@ -1294,6 +1294,69 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(all(item["baseline_snapshot"].snapshot_date == date(2026, 4, 13) for item in tracking["tickets"]))
         self.assertEqual(tracking["global"]["chart"]["start_label"], "2026-04-13")
 
+    def test_ticket_tracking_includes_sale_and_reentry_plan_from_purchase_baseline(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2023, 1, 31),
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+            annual_dividend_income=Decimal("20.00"),
+        )
+        populate_position_history(position, growth=Decimal("1.0150"), benchmark_growth=Decimal("1.0060"), months=36)
+
+        cards = build_equity_history_cards([position])
+        capture_equity_ticket_snapshots(cards, snapshot_date=date(2026, 4, 16))
+        position.current_price_per_share = Decimal("12.3000")
+        position.save(update_fields=["current_price_per_share", "updated_at"])
+        refreshed_cards = build_equity_history_cards(list(EquityPosition.objects.prefetch_related("price_history")))
+        capture_equity_ticket_snapshots(refreshed_cards, snapshot_date=date(2026, 4, 17))
+
+        EquityPurchaseForecastBaseline.objects.create(
+            position=position,
+            source_analysis_date=date(2026, 4, 16),
+            baseline_date=date(2026, 4, 16),
+            reference_label="IBEX 35",
+            trade_alert_label="Comprar",
+            reliability_label="Alta",
+            baseline_price=Decimal("10.0000"),
+            projected_price_1y=Decimal("11.2000"),
+            projected_price_2y=Decimal("9.9000"),
+            projected_price_3y=Decimal("11.7000"),
+            projected_price_4y=Decimal("12.4000"),
+            projected_price_5y=Decimal("13.2000"),
+            projected_return_pct_1y=Decimal("12.00"),
+            projected_return_pct_2y=Decimal("-1.00"),
+            projected_return_pct_3y=Decimal("17.00"),
+            projected_return_pct_4y=Decimal("24.00"),
+            projected_return_pct_5y=Decimal("32.00"),
+        )
+
+        benchmark_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+        with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
+            tracking = build_equity_ticket_tracking_context(refreshed_cards)
+
+        trade_plan = tracking["tickets"][0]["trade_plan"]
+        self.assertTrue(trade_plan["available"])
+        self.assertEqual(trade_plan["mode"], "sale_reentry")
+        self.assertEqual(trade_plan["sale_year_number"], 1)
+        self.assertEqual(trade_plan["sale_date_label"], "2027-04-16")
+        self.assertEqual(trade_plan["reentry_year_number"], 3)
+        self.assertEqual(trade_plan["reentry_date_label"], "2028-04-16")
+        self.assertEqual(trade_plan["drawdown_year_number"], 2)
+        self.assertEqual(trade_plan["drawdown_margin_pct"], Decimal("-11.61"))
+
     def test_investment_journey_builds_active_and_closed_ticket_history(self):
         active = EquityPosition.objects.create(
             broker="Interactive Brokers",
@@ -5386,6 +5449,56 @@ class EquitiesViewTests(TestCase):
         self.assertLess(page.index('id="equity-portfolio-summary"'), page.index('id="equity-decision"'))
         self.assertLess(page.index('id="equity-decision"'), page.index('id="equity-ibex"'))
         self.assertEqual(EquityTicketSnapshot.objects.count(), 2)
+
+    def test_equities_page_tracking_shows_recommended_sale_and_reentry(self):
+        position = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2023, 1, 31),
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        populate_position_history(position, growth=Decimal("1.0180"), benchmark_growth=Decimal("1.0070"), months=48)
+        EquityPurchaseForecastBaseline.objects.create(
+            position=position,
+            source_analysis_date=date(2026, 4, 16),
+            baseline_date=date(2026, 4, 16),
+            reference_label="IBEX 35",
+            trade_alert_label="Comprar",
+            reliability_label="Alta",
+            baseline_price=Decimal("10.0000"),
+            projected_price_1y=Decimal("11.2000"),
+            projected_price_2y=Decimal("9.9000"),
+            projected_price_3y=Decimal("11.7000"),
+            projected_price_4y=Decimal("12.4000"),
+            projected_price_5y=Decimal("13.2000"),
+            projected_return_pct_1y=Decimal("12.00"),
+            projected_return_pct_2y=Decimal("-1.00"),
+            projected_return_pct_3y=Decimal("17.00"),
+            projected_return_pct_4y=Decimal("24.00"),
+            projected_return_pct_5y=Decimal("32.00"),
+        )
+
+        benchmark_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+        with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Venta sugerida")
+        self.assertContains(response, "2027-04-16")
+        self.assertContains(response, "Reentrada sugerida")
+        self.assertContains(response, "2028-04-16")
 
     def test_equities_page_keeps_watchlist_analysis_separate_from_owned_tabs(self):
         owned = EquityPosition.objects.create(
