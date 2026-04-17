@@ -1108,7 +1108,7 @@
               </div>
               <div class="equity-table-wrap" style="margin-top:18px;">
                 <table>
-                  <thead><tr><th>Empresa</th><th>Persistencia</th><th>30d</th><th>60d</th><th>Top 3 60d</th><th>Rango medio 60d</th><th>Estrategias</th><th>Ultima coincidencia</th><th>Gestion</th></tr></thead>
+                  <thead><tr><th>Empresa</th><th>Persistencia</th><th>30d</th><th>60d</th><th>% medio</th><th>Margenes medios A&Ntilde;O 1-5</th><th>Fiabilidad</th><th>Top 3 60d</th><th>Rango medio 60d</th><th>Estrategias</th><th>Ultima coincidencia</th><th>Gestion</th></tr></thead>
                   <tbody>
                     {% for row in scheduled_optimization_persistence.rows %}
                       <tr>
@@ -1116,6 +1116,16 @@
                         <td><strong class="{% if row.persistence_label == 'Alta' %}good{% elif row.persistence_label == 'Media' %}warn{% endif %}">{{ row.persistence_label }}</strong><br><span class="metric-sub">{{ row.distinct_days_60d }} dias en 60d</span></td>
                         <td>{{ row.appearances_30d }} apariciones<br><span class="metric-sub">{{ row.distinct_days_30d }} dias distintos</span></td>
                         <td>{{ row.appearances_60d }} apariciones<br><span class="metric-sub">{{ row.distinct_days_60d }} dias distintos</span></td>
+                        <td>{% if row.average_return_60d is not None %}{{ row.average_return_60d|floatformat:1 }} %{% else %}-{% endif %}</td>
+                        <td>
+                          {% for year in row.average_year_margins %}
+                            <span class="equity-candidate" style="display:inline-flex; margin:0 8px 8px 0;">{{ year.label }} {% if year.margin_pct is not None %}{{ year.margin_pct|floatformat:1 }} %{% else %}-{% endif %}</span>
+                          {% endfor %}
+                        </td>
+                        <td>
+                          {{ row.average_reliability_label_60d }}
+                          <br><span class="metric-sub">{% if row.average_reliability_score_60d is not None %}{{ row.average_reliability_score_60d|floatformat:1 }}/100{% else %}-{% endif %}</span>
+                        </td>
                         <td>{{ row.top3_60d }}</td>
                         <td>{% if row.average_rank_60d is not None %}{{ row.average_rank_60d|floatformat:1 }}{% else %}-{% endif %}</td>
                         <td>{{ row.strategy_labels_60d_label }}<br><span class="metric-sub">Ultimo dia: {{ row.latest_day_strategy_label }}</span></td>

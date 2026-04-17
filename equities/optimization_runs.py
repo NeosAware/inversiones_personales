@@ -33,6 +33,7 @@ from .services import (
     clear_market_data_caches,
     find_ibex_universe_company,
     get_optimizer_strategy_config,
+    projection_reliability_score,
     sync_all_equities_market_data,
 )
 
@@ -792,6 +793,16 @@ def serialize_allocations_data(plan: dict) -> list[dict]:
                 "reliability_label": item["reliability_label"],
                 "external_signal_label": item.get("external_signal_label", ""),
                 "external_signal_score": float(item.get("external_signal_score", 0) or 0),
+                "reliability_score": float(item["reliability_score"]) if item.get("reliability_score") is not None else None,
+                "cycle_yearly_margins": [
+                    {
+                        "year_number": int(year_item.get("year_number") or 0),
+                        "label": str(year_item.get("label") or ""),
+                        "margin_pct": float(year_item["margin_pct"]) if year_item.get("margin_pct") is not None else None,
+                        "cumulative_return_pct": float(year_item["cumulative_return_pct"]) if year_item.get("cumulative_return_pct") is not None else None,
+                    }
+                    for year_item in (item.get("cycle_yearly_margins") or [])
+                ],
             }
         )
     return items
@@ -900,6 +911,15 @@ def build_scheduled_optimization_persistence_context(
             "windows": normalized_windows,
         }
 
+    def reliability_label_from_score(score: Decimal | None) -> str:
+        if score is None:
+            return "-"
+        if score >= Decimal("75"):
+            return "Alta"
+        if score >= Decimal("55"):
+            return "Media"
+        return "Baja"
+
     stats_by_ticker: dict[str, dict] = {}
     runs_in_window = {window: 0 for window in normalized_windows}
     distinct_days_in_window = {window: set() for window in normalized_windows}
@@ -946,6 +966,12 @@ def build_scheduled_optimization_persistence_context(
                     "top3_60d": 0,
                     "rank_total_60d": Decimal("0"),
                     "rank_count_60d": 0,
+                    "return_total_60d": Decimal("0"),
+                    "return_count_60d": 0,
+                    "reliability_total_60d": Decimal("0"),
+                    "reliability_count_60d": 0,
+                    "year_margin_totals": {year_number: Decimal("0") for year_number in range(1, 6)},
+                    "year_margin_counts": {year_number: 0 for year_number in range(1, 6)},
                     "daily_strategies": {},
                 },
             )
@@ -958,6 +984,28 @@ def build_scheduled_optimization_persistence_context(
             if run_date >= window_cutoffs.get(30, cutoff_date):
                 stats["appearances_30d"] += 1
                 stats["distinct_days_30d"].add(run_date)
+            net_return_pct = item.get("net_projected_return_pct")
+            if net_return_pct is not None:
+                stats["return_total_60d"] += Decimal(str(net_return_pct))
+                stats["return_count_60d"] += 1
+            reliability_score = item.get("reliability_score")
+            if reliability_score is None and item.get("reliability_label"):
+                reliability_score = projection_reliability_score(str(item.get("reliability_label") or ""))
+            if reliability_score is not None:
+                stats["reliability_total_60d"] += Decimal(str(reliability_score))
+                stats["reliability_count_60d"] += 1
+            for year_item in item.get("cycle_yearly_margins") or []:
+                try:
+                    year_number = int(year_item.get("year_number") or 0)
+                except (TypeError, ValueError):
+                    year_number = 0
+                if year_number not in stats["year_margin_totals"]:
+                    continue
+                margin_pct = year_item.get("margin_pct")
+                if margin_pct is None:
+                    continue
+                stats["year_margin_totals"][year_number] += Decimal(str(margin_pct))
+                stats["year_margin_counts"][year_number] += 1
             rank_value = item.get("rank")
             if rank_value is not None:
                 try:
@@ -980,6 +1028,30 @@ def build_scheduled_optimization_persistence_context(
             average_rank = (
                 stats["rank_total_60d"] / Decimal(str(stats["rank_count_60d"]))
             ).quantize(Decimal("0.1"))
+        average_return = None
+        if stats["return_count_60d"]:
+            average_return = (
+                stats["return_total_60d"] / Decimal(str(stats["return_count_60d"]))
+            ).quantize(Decimal("0.1"))
+        average_reliability_score = None
+        if stats["reliability_count_60d"]:
+            average_reliability_score = (
+                stats["reliability_total_60d"] / Decimal(str(stats["reliability_count_60d"]))
+            ).quantize(Decimal("0.1"))
+        average_year_margins = []
+        for year_number in range(1, 6):
+            year_average = None
+            if stats["year_margin_counts"][year_number]:
+                year_average = (
+                    stats["year_margin_totals"][year_number] / Decimal(str(stats["year_margin_counts"][year_number]))
+                ).quantize(Decimal("0.1"))
+            average_year_margins.append(
+                {
+                    "year_number": year_number,
+                    "label": f"AÑO {year_number}",
+                    "margin_pct": year_average,
+                }
+            )
         distinct_days_60d = len(stats["distinct_days_60d"])
         latest_strategy_count = len(latest_strategies)
         if distinct_days_60d >= 4 and latest_strategy_count >= 2:
@@ -998,6 +1070,10 @@ def build_scheduled_optimization_persistence_context(
                 "distinct_days_60d": distinct_days_60d,
                 "top3_60d": stats["top3_60d"],
                 "average_rank_60d": average_rank,
+                "average_return_60d": average_return,
+                "average_year_margins": average_year_margins,
+                "average_reliability_score_60d": average_reliability_score,
+                "average_reliability_label_60d": reliability_label_from_score(average_reliability_score),
                 "persistence_label": persistence_label,
                 "strategy_labels_60d": sorted(stats["strategy_labels_60d"]),
                 "strategy_labels_60d_label": ", ".join(sorted(stats["strategy_labels_60d"])) or "-",

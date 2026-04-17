@@ -2355,11 +2355,28 @@ class EquitiesServicesTests(TestCase):
                             "rank": 1 if strategy_mode == "12m_primary" else 2,
                             "company_name": "Iberdrola",
                             "ticker": "IBE",
+                            "net_projected_return_pct": 12.0 if strategy_mode == "12m_primary" else 10.0,
+                            "reliability_label": "Alta",
+                            "reliability_score": 82.0 if strategy_mode == "12m_primary" else 78.0,
+                            "cycle_yearly_margins": [
+                                {"year_number": 1, "label": "AÑO 1", "margin_pct": 12.0 if strategy_mode == "12m_primary" else 10.0},
+                                {"year_number": 2, "label": "AÑO 2", "margin_pct": 7.0},
+                                {"year_number": 3, "label": "AÑO 3", "margin_pct": 8.0},
+                                {"year_number": 4, "label": "AÑO 4", "margin_pct": 9.0},
+                                {"year_number": 5, "label": "AÑO 5", "margin_pct": 10.0},
+                            ],
                         },
                         {
                             "rank": 4,
                             "company_name": "Repsol",
                             "ticker": "REP",
+                            "net_projected_return_pct": 6.0,
+                            "reliability_label": "Media",
+                            "reliability_score": 64.0,
+                            "cycle_yearly_margins": [
+                                {"year_number": 1, "label": "AÑO 1", "margin_pct": 6.0},
+                                {"year_number": 2, "label": "AÑO 2", "margin_pct": 4.0},
+                            ],
                         },
                     ],
                 )
@@ -2384,6 +2401,13 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(top_row["top3_60d"], 6)
         self.assertEqual(top_row["persistence_label"], "Media")
         self.assertEqual(top_row["strategy_labels_60d_label"], "12M principal, 5A principal")
+        self.assertEqual(top_row["average_return_60d"], Decimal("11.0"))
+        self.assertEqual(top_row["average_reliability_label_60d"], "Alta")
+        self.assertEqual(top_row["average_reliability_score_60d"], Decimal("80.0"))
+        self.assertEqual(
+            [item["margin_pct"] for item in top_row["average_year_margins"]],
+            [Decimal("11.0"), Decimal("7.0"), Decimal("8.0"), Decimal("9.0"), Decimal("10.0")],
+        )
 
     def test_dashboard_can_extend_optimizer_to_full_ibex_universe(self):
         acerinox = find_equity_company_profile("Acerinox")
@@ -4942,8 +4966,33 @@ class EquitiesViewTests(TestCase):
                     "scheduled_analysis_date": scheduled_day.isoformat(),
                 },
                 allocations_data=[
-                    {"rank": 1, "company_name": "Iberdrola", "ticker": "IBE"},
-                    {"rank": 3, "company_name": "Endesa", "ticker": "ELE"},
+                    {
+                        "rank": 1,
+                        "company_name": "Iberdrola",
+                        "ticker": "IBE",
+                        "net_projected_return_pct": 12.5,
+                        "reliability_label": "Alta",
+                        "reliability_score": 82.0,
+                        "cycle_yearly_margins": [
+                            {"year_number": 1, "label": "AÑO 1", "margin_pct": 12.5},
+                            {"year_number": 2, "label": "AÑO 2", "margin_pct": 8.0},
+                            {"year_number": 3, "label": "AÑO 3", "margin_pct": 9.0},
+                            {"year_number": 4, "label": "AÑO 4", "margin_pct": 10.0},
+                            {"year_number": 5, "label": "AÑO 5", "margin_pct": 11.0},
+                        ],
+                    },
+                    {
+                        "rank": 3,
+                        "company_name": "Endesa",
+                        "ticker": "ELE",
+                        "net_projected_return_pct": 9.0,
+                        "reliability_label": "Media",
+                        "reliability_score": 64.0,
+                        "cycle_yearly_margins": [
+                            {"year_number": 1, "label": "AÑO 1", "margin_pct": 9.0},
+                            {"year_number": 2, "label": "AÑO 2", "margin_pct": 6.0},
+                        ],
+                    },
                 ],
             )
             EquityOptimizationRun.objects.filter(pk=run.pk).update(
@@ -4958,6 +5007,9 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Iberdrola")
         self.assertContains(response, "2 apariciones")
         self.assertContains(response, "12M principal, 5A principal")
+        self.assertContains(response, "% medio")
+        self.assertContains(response, "Fiabilidad")
+        self.assertContains(response, "A&Ntilde;O 1")
 
     def test_completed_optimization_run_can_be_deleted_from_history(self):
         run = EquityOptimizationRun.objects.create(

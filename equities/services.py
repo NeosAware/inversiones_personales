@@ -7723,6 +7723,12 @@ def build_equity_allocation_plan(
                 "cycle_projection_available": candidate["cycle_projection_available"],
                 "cycle_return_annual_pct": candidate["cycle_return_annual_pct"],
                 "cycle_return_5y_pct": candidate["cycle_return_5y_pct"],
+                "cycle_yearly_margins": build_cycle_projection_yearly_margins(
+                    candidate["position"].current_price_per_share,
+                    candidate["card"].get("cycle_projection_5y") or {},
+                    first_year_projected_price=candidate["projection"].get("projected_price"),
+                    first_year_return_pct=candidate["base_return_pct"],
+                ),
                 "cycle_support_score": candidate["cycle_support_score"],
                 "max_drawdown_pct": candidate["max_drawdown_pct"],
                 "current_drawdown_pct": candidate["current_drawdown_pct"],
