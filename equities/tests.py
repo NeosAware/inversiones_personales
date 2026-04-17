@@ -1438,9 +1438,9 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(trade_plan["available"])
         self.assertEqual(trade_plan["mode"], "sale_reentry")
         self.assertEqual(trade_plan["sale_year_number"], 1)
-        self.assertEqual(trade_plan["sale_date_label"], "2027-04-16")
+        self.assertEqual(trade_plan["sale_window_label"], "Cierre AÑO 1")
         self.assertEqual(trade_plan["reentry_year_number"], 3)
-        self.assertEqual(trade_plan["reentry_date_label"], "2028-04-16")
+        self.assertEqual(trade_plan["reentry_window_label"], "Inicio AÑO 3")
         self.assertEqual(trade_plan["drawdown_year_number"], 2)
         self.assertEqual(trade_plan["drawdown_margin_pct"], Decimal("-11.61"))
         self.assertEqual(tracking["tickets"][0]["rotation_plan"]["action"], "rotar")
@@ -5747,9 +5747,9 @@ class EquitiesViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Venta sugerida")
-        self.assertContains(response, "2027-04-16")
+        self.assertContains(response, "Cierre AÑO 1")
         self.assertContains(response, "Reentrada sugerida")
-        self.assertContains(response, "2028-04-16")
+        self.assertContains(response, "Inicio AÑO 3")
         self.assertContains(response, "Rotacion radar")
         self.assertContains(response, "Rotar a ELE")
 
@@ -5857,7 +5857,7 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(baseline.source_analysis_date, date(2026, 4, 17))
         self.assertEqual(baseline.baseline_date, date(2026, 4, 17))
         self.assertContains(response, "Venta sugerida")
-        self.assertContains(response, "2027-04-17")
+        self.assertContains(response, "Cierre AÑO 1")
 
     def test_equities_page_can_render_round_investment_plan(self):
         owned = EquityPosition.objects.create(

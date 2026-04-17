@@ -3216,22 +3216,32 @@ def build_purchase_forecast_trade_plan(
             break
 
     if sale_row is None:
+        sale_window_label = (
+            f"Cierre A\u00d1O {best_row['year_number']}"
+            if best_row.get("year_number")
+            else "Mantener"
+        )
         return {
             "available": True,
             "mode": "hold",
             "sale_year_number": best_row["year_number"],
             "sale_date": best_row["projected_date"],
-            "sale_date_label": best_row["projected_date"].isoformat() if best_row.get("projected_date") else "",
+            "sale_date_label": "",
+            "sale_window_label": sale_window_label,
             "reentry_year_number": None,
             "reentry_date": None,
             "reentry_date_label": "",
+            "reentry_window_label": "",
             "summary": (
                 "La foto de compra no muestra un retroceso anual lo bastante fuerte como para justificar "
-                f"una salida tactica. Mantener hasta {best_row['projected_date'].isoformat()} sigue siendo "
-                "la lectura base."
+                f"una salida tactica. Mantener hasta {sale_window_label.lower()} sigue siendo la lectura base. "
+                "La recomendacion se expresa en ventanas anuales, no en dias exactos."
             )
-            if best_row.get("projected_date")
-            else "La foto de compra no muestra un retroceso anual fuerte y la lectura base sigue siendo mantener.",
+            if best_row.get("year_number")
+            else (
+                "La foto de compra no muestra un retroceso anual fuerte y la lectura base sigue siendo mantener. "
+                "La recomendacion se expresa en ventanas anuales, no en dias exactos."
+            ),
             "yearly_rows": yearly_rows,
             "drawdown_year_number": None,
             "drawdown_margin_pct": None,
@@ -3247,17 +3257,21 @@ def build_purchase_forecast_trade_plan(
         ),
         None,
     )
+    sale_window_label = f"Cierre A\u00d1O {sale_row['year_number']}"
     reentry_date = reentry_row.get("reentry_date") if reentry_row else None
-    if reentry_row and reentry_date:
+    reentry_window_label = f"Inicio A\u00d1O {reentry_row['year_number']}" if reentry_row else ""
+    if reentry_row and reentry_window_label:
         summary = (
-            f"Se propone vender el {sale_row['projected_date'].isoformat()} antes de una caida prevista "
+            f"Se propone salir en {sale_window_label.lower()} antes de una caida prevista "
             f"del {drawdown_row['margin_pct']:.1f} %. Si la tesis sigue viva, la reentrada sugerida "
-            f"arranca el {reentry_date.isoformat()}."
+            f"se revisa en {reentry_window_label.lower()}. La recomendacion se expresa en ventanas anuales, "
+            "no en dias exactos."
         )
     else:
         summary = (
-            f"Se propone vender el {sale_row['projected_date'].isoformat()} antes de una caida prevista "
-            f"del {drawdown_row['margin_pct']:.1f} %. Despues conviene revisar de nuevo el radar antes de volver."
+            f"Se propone salir en {sale_window_label.lower()} antes de una caida prevista "
+            f"del {drawdown_row['margin_pct']:.1f} %. Despues conviene revisar de nuevo el radar antes de volver. "
+            "La recomendacion se expresa en ventanas anuales, no en dias exactos."
         )
 
     return {
@@ -3265,10 +3279,12 @@ def build_purchase_forecast_trade_plan(
         "mode": "sale_reentry" if reentry_row else "sale_review",
         "sale_year_number": sale_row["year_number"],
         "sale_date": sale_row["projected_date"],
-        "sale_date_label": sale_row["projected_date"].isoformat() if sale_row.get("projected_date") else "",
+        "sale_date_label": "",
+        "sale_window_label": sale_window_label,
         "reentry_year_number": reentry_row["year_number"] if reentry_row else None,
         "reentry_date": reentry_date,
-        "reentry_date_label": reentry_date.isoformat() if reentry_date else "",
+        "reentry_date_label": "",
+        "reentry_window_label": reentry_window_label,
         "summary": summary,
         "yearly_rows": yearly_rows,
         "drawdown_year_number": drawdown_row["year_number"] if drawdown_row else None,
