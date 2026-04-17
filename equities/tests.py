@@ -40,6 +40,7 @@ from .services import (
     SPAIN_GAS_CONSUMPTION_SYMBOL,
     build_equity_allocation_plan,
     build_equity_analysis_dashboard,
+    build_equity_decision_rows,
     build_equity_history_cards,
     build_equity_investment_journey_context,
     build_equity_sale_preview,
@@ -506,6 +507,87 @@ class EquitiesServicesTests(TestCase):
                 current["projected_price"] < previous["projected_price"]
                 for previous, current in zip(cycle_projection["path"], cycle_projection["path"][1:])
             )
+        )
+
+    def test_decision_rows_include_five_year_projection_and_yearly_margins(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="REP",
+            quote_symbol="REP.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Repsol, S.A.",
+            shares=Decimal("25"),
+            average_cost_per_share=Decimal("100.0000"),
+            current_price_per_share=Decimal("100.0000"),
+        )
+
+        row = build_equity_decision_rows(
+            [
+                {
+                    "position": position,
+                    "has_history": True,
+                    "status_key": "ibex",
+                    "status_label": "Solo radar",
+                    "status_note": "",
+                    "detail_anchor": "",
+                    "reference_label": "IBEX 35",
+                    "correlation": {"coefficient": Decimal("0.74")},
+                    "projection": {
+                        "available": True,
+                        "base_return_pct": Decimal("12.50"),
+                        "projected_price": Decimal("112.5000"),
+                        "years_covered": Decimal("10.00"),
+                        "safety_score": Decimal("68.00"),
+                        "safety_label": "Alta",
+                        "benefit_risk_ratio": Decimal("1.90"),
+                        "cycle_phase": "Expansion",
+                        "decision_score": Decimal("82.00"),
+                    },
+                    "projection_reliability": {"label": "Alta", "score": Decimal("79.00")},
+                    "trade_alert": {
+                        "label": "Comprar",
+                        "tone": "buy",
+                        "score": Decimal("75.00"),
+                        "note": "Buena combinacion de retorno y seguridad.",
+                        "trigger_label": "Retorno 12M y seguridad apoyan compra",
+                    },
+                    "coefficient_alert": {
+                        "label": "Solido",
+                        "tone": "good",
+                        "trigger_label": "Coeficiente consistente",
+                    },
+                    "reference_playbook": {"best_candidate": None},
+                    "cycle_projection_5y": {
+                        "available": True,
+                        "cycle_phase": "Expansion",
+                        "five_year_return_pct": Decimal("61.0510"),
+                        "path": [
+                            {"label": "6M", "projected_price": Decimal("104.8809")},
+                            {"label": "1A", "projected_price": Decimal("110.0000")},
+                            {"label": "18M", "projected_price": Decimal("115.3687")},
+                            {"label": "2A", "projected_price": Decimal("121.0000")},
+                            {"label": "30M", "projected_price": Decimal("126.9016")},
+                            {"label": "3A", "projected_price": Decimal("133.1000")},
+                            {"label": "42M", "projected_price": Decimal("139.5968")},
+                            {"label": "4A", "projected_price": Decimal("146.4100")},
+                            {"label": "54M", "projected_price": Decimal("153.5574")},
+                            {"label": "5A", "projected_price": Decimal("161.0510")},
+                        ],
+                    },
+                }
+            ]
+        )[0]
+
+        self.assertEqual(row["cycle_return_5y_pct"], Decimal("61.05"))
+        self.assertEqual(row["cycle_return_annual_pct"], Decimal("10.00"))
+        self.assertEqual(
+            [item["label"] for item in row["cycle_yearly_margins"]],
+            ["AÑO 1", "AÑO 2", "AÑO 3", "AÑO 4", "AÑO 5"],
+        )
+        self.assertEqual(
+            [item["margin_pct"] for item in row["cycle_yearly_margins"]],
+            [Decimal("10.00")] * 5,
         )
 
     def test_projection_includes_dividends_and_broker_drag(self):
@@ -4888,6 +4970,54 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, reverse("equities:ibex_detail", kwargs={"ticker": acs["ticker"]}))
         self.assertContains(response, 'target="_blank"', html=False)
         self.assertContains(response, "Abrir analisis completo")
+
+    @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_IBEX_UNIVERSE_LIMIT=1)
+    def test_ibex_table_shows_five_year_projection_columns(self):
+        acs = find_equity_company_profile("ACS")
+        company = {
+            "ticker": acs["ticker"],
+            "company_name": acs["company_name"],
+            "quote_symbol": acs["quote_symbol"],
+            "sector": acs["sector_label"],
+            "dividend_yield": Decimal("3.10"),
+            "catalog_profile": acs,
+        }
+        empty_workbook = {
+            "available": False,
+            "path": "",
+            "companies": [],
+            "companies_by_key": {},
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+        def fake_market_series(symbol, range_key="10y", interval="1d"):
+            return build_compound_market_series(symbol, symbol, growth=Decimal("1.0200"), months=120, start_price=Decimal("12.0000"))
+
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+            return build_compound_market_series(
+                benchmark_symbol or "^IBEX",
+                benchmark_name or "Referencia",
+                growth=Decimal("1.0060"),
+                months=120,
+                start_price=Decimal("100.0000"),
+            )
+
+        with (
+            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=empty_workbook),
+            patch("equities.services.build_ibex_universe_companies", return_value=[company]),
+            patch("equities.services.fetch_market_series", side_effect=fake_market_series),
+            patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series),
+        ):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Pred. 5 AÑOS")
+        self.assertContains(response, "Márgenes por AÑO")
+        self.assertContains(response, "AÑO 1")
+        self.assertContains(response, "AÑO 5")
 
     def test_can_open_ibex_detail_page_with_company_title_and_charts(self):
         acs = find_equity_company_profile("ACS")

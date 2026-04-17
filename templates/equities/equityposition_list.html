@@ -312,6 +312,53 @@
       font-weight:700;
       color:#0d5d78;
     }
+    .radar-ibex-table{
+      min-width:1320px;
+    }
+    .equity-projection-stack{
+      display:grid;
+      gap:4px;
+      min-width:120px;
+    }
+    .equity-projection-stack strong{
+      font-size:14px;
+      line-height:1.2;
+    }
+    .equity-year-breakdown{
+      display:flex;
+      flex-wrap:wrap;
+      gap:6px;
+      min-width:260px;
+    }
+    .equity-year-badge{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding:6px 8px;
+      border-radius:999px;
+      border:1px solid #d8e4ec;
+      background:#f4f8fb;
+      color:#234050;
+      font-size:12px;
+      font-weight:700;
+      white-space:nowrap;
+    }
+    .equity-year-badge strong{
+      color:var(--accent);
+      font-size:11px;
+      letter-spacing:.04em;
+      text-transform:uppercase;
+    }
+    .equity-year-badge.good{
+      border-color:#cfe6d6;
+      background:#eef8f1;
+      color:#0d6840;
+    }
+    .equity-year-badge.warn{
+      border-color:#ebcfb0;
+      background:#fff4ea;
+      color:#9a5500;
+    }
     .equity-table-wrap table{ width:100%; min-width:760px; margin:0; }
     .equity-fold{
       overflow:hidden;
@@ -669,7 +716,7 @@
           </div>
         {% endif %}
         <div class="equity-table-wrap" style="margin-top:18px;">
-          <table class="equity-decision-table">
+          <table class="equity-decision-table radar-ibex-table">
             <thead>
               <tr>
                 <th>Valor</th>
@@ -677,10 +724,11 @@
                 <th>Referencia</th>
                 <th>Corr 10A</th>
                 <th>Pred. 12M</th>
+                <th>Pred. 5 AÑOS</th>
+                <th>Márgenes por AÑO</th>
                 <th>Seguridad</th>
                 <th>Fiabilidad</th>
                 <th>Benef./riesgo</th>
-                <th>Ciclo</th>
                 <th>Gestion</th>
               </tr>
             </thead>
@@ -710,10 +758,36 @@
                     {% endif %}
                   </td>
                   <td class="{% if row.projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.projected_return_pct|floatformat:1 }} %</td>
+                  <td>
+                    {% if row.cycle_return_5y_pct is not None %}
+                      <div class="equity-projection-stack">
+                        <strong class="{% if row.cycle_return_5y_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.cycle_return_5y_pct|floatformat:1 }} %</strong>
+                        <span class="metric-sub">
+                          {% if row.cycle_return_annual_pct is not None %}Anual {{ row.cycle_return_annual_pct|floatformat:1 }} %{% else %}Anual -{% endif %}
+                          {% if row.cycle_phase %}<br>Ciclo {{ row.cycle_phase }}{% endif %}
+                        </span>
+                      </div>
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if row.cycle_yearly_margins %}
+                      <div class="equity-year-breakdown">
+                        {% for margin in row.cycle_yearly_margins %}
+                          <span class="equity-year-badge {% if margin.margin_pct is not None and margin.margin_pct >= 0 %}good{% elif margin.margin_pct is not None %}warn{% endif %}"{% if margin.cumulative_return_pct is not None %} title="Acumulado {{ margin.cumulative_return_pct|floatformat:1 }} %"{% endif %}>
+                            <strong>{{ margin.label }}</strong>
+                            {% if margin.margin_pct is not None %}{{ margin.margin_pct|floatformat:1 }} %{% else %}-{% endif %}
+                          </span>
+                        {% endfor %}
+                      </div>
+                    {% else %}
+                      <span class="metric-sub">Sin senda anual</span>
+                    {% endif %}
+                  </td>
                   <td>{{ row.safety_score|floatformat:0 }}/100</td>
                   <td>{{ row.reliability_label }}</td>
                   <td>{% if row.benefit_risk_ratio is not None %}{{ row.benefit_risk_ratio|floatformat:2 }}{% else %}-{% endif %}</td>
-                  <td>{{ row.cycle_phase }}</td>
                   <td>
                     {% if row.status_key == 'owned' and row.detail_anchor %}
                       <a class="button secondary" href="#{{ row.detail_anchor }}">Vender / rentabilidad</a>

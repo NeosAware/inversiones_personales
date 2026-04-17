@@ -5655,6 +5655,72 @@ def build_decision_action_label(
     return "Reducir riesgo" if position.is_owned else "Esperar"
 
 
+def build_cycle_projection_yearly_margins(
+    current_price: Decimal | None,
+    cycle_projection: dict | None,
+    *,
+    max_years: int = 5,
+) -> list[dict]:
+    if current_price in {None, ZERO} or not cycle_projection or not cycle_projection.get("available"):
+        return []
+
+    path = cycle_projection.get("path") or []
+    checkpoints_by_label = {
+        str(step.get("label")): step
+        for step in path
+        if step.get("label") and step.get("projected_price") is not None
+    }
+    margins = []
+    previous_price = current_price
+
+    for year_number in range(1, max_years + 1):
+        step = checkpoints_by_label.get(f"{year_number}A")
+        if not step:
+            continue
+        projected_price = step.get("projected_price")
+        if projected_price is None:
+            continue
+        margin_pct = percentage_change(projected_price, previous_price)
+        cumulative_return_pct = percentage_change(projected_price, current_price)
+        margins.append(
+            {
+                "year_number": year_number,
+                "label": f"AÑO {year_number}",
+                "projected_price": projected_price,
+                "margin_pct": quantize_decimal(margin_pct),
+                "cumulative_return_pct": quantize_decimal(cumulative_return_pct),
+            }
+        )
+        previous_price = projected_price
+
+    return margins
+
+
+def build_cycle_projection_return_profile(
+    current_price: Decimal | None,
+    cycle_projection: dict | None,
+) -> dict:
+    yearly_margins = build_cycle_projection_yearly_margins(current_price, cycle_projection)
+    five_year_return_pct = None
+    five_year_annualized_return_pct = None
+    if cycle_projection and cycle_projection.get("available"):
+        five_year_return_pct = cycle_projection.get("five_year_return_pct")
+        if five_year_return_pct is None:
+            five_year_row = next((item for item in yearly_margins if item["year_number"] == 5), None)
+            if five_year_row:
+                five_year_return_pct = five_year_row.get("cumulative_return_pct")
+        if five_year_return_pct is not None:
+            five_year_annualized_return_pct = annualize_return_pct(five_year_return_pct, 60)
+        if five_year_annualized_return_pct is None:
+            five_year_annualized_return_pct = cycle_projection.get("annual_return_pct")
+
+    return {
+        "five_year_return_pct": quantize_decimal(five_year_return_pct),
+        "five_year_annualized_return_pct": quantize_decimal(five_year_annualized_return_pct),
+        "yearly_margins": yearly_margins,
+    }
+
+
 def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
     rows = []
     status_order = {"owned": 0, "watchlist": 1, "ibex": 2, "guide": 3}
@@ -5668,6 +5734,8 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
         projected_return_pct = projection.get("base_return_pct")
         trade_alert = card.get("trade_alert", {})
         coefficient_alert = card.get("coefficient_alert", {})
+        cycle_projection = card.get("cycle_projection_5y") or {}
+        cycle_return_profile = build_cycle_projection_return_profile(position.current_price_per_share, cycle_projection)
         rows.append(
             {
                 "position": position,
@@ -5684,6 +5752,9 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
                 "years_covered": projection.get("years_covered"),
                 "projected_return_pct": projected_return_pct,
                 "projected_price": projection.get("projected_price"),
+                "cycle_return_5y_pct": cycle_return_profile["five_year_return_pct"],
+                "cycle_return_annual_pct": cycle_return_profile["five_year_annualized_return_pct"],
+                "cycle_yearly_margins": cycle_return_profile["yearly_margins"],
                 "safety_score": projection.get("safety_score"),
                 "safety_label": projection.get("safety_label"),
                 "reliability_score": reliability.get("score"),
