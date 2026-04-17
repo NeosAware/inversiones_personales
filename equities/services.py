@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
@@ -48,6 +49,8 @@ COMPARABLE_MONTH_DAYS = Decimal("30.4375")
 OPTIMIZER_MAX_ENTRY_DRAG_PCT = Decimal("1.00")
 OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT = Decimal("2.00")
 OPTIMIZER_MIN_GAIN_TO_ROUNDTRIP_MULTIPLE = Decimal("1.80")
+
+logger = logging.getLogger(__name__)
 DEFAULT_EQUITY_ANALYSIS_NOTIONAL = Decimal("10000.00")
 DEFAULT_BENCHMARK_SYMBOL = "^IBEX"
 DEFAULT_BENCHMARK_NAME = "IBEX 35"
@@ -3432,12 +3435,26 @@ def build_equity_ticket_tracking_item(
         if previous and previous.current_value
         else None
     )
-    trade_plan = build_purchase_forecast_trade_plan(purchase_baseline)
-    rotation_plan = build_purchase_trade_rotation_guidance(
-        trade_plan,
-        position,
-        optimizer_cards,
-    )
+    try:
+        trade_plan = build_purchase_forecast_trade_plan(purchase_baseline)
+    except Exception:
+        logger.exception(
+            "No se pudo construir el plan tactico de compra para %s",
+            position.ticker,
+        )
+        trade_plan = {"available": False}
+    try:
+        rotation_plan = build_purchase_trade_rotation_guidance(
+            trade_plan,
+            position,
+            optimizer_cards,
+        )
+    except Exception:
+        logger.exception(
+            "No se pudo construir la sugerencia de rotacion para %s",
+            position.ticker,
+        )
+        rotation_plan = {"available": False}
     return {
         "position": position,
         "card": card,
