@@ -1303,6 +1303,9 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(all(item["chart"]["available"] for item in tracking["tickets"]))
         self.assertIsNotNone(tracking["global"]["expected_today_value"])
         self.assertTrue(tracking["global"]["chart"]["x_markers"])
+        self.assertEqual(tracking["global"]["net_gain_value"], Decimal("16.00"))
+        self.assertEqual(tracking["global"]["invested_return_pct"], Decimal("2.91"))
+        self.assertEqual(tracking["global"]["annualized_return_pct"], Decimal("3512395.03"))
 
     def test_ticket_tracking_uses_first_common_snapshot_date_as_shared_base(self):
         def create_position(ticker, company_name, start_price):
@@ -5744,6 +5747,9 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Prediccion frente a realidad")
         self.assertContains(response, "Ticket IBE")
         self.assertContains(response, "Ticket ENG")
+        self.assertContains(response, "Beneficio neto")
+        self.assertContains(response, "Rentabilidad sobre base")
+        self.assertContains(response, "Rentabilidad anualizada")
         self.assertContains(response, 'id="tracked-ticket-tab-', html=False)
         self.assertContains(response, 'aria-label="Tickets comprados"', html=False)
         self.assertContains(response, 'id="equity-portfolio-summary"', html=False)

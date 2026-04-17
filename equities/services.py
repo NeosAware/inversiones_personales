@@ -3785,6 +3785,13 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         if current_expected_value is not None
         else None
     )
+    tracked_days = max((latest_date - actual_series[0]["date"]).days, 0)
+    net_gain_value = quantize_decimal(latest_actual - baseline_value, "0.01")
+    actual_change_pct = percentage_change(latest_actual, baseline_value)
+    comparable_returns = build_comparable_return_metrics(
+        actual_change_pct,
+        tracked_days,
+    )
     return {
         "available": True,
         "chart": chart,
@@ -3793,16 +3800,20 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         "expected_today_value": current_expected_value,
         "expected_market_value_12m": expected_series[-1]["value"] if expected_series else baseline_value,
         "expected_total_value_12m": quantize_decimal(expected_total_value_12m, "0.01") or ZERO,
-        "actual_change_pct": percentage_change(latest_actual, baseline_value),
+        "actual_change_pct": actual_change_pct,
         "expected_change_pct": percentage_change(current_expected_value, baseline_value)
         if current_expected_value is not None
         else None,
+        "net_gain_value": net_gain_value,
+        "net_gain_tone": "good" if net_gain_value is not None and net_gain_value >= ZERO else "warn",
+        "invested_return_pct": quantize_decimal(actual_change_pct, "0.01"),
+        "annualized_return_pct": quantize_decimal(comparable_returns.get("annual_equivalent_return_pct"), "0.01"),
         "benchmark": benchmark,
         "gap_value": gap_value,
         "gap_pct": percentage_change(latest_actual, current_expected_value) if current_expected_value is not None else None,
         "gap_tone": "good" if gap_value is not None and gap_value >= ZERO else "warn",
         "daily_change_pct": percentage_change(latest_actual, previous_actual) if previous_actual else None,
-        "tracked_days": max((latest_date - actual_series[0]["date"]).days, 0),
+        "tracked_days": tracked_days,
     }
 
 
