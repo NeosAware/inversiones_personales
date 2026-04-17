@@ -977,6 +977,13 @@ def build_scheduled_optimization_persistence_context(
             },
         }
 
+    def ratio_percent(numerator: int, denominator: int) -> Decimal | None:
+        if denominator <= 0:
+            return None
+        return (
+            Decimal(str(numerator)) * Decimal("100") / Decimal(str(denominator))
+        ).quantize(Decimal("0.1"))
+
     def reliability_label_from_score(score: Decimal | None) -> str:
         if score is None:
             return "-"
@@ -1076,6 +1083,7 @@ def build_scheduled_optimization_persistence_context(
                 stats["last_seen_on"] = run_date
 
     rows = []
+    total_days_count = len(distinct_days)
     for stats in stats_by_ticker.values():
         latest_strategies = stats["daily_strategies"].get(stats["last_seen_on"], set())
         average_rank = None
@@ -1113,6 +1121,9 @@ def build_scheduled_optimization_persistence_context(
                 }
             )
         distinct_days_count = len(stats["distinct_days_3m"])
+        presence_pct = ratio_percent(stats["appearances_3m"], runs_count)
+        day_presence_pct = ratio_percent(distinct_days_count, total_days_count)
+        top3_pct = ratio_percent(stats["top3_3m"], stats["appearances_3m"])
         latest_strategy_count = len(latest_strategies)
         if distinct_days_count >= 4 and latest_strategy_count >= 2:
             persistence_label = "Alta"
@@ -1125,8 +1136,11 @@ def build_scheduled_optimization_persistence_context(
                 "ticker": stats["ticker"],
                 "company_name": stats["company_name"],
                 "appearances_3m": stats["appearances_3m"],
+                "presence_pct_3m": presence_pct,
                 "distinct_days_3m": distinct_days_count,
+                "day_presence_pct_3m": day_presence_pct,
                 "top3_3m": stats["top3_3m"],
+                "top3_pct_3m": top3_pct,
                 "average_rank_3m": average_rank,
                 "average_return_12m_3m": average_return_12m,
                 "average_return_5y_3m": average_return_5y,
@@ -1145,8 +1159,18 @@ def build_scheduled_optimization_persistence_context(
 
     rows.sort(
         key=lambda item: (
-            -item["distinct_days_3m"],
             -item["appearances_3m"],
+            -(
+                item["average_return_12m_3m"]
+                if item["average_return_12m_3m"] is not None
+                else Decimal("-9999")
+            ),
+            -(
+                item["average_return_5y_3m"]
+                if item["average_return_5y_3m"] is not None
+                else Decimal("-9999")
+            ),
+            -item["distinct_days_3m"],
             -item["top3_3m"],
             item["average_rank_3m"] if item["average_rank_3m"] is not None else Decimal("999.9"),
             item["ticker"],

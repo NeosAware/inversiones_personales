@@ -271,7 +271,7 @@
       scrollbar-gutter:stable;
     }
     .equity-persistence-wrap table{
-      min-width:1320px;
+      min-width:1120px;
     }
     .equity-persistence-table td, .equity-persistence-table th{
       vertical-align:top;
@@ -279,16 +279,25 @@
     .equity-persistence-company{
       display:grid;
       gap:8px;
-      min-width:180px;
+      min-width:160px;
     }
     .equity-persistence-company strong{
-      font-size:18px;
+      font-size:17px;
       line-height:1.15;
     }
     .equity-persistence-stack{
       display:grid;
       gap:8px;
-      min-width:250px;
+      min-width:240px;
+    }
+    .equity-persistence-presence{
+      display:grid;
+      gap:4px;
+    }
+    .equity-persistence-presence strong{
+      display:block;
+      font-size:24px;
+      line-height:1;
     }
     .equity-persistence-stats{
       display:flex;
@@ -307,10 +316,14 @@
       font-weight:700;
       white-space:nowrap;
     }
-    .equity-persistence-returns{
+    .equity-persistence-returns-grid{
       display:grid;
       gap:8px;
-      min-width:120px;
+      min-width:180px;
+    }
+    .equity-persistence-returns{
+      display:grid;
+      gap:4px;
     }
     .equity-persistence-returns span{
       display:block;
@@ -329,7 +342,7 @@
       display:flex;
       flex-wrap:wrap;
       gap:6px;
-      min-width:360px;
+      min-width:280px;
     }
     .equity-persistence-years .equity-year-badge{
       background:#fff;
@@ -337,11 +350,19 @@
     .equity-persistence-reliability{
       display:grid;
       gap:6px;
-      min-width:110px;
+      min-width:130px;
     }
     .equity-persistence-reliability strong{
       font-size:18px;
       line-height:1.1;
+    }
+    .equity-persistence-action{
+      min-width:118px;
+    }
+    .equity-persistence-action .button{
+      width:100%;
+      justify-content:center;
+      white-space:normal;
     }
     .equity-optimization-history thead th{
       position:sticky;
@@ -1164,7 +1185,7 @@
             </div>
           {% endif %}
 
-          {% if scheduled_optimization_persistence.available %}
+          {% if scheduled_optimization_persistence.available and False %}
             <div class="equity-panel" style="margin-top:18px;">
               <div class="equity-panel-head">
                 <div>
@@ -1235,6 +1256,88 @@
                         </td>
                         <td>{{ row.last_seen_on_label }}</td>
                         <td><a class="button secondary" href="{{ row.detail_url }}" target="_blank" rel="noopener">Abrir analisis</a></td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          {% endif %}
+
+          {% if scheduled_optimization_persistence.available %}
+            <div class="equity-panel" style="margin-top:18px;">
+              <div class="equity-panel-head">
+                <div>
+                  <p class="section-title">Persistencia programada</p>
+                  <h3>Valores mas consistentes en optimizaciones automaticas</h3>
+                  <p>La presencia mide en que porcentaje de las optimizaciones programadas de {{ scheduled_optimization_persistence.weekdays_label }} aparece cada valor. Si sale en todas las ejecuciones guardadas de la ventana, marca 100 %.</p>
+                </div>
+                <div class="equity-chip-row">
+                  <span class="pill">{{ scheduled_optimization_persistence.runs_count_3m }} ejecuciones 3 meses</span>
+                  <span class="pill">{{ scheduled_optimization_persistence.distinct_days_count_3m }} dias distintos</span>
+                  <span class="pill">Max {{ scheduled_optimization_persistence.policy.max_total_positions }} empresas</span>
+                  <span class="pill">Max {{ scheduled_optimization_persistence.policy.max_sector_positions }} por sector</span>
+                  <span class="pill">Max {{ scheduled_optimization_persistence.policy.max_company_pct }} % por empresa</span>
+                  {% if scheduled_optimization_persistence.next_run_date_label %}<span class="pill">Proxima {{ scheduled_optimization_persistence.next_run_date_label }}</span>{% endif %}
+                </div>
+              </div>
+              <div class="equity-compact-note" style="margin-top:16px;">
+                Se mantiene una ventana rotativa desde {{ scheduled_optimization_persistence.cutoff_date_label }}. La tabla se ordena primero por presencia y despues por rentabilidad media a 12 meses.
+              </div>
+              <div class="equity-table-wrap equity-persistence-wrap" style="margin-top:18px;">
+                <table class="equity-persistence-table">
+                  <thead><tr><th>Empresa</th><th>Presencia 3 meses</th><th>Rentabilidad media</th><th>Margenes medios A&Ntilde;O 1-5</th><th>Fiabilidad</th><th>Gestion</th></tr></thead>
+                  <tbody>
+                    {% for row in scheduled_optimization_persistence.rows %}
+                      <tr>
+                        <td>
+                          <div class="equity-persistence-company">
+                            <strong>{{ row.company_name }}</strong>
+                            <span class="metric-sub">{{ row.ticker }}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div class="equity-persistence-stack">
+                            <div class="equity-persistence-presence">
+                              <strong class="{% if row.presence_pct_3m is not None and row.presence_pct_3m >= 75 %}good{% elif row.presence_pct_3m is not None and row.presence_pct_3m >= 40 %}warn{% endif %}">{% if row.presence_pct_3m is not None %}{{ row.presence_pct_3m|floatformat:0 }} %{% else %}-{% endif %}</strong>
+                              <span class="metric-sub">{{ row.persistence_label }} en optimizaciones</span>
+                            </div>
+                            <div class="equity-persistence-stats">
+                              <span class="equity-persistence-stat">{{ row.appearances_3m }}/{{ scheduled_optimization_persistence.runs_count_3m }} ejec.</span>
+                              <span class="equity-persistence-stat">{% if row.day_presence_pct_3m is not None %}{{ row.day_presence_pct_3m|floatformat:0 }} % dias{% else %}- dias{% endif %}</span>
+                              <span class="equity-persistence-stat">Top 3 {% if row.top3_pct_3m is not None %}{{ row.top3_pct_3m|floatformat:0 }} %{% else %}-{% endif %}</span>
+                              <span class="equity-persistence-stat">Rango {{ row.average_rank_3m|default:"-" }}</span>
+                            </div>
+                            <span class="metric-sub">Estrategias {{ row.strategy_labels_3m_label }}. Ultima coincidencia {{ row.last_seen_on_label }}.</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div class="equity-persistence-returns-grid">
+                            <div class="equity-persistence-returns">
+                              <span>12M medio</span>
+                              <strong class="{% if row.average_return_12m_3m is not None and row.average_return_12m_3m >= 0 %}good{% elif row.average_return_12m_3m is not None %}warn{% endif %}">{% if row.average_return_12m_3m is not None %}{{ row.average_return_12m_3m|floatformat:1 }} %{% else %}-{% endif %}</strong>
+                            </div>
+                            <div class="equity-persistence-returns">
+                              <span>5A acumulada</span>
+                              <strong class="{% if row.average_return_5y_3m is not None and row.average_return_5y_3m >= 0 %}good{% elif row.average_return_5y_3m is not None %}warn{% endif %}">{% if row.average_return_5y_3m is not None %}{{ row.average_return_5y_3m|floatformat:1 }} %{% else %}-{% endif %}</strong>
+                            </div>
+                          </div>
+                        </td>
+                        <td>
+                          <div class="equity-persistence-years">
+                            {% for year in row.average_year_margins %}
+                              <span class="equity-year-badge {% if year.margin_pct is not None and year.margin_pct >= 0 %}good{% elif year.margin_pct is not None %}warn{% endif %}"><strong>A&Ntilde;O {{ year.year_number }}</strong>{% if year.margin_pct is not None %}{{ year.margin_pct|floatformat:1 }} %{% else %}-{% endif %}</span>
+                            {% endfor %}
+                          </div>
+                        </td>
+                        <td>
+                          <div class="equity-persistence-reliability">
+                            <strong>{{ row.average_reliability_label_3m }}</strong>
+                            <span class="metric-sub">{% if row.average_reliability_score_3m is not None %}{{ row.average_reliability_score_3m|floatformat:1 }}/100{% else %}-{% endif %}</span>
+                            <span class="metric-sub">Ultimo dia {{ row.latest_day_strategy_label }}</span>
+                          </div>
+                        </td>
+                        <td class="equity-persistence-action"><a class="button secondary" href="{{ row.detail_url }}" target="_blank" rel="noopener">Abrir analisis</a></td>
                       </tr>
                     {% endfor %}
                   </tbody>

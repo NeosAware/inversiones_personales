@@ -2435,6 +2435,19 @@ class EquitiesServicesTests(TestCase):
                                 {"year_number": 2, "label": "AÑO 2", "margin_pct": 4.0},
                             ],
                         },
+                        {
+                            "rank": 5,
+                            "company_name": "ACS",
+                            "ticker": "ACS",
+                            "net_projected_return_pct": 8.0,
+                            "cycle_return_5y_pct": 40.0,
+                            "reliability_label": "Media",
+                            "reliability_score": 60.0,
+                            "cycle_yearly_margins": [
+                                {"year_number": 1, "label": "AÃ‘O 1", "margin_pct": 8.0},
+                                {"year_number": 2, "label": "AÃ‘O 2", "margin_pct": 5.0},
+                            ],
+                        },
                     ],
                 )
                 EquityOptimizationRun.objects.filter(pk=run.pk).update(
@@ -2453,14 +2466,18 @@ class EquitiesServicesTests(TestCase):
         top_row = context["rows"][0]
         self.assertEqual(top_row["ticker"], "IBE")
         self.assertEqual(top_row["appearances_3m"], 6)
+        self.assertEqual(top_row["presence_pct_3m"], Decimal("100.0"))
         self.assertEqual(top_row["distinct_days_3m"], 3)
+        self.assertEqual(top_row["day_presence_pct_3m"], Decimal("100.0"))
         self.assertEqual(top_row["top3_3m"], 6)
+        self.assertEqual(top_row["top3_pct_3m"], Decimal("100.0"))
         self.assertEqual(top_row["persistence_label"], "Media")
         self.assertEqual(top_row["strategy_labels_3m_label"], "12M principal, 5A principal")
         self.assertEqual(top_row["average_return_12m_3m"], Decimal("11.0"))
         self.assertEqual(top_row["average_return_5y_3m"], Decimal("72.0"))
         self.assertEqual(top_row["average_reliability_label_3m"], "Alta")
         self.assertEqual(top_row["average_reliability_score_3m"], Decimal("80.0"))
+        self.assertEqual([item["ticker"] for item in context["rows"][:3]], ["IBE", "ACS", "REP"])
         self.assertEqual(
             [item["margin_pct"] for item in top_row["average_year_margins"]],
             [Decimal("11.0"), Decimal("7.0"), Decimal("8.0"), Decimal("9.0"), Decimal("10.0")],
@@ -4997,7 +5014,7 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Repsol")
         self.assertContains(response, "25,0 %")
 
-    def test_equities_page_shows_scheduled_optimization_persistence_panel(self):
+    def helper_equities_page_shows_scheduled_optimization_persistence_panel_legacy(self):
         today = timezone.localdate()
         scheduled_day = today - timedelta(days=3)
         for strategy_label, strategy_mode in (("12M principal", "12m_primary"), ("5A principal", "5y_primary")):
@@ -5064,8 +5081,83 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Valores que mas se repiten en optimizaciones automáticas")
         self.assertContains(response, "Iberdrola")
-        self.assertContains(response, "2 apariciones")
-        self.assertContains(response, "12M principal, 5A principal")
+        self.assertContains(response, "100 %")
+        self.assertContains(response, "2/2 ejec.")
+        self.assertContains(response, "12M medio")
+        self.assertContains(response, "Fiabilidad")
+        self.assertContains(response, "A&Ntilde;O 1")
+        self.assertContains(response, "5A acumulada")
+        self.assertContains(response, "Max 5 empresas")
+
+    def test_equities_page_shows_presence_percentage_in_scheduled_optimization_persistence_panel(self):
+        today = timezone.localdate()
+        scheduled_day = today - timedelta(days=3)
+        for strategy_label, strategy_mode in (("12M principal", "12m_primary"), ("5A principal", "5y_primary")):
+            run = EquityOptimizationRun.objects.create(
+                reference_code=f"OPT-PERSIST-V2-{strategy_mode}",
+                label=f"Programada {strategy_label}",
+                total_investment=Decimal("200000"),
+                max_company_pct=Decimal("30"),
+                max_total_positions=5,
+                max_sector_positions=2,
+                status=EquityOptimizationRun.Status.COMPLETED,
+                progress_data={
+                    "strategy_label": strategy_label,
+                    "strategy_mode": strategy_mode,
+                    "schedule_kind": "nightly",
+                    "scheduled_run_key": f"scheduled-optimization:{scheduled_day.isoformat()}",
+                    "scheduled_analysis_date": scheduled_day.isoformat(),
+                    "scheduled_weekdays_label": "martes y jueves",
+                },
+                summary_data={
+                    "available": True,
+                    "strategy_label": strategy_label,
+                    "scheduled_analysis_date": scheduled_day.isoformat(),
+                },
+                allocations_data=[
+                    {
+                        "rank": 1,
+                        "company_name": "Iberdrola",
+                        "ticker": "IBE",
+                        "net_projected_return_pct": 12.5,
+                        "cycle_return_5y_pct": 68.0,
+                        "reliability_label": "Alta",
+                        "reliability_score": 82.0,
+                        "cycle_yearly_margins": [
+                            {"year_number": 1, "label": "AÃ‘O 1", "margin_pct": 12.5},
+                            {"year_number": 2, "label": "AÃ‘O 2", "margin_pct": 8.0},
+                            {"year_number": 3, "label": "AÃ‘O 3", "margin_pct": 9.0},
+                            {"year_number": 4, "label": "AÃ‘O 4", "margin_pct": 10.0},
+                            {"year_number": 5, "label": "AÃ‘O 5", "margin_pct": 11.0},
+                        ],
+                    },
+                    {
+                        "rank": 3,
+                        "company_name": "Endesa",
+                        "ticker": "ELE",
+                        "net_projected_return_pct": 9.0,
+                        "cycle_return_5y_pct": 44.0,
+                        "reliability_label": "Media",
+                        "reliability_score": 64.0,
+                        "cycle_yearly_margins": [
+                            {"year_number": 1, "label": "AÃ‘O 1", "margin_pct": 9.0},
+                            {"year_number": 2, "label": "AÃ‘O 2", "margin_pct": 6.0},
+                        ],
+                    },
+                ],
+            )
+            EquityOptimizationRun.objects.filter(pk=run.pk).update(
+                created_at=timezone.make_aware(datetime.combine(scheduled_day, datetime.min.time())),
+                completed_at=timezone.make_aware(datetime.combine(scheduled_day, datetime.min.time())),
+            )
+
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Valores mas consistentes en optimizaciones automaticas")
+        self.assertContains(response, "Iberdrola")
+        self.assertContains(response, "100 %")
+        self.assertContains(response, "2/2 ejec.")
         self.assertContains(response, "12M medio")
         self.assertContains(response, "Fiabilidad")
         self.assertContains(response, "A&Ntilde;O 1")
