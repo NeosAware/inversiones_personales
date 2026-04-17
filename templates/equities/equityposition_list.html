@@ -313,7 +313,7 @@
       color:#0d5d78;
     }
     .radar-ibex-table{
-      min-width:1320px;
+      min-width:1540px;
     }
     .equity-projection-stack{
       display:grid;
@@ -626,6 +626,8 @@
               <tr>
                 <th>Valor</th>
                 <th>Alerta</th>
+                <th>Compra recom.</th>
+                <th>Venta recom.</th>
                 <th>Referencia</th>
                 <th>Corr 10A</th>
                 <th>Pred. 12M</th>
@@ -721,6 +723,8 @@
               <tr>
                 <th>Valor</th>
                 <th>Alerta</th>
+                <th>Compra recom.</th>
+                <th>Venta recom.</th>
                 <th>Referencia</th>
                 <th>Corr 10A</th>
                 <th>Pred. 12M</th>
@@ -748,6 +752,22 @@
                     {% endif %}
                   </td>
                   <td><strong class="{% if row.trade_alert_tone == 'buy' %}good{% elif row.trade_alert_tone == 'sell' %}warn{% endif %}">{{ row.trade_alert_label }}</strong><br><span class="metric-sub">{{ row.trade_alert_trigger }}</span></td>
+                  <td>
+                    {% if row.buy_recommended_on %}
+                      <strong class="{% if row.trade_alert_label == 'Comprar' %}good{% endif %}">{{ row.buy_recommended_on|date:"Y-m-d" }}</strong>
+                      {% if row.trade_alert_label == 'Comprar' %}<br><span class="metric-sub">Activa</span>{% endif %}
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if row.sell_recommended_on %}
+                      <strong class="{% if row.trade_alert_label == 'Vender' %}warn{% endif %}">{{ row.sell_recommended_on|date:"Y-m-d" }}</strong>
+                      {% if row.trade_alert_label == 'Vender' %}<br><span class="metric-sub">Activa</span>{% endif %}
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
                   <td><strong>{{ row.reference_label }}</strong>{% if row.best_reference_label and row.best_reference_label != row.reference_label %}<br><span class="metric-sub">Mejor ajuste: {{ row.best_reference_label }}</span>{% endif %}</td>
                   <td>
                     {% if row.correlation is not None %}

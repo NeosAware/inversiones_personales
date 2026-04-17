@@ -20,10 +20,12 @@ from .models import (
     EquityNightlyAnalysisRun,
     EquityNightlyAnalysisSnapshot,
     EquityPosition,
+    EquityPurchaseForecastBaseline,
 )
 from .services import (
     ZERO,
     build_analysis_broker_costs,
+    build_cycle_projection_yearly_margins,
     build_equity_analysis_dashboard,
     build_equity_analysis_overview,
     build_equity_decision_rows,
@@ -516,6 +518,169 @@ def load_latest_nightly_analysis_run() -> EquityNightlyAnalysisRun | None:
     if not nightly_analysis_enabled():
         return None
     return EquityNightlyAnalysisRun.objects.order_by("-analysis_date", "-id").first()
+
+
+def load_latest_completed_nightly_analysis_run_for_date(target_date: date) -> EquityNightlyAnalysisRun | None:
+    if not target_date:
+        return None
+    return (
+        EquityNightlyAnalysisRun.objects.filter(
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            analysis_date__lte=target_date,
+        )
+        .order_by("-analysis_date", "-id")
+        .first()
+    )
+
+
+def build_ibex_recommendation_date_map(tickers: list[str] | tuple[str, ...]) -> dict[str, dict]:
+    normalized_tickers = sorted({clean_ticker(ticker) for ticker in tickers if ticker})
+    if not normalized_tickers:
+        return {}
+
+    snapshots = (
+        EquityNightlyAnalysisSnapshot.objects.filter(
+            run__status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
+            ticker__in=normalized_tickers,
+        )
+        .order_by("ticker", "analysis_date", "id")
+    )
+
+    recommendation_dates: dict[str, dict] = {}
+    current_labels: dict[str, str] = {}
+
+    for snapshot in snapshots:
+        ticker = clean_ticker(snapshot.ticker)
+        payload = deserialize_cached_value(snapshot.analysis_payload or {})
+        label = str((payload.get("trade_alert") or {}).get("label") or "").strip()
+        if not label or current_labels.get(ticker) == label:
+            continue
+
+        current_labels[ticker] = label
+        record = recommendation_dates.setdefault(
+            ticker,
+            {
+                "buy_recommended_on": None,
+                "sell_recommended_on": None,
+            },
+        )
+        if label == "Comprar":
+            record["buy_recommended_on"] = snapshot.analysis_date
+        elif label == "Vender":
+            record["sell_recommended_on"] = snapshot.analysis_date
+
+    return recommendation_dates
+
+
+def load_purchase_baseline_source_card(
+    position: EquityPosition,
+    *,
+    baseline_date: date,
+) -> tuple[EquityNightlyAnalysisRun | None, EquityNightlyAnalysisSnapshot | None, dict | None]:
+    run = load_latest_completed_nightly_analysis_run_for_date(baseline_date)
+    if run is None:
+        return None, None, None
+
+    snapshot = None
+    if position.id:
+        snapshot = run.snapshots.filter(
+            scope=EquityNightlyAnalysisSnapshot.Scope.TRACKED,
+            position_id=position.id,
+        ).first()
+
+    if snapshot is None:
+        snapshot = run.snapshots.filter(
+            scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
+            ticker=clean_ticker(position.ticker),
+        ).first()
+
+    if snapshot is None:
+        snapshot = run.snapshots.filter(
+            scope=EquityNightlyAnalysisSnapshot.Scope.TRACKED,
+            ticker=clean_ticker(position.ticker),
+        ).first()
+
+    if snapshot is None:
+        return run, None, None
+
+    return run, snapshot, deserialize_cached_value(snapshot.analysis_payload or {})
+
+
+def build_purchase_forecast_baseline_defaults(
+    position: EquityPosition,
+    card: dict,
+    *,
+    baseline_date: date,
+    source_run: EquityNightlyAnalysisRun,
+    source_snapshot: EquityNightlyAnalysisSnapshot,
+) -> dict | None:
+    cached_position = card.get("position")
+    projection = card.get("projection") or {}
+    cycle_projection = card.get("cycle_projection_5y") or {}
+    if cached_position is None:
+        return None
+
+    baseline_price = getattr(cached_position, "current_price_per_share", None)
+    yearly_rows = build_cycle_projection_yearly_margins(
+        baseline_price,
+        cycle_projection,
+        first_year_projected_price=projection.get("projected_price"),
+        first_year_return_pct=projection.get("base_return_pct"),
+        max_years=5,
+    )
+    yearly_by_year = {item["year_number"]: item for item in yearly_rows}
+    reliability = card.get("projection_reliability") or {}
+
+    defaults = {
+        "source_run": source_run,
+        "source_analysis_date": source_run.analysis_date,
+        "baseline_date": baseline_date,
+        "analysis_scope": source_snapshot.scope,
+        "analysis_key": source_snapshot.analysis_key,
+        "reference_label": card.get("reference_label", ""),
+        "trade_alert_label": str((card.get("trade_alert") or {}).get("label") or ""),
+        "reliability_label": str(reliability.get("label") or ""),
+        "safety_score": quantize_decimal(projection.get("safety_score")),
+        "baseline_price": quantize_decimal(baseline_price, "0.0001"),
+    }
+
+    for year_number in range(1, 6):
+        yearly_row = yearly_by_year.get(year_number) or {}
+        defaults[f"projected_price_{year_number}y"] = quantize_decimal(yearly_row.get("projected_price"), "0.0001")
+        defaults[f"projected_return_pct_{year_number}y"] = quantize_decimal(yearly_row.get("cumulative_return_pct"))
+
+    return defaults
+
+
+def capture_purchase_forecast_baseline(
+    position: EquityPosition,
+    *,
+    baseline_date: date | None = None,
+) -> EquityPurchaseForecastBaseline | None:
+    if not position.is_owned:
+        return None
+
+    baseline_date = baseline_date or position.opened_on or timezone.localdate()
+    run, snapshot, card = load_purchase_baseline_source_card(position, baseline_date=baseline_date)
+    if run is None or snapshot is None or not card:
+        return None
+
+    defaults = build_purchase_forecast_baseline_defaults(
+        position,
+        card,
+        baseline_date=baseline_date,
+        source_run=run,
+        source_snapshot=snapshot,
+    )
+    if not defaults:
+        return None
+
+    baseline, _ = EquityPurchaseForecastBaseline.objects.update_or_create(
+        position=position,
+        defaults=defaults,
+    )
+    return baseline
 
 
 def nightly_analysis_matches_positions(run: EquityNightlyAnalysisRun, positions) -> bool:

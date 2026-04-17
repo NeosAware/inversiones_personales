@@ -26,9 +26,17 @@ from .models import (
     EquityOptimizationRun,
     EquityPosition,
     EquityPriceHistory,
+    EquityPurchaseForecastBaseline,
     EquityTicketSnapshot,
 )
-from .nightly_analysis import build_dashboard_from_nightly_cache, persist_nightly_analysis_dashboard, run_nightly_equity_analysis
+from .nightly_analysis import (
+    build_dashboard_from_nightly_cache,
+    build_ibex_recommendation_date_map,
+    capture_purchase_forecast_baseline,
+    persist_nightly_analysis_dashboard,
+    run_nightly_equity_analysis,
+    serialize_cached_value,
+)
 from .optimization_runs import launch_equity_optimization_run, launch_equity_optimization_run_pair, process_equity_optimization_run
 from .services import (
     EURIBOR_REFERENCE_NAME,
@@ -590,6 +598,117 @@ class EquitiesServicesTests(TestCase):
             [Decimal("12.50"), Decimal("7.56"), Decimal("10.00"), Decimal("10.00"), Decimal("10.00")],
         )
         self.assertEqual(row["cycle_yearly_margins"][0]["margin_pct"], row["projected_return_pct"])
+
+    def test_capture_purchase_forecast_baseline_uses_latest_nightly_snapshot_before_purchase(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola, S.A.",
+            opened_on=date(2026, 4, 17),
+            shares=Decimal("20"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.4000"),
+        )
+        run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2026, 4, 17),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            started_at=timezone.now(),
+            completed_at=timezone.now(),
+        )
+        cached_position = EquityPosition(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola, S.A.",
+            shares=Decimal("0"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+        )
+        card = {
+            "position": cached_position,
+            "reference_label": "IBEX 35",
+            "projection": {
+                "available": True,
+                "projected_price": Decimal("11.2500"),
+                "base_return_pct": Decimal("12.50"),
+                "safety_score": Decimal("68.00"),
+            },
+            "projection_reliability": {"label": "Alta", "score": Decimal("79.00")},
+            "trade_alert": {"label": "Comprar"},
+            "cycle_projection_5y": {
+                "available": True,
+                "path": [
+                    {"label": "1A", "projected_price": Decimal("11.0000")},
+                    {"label": "2A", "projected_price": Decimal("12.3750")},
+                    {"label": "3A", "projected_price": Decimal("13.6125")},
+                    {"label": "4A", "projected_price": Decimal("14.9738")},
+                    {"label": "5A", "projected_price": Decimal("16.4712")},
+                ],
+            },
+        }
+        EquityNightlyAnalysisSnapshot.objects.create(
+            run=run,
+            analysis_date=run.analysis_date,
+            scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
+            analysis_key="ibex:IBE",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            company_name="Iberdrola, S.A.",
+            status_key="ibex",
+            sector_label="Utilities",
+            agent_provider="core",
+            analysis_payload=serialize_cached_value(card),
+        )
+
+        baseline = capture_purchase_forecast_baseline(position)
+
+        self.assertIsNotNone(baseline)
+        self.assertEqual(EquityPurchaseForecastBaseline.objects.count(), 1)
+        self.assertEqual(baseline.source_analysis_date, date(2026, 4, 17))
+        self.assertEqual(baseline.baseline_date, date(2026, 4, 17))
+        self.assertEqual(baseline.trade_alert_label, "Comprar")
+        self.assertEqual(baseline.projected_price_1y, Decimal("11.2500"))
+        self.assertEqual(baseline.projected_return_pct_1y, Decimal("12.50"))
+        self.assertEqual(baseline.projected_price_2y, Decimal("12.3750"))
+        self.assertEqual(baseline.projected_return_pct_2y, Decimal("23.75"))
+
+    def test_build_ibex_recommendation_date_map_tracks_last_buy_and_sell_starts(self):
+        for analysis_day, label in (
+            (date(2026, 4, 14), "Vigilar"),
+            (date(2026, 4, 15), "Comprar"),
+            (date(2026, 4, 16), "Comprar"),
+            (date(2026, 4, 17), "Vender"),
+            (date(2026, 4, 18), "Vender"),
+        ):
+            run = EquityNightlyAnalysisRun.objects.create(
+                analysis_date=analysis_day,
+                status=EquityNightlyAnalysisRun.Status.COMPLETED,
+                started_at=timezone.now(),
+                completed_at=timezone.now(),
+            )
+            EquityNightlyAnalysisSnapshot.objects.create(
+                run=run,
+                analysis_date=analysis_day,
+                scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
+                analysis_key=f"ibex:ACS:{analysis_day.isoformat()}",
+                ticker="ACS",
+                quote_symbol="ACS.MC",
+                company_name="ACS",
+                status_key="ibex",
+                sector_label="Construccion",
+                agent_provider="core",
+                analysis_payload=serialize_cached_value({"trade_alert": {"label": label}}),
+            )
+
+        recommendation_dates = build_ibex_recommendation_date_map(["ACS"])
+
+        self.assertEqual(recommendation_dates["ACS"]["buy_recommended_on"], date(2026, 4, 15))
+        self.assertEqual(recommendation_dates["ACS"]["sell_recommended_on"], date(2026, 4, 17))
 
     def test_projection_includes_dividends_and_broker_drag(self):
         position = EquityPosition.objects.create(
@@ -3705,6 +3824,92 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(position.annual_dividend_income, Decimal("72.50"))
         self.assertEqual(position.annual_maintenance_cost, Decimal("18.75"))
 
+    def test_create_owned_position_captures_purchase_forecast_baseline(self):
+        analysis_day = date(2026, 4, 17)
+        run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=analysis_day,
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            started_at=timezone.now(),
+            completed_at=timezone.now(),
+        )
+        cached_position = EquityPosition(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("0"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+        )
+        EquityNightlyAnalysisSnapshot.objects.create(
+            run=run,
+            analysis_date=analysis_day,
+            scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
+            analysis_key="ibex:IBE",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            company_name="Iberdrola",
+            status_key="ibex",
+            sector_label="Utilities",
+            agent_provider="core",
+            analysis_payload=serialize_cached_value(
+                {
+                    "position": cached_position,
+                    "reference_label": "IBEX 35",
+                    "projection": {
+                        "available": True,
+                        "projected_price": Decimal("11.2500"),
+                        "base_return_pct": Decimal("12.50"),
+                        "safety_score": Decimal("68.00"),
+                    },
+                    "projection_reliability": {"label": "Alta", "score": Decimal("79.00")},
+                    "trade_alert": {"label": "Comprar"},
+                    "cycle_projection_5y": {
+                        "available": True,
+                        "path": [
+                            {"label": "1A", "projected_price": Decimal("11.0000")},
+                            {"label": "2A", "projected_price": Decimal("12.3750")},
+                            {"label": "3A", "projected_price": Decimal("13.6125")},
+                            {"label": "4A", "projected_price": Decimal("14.9738")},
+                            {"label": "5A", "projected_price": Decimal("16.4712")},
+                        ],
+                    },
+                }
+            ),
+        )
+
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "create_position",
+                "position_kind": EquityPosition.PositionKind.OWNED,
+                "ownership_category": AssetOwnershipCategory.XIMO,
+                "broker": "Interactive Brokers",
+                "ticker": "IBE",
+                "company_name": "Iberdrola",
+                "quote_symbol": "IBE.MC",
+                "reference_profile": EquityPosition.ReferenceProfile.MARKET_INDEX,
+                "benchmark_symbol": "^IBEX",
+                "benchmark_name": "IBEX 35",
+                "opened_on": "2026-04-17",
+                "shares": "125,5000",
+                "average_cost_per_share": "10,2500",
+                "current_price_per_share": "",
+                "annual_dividend_income": "72,50",
+                "annual_maintenance_cost": "18,75",
+                "notes": "Posicion principal",
+            },
+        )
+
+        self.assertRedirects(response, reverse("equities:list"))
+        position = EquityPosition.objects.get(ticker="IBE", broker="Interactive Brokers")
+        baseline = EquityPurchaseForecastBaseline.objects.get(position=position)
+        self.assertEqual(baseline.source_analysis_date, analysis_day)
+        self.assertEqual(baseline.projected_return_pct_1y, Decimal("12.50"))
+        self.assertEqual(baseline.projected_price_5y, Decimal("16.4712"))
+
     def test_can_create_equity_position_by_only_typing_indra(self):
         response = self.client.post(
             reverse("equities:list"),
@@ -5019,6 +5224,80 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Márgenes por AÑO")
         self.assertContains(response, "AÑO 1")
         self.assertContains(response, "AÑO 5")
+
+    @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_IBEX_UNIVERSE_LIMIT=1)
+    def test_ibex_table_shows_buy_and_sell_recommendation_dates(self):
+        acs = find_equity_company_profile("ACS")
+        company = {
+            "ticker": acs["ticker"],
+            "company_name": acs["company_name"],
+            "quote_symbol": acs["quote_symbol"],
+            "sector": acs["sector_label"],
+            "dividend_yield": Decimal("3.10"),
+            "catalog_profile": acs,
+        }
+        empty_workbook = {
+            "available": False,
+            "path": "",
+            "companies": [],
+            "companies_by_key": {},
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+        for analysis_day, label in (
+            (date(2026, 4, 14), "Vigilar"),
+            (date(2026, 4, 15), "Comprar"),
+            (date(2026, 4, 16), "Comprar"),
+            (date(2026, 4, 17), "Vender"),
+        ):
+            run = EquityNightlyAnalysisRun.objects.create(
+                analysis_date=analysis_day,
+                status=EquityNightlyAnalysisRun.Status.COMPLETED,
+                started_at=timezone.now(),
+                completed_at=timezone.now(),
+            )
+            EquityNightlyAnalysisSnapshot.objects.create(
+                run=run,
+                analysis_date=analysis_day,
+                scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
+                analysis_key=f"ibex:ACS:{analysis_day.isoformat()}",
+                ticker="ACS",
+                quote_symbol="ACS.MC",
+                company_name="ACS",
+                status_key="ibex",
+                sector_label="Construccion",
+                agent_provider="core",
+                analysis_payload=serialize_cached_value({"trade_alert": {"label": label}}),
+            )
+
+        def fake_market_series(symbol, range_key="10y", interval="1d"):
+            return build_compound_market_series(symbol, symbol, growth=Decimal("1.0200"), months=120, start_price=Decimal("12.0000"))
+
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+            return build_compound_market_series(
+                benchmark_symbol or "^IBEX",
+                benchmark_name or "Referencia",
+                growth=Decimal("1.0060"),
+                months=120,
+                start_price=Decimal("100.0000"),
+            )
+
+        with (
+            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=empty_workbook),
+            patch("equities.services.build_ibex_universe_companies", return_value=[company]),
+            patch("equities.services.fetch_market_series", side_effect=fake_market_series),
+            patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series),
+        ):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Compra recom.")
+        self.assertContains(response, "Venta recom.")
+        self.assertContains(response, "2026-04-15")
+        self.assertContains(response, "2026-04-17")
 
     def test_can_open_ibex_detail_page_with_company_title_and_charts(self):
         acs = find_equity_company_profile("ACS")

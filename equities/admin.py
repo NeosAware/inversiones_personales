@@ -6,6 +6,7 @@ from .models import (
     EquityOptimizationRun,
     EquityPosition,
     EquityPriceHistory,
+    EquityPurchaseForecastBaseline,
     EquityTicketSnapshot,
 )
 
@@ -98,3 +99,19 @@ class EquityNightlyAnalysisSnapshotAdmin(admin.ModelAdmin):
     )
     search_fields = ("ticker", "company_name", "quote_symbol", "analysis_key")
     list_filter = ("analysis_date", "scope", "status_key", "agent_provider")
+
+
+@admin.register(EquityPurchaseForecastBaseline)
+class EquityPurchaseForecastBaselineAdmin(admin.ModelAdmin):
+    list_display = (
+        "position",
+        "source_analysis_date",
+        "baseline_date",
+        "trade_alert_label",
+        "reference_label",
+        "projected_return_pct_1y",
+        "projected_return_pct_3y",
+        "projected_return_pct_5y",
+    )
+    search_fields = ("position__ticker", "position__company_name", "analysis_key")
+    list_filter = ("source_analysis_date", "baseline_date", "trade_alert_label", "reference_label")

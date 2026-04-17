@@ -257,6 +257,48 @@ class EquityNightlyAnalysisSnapshot(models.Model):
         return f"{self.analysis_date} {self.scope} {self.ticker}"
 
 
+class EquityPurchaseForecastBaseline(models.Model):
+    position = models.OneToOneField(
+        EquityPosition,
+        on_delete=models.CASCADE,
+        related_name="purchase_forecast_baseline",
+    )
+    source_run = models.ForeignKey(
+        EquityNightlyAnalysisRun,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="purchase_forecast_baselines",
+    )
+    source_analysis_date = models.DateField()
+    baseline_date = models.DateField()
+    analysis_scope = models.CharField(max_length=16, blank=True, default="ibex")
+    analysis_key = models.CharField(max_length=80, blank=True)
+    reference_label = models.CharField(max_length=120, blank=True)
+    trade_alert_label = models.CharField(max_length=32, blank=True)
+    reliability_label = models.CharField(max_length=32, blank=True)
+    safety_score = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    baseline_price = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    projected_price_1y = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    projected_price_2y = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    projected_price_3y = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    projected_price_4y = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    projected_price_5y = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    projected_return_pct_1y = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    projected_return_pct_2y = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    projected_return_pct_3y = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    projected_return_pct_4y = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    projected_return_pct_5y = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-source_analysis_date", "-id"]
+
+    def __str__(self):
+        return f"Baseline compra {self.position.ticker} ({self.source_analysis_date})"
+
+
 class EquityClosedPosition(models.Model):
     ownership_category = models.CharField(
         max_length=12,

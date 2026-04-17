@@ -13,7 +13,13 @@ from django.views.generic import TemplateView, View
 
 from .forms import EquityAllocationOptimizerForm, EquityClosePositionForm, EquityDocumentImportForm, EquityOptimizationRunForm, EquityPositionForm
 from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition
-from .nightly_analysis import build_dashboard_from_nightly_cache, build_nightly_analysis_status, load_cached_ibex_card
+from .nightly_analysis import (
+    build_dashboard_from_nightly_cache,
+    build_ibex_recommendation_date_map,
+    build_nightly_analysis_status,
+    capture_purchase_forecast_baseline,
+    load_cached_ibex_card,
+)
 from .optimization_runs import (
     build_fallback_report_pdf_html,
     launch_equity_optimization_run_pair,
@@ -138,9 +144,13 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["owned_history_cards"] = dashboard["owned_history_cards"]
         context["watchlist_history_cards"] = dashboard["watchlist_history_cards"]
         context["decision_rows"] = dashboard["decision_rows"]
+        ibex_recommendation_dates = build_ibex_recommendation_date_map(
+            [row["ticker"] for row in dashboard["ibex_universe_rows"]]
+        )
         context["ibex_universe_rows"] = [
             {
                 **row,
+                **ibex_recommendation_dates.get(row["ticker"], {}),
                 "detail_url": reverse("equities:ibex_detail", kwargs={"ticker": row["ticker"]}),
             }
             for row in dashboard["ibex_universe_rows"]
@@ -358,6 +368,13 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             created = True
             duplicate_count = 0
 
+        purchase_baseline = None
+        if position.is_owned:
+            purchase_baseline = capture_purchase_forecast_baseline(
+                position,
+                baseline_date=position.opened_on or timezone.localdate(),
+            )
+
         if created:
             messages.success(request, f"Posicion {position.ticker} creada correctamente.")
         else:
@@ -366,6 +383,17 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 messages.warning(
                     request,
                     f"Se han detectado {duplicate_count} posiciones repetidas para {position.ticker}. Se ha actualizado la mas reciente.",
+                )
+        if position.is_owned:
+            if purchase_baseline is not None:
+                messages.info(
+                    request,
+                    f"Se ha guardado la foto de compra de {position.ticker} con el analisis nocturno del {purchase_baseline.source_analysis_date:%Y-%m-%d}.",
+                )
+            else:
+                messages.warning(
+                    request,
+                    f"No habia analisis nocturno disponible para guardar la foto de compra de {position.ticker}.",
                 )
         return redirect("equities:list")
 
