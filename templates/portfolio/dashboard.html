@@ -3,12 +3,97 @@
 {% block title %}Resumen | Centro de inversiones personales{% endblock %}
 
 {% block content %}
-  <div class="split">
-    <section class="card">
+  <style>
+    .portfolio-page{
+      display:grid;
+      gap:30px;
+    }
+    .portfolio-hero{
+      display:grid;
+      gap:20px;
+      grid-template-columns:minmax(0, 1.45fr) minmax(360px, .9fr);
+    }
+    .portfolio-panel{
+      padding:26px;
+    }
+    .portfolio-panel h2{
+      font-size:clamp(30px, 2.2vw, 40px);
+      letter-spacing:-.03em;
+      margin-bottom:12px;
+    }
+    .portfolio-copy{
+      max-width:74ch;
+      line-height:1.65;
+    }
+    .portfolio-kpi-grid{
+      display:grid;
+      gap:16px;
+      grid-template-columns:repeat(4, minmax(0,1fr));
+      margin-top:18px;
+    }
+    .portfolio-kpi{
+      padding:18px;
+      border-radius:18px;
+      border:1px solid #e4ecf2;
+      background:linear-gradient(180deg, #ffffff 0%, #f7fafc 100%);
+      display:grid;
+      gap:8px;
+    }
+    .portfolio-kpi .metric-value{
+      font-size:clamp(28px, 1.95vw, 38px);
+    }
+    .portfolio-action-card{
+      background:linear-gradient(180deg, #ffffff 0%, #f5fafe 100%);
+    }
+    .portfolio-meta{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      margin-top:16px;
+    }
+    .portfolio-owner-grid{
+      display:grid;
+      gap:18px;
+      grid-template-columns:repeat(3, minmax(0,1fr));
+    }
+    .portfolio-owner-card{
+      padding:22px;
+    }
+    .portfolio-split{
+      display:grid;
+      gap:20px;
+      grid-template-columns:minmax(0, 1.35fr) minmax(360px, .95fr);
+    }
+    .portfolio-table-card{
+      padding-top:18px;
+    }
+    .portfolio-chart{
+      background:#f7fafc;
+      border:1px solid var(--line);
+      border-radius:18px;
+    }
+    .portfolio-section-stack{
+      display:grid;
+      gap:18px;
+    }
+    @media (max-width: 1180px){
+      .portfolio-hero,
+      .portfolio-split,
+      .portfolio-owner-grid,
+      .portfolio-kpi-grid{
+        grid-template-columns:1fr;
+      }
+    }
+  </style>
+
+  <div class="portfolio-page">
+  <div class="portfolio-hero">
+    <section class="card portfolio-panel">
       <p class="section-title">Resumen</p>
-      <p class="muted" style="margin-top:0;">Vista rapida entre empresas del grupo, acciones cotizadas, banca y patrimonio inmobiliario.</p>
-      <div class="grid cols-4">
-        <section class="card">
+      <h2 style="margin-top:0;">Lectura consolidada del patrimonio</h2>
+      <p class="muted portfolio-copy" style="margin-top:0;">Vista rapida entre empresas del grupo, acciones cotizadas, banca y patrimonio inmobiliario para decidir con contexto y sin cambiar de modulo.</p>
+      <div class="portfolio-kpi-grid">
+        <section class="portfolio-kpi">
           <div class="metric-label">Patrimonio total</div>
           <div class="metric-value">{{ overview.total_current_value|floatformat:2 }} EUR</div>
           <div class="metric-sub">
@@ -19,21 +104,21 @@
             {% endif %}
           </div>
         </section>
-        <section class="card">
+        <section class="portfolio-kpi">
           <div class="metric-label">Grupo Neos consolidado</div>
           <div class="metric-value">{{ overview.neos_group_current_value|floatformat:2 }} EUR</div>
           <div class="metric-sub">
             {{ overview.neos_group_share_pct|floatformat:2 }} % del patrimonio del hogar. Neos Ceramica actua como holding y evita sumar dos veces Additives y Materials.
           </div>
         </section>
-        <section class="card">
+        <section class="portfolio-kpi">
           <div class="metric-label">Acciones cotizadas</div>
           <div class="metric-value">{{ overview.ibex_equities_current_value|floatformat:2 }} EUR</div>
           <div class="metric-sub">
             {{ overview.ibex_equities_share_pct|floatformat:2 }} % del patrimonio del hogar.
           </div>
         </section>
-        <section class="card">
+        <section class="portfolio-kpi">
           <div class="metric-label">Banca</div>
           <div class="metric-value">{{ overview.banking_current_value|floatformat:2 }} EUR</div>
           <div class="metric-sub">
@@ -42,15 +127,15 @@
         </section>
       </div>
     </section>
-    <section class="card">
+    <section class="card portfolio-panel portfolio-action-card">
       <p class="section-title">Operativa diaria</p>
       <h2 style="margin-top:0;">Seguimiento del hogar</h2>
-      <p class="muted" style="margin-top:0;">Usa esta zona para mantener una serie diaria de la cartera familiar y revisar alertas de gasto.</p>
+      <p class="muted portfolio-copy" style="margin-top:0;">Usa esta zona para mantener una serie diaria de la cartera familiar y revisar alertas de gasto sin perder la lectura agregada del patrimonio.</p>
       <form method="post" style="margin-top:18px;">
         {% csrf_token %}
         <button class="button" type="submit">Guardar foto de hoy</button>
       </form>
-      <div class="meta">
+      <div class="portfolio-meta">
         <span class="pill">{{ request.user.username }}</span>
         {% if alert_settings %}<span class="pill">Limite de gasto {{ alert_settings.total_monthly_expense_limit|floatformat:0 }} EUR</span>{% endif %}
         {% if alerts_latest_month %}<span class="pill">Mes de alertas {{ alerts_latest_month }}</span>{% endif %}
@@ -60,9 +145,9 @@
   </div>
 
   <p class="section-title" style="margin-top:28px;">Patrimonio por titular</p>
-  <div class="grid cols-3">
+  <div class="portfolio-owner-grid">
     {% for owner in owner_asset_overview.groups %}
-      <section class="card">
+      <section class="card portfolio-owner-card">
         <div class="metric-label">{{ owner.ownership_label }}</div>
         <div class="metric-value">{{ owner.current_value|floatformat:2 }} EUR</div>
         <div class="metric-sub">Renta anual {{ owner.annual_income|floatformat:2 }} EUR</div>
@@ -76,7 +161,7 @@
     {% endfor %}
   </div>
 
-  <section class="card table-card" style="margin-top:18px;">
+  <section class="card table-card portfolio-table-card" style="margin-top:18px;">
     <table>
       <thead>
         <tr>
@@ -108,21 +193,21 @@
   </section>
 
   <p class="section-title" style="margin-top:28px;">Mapa del conglomerado Neos</p>
-  <div class="split">
-    <section class="card">
+  <div class="portfolio-split">
+    <section class="card portfolio-panel">
       <h2 style="margin-top:0;">Holding familiar</h2>
-      <div class="grid cols-3">
-        <section class="card">
+      <div class="portfolio-kpi-grid" style="grid-template-columns:repeat(3, minmax(0,1fr));">
+        <section class="portfolio-kpi">
           <div class="metric-label">Valor consolidado</div>
           <div class="metric-value">{{ neos_group_context.consolidated_current_value|floatformat:2 }} EUR</div>
           <div class="metric-sub">Es el valor que se suma al patrimonio total del hogar.</div>
         </section>
-        <section class="card">
+        <section class="portfolio-kpi">
           <div class="metric-label">Ximo</div>
           <div class="metric-value">{{ neos_group_context.owner_breakdown.0.current_value|floatformat:2 }} EUR</div>
           <div class="metric-sub">90 % economico del holding.</div>
         </section>
-        <section class="card">
+        <section class="portfolio-kpi">
           <div class="metric-label">Monica</div>
           <div class="metric-value">{{ neos_group_context.owner_breakdown.1.current_value|floatformat:2 }} EUR</div>
           <div class="metric-sub">10 % economico del holding.</div>
@@ -132,7 +217,7 @@
         Neos Ceramica se trata como cabecera del grupo. Neos Additives y Neos Materials se siguen de forma analitica para ver la salud de cada filial, pero no se suman otra vez al patrimonio total cuando ya existe valor consolidado en el holding.
       </div>
     </section>
-    <section class="card table-card">
+    <section class="card table-card portfolio-table-card">
       <h2 style="margin-top:0;">Filiales seguidas</h2>
       <table>
         <thead>
@@ -160,34 +245,34 @@
   </div>
 
   <p class="section-title" style="margin-top:28px;">Liquidez bancaria</p>
-  <div class="grid cols-4">
-    <section class="card">
+  <div class="portfolio-kpi-grid">
+    <section class="portfolio-kpi">
       <div class="metric-label">Liquidez actual</div>
       <div class="metric-value">{{ bank_liquidity.current_value|floatformat:2 }} EUR</div>
       <div class="metric-sub">Ultimo saldo final importado por cuenta corriente.</div>
     </section>
-    <section class="card">
+    <section class="portfolio-kpi">
       <div class="metric-label">Cuentas seguidas</div>
       <div class="metric-value">{{ bank_liquidity.accounts_count }}</div>
       <div class="metric-sub">Cuentas con extractos importados que aportan a la liquidez.</div>
     </section>
-    <section class="card">
+    <section class="portfolio-kpi">
       <div class="metric-label">Peso sobre la cartera</div>
       <div class="metric-value">{{ bank_liquidity.current_share_pct|floatformat:2 }} %</div>
       <div class="metric-sub">Peso del efectivo bancario liquido sobre el valor actual del patrimonio familiar.</div>
     </section>
-    <section class="card">
+    <section class="portfolio-kpi">
       <div class="metric-label">Ultimo mes bancario</div>
       <div class="metric-value">{{ bank_liquidity.latest_month|default:"-" }}</div>
       <div class="metric-sub">La serie mensual de liquidez se construye con los saldos finales importados.</div>
     </section>
   </div>
 
-  <div class="split" style="margin-top:18px;">
-    <section class="card">
+  <div class="portfolio-split" style="margin-top:18px;">
+    <section class="card portfolio-panel">
       <h2 style="margin-top:0;">Evolucion del efectivo importado</h2>
       {% if bank_liquidity.history_line %}
-        <svg viewBox="0 0 720 220" width="100%" height="220" style="background:#f6fafc; border:1px solid #e4edf4; border-radius:18px;">
+        <svg viewBox="0 0 720 220" width="100%" height="220" class="portfolio-chart">
           <line x1="18" y1="202" x2="702" y2="202" stroke="#d3e1ea" stroke-width="1" />
           <line x1="18" y1="18" x2="18" y2="202" stroke="#d3e1ea" stroke-width="1" />
           <polyline fill="none" stroke="#2f9dd1" stroke-width="4" points="{{ bank_liquidity.history_line }}" />
@@ -200,7 +285,7 @@
         <div class="metric-sub">Importa al menos dos extractos mensuales para ver la tendencia de liquidez de tus cuentas corrientes.</div>
       {% endif %}
     </section>
-    <section class="card table-card">
+    <section class="card table-card portfolio-table-card">
       <h2 style="margin-top:0;">Cuentas bancarias actuales</h2>
       <table>
         <thead>
@@ -231,7 +316,7 @@
     </section>
   </div>
 
-  <section class="card table-card" style="margin-top:18px;">
+  <section class="card table-card portfolio-table-card" style="margin-top:18px;">
     <p class="section-title">Serie mensual de liquidez</p>
     <table>
       <thead>
@@ -262,10 +347,10 @@
   </section>
 
   <p class="section-title" style="margin-top:28px;">Valor historico de la cartera</p>
-  <div class="split">
-    <section class="card">
+  <div class="portfolio-split">
+    <section class="card portfolio-panel">
       {% if snapshot_line %}
-        <svg viewBox="0 0 720 220" width="100%" height="220" style="background:#f6fafc; border:1px solid #e4edf4; border-radius:18px;">
+        <svg viewBox="0 0 720 220" width="100%" height="220" class="portfolio-chart">
           <line x1="18" y1="202" x2="702" y2="202" stroke="#d3e1ea" stroke-width="1" />
           <line x1="18" y1="18" x2="18" y2="202" stroke="#d3e1ea" stroke-width="1" />
           <polyline fill="none" stroke="#0f5f88" stroke-width="4" points="{{ snapshot_line }}" />
@@ -278,7 +363,7 @@
         <div class="metric-sub">Guarda varias fotos para empezar a ver el historico de inversion del hogar.</div>
       {% endif %}
     </section>
-    <section class="card table-card">
+    <section class="card table-card portfolio-table-card">
       <table>
         <thead>
           <tr>
@@ -305,7 +390,7 @@
   </div>
 
   <p class="section-title" style="margin-top:28px;">Alertas de gasto</p>
-  <section class="card table-card">
+  <section class="card table-card portfolio-table-card">
     <table>
       <thead>
         <tr>
@@ -335,9 +420,9 @@
   </section>
 
   <p class="section-title" style="margin-top:28px;">Asignacion por bloque</p>
-  <div class="grid cols-2">
+  <div class="portfolio-split">
     {% for section in sections %}
-      <section class="card">
+      <section class="card portfolio-panel">
         <div class="app-summary">
           <div>
             <h3>{{ section.title }}</h3>
@@ -377,7 +462,7 @@
   </div>
 
   <p class="section-title" style="margin-top:28px;">Mejores posiciones por rentabilidad</p>
-  <section class="card table-card">
+  <section class="card table-card portfolio-table-card">
     <table>
       <thead>
         <tr>
@@ -409,4 +494,5 @@
       </tbody>
     </table>
   </section>
+  </div>
 {% endblock %}
