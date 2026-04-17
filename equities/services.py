@@ -5659,6 +5659,8 @@ def build_cycle_projection_yearly_margins(
     current_price: Decimal | None,
     cycle_projection: dict | None,
     *,
+    first_year_projected_price: Decimal | None = None,
+    first_year_return_pct: Decimal | None = None,
     max_years: int = 5,
 ) -> list[dict]:
     if current_price in {None, ZERO} or not cycle_projection or not cycle_projection.get("available"):
@@ -5675,12 +5677,18 @@ def build_cycle_projection_yearly_margins(
 
     for year_number in range(1, max_years + 1):
         step = checkpoints_by_label.get(f"{year_number}A")
-        if not step:
-            continue
-        projected_price = step.get("projected_price")
+        if year_number == 1 and first_year_projected_price is not None:
+            projected_price = first_year_projected_price
+        elif step:
+            projected_price = step.get("projected_price")
+        else:
+            projected_price = None
         if projected_price is None:
             continue
-        margin_pct = percentage_change(projected_price, previous_price)
+        if year_number == 1 and first_year_return_pct is not None:
+            margin_pct = first_year_return_pct
+        else:
+            margin_pct = percentage_change(projected_price, previous_price)
         cumulative_return_pct = percentage_change(projected_price, current_price)
         margins.append(
             {
@@ -5699,8 +5707,16 @@ def build_cycle_projection_yearly_margins(
 def build_cycle_projection_return_profile(
     current_price: Decimal | None,
     cycle_projection: dict | None,
+    *,
+    first_year_projected_price: Decimal | None = None,
+    first_year_return_pct: Decimal | None = None,
 ) -> dict:
-    yearly_margins = build_cycle_projection_yearly_margins(current_price, cycle_projection)
+    yearly_margins = build_cycle_projection_yearly_margins(
+        current_price,
+        cycle_projection,
+        first_year_projected_price=first_year_projected_price,
+        first_year_return_pct=first_year_return_pct,
+    )
     five_year_return_pct = None
     five_year_annualized_return_pct = None
     if cycle_projection and cycle_projection.get("available"):
@@ -5735,7 +5751,12 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
         trade_alert = card.get("trade_alert", {})
         coefficient_alert = card.get("coefficient_alert", {})
         cycle_projection = card.get("cycle_projection_5y") or {}
-        cycle_return_profile = build_cycle_projection_return_profile(position.current_price_per_share, cycle_projection)
+        cycle_return_profile = build_cycle_projection_return_profile(
+            position.current_price_per_share,
+            cycle_projection,
+            first_year_projected_price=projection.get("projected_price"),
+            first_year_return_pct=projected_return_pct,
+        )
         rows.append(
             {
                 "position": position,

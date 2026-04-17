@@ -587,8 +587,9 @@ class EquitiesServicesTests(TestCase):
         )
         self.assertEqual(
             [item["margin_pct"] for item in row["cycle_yearly_margins"]],
-            [Decimal("10.00")] * 5,
+            [Decimal("12.50"), Decimal("7.56"), Decimal("10.00"), Decimal("10.00"), Decimal("10.00")],
         )
+        self.assertEqual(row["cycle_yearly_margins"][0]["margin_pct"], row["projected_return_pct"])
 
     def test_projection_includes_dividends_and_broker_drag(self):
         position = EquityPosition.objects.create(
