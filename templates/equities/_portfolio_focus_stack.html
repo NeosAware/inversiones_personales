@@ -44,13 +44,41 @@
       <div class="equity-box">
         <span>Ratio de costes</span>
         <strong class="{% if investment_journey.cost_ratio_pct <= 3 %}good{% else %}warn{% endif %}">{{ investment_journey.cost_ratio_pct|floatformat:2 }} %</strong>
-        <small>{{ investment_journey.costs_total|floatformat:0 }} EUR sobre el capital comprometido.</small>
+        <small>{{ investment_journey.costs_total|floatformat:0 }} EUR sobre el capital comprometido. Ya pagados {{ investment_journey.costs_paid_total|floatformat:0 }} EUR{% if investment_journey.open_sale_cost_reserve_total %} | salida estimada {{ investment_journey.open_sale_cost_reserve_total|floatformat:0 }} EUR{% endif %}.</small>
       </div>
       <div class="equity-box">
         <span>Yield neto dividendos</span>
         <strong>{{ investment_journey.dividend_yield_pct|floatformat:2 }} %</strong>
         <small>{{ investment_journey.dividends_total|floatformat:0 }} EUR netos cobrados o estimados.</small>
       </div>
+    </div>
+    <div class="equity-cost-strip">
+      <div class="equity-cost-card">
+        <span>Entrada</span>
+        <strong>{{ investment_journey.purchase_cost_total|floatformat:0 }} EUR</strong>
+        <small>Comisiones de compra ya cargadas al abrir las posiciones.</small>
+      </div>
+      <div class="equity-cost-card">
+        <span>Mantenimiento</span>
+        <strong>{{ investment_journey.maintenance_cost_total|floatformat:0 }} EUR</strong>
+        <small>Custodia y costes recurrentes acumulados hasta hoy.</small>
+      </div>
+      <div class="equity-cost-card">
+        <span>Venta ya pagada</span>
+        <strong>{{ investment_journey.closed_sale_cost_total|floatformat:0 }} EUR</strong>
+        <small>Coste real de las posiciones que ya se cerraron.</small>
+      </div>
+      <div class="equity-cost-card estimated">
+        <span>Salida abierta estimada</span>
+        <strong>{{ investment_journey.open_sale_cost_reserve_total|floatformat:0 }} EUR</strong>
+        <small>Reserva teorica si vendieras hoy las posiciones abiertas.</small>
+      </div>
+    </div>
+    <div class="equity-cost-explainer">
+      <strong>Como leer los costes:</strong> el total no solo suma lo ya pagado, tambien reserva el coste de salida de las posiciones abiertas para que la rentabilidad neta sea comparable como si cerraras hoy.
+      {% if investment_journey.active_count %}
+        Ahora mismo hay {{ investment_journey.active_count }} posicion(es) abierta(s), por eso parte del coste total aun no ha salido de caja y solo funciona como estimacion tactica.
+      {% endif %}
     </div>
     <div class="equity-grid-4" style="margin-top:16px;">
       <div class="equity-box"><span>Ventas cerradas</span><strong>{{ investment_journey.closed_count }}</strong></div>

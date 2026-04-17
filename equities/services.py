@@ -4309,6 +4309,12 @@ def build_equity_investment_journey_context(
     total_net_result = sum((ticket["net_result"] for ticket in all_tickets), ZERO)
     total_realized_result = sum((ticket["net_result"] for ticket in closed_tickets), ZERO)
     total_live_result = sum((ticket["net_result"] for ticket in active_tickets), ZERO)
+    total_purchase_costs = sum((ticket["purchase_cost"] for ticket in all_tickets), ZERO)
+    total_sale_costs = sum((ticket["sale_cost"] for ticket in all_tickets), ZERO)
+    total_maintenance_costs = sum((ticket["maintenance_total"] for ticket in all_tickets), ZERO)
+    closed_sale_cost_total = sum((ticket["sale_cost"] for ticket in closed_tickets), ZERO)
+    open_sale_cost_reserve_total = sum((ticket["sale_cost"] for ticket in active_tickets), ZERO)
+    costs_paid_total = total_purchase_costs + total_maintenance_costs + closed_sale_cost_total
     total_costs = sum((ticket["costs_total"] for ticket in all_tickets), ZERO)
     total_dividends = sum((ticket["dividend_total"] for ticket in all_tickets), ZERO)
     earliest_start = min((ticket["start_date"] for ticket in all_tickets), default=django_timezone.localdate())
@@ -4387,6 +4393,12 @@ def build_equity_investment_journey_context(
         "live_net_result": quantize_decimal(total_live_result, "0.01") or ZERO,
         "committed_capital_total": quantize_decimal(total_committed_capital, "0.01") or ZERO,
         "costs_total": quantize_decimal(total_costs, "0.01") or ZERO,
+        "costs_paid_total": quantize_decimal(costs_paid_total, "0.01") or ZERO,
+        "purchase_cost_total": quantize_decimal(total_purchase_costs, "0.01") or ZERO,
+        "sale_cost_total": quantize_decimal(total_sale_costs, "0.01") or ZERO,
+        "closed_sale_cost_total": quantize_decimal(closed_sale_cost_total, "0.01") or ZERO,
+        "open_sale_cost_reserve_total": quantize_decimal(open_sale_cost_reserve_total, "0.01") or ZERO,
+        "maintenance_cost_total": quantize_decimal(total_maintenance_costs, "0.01") or ZERO,
         "dividends_total": quantize_decimal(total_dividends, "0.01") or ZERO,
         "holding_start_label": earliest_start.isoformat() if earliest_start else "",
         "holding_end_label": latest_end.isoformat() if latest_end else "",

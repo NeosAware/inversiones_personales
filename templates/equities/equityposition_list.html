@@ -116,6 +116,16 @@
       color:var(--ink);
       box-shadow:0 24px 56px rgba(17,34,46,.08);
     }
+    .equity-hero-layout{
+      display:grid;
+      gap:20px;
+      grid-template-columns:minmax(0, 1.4fr) minmax(320px, .82fr);
+      align-items:start;
+    }
+    .equity-hero-main{
+      display:grid;
+      gap:0;
+    }
     .equity-hero-top, .equity-panel-head, .equity-toolbar, .equity-stock-summary{
       display:flex;
       justify-content:space-between;
@@ -141,6 +151,170 @@
       font-weight:700;
       letter-spacing:.03em;
       box-shadow:0 8px 16px rgba(16,36,51,.05);
+    }
+    .equity-sale-focus{
+      position:relative;
+      padding:22px;
+      border-radius:26px;
+      border:1px solid #ebcfc9;
+      background:
+        radial-gradient(circle at top right, rgba(198,59,49,.10), transparent 34%),
+        radial-gradient(circle at bottom left, rgba(232,189,136,.16), transparent 34%),
+        linear-gradient(180deg, #fffdfb 0%, #fff5f2 100%);
+      box-shadow:0 18px 34px rgba(198,59,49,.10);
+      overflow:hidden;
+    }
+    .equity-sale-focus::after{
+      content:"";
+      position:absolute;
+      inset:0 auto 0 0;
+      width:8px;
+      background:linear-gradient(180deg, #d9654d 0%, #b73e34 100%);
+    }
+    .equity-sale-focus.empty{
+      border-color:#dccfc1;
+      background:
+        radial-gradient(circle at top right, rgba(58,133,167,.08), transparent 32%),
+        radial-gradient(circle at bottom left, rgba(232,189,136,.12), transparent 34%),
+        linear-gradient(180deg, #fffdfb 0%, #f9f5ef 100%);
+      box-shadow:0 16px 32px rgba(30, 54, 72, .06);
+    }
+    .equity-sale-focus.empty::after{
+      background:linear-gradient(180deg, #9b815f 0%, #7a6248 100%);
+    }
+    .equity-sale-focus .section-title{
+      margin-bottom:12px;
+      color:#8a5547;
+    }
+    .equity-sale-focus.empty .section-title{
+      color:#7b6957;
+    }
+    .equity-sale-company{
+      margin:0;
+      font-size:34px;
+      line-height:1;
+    }
+    .equity-sale-window{
+      display:inline-flex;
+      align-items:center;
+      margin-top:14px;
+      padding:10px 14px;
+      border-radius:999px;
+      border:1px solid rgba(183,62,52,.16);
+      background:rgba(255,255,255,.86);
+      color:#98352d;
+      font-size:14px;
+      font-weight:800;
+      letter-spacing:.04em;
+      text-transform:uppercase;
+    }
+    .equity-sale-focus.empty .equity-sale-window{
+      border-color:rgba(122,98,72,.18);
+      color:#745c45;
+    }
+    .equity-sale-caption{
+      margin-top:10px;
+      font-size:13px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:#8f6453;
+      font-weight:800;
+    }
+    .equity-sale-summary{
+      margin:14px 0 0;
+      color:var(--ink-soft);
+      line-height:1.6;
+      font-size:15px;
+    }
+    .equity-sale-meta{
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(2, minmax(0,1fr));
+      margin-top:16px;
+    }
+    .equity-sale-metric{
+      padding:14px 15px;
+      border-radius:18px;
+      border:1px solid rgba(183,62,52,.12);
+      background:rgba(255,255,255,.78);
+      box-shadow:0 8px 16px rgba(16,36,51,.04);
+    }
+    .equity-sale-focus.empty .equity-sale-metric{
+      border-color:rgba(122,98,72,.14);
+    }
+    .equity-sale-metric span{
+      display:block;
+      font-size:11px;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      color:#8f6453;
+      font-weight:800;
+    }
+    .equity-sale-focus.empty .equity-sale-metric span{
+      color:#7b6957;
+    }
+    .equity-sale-metric strong{
+      display:block;
+      margin-top:6px;
+      font-size:20px;
+      color:var(--ink);
+      font-variant-numeric:tabular-nums;
+    }
+    .equity-sale-metric small{
+      display:block;
+      margin-top:6px;
+      color:var(--muted);
+      line-height:1.5;
+    }
+    .equity-cost-strip{
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(4, minmax(0,1fr));
+      margin-top:16px;
+    }
+    .equity-cost-card{
+      padding:15px 16px;
+      border-radius:18px;
+      border:1px solid var(--line);
+      background:linear-gradient(180deg, #fffdfa 0%, #f9f4ed 100%);
+      box-shadow:0 10px 20px rgba(17,34,46,.04);
+    }
+    .equity-cost-card.estimated{
+      border-color:#e6cfc6;
+      background:linear-gradient(180deg, #fff9f8 0%, #fff2ef 100%);
+    }
+    .equity-cost-card span{
+      display:block;
+      font-size:11px;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      color:#8b6a54;
+      font-weight:800;
+    }
+    .equity-cost-card strong{
+      display:block;
+      margin-top:8px;
+      font-size:24px;
+      font-variant-numeric:tabular-nums;
+      color:var(--ink);
+    }
+    .equity-cost-card small{
+      display:block;
+      margin-top:8px;
+      color:var(--muted);
+      line-height:1.5;
+    }
+    .equity-cost-explainer{
+      margin-top:16px;
+      padding:16px 18px;
+      border-radius:18px;
+      border:1px solid #e2d6c9;
+      background:linear-gradient(180deg, #fffdfb 0%, #faf5ee 100%);
+      color:var(--ink-soft);
+      line-height:1.6;
+    }
+    .equity-cost-explainer strong{
+      color:var(--ink);
     }
     .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-chart-grid{
       display:grid;
@@ -758,64 +932,99 @@
       line-height:1.5;
     }
     @media (max-width: 1180px){
-      .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-candidate-grid, .equity-chart-grid, .equity-progress-events, .equity-preview-columns{ grid-template-columns:1fr; }
+      .equity-hero-layout, .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-candidate-grid, .equity-chart-grid, .equity-progress-events, .equity-preview-columns, .equity-cost-strip{ grid-template-columns:1fr; }
       .equity-hero-top, .equity-panel-head, .equity-toolbar, .equity-stock-summary, .equity-detail-head, .equity-section-head{ flex-direction:column; }
+      .equity-sale-meta{ grid-template-columns:1fr; }
     }
   </style>
 
   <div class="equity-page">
     <section class="equity-hero">
-      <div class="equity-hero-top">
-        <div>
-          <p class="section-title" style="margin-bottom:12px;">Cockpit de acciones</p>
-          <h1>Decision 12M mas clara y mas util</h1>
-          <p>La vista principal prioriza retorno total esperado, seguridad, fiabilidad y referencia de cada valor. Los calculos usan hasta 10 anos de historico, incorporan dividendos y descuentan las condiciones del broker cuando la app conoce su tarifa.</p>
-        </div>
-        <div class="equity-chip-row">
-          <span class="equity-chip">{{ summary.owned_positions_count }} compradas</span>
-          <span class="equity-chip">{{ summary.watchlist_positions_count }} seguimientos guardados</span>
-          {% if investment_journey.available %}<span class="equity-chip">{{ investment_journey.closed_count }} vendidas</span>{% endif %}
-          {% if analysis_overview.best_decision %}<span class="equity-chip">Mejor lectura {{ analysis_overview.best_decision.ticker }}</span>{% endif %}
-          {% if ibex_universe_summary.available %}<span class="equity-chip">Radar IBEX {{ ibex_universe_summary.analyzed_count }}</span>{% endif %}
-          {% if reference_guide_summary.workbook_loaded %}<span class="equity-chip">{{ reference_guide_summary.source_label }}</span>{% endif %}
-          {% if analysis_overview.next_sale_recommendation.available %}
-            <span class="equity-chip">Primera venta {{ analysis_overview.next_sale_recommendation.ticker }} {{ analysis_overview.next_sale_recommendation.sale_window_label }}</span>
-          {% endif %}
-          {% if nightly_analysis.available %}
-            <span class="equity-chip">Analisis exhaustivo {{ nightly_analysis.status_badge }}</span>
-            <span class="equity-chip">Ultima ejecucion {{ nightly_analysis.completed_at_label }}</span>
-            {% if nightly_analysis.llm.enabled %}
-              <span class="equity-chip">IA {{ nightly_analysis.llm.completed_count }}/{{ nightly_analysis.llm.total_count }}</span>
-              <span class="equity-chip">Coste {{ nightly_analysis.llm.estimated_cost_usd }} USD</span>
+      <div class="equity-hero-layout">
+        <div class="equity-hero-main">
+          <div class="equity-hero-top">
+            <div>
+              <p class="section-title" style="margin-bottom:12px;">Cockpit de acciones</p>
+              <h1>Decision 12M mas clara y mas util</h1>
+              <p>La vista principal prioriza retorno total esperado, seguridad, fiabilidad y referencia de cada valor. Los calculos usan hasta 10 anos de historico, incorporan dividendos y descuentan las condiciones del broker cuando la app conoce su tarifa.</p>
+            </div>
+            <div class="equity-chip-row">
+              <span class="equity-chip">{{ summary.owned_positions_count }} compradas</span>
+              <span class="equity-chip">{{ summary.watchlist_positions_count }} seguimientos guardados</span>
+              {% if investment_journey.available %}<span class="equity-chip">{{ investment_journey.closed_count }} vendidas</span>{% endif %}
+              {% if analysis_overview.best_decision %}<span class="equity-chip">Mejor lectura {{ analysis_overview.best_decision.ticker }}</span>{% endif %}
+              {% if ibex_universe_summary.available %}<span class="equity-chip">Radar IBEX {{ ibex_universe_summary.analyzed_count }}</span>{% endif %}
+              {% if reference_guide_summary.workbook_loaded %}<span class="equity-chip">{{ reference_guide_summary.source_label }}</span>{% endif %}
+              {% if analysis_overview.next_sale_recommendation.available %}
+                <span class="equity-chip">Primera venta {{ analysis_overview.next_sale_recommendation.ticker }} {{ analysis_overview.next_sale_recommendation.sale_window_label }}</span>
+              {% endif %}
+              {% if nightly_analysis.available %}
+                <span class="equity-chip">Analisis exhaustivo {{ nightly_analysis.status_badge }}</span>
+                <span class="equity-chip">Ultima ejecucion {{ nightly_analysis.completed_at_label }}</span>
+                {% if nightly_analysis.llm.enabled %}
+                  <span class="equity-chip">IA {{ nightly_analysis.llm.completed_count }}/{{ nightly_analysis.llm.total_count }}</span>
+                  <span class="equity-chip">Coste {{ nightly_analysis.llm.estimated_cost_usd }} USD</span>
+                {% endif %}
+              {% else %}
+                <span class="equity-chip">Analisis exhaustivo NO OK</span>
+              {% endif %}
+            </div>
+          </div>
+          <p style="margin:14px 0 0;">
+            {% if nightly_analysis.available %}
+              Analisis exhaustivo {{ nightly_analysis.status_badge }}.
+              {% if nightly_analysis.completed_at_label %}Ultima ejecucion {{ nightly_analysis.completed_at_label }}.{% endif %}
+              {% if nightly_analysis.agent_label %} Motor {{ nightly_analysis.agent_label }}.{% endif %}
+              {% if nightly_analysis.llm.enabled %}
+                IA aplicada a {{ nightly_analysis.llm.completed_count }}/{{ nightly_analysis.llm.total_count }} valores con coste estimado {{ nightly_analysis.llm.estimated_cost_usd }} USD.
+                {% if nightly_analysis.llm.refresh_performed and nightly_analysis.llm.refresh_failed_count %} Hubo {{ nightly_analysis.llm.refresh_failed_count }} fallo(s) de API.{% endif %}
+                {% if nightly_analysis.llm.pending_count %} Quedan {{ nightly_analysis.llm.pending_count }} valores sin lectura IA previa.{% endif %}
+                {% if nightly_analysis.llm.skipped_budget_count %} Se omitieron {{ nightly_analysis.llm.skipped_budget_count }} valores por presupuesto.{% endif %}
+              {% elif nightly_analysis.llm.reason %}
+                {{ nightly_analysis.llm.reason }}
+              {% endif %}
+              {% if nightly_analysis.cache_available %} La web esta reutilizando ese analisis nocturno durante el dia.{% else %} La vista actual esta fuera del cache nocturno y puede recalcular en vivo si hace falta.{% endif %}
+              {% if nightly_analysis.status_note %} {{ nightly_analysis.status_note }}.{% endif %}
+              {% if nightly_analysis.status_key == "failed" and nightly_analysis.error_message %} Error: {{ nightly_analysis.error_message|truncatechars:160 }}{% endif %}
+            {% else %}
+              Aun no hay un analisis exhaustivo nocturno disponible. La vista usa calculo en vivo hasta que corra la tarea de madrugada.
             {% endif %}
-          {% else %}
-            <span class="equity-chip">Analisis exhaustivo NO OK</span>
-          {% endif %}
+            {% if analysis_overview.next_sale_recommendation.available %}
+              La primera salida tactica sugerida hoy seria {{ analysis_overview.next_sale_recommendation.company_name }} en {{ analysis_overview.next_sale_recommendation.sale_window_label }}.
+            {% endif %}
+          </p>
         </div>
-      </div>
-      <p style="margin:14px 0 0;">
-        {% if nightly_analysis.available %}
-          Analisis exhaustivo {{ nightly_analysis.status_badge }}.
-          {% if nightly_analysis.completed_at_label %}Ultima ejecucion {{ nightly_analysis.completed_at_label }}.{% endif %}
-          {% if nightly_analysis.agent_label %} Motor {{ nightly_analysis.agent_label }}.{% endif %}
-          {% if nightly_analysis.llm.enabled %}
-            IA aplicada a {{ nightly_analysis.llm.completed_count }}/{{ nightly_analysis.llm.total_count }} valores con coste estimado {{ nightly_analysis.llm.estimated_cost_usd }} USD.
-            {% if nightly_analysis.llm.refresh_performed and nightly_analysis.llm.refresh_failed_count %} Hubo {{ nightly_analysis.llm.refresh_failed_count }} fallo(s) de API.{% endif %}
-            {% if nightly_analysis.llm.pending_count %} Quedan {{ nightly_analysis.llm.pending_count }} valores sin lectura IA previa.{% endif %}
-            {% if nightly_analysis.llm.skipped_budget_count %} Se omitieron {{ nightly_analysis.llm.skipped_budget_count }} valores por presupuesto.{% endif %}
-          {% elif nightly_analysis.llm.reason %}
-            {{ nightly_analysis.llm.reason }}
+        <aside class="equity-sale-focus {% if not analysis_overview.next_sale_recommendation.available %}empty{% endif %}">
+          <p class="section-title">{% if analysis_overview.next_sale_recommendation.available %}Primera salida tactica{% else %}Venta tactica{% endif %}</p>
+          {% if analysis_overview.next_sale_recommendation.available %}
+            <h2 class="equity-sale-company">{{ analysis_overview.next_sale_recommendation.company_name }}</h2>
+            <div class="equity-sale-window">{{ analysis_overview.next_sale_recommendation.sale_window_label }}</div>
+            <div class="equity-sale-caption">{{ analysis_overview.next_sale_recommendation.ticker }} | sugerencia mas cercana para vender</div>
+            <p class="equity-sale-summary">
+              {{ analysis_overview.next_sale_recommendation.summary|default:"La curva 5A vigente es la primera en mostrar un giro desestacionalizado negativo en esta ventana." }}
+            </p>
+            <div class="equity-sale-meta">
+              <div class="equity-sale-metric">
+                <span>Empresa</span>
+                <strong>{{ analysis_overview.next_sale_recommendation.ticker }}</strong>
+                <small>{{ analysis_overview.next_sale_recommendation.company_name }}</small>
+              </div>
+              <div class="equity-sale-metric">
+                <span>Ventana</span>
+                <strong>{{ analysis_overview.next_sale_recommendation.sale_window_label }}</strong>
+                <small>Se recalcula con cada actualizacion de martes y jueves.</small>
+              </div>
+            </div>
+          {% else %}
+            <h2 class="equity-sale-company">Sin venta inmediata</h2>
+            <div class="equity-sale-window">Mantener seguimiento</div>
+            <div class="equity-sale-caption">No hay un giro tactico negativo prioritario</div>
+            <p class="equity-sale-summary">
+              Las acciones compradas siguen sin una ventana de salida mas urgente que el resto. En cuanto aparezca la primera venta tactica, quedara fijada aqui con empresa y fecha sugerida.
+            </p>
           {% endif %}
-          {% if nightly_analysis.cache_available %} La web esta reutilizando ese analisis nocturno durante el dia.{% else %} La vista actual esta fuera del cache nocturno y puede recalcular en vivo si hace falta.{% endif %}
-          {% if nightly_analysis.status_note %} {{ nightly_analysis.status_note }}.{% endif %}
-          {% if nightly_analysis.status_key == "failed" and nightly_analysis.error_message %} Error: {{ nightly_analysis.error_message|truncatechars:160 }}{% endif %}
-        {% else %}
-          Aun no hay un analisis exhaustivo nocturno disponible. La vista usa calculo en vivo hasta que corra la tarea de madrugada.
-        {% endif %}
-        {% if analysis_overview.next_sale_recommendation.available %}
-          La primera salida tactica sugerida hoy seria {{ analysis_overview.next_sale_recommendation.company_name }} en {{ analysis_overview.next_sale_recommendation.sale_window_label }}.
-        {% endif %}
-      </p>
+        </aside>
+      </div>
       <div class="equity-kpis">
         <div class="equity-kpi"><span>Valor cartera</span><strong>{{ analysis_overview.current_value|floatformat:0 }} EUR</strong><small>Capital ya invertido.</small></div>
         <div class="equity-kpi"><span>Rentabilidad neta</span><strong class="{% if analysis_overview.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.unrealized_return_pct|floatformat:1 }} %</strong><small>{{ analysis_overview.unrealized_gain_total|floatformat:0 }} EUR tras compra y costes anuales.</small></div>

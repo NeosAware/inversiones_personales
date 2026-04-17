@@ -1805,6 +1805,14 @@ class EquitiesServicesTests(TestCase):
         self.assertIsNotNone(context["monthly_equivalent_return_pct"])
         self.assertIsNotNone(context["active_tickets"][0]["monthly_equivalent_return_pct"])
         self.assertGreaterEqual(context["costs_total"], Decimal("0.00"))
+        self.assertEqual(
+            context["purchase_cost_total"] + context["maintenance_cost_total"] + context["sale_cost_total"],
+            context["costs_total"],
+        )
+        self.assertEqual(
+            context["costs_paid_total"] + context["open_sale_cost_reserve_total"],
+            context["costs_total"],
+        )
         self.assertIsNotNone(context["average_annual_result"])
 
     def test_sale_preview_calculates_net_result_for_a_specific_sale_price(self):
@@ -6245,6 +6253,8 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Cuenta de resultados")
         self.assertContains(response, "Resultado neto comparable de las posiciones cerradas")
         self.assertContains(response, "Rentabilidad comparable por ticket abierto")
+        self.assertContains(response, "Salida abierta estimada")
+        self.assertContains(response, "Como leer los costes:")
 
     def test_equities_page_surfaces_sale_simulator_and_unfollow_action(self):
         EquityPosition.objects.create(
