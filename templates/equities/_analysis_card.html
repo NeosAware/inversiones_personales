@@ -18,7 +18,7 @@
         <div>
           <p class="section-title">Seguimiento desde compra</p>
           <h3 style="margin:0;">Valor real frente al escenario esperado</h3>
-          <p style="margin:6px 0 0;">Aqui ves la evolucion de esta compra desde su base comun actualizada. La salida y la reentrada solo se calculan para acciones ya compradas y se expresan como ventanas anuales, no como dias exactos.</p>
+          <p style="margin:6px 0 0;">Aqui ves la evolucion de esta compra desde su base comun actualizada. La salida y la reentrada se recalculan solo para acciones compradas con cada prediccion nueva de martes y jueves, usando la curva 5A vigente y una media centrada de 5 meses sobre cada mes.</p>
         </div>
         <span class="pill">{{ tracking_ticket.snapshot_count }} foto(s) | {{ tracking_ticket.card.reference_label }}</span>
       </div>
@@ -47,20 +47,20 @@
       {% if tracking_ticket.trade_plan.available %}
         <div style="display:grid; gap:16px; grid-template-columns:repeat(auto-fit, minmax(220px,1fr)); margin-top:16px;">
           <div class="equity-mini-stat">
-            <span>Venta sugerida</span>
+            <span>Salida tactica</span>
             <strong>{% if tracking_ticket.trade_plan.sale_window_label %}{{ tracking_ticket.trade_plan.sale_window_label }}{% else %}-{% endif %}</strong>
             <small>
-              {% if tracking_ticket.trade_plan.mode == "hold" and tracking_ticket.trade_plan.sale_year_number %}
-                Mantener y revisar al cierre del A&Ntilde;O {{ tracking_ticket.trade_plan.sale_year_number }}.
-              {% elif tracking_ticket.trade_plan.sale_year_number and tracking_ticket.trade_plan.drawdown_year_number %}
-                Cierre A&Ntilde;O {{ tracking_ticket.trade_plan.sale_year_number }} antes del tramo A&Ntilde;O {{ tracking_ticket.trade_plan.drawdown_year_number }}.
+              {% if tracking_ticket.trade_plan.mode == "hold" %}
+                La pendiente 5M no gira a negativo en la proyeccion 5A actual.
+              {% elif tracking_ticket.trade_plan.sale_month_number %}
+                Primer mes en el que la pendiente suavizada cambia a negativa.
               {% else %}
                 Sin ventana sugerida.
               {% endif %}
             </small>
           </div>
           <div class="equity-mini-stat">
-            <span>{% if tracking_ticket.trade_plan.reentry_window_label %}Reentrada sugerida{% else %}Lectura tactica{% endif %}</span>
+            <span>{% if tracking_ticket.trade_plan.reentry_window_label %}Reentrada tactica{% else %}Lectura tactica{% endif %}</span>
             <strong>
               {% if tracking_ticket.trade_plan.reentry_window_label %}
                 {{ tracking_ticket.trade_plan.reentry_window_label }}
@@ -71,27 +71,27 @@
               {% endif %}
             </strong>
             <small>
-              {% if tracking_ticket.trade_plan.reentry_year_number %}
-                Inicio A&Ntilde;O {{ tracking_ticket.trade_plan.reentry_year_number }} si la tesis sigue viva.
+              {% if tracking_ticket.trade_plan.reentry_month_number %}
+                Primer mes posterior en el que la pendiente 5M vuelve a positivo.
               {% elif tracking_ticket.trade_plan.mode == "hold" %}
-                No hay una caida anual fuerte que justifique salir y recomprar.
+                No hay un giro bajista claro que justifique salir y recomprar.
               {% else %}
                 No hay reentrada clara; conviene contrastarlo con el radar actual.
               {% endif %}
             </small>
           </div>
           <div class="equity-mini-stat">
-            <span>Lectura 1-5 A&Ntilde;OS</span>
+            <span>Pendiente 5M</span>
             <strong>
-              {% if tracking_ticket.trade_plan.drawdown_margin_pct is not None %}
-                {{ tracking_ticket.trade_plan.drawdown_margin_pct|floatformat:1 }} %
-              {% elif tracking_ticket.trade_plan.sale_year_number %}
-                A&Ntilde;O {{ tracking_ticket.trade_plan.sale_year_number }}
+              {% if tracking_ticket.trade_plan.signal_value_pct is not None %}
+                {{ tracking_ticket.trade_plan.signal_value_pct|floatformat:2 }} %
+              {% elif tracking_ticket.trade_plan.signal_label %}
+                {{ tracking_ticket.trade_plan.signal_label }}
               {% else %}
                 Estable
               {% endif %}
             </strong>
-            <small>{{ tracking_ticket.trade_plan.summary }}</small>
+            <small>{{ tracking_ticket.trade_plan.analysis_basis_label }}. {{ tracking_ticket.trade_plan.summary }}</small>
           </div>
           {% if tracking_ticket.rotation_plan.available %}
             <div class="equity-mini-stat">

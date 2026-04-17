@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from calendar import monthrange
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
@@ -51,6 +52,20 @@ OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT = Decimal("2.00")
 OPTIMIZER_MIN_GAIN_TO_ROUNDTRIP_MULTIPLE = Decimal("1.80")
 
 logger = logging.getLogger(__name__)
+SPANISH_MONTH_LABELS = {
+    1: "enero",
+    2: "febrero",
+    3: "marzo",
+    4: "abril",
+    5: "mayo",
+    6: "junio",
+    7: "julio",
+    8: "agosto",
+    9: "septiembre",
+    10: "octubre",
+    11: "noviembre",
+    12: "diciembre",
+}
 DEFAULT_EQUITY_ANALYSIS_NOTIONAL = Decimal("10000.00")
 DEFAULT_BENCHMARK_SYMBOL = "^IBEX"
 DEFAULT_BENCHMARK_NAME = "IBEX 35"
@@ -3127,6 +3142,40 @@ def add_calendar_years(value: date | None, years: int) -> date | None:
         return value.replace(month=2, day=28, year=value.year + years)
 
 
+def add_calendar_months(value: date | None, months: int) -> date | None:
+    if value is None:
+        return None
+    month_index = (value.month - 1) + months
+    year = value.year + (month_index // 12)
+    month = (month_index % 12) + 1
+    day = min(value.day, monthrange(year, month)[1])
+    return value.replace(year=year, month=month, day=day)
+
+
+def parse_projection_label_months(label: str | None) -> int | None:
+    normalized = str(label or "").strip().upper()
+    if not normalized:
+        return None
+    year_match = re.fullmatch(r"(\d+)A", normalized)
+    if year_match:
+        return int(year_match.group(1)) * 12
+    month_match = re.fullmatch(r"(\d+)M", normalized)
+    if month_match:
+        return int(month_match.group(1))
+    return None
+
+
+def format_projection_month_window(projected_date: date | None, month_number: int | None) -> str:
+    if projected_date:
+        month_label = SPANISH_MONTH_LABELS.get(projected_date.month, str(projected_date.month))
+        if month_number:
+            return f"{month_label} {projected_date.year} (mes {month_number})"
+        return f"{month_label} {projected_date.year}"
+    if month_number:
+        return f"Mes {month_number}"
+    return ""
+
+
 def build_purchase_baseline_yearly_rows(
     purchase_baseline: EquityPurchaseForecastBaseline | None,
 ) -> list[dict]:
@@ -3292,6 +3341,211 @@ def build_purchase_forecast_trade_plan(
     }
 
 
+def build_cycle_projection_monthly_trend_rows(card: dict) -> list[dict]:
+    position = card.get("position")
+    cycle_projection = card.get("cycle_projection_5y") or {}
+    if position is None or not cycle_projection.get("available"):
+        return []
+
+    current_price = getattr(position, "current_price_per_share", None)
+    path = cycle_projection.get("path") or []
+    if current_price in {None, ZERO} or not path:
+        return []
+
+    anchor_date = getattr(position, "latest_price_date", None) or django_timezone.localdate()
+    anchor_points = [(0, current_price, anchor_date)]
+    for index, step in enumerate(path, start=1):
+        projected_price = step.get("projected_price")
+        months_offset = parse_projection_label_months(step.get("label")) or (index * 6)
+        if projected_price in {None, ZERO} or months_offset <= 0:
+            continue
+        anchor_points.append(
+            (
+                months_offset,
+                projected_price,
+                step.get("projected_date") or add_calendar_months(anchor_date, months_offset),
+            )
+        )
+
+    if len(anchor_points) < 2:
+        return []
+
+    monthly_rows = []
+    for (start_month, start_price, start_date), (end_month, end_price, _) in zip(anchor_points, anchor_points[1:]):
+        if start_price in {None, ZERO} or end_price in {None, ZERO} or end_month <= start_month:
+            continue
+        for month_number in range(start_month, end_month):
+            if month_number < start_month:
+                continue
+            fraction = Decimal(str(month_number - start_month)) / Decimal(str(end_month - start_month))
+            price_ratio = float(Decimal(str(end_price)) / Decimal(str(start_price)))
+            interpolated_price = Decimal(str(round(float(start_price) * (price_ratio ** float(fraction)), 4)))
+            monthly_rows.append(
+                {
+                    "month_number": month_number,
+                    "projected_date": add_calendar_months(start_date, month_number - start_month),
+                    "projected_price": quantize_decimal(interpolated_price, "0.0001"),
+                }
+            )
+
+    final_month, final_price, final_date = anchor_points[-1]
+    monthly_rows.append(
+        {
+            "month_number": final_month,
+            "projected_date": final_date,
+            "projected_price": quantize_decimal(final_price, "0.0001"),
+        }
+    )
+
+    monthly_rows.sort(key=lambda item: item["month_number"])
+    deduped_rows = []
+    seen_months = set()
+    for row in monthly_rows:
+        if row["month_number"] in seen_months:
+            continue
+        seen_months.add(row["month_number"])
+        deduped_rows.append(row)
+
+    for index, row in enumerate(deduped_rows):
+        if index < 2 or index > len(deduped_rows) - 3:
+            row["smoothed_price"] = None
+            row["smoothed_slope_value"] = None
+            row["smoothed_slope_pct"] = None
+            continue
+        smoothed_price = average_decimal(
+            [item["projected_price"] for item in deduped_rows[index - 2:index + 3] if item.get("projected_price") is not None]
+        )
+        row["smoothed_price"] = quantize_decimal(smoothed_price, "0.0001")
+        previous_smoothed = deduped_rows[index - 1].get("smoothed_price")
+        if previous_smoothed in {None, ZERO} or row["smoothed_price"] is None:
+            row["smoothed_slope_value"] = None
+            row["smoothed_slope_pct"] = None
+        else:
+            row["smoothed_slope_value"] = quantize_decimal(row["smoothed_price"] - previous_smoothed, "0.0001")
+            row["smoothed_slope_pct"] = quantize_decimal(
+                percentage_change(row["smoothed_price"], previous_smoothed),
+                "0.01",
+            )
+
+    return deduped_rows
+
+
+def build_owned_cycle_trade_timing_plan(card: dict) -> dict:
+    position = card.get("position")
+    if position is None or not getattr(position, "is_owned", False):
+        return {"available": False}
+
+    monthly_rows = build_cycle_projection_monthly_trend_rows(card)
+    if len(monthly_rows) < 7:
+        return {"available": False}
+
+    current_price = getattr(position, "current_price_per_share", None)
+    valid_rows = [row for row in monthly_rows if row.get("smoothed_slope_pct") is not None]
+    if not valid_rows:
+        return {"available": False}
+
+    sell_row = None
+    previous_row = None
+    for row in valid_rows:
+        if previous_row is not None:
+            previous_slope = previous_row.get("smoothed_slope_pct")
+            current_slope = row.get("smoothed_slope_pct")
+            if previous_slope is not None and current_slope is not None and previous_slope >= ZERO and current_slope < ZERO:
+                sell_row = row
+                break
+        previous_row = row
+
+    if sell_row is None:
+        return {
+            "available": True,
+            "mode": "hold",
+            "analysis_basis_label": "Pendiente 5M desestacionalizada sobre la senda 5A vigente",
+            "sale_month_number": None,
+            "sale_window_label": "Mantener",
+            "sale_date": None,
+            "sale_date_label": "",
+            "reentry_month_number": None,
+            "reentry_window_label": "",
+            "reentry_date": None,
+            "reentry_date_label": "",
+            "summary": (
+                "La pendiente desestacionalizada de 5 meses sigue positiva en toda la curva 5A vigente. "
+                "No aparece un giro bajista claro que justifique salir por ahora."
+            ),
+            "signal_label": "Pendiente 5M positiva",
+            "signal_value_pct": valid_rows[-1].get("smoothed_slope_pct"),
+            "monthly_rows": monthly_rows,
+            "drawdown_month_number": None,
+            "drawdown_margin_pct": None,
+            "pre_sale_return_pct": None,
+        }
+
+    reentry_row = None
+    previous_row = sell_row
+    for row in valid_rows:
+        if row["month_number"] <= sell_row["month_number"]:
+            previous_row = row
+            continue
+        previous_slope = previous_row.get("smoothed_slope_pct")
+        current_slope = row.get("smoothed_slope_pct")
+        if previous_slope is not None and current_slope is not None and previous_slope <= ZERO and current_slope > ZERO:
+            reentry_row = row
+            break
+        previous_row = row
+
+    pre_sale_return_pct = (
+        quantize_decimal(percentage_change(sell_row.get("projected_price"), current_price), "0.01")
+        if current_price not in {None, ZERO}
+        else None
+    )
+    sale_window_label = format_projection_month_window(
+        sell_row.get("projected_date"),
+        sell_row.get("month_number"),
+    )
+    reentry_window_label = format_projection_month_window(
+        reentry_row.get("projected_date") if reentry_row else None,
+        reentry_row.get("month_number") if reentry_row else None,
+    )
+    summary = (
+        f"La pendiente desestacionalizada de 5 meses gira a negativo en {sale_window_label.lower()}. "
+        f"Antes de ese giro la senda aun deja un {pre_sale_return_pct:.2f} % de recorrido estimado."
+        if pre_sale_return_pct is not None
+        else f"La pendiente desestacionalizada de 5 meses gira a negativo en {sale_window_label.lower()}."
+    )
+    if reentry_row:
+        summary += (
+            f" Si despues vuelve a cruzar a positivo, la primera ventana clara aparece en "
+            f"{reentry_window_label.lower()}."
+        )
+    else:
+        summary += " Despues no aparece una reentrada clara en la curva 5A actual."
+
+    return {
+        "available": True,
+        "mode": "sale_reentry" if reentry_row else "sale_review",
+        "analysis_basis_label": "Pendiente 5M desestacionalizada sobre la senda 5A vigente",
+        "sale_month_number": sell_row["month_number"],
+        "sale_year_number": max(int(math.ceil(sell_row["month_number"] / 12)), 1),
+        "sale_window_label": sale_window_label,
+        "sale_date": sell_row.get("projected_date"),
+        "sale_date_label": sell_row.get("projected_date").isoformat() if sell_row.get("projected_date") else "",
+        "reentry_month_number": reentry_row["month_number"] if reentry_row else None,
+        "reentry_year_number": max(int(math.ceil(reentry_row["month_number"] / 12)), 1) if reentry_row else None,
+        "reentry_window_label": reentry_window_label,
+        "reentry_date": reentry_row.get("projected_date") if reentry_row else None,
+        "reentry_date_label": reentry_row.get("projected_date").isoformat() if reentry_row and reentry_row.get("projected_date") else "",
+        "summary": summary,
+        "signal_label": "Pendiente 5M negativa" if sell_row.get("smoothed_slope_pct") is not None else "Pendiente 5M",
+        "signal_value_pct": sell_row.get("smoothed_slope_pct"),
+        "monthly_rows": monthly_rows,
+        "yearly_rows": [],
+        "drawdown_month_number": sell_row["month_number"],
+        "drawdown_year_number": max(int(math.ceil(sell_row["month_number"] / 12)), 1),
+        "drawdown_margin_pct": sell_row.get("smoothed_slope_pct"),
+        "pre_sale_return_pct": pre_sale_return_pct,
+    }
+
+
 def build_purchase_trade_rotation_guidance(
     trade_plan: dict,
     position: EquityPosition,
@@ -3328,48 +3582,6 @@ def build_purchase_trade_rotation_guidance(
     if selected_candidate is None or selected_scenario is None:
         return {"available": False}
 
-    yearly_rows = trade_plan.get("yearly_rows") or []
-    sale_year_number = trade_plan.get("sale_year_number")
-    sale_row = next((item for item in yearly_rows if item.get("year_number") == sale_year_number), None)
-    future_rows = [
-        item
-        for item in yearly_rows
-        if sale_year_number is not None
-        and item.get("year_number", 0) > sale_year_number
-        and item.get("projected_price") is not None
-    ]
-    best_future_row = max(
-        future_rows,
-        key=lambda item: (
-            item.get("cumulative_return_pct")
-            if item.get("cumulative_return_pct") is not None
-            else Decimal("-9999"),
-            -item.get("year_number", 0),
-        ),
-        default=None,
-    )
-    hold_remaining_return_pct = None
-    if sale_row and best_future_row and sale_row.get("projected_price") not in {None, ZERO}:
-        hold_remaining_return_pct = percentage_change(
-            best_future_row.get("projected_price"),
-            sale_row.get("projected_price"),
-        )
-
-    reentry_reference_row = next(
-        (
-            item
-            for item in yearly_rows
-            if item.get("year_number") == trade_plan.get("drawdown_year_number")
-        ),
-        None,
-    )
-    reentry_remaining_return_pct = None
-    if reentry_reference_row and best_future_row and reentry_reference_row.get("projected_price") not in {None, ZERO}:
-        reentry_remaining_return_pct = percentage_change(
-            best_future_row.get("projected_price"),
-            reentry_reference_row.get("projected_price"),
-        )
-
     alternative_return_pct = selected_scenario.get("net_projected_return_pct")
     action = "mantener"
     summary = (
@@ -3377,12 +3589,9 @@ def build_purchase_trade_rotation_guidance(
         f"({selected_candidate['position'].ticker}) con retorno neto 12M del {alternative_return_pct:.2f} %."
     )
 
-    drawdown_margin_pct = trade_plan.get("drawdown_margin_pct")
-    tactical_weak_period_pct = (
-        drawdown_margin_pct.copy_abs()
-        if isinstance(drawdown_margin_pct, Decimal) and drawdown_margin_pct < ZERO
-        else ZERO
-    )
+    tactical_weak_period_pct = trade_plan.get("pre_sale_return_pct")
+    if tactical_weak_period_pct is None:
+        tactical_weak_period_pct = ZERO
     if (
         trade_plan.get("mode") in {"sale_reentry", "sale_review"}
         and alternative_return_pct is not None
@@ -3392,14 +3601,14 @@ def build_purchase_trade_rotation_guidance(
         summary = (
             f"En la foto actual compensa mas rotar hacia {selected_candidate['position'].company_name} "
             f"({selected_candidate['position'].ticker}), con retorno neto 12M del {alternative_return_pct:.2f} %, "
-            "que aguantar el tramo debil previsto de esta posicion."
+            "que esperar el giro bajista previsto en la tendencia 5A de esta posicion."
         )
     elif trade_plan.get("mode") == "sale_reentry":
         action = "esperar_reentrada"
-        summary += " Hoy sigue pesando mas la salida tactica y esperar la reentrada sugerida."
+        summary += " Hoy sigue pesando mas esperar la ventana de salida y la posible reentrada que rotar ahora."
     elif trade_plan.get("mode") == "sale_review":
         action = "revisar_en_venta"
-        summary += " Hoy sigue pesando mas vender en la fecha sugerida y revisar entonces el radar."
+        summary += " Hoy sigue pesando mas esperar la ventana de salida y revisar entonces el radar."
 
     return {
         "available": True,
@@ -3412,8 +3621,8 @@ def build_purchase_trade_rotation_guidance(
         "alternative_trade_alert_label": selected_candidate.get("trade_alert_label") or "",
         "alternative_reliability_label": selected_candidate.get("reliability_label") or "",
         "alternative_strategy_label": selected_candidate.get("strategy_label") or "",
-        "hold_remaining_return_pct": quantize_decimal(hold_remaining_return_pct),
-        "reentry_remaining_return_pct": quantize_decimal(reentry_remaining_return_pct),
+        "hold_remaining_return_pct": quantize_decimal(tactical_weak_period_pct),
+        "reentry_remaining_return_pct": None,
     }
 
 
@@ -3452,7 +3661,7 @@ def build_equity_ticket_tracking_item(
         else None
     )
     try:
-        trade_plan = build_purchase_forecast_trade_plan(purchase_baseline)
+        trade_plan = build_owned_cycle_trade_timing_plan(card)
     except Exception:
         logger.exception(
             "No se pudo construir el plan tactico de compra para %s",
@@ -7947,24 +8156,13 @@ def build_equity_round_investment_plan(
             "target_total_capital": target_total_capital,
         }
 
-    baseline_map = {
-        baseline.position_id: baseline
-        for baseline in EquityPurchaseForecastBaseline.objects.filter(
-            position_id__in=[
-                card["position"].id
-                for card in optimizer_cards
-                if getattr(card.get("position"), "id", None)
-            ]
-        )
-    }
     candidate_pool = []
     for card in optimizer_cards:
         candidate = build_equity_optimizer_candidate(card, strategy["mode"])
         if candidate is None:
             continue
-        position_id = getattr(candidate["position"], "id", None)
-        if position_id:
-            trade_plan = build_purchase_forecast_trade_plan(baseline_map.get(position_id))
+        if candidate["position"].is_owned:
+            trade_plan = build_owned_cycle_trade_timing_plan(candidate["card"])
             if trade_plan.get("mode") in {"sale_reentry", "sale_review"}:
                 continue
         candidate_pool.append(candidate)

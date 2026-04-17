@@ -59,6 +59,7 @@ from .services import (
     build_equity_round_investment_plan,
     build_equity_sale_preview,
     build_equity_ticket_tracking_context,
+    build_owned_cycle_trade_timing_plan,
     archive_equity_position_sale,
     build_trade_alert,
     build_reference_suggestions_for_equity,
@@ -1367,7 +1368,52 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(all(item["baseline_snapshot"].snapshot_date == date(2026, 4, 13) for item in tracking["tickets"]))
         self.assertEqual(tracking["global"]["chart"]["start_label"], "2026-04-13")
 
-    def test_ticket_tracking_includes_sale_and_reentry_plan_from_purchase_baseline(self):
+    def test_build_owned_cycle_trade_timing_plan_detects_monthly_trend_turns(self):
+        position = EquityPosition(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2023, 1, 31),
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("100.0000"),
+            latest_price_date=date(2026, 4, 17),
+        )
+        card = {
+            "position": position,
+            "cycle_projection_5y": {
+                "available": True,
+                "path": [
+                    {"label": "6M", "projected_price": Decimal("118.0000")},
+                    {"label": "12M", "projected_price": Decimal("126.0000")},
+                    {"label": "18M", "projected_price": Decimal("112.0000")},
+                    {"label": "24M", "projected_price": Decimal("96.0000")},
+                    {"label": "30M", "projected_price": Decimal("101.0000")},
+                    {"label": "36M", "projected_price": Decimal("118.0000")},
+                    {"label": "42M", "projected_price": Decimal("132.0000")},
+                    {"label": "48M", "projected_price": Decimal("145.0000")},
+                    {"label": "54M", "projected_price": Decimal("156.0000")},
+                    {"label": "60M", "projected_price": Decimal("168.0000")},
+                ],
+            },
+        }
+
+        plan = build_owned_cycle_trade_timing_plan(card)
+
+        self.assertTrue(plan["available"])
+        self.assertEqual(plan["mode"], "sale_reentry")
+        self.assertEqual(plan["sale_month_number"], 12)
+        self.assertEqual(plan["sale_window_label"], "abril 2027 (mes 12)")
+        self.assertEqual(plan["reentry_month_number"], 26)
+        self.assertEqual(plan["reentry_window_label"], "junio 2028 (mes 26)")
+        self.assertEqual(plan["signal_value_pct"], Decimal("-0.13"))
+        self.assertEqual(plan["pre_sale_return_pct"], Decimal("26.00"))
+        self.assertIn("pendiente desestacionalizada de 5 meses", plan["summary"].lower())
+
+    def test_ticket_tracking_includes_sale_and_reentry_plan_from_current_cycle_trend(self):
         position = EquityPosition.objects.create(
             broker="Interactive Brokers",
             ticker="IBE",
@@ -1431,18 +1477,45 @@ class EquitiesServicesTests(TestCase):
             growth=Decimal("1.0060"),
             start_price=Decimal("100.0000"),
         )
-        with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
+        trade_plan_payload = {
+            "available": True,
+            "mode": "sale_reentry",
+            "analysis_basis_label": "Pendiente 5M desestacionalizada sobre la senda 5A vigente",
+            "sale_month_number": 12,
+            "sale_year_number": 1,
+            "sale_window_label": "abril 2027 (mes 12)",
+            "sale_date": date(2027, 4, 17),
+            "sale_date_label": "2027-04-17",
+            "reentry_month_number": 26,
+            "reentry_year_number": 3,
+            "reentry_window_label": "junio 2028 (mes 26)",
+            "reentry_date": date(2028, 6, 17),
+            "reentry_date_label": "2028-06-17",
+            "summary": "La pendiente desestacionalizada de 5 meses gira a negativo y luego vuelve a positivo.",
+            "signal_label": "Pendiente 5M negativa",
+            "signal_value_pct": Decimal("-0.13"),
+            "monthly_rows": [],
+            "yearly_rows": [],
+            "drawdown_month_number": 12,
+            "drawdown_year_number": 1,
+            "drawdown_margin_pct": Decimal("-0.13"),
+            "pre_sale_return_pct": Decimal("8.00"),
+        }
+        with (
+            patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series),
+            patch("equities.services.build_owned_cycle_trade_timing_plan", return_value=trade_plan_payload),
+        ):
             tracking = build_equity_ticket_tracking_context(refreshed_cards, optimizer_cards=refreshed_cards)
 
         trade_plan = tracking["tickets"][0]["trade_plan"]
         self.assertTrue(trade_plan["available"])
         self.assertEqual(trade_plan["mode"], "sale_reentry")
-        self.assertEqual(trade_plan["sale_year_number"], 1)
-        self.assertEqual(trade_plan["sale_window_label"], "Cierre AÑO 1")
-        self.assertEqual(trade_plan["reentry_year_number"], 3)
-        self.assertEqual(trade_plan["reentry_window_label"], "Inicio AÑO 3")
-        self.assertEqual(trade_plan["drawdown_year_number"], 2)
-        self.assertEqual(trade_plan["drawdown_margin_pct"], Decimal("-11.61"))
+        self.assertEqual(trade_plan["sale_month_number"], 12)
+        self.assertEqual(trade_plan["sale_window_label"], "abril 2027 (mes 12)")
+        self.assertEqual(trade_plan["reentry_month_number"], 26)
+        self.assertEqual(trade_plan["reentry_window_label"], "junio 2028 (mes 26)")
+        self.assertEqual(trade_plan["drawdown_month_number"], 12)
+        self.assertEqual(trade_plan["drawdown_margin_pct"], Decimal("-0.13"))
         self.assertEqual(tracking["tickets"][0]["rotation_plan"]["action"], "rotar")
         self.assertEqual(tracking["tickets"][0]["rotation_plan"]["alternative_ticker"], "ELE")
 
@@ -5739,17 +5812,43 @@ class EquitiesViewTests(TestCase):
             growth=Decimal("1.0060"),
             start_price=Decimal("100.0000"),
         )
+        trade_plan_payload = {
+            "available": True,
+            "mode": "sale_reentry",
+            "analysis_basis_label": "Pendiente 5M desestacionalizada sobre la senda 5A vigente",
+            "sale_month_number": 12,
+            "sale_year_number": 1,
+            "sale_window_label": "abril 2027 (mes 12)",
+            "sale_date": date(2027, 4, 17),
+            "sale_date_label": "2027-04-17",
+            "reentry_month_number": 26,
+            "reentry_year_number": 3,
+            "reentry_window_label": "junio 2028 (mes 26)",
+            "reentry_date": date(2028, 6, 17),
+            "reentry_date_label": "2028-06-17",
+            "summary": "La pendiente desestacionalizada de 5 meses gira a negativo y luego vuelve a positivo.",
+            "signal_label": "Pendiente 5M negativa",
+            "signal_value_pct": Decimal("-0.13"),
+            "monthly_rows": [],
+            "yearly_rows": [],
+            "drawdown_month_number": 12,
+            "drawdown_year_number": 1,
+            "drawdown_margin_pct": Decimal("-0.13"),
+            "pre_sale_return_pct": Decimal("8.00"),
+        }
         with (
             patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series),
             patch("equities.views.build_equity_investment_journey_context", return_value={"available": False}),
+            patch("equities.services.build_owned_cycle_trade_timing_plan", return_value=trade_plan_payload),
         ):
             response = self.client.get(reverse("equities:list"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Venta sugerida")
-        self.assertContains(response, "Cierre AÑO 1")
-        self.assertContains(response, "Reentrada sugerida")
-        self.assertContains(response, "Inicio AÑO 3")
+        self.assertContains(response, "Salida tactica")
+        self.assertContains(response, "abril 2027 (mes 12)")
+        self.assertContains(response, "Reentrada tactica")
+        self.assertContains(response, "junio 2028 (mes 26)")
+        self.assertContains(response, "Pendiente 5M")
         self.assertContains(response, "Rotacion radar")
         self.assertContains(response, "Rotar a ELE")
 
@@ -5846,9 +5945,34 @@ class EquitiesViewTests(TestCase):
             growth=Decimal("1.0060"),
             start_price=Decimal("100.0000"),
         )
+        trade_plan_payload = {
+            "available": True,
+            "mode": "sale_reentry",
+            "analysis_basis_label": "Pendiente 5M desestacionalizada sobre la senda 5A vigente",
+            "sale_month_number": 12,
+            "sale_year_number": 1,
+            "sale_window_label": "abril 2027 (mes 12)",
+            "sale_date": date(2027, 4, 17),
+            "sale_date_label": "2027-04-17",
+            "reentry_month_number": 26,
+            "reentry_year_number": 3,
+            "reentry_window_label": "junio 2028 (mes 26)",
+            "reentry_date": date(2028, 6, 17),
+            "reentry_date_label": "2028-06-17",
+            "summary": "La pendiente desestacionalizada de 5 meses gira a negativo y luego vuelve a positivo.",
+            "signal_label": "Pendiente 5M negativa",
+            "signal_value_pct": Decimal("-0.13"),
+            "monthly_rows": [],
+            "yearly_rows": [],
+            "drawdown_month_number": 12,
+            "drawdown_year_number": 1,
+            "drawdown_margin_pct": Decimal("-0.13"),
+            "pre_sale_return_pct": Decimal("8.00"),
+        }
         with (
             patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series),
             patch("equities.views.build_equity_investment_journey_context", return_value={"available": False}),
+            patch("equities.services.build_owned_cycle_trade_timing_plan", return_value=trade_plan_payload),
         ):
             response = self.client.get(reverse("equities:list"))
 
@@ -5856,8 +5980,8 @@ class EquitiesViewTests(TestCase):
         baseline = EquityPurchaseForecastBaseline.objects.get(position=position)
         self.assertEqual(baseline.source_analysis_date, date(2026, 4, 17))
         self.assertEqual(baseline.baseline_date, date(2026, 4, 17))
-        self.assertContains(response, "Venta sugerida")
-        self.assertContains(response, "Cierre AÑO 1")
+        self.assertContains(response, "Salida tactica")
+        self.assertContains(response, "abril 2027 (mes 12)")
 
     def test_equities_page_can_render_round_investment_plan(self):
         owned = EquityPosition.objects.create(
