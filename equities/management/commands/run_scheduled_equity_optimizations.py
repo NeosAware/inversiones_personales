@@ -18,9 +18,9 @@ class Command(BaseCommand):
             help="Lanza las optimizaciones aunque la fecha no caiga en un dia programado.",
         )
         parser.add_argument(
-            "--inline",
+            "--background",
             action="store_true",
-            help="Procesa las optimizaciones en este mismo proceso en lugar de en segundo plano.",
+            help="Deja las optimizaciones en segundo plano. Por defecto el comando las procesa en este mismo proceso para que cron y SSH no corten el trabajo.",
         )
 
     def handle(self, *args, **options):
@@ -33,7 +33,7 @@ class Command(BaseCommand):
         runs = launch_scheduled_equity_optimization_runs(
             analysis_date=analysis_date,
             force=bool(options.get("force")),
-            run_inline=bool(options.get("inline")),
+            run_inline=not bool(options.get("background")),
         )
         if not runs:
             self.stdout.write(
@@ -48,6 +48,6 @@ class Command(BaseCommand):
         ).strip()
         self.stdout.write(
             self.style.SUCCESS(
-                f"Optimizaciones programadas {analysis_label or 'actuales'}: {len(runs)} ejecucion(es) preparadas."
+                f"Optimizaciones programadas {analysis_label or 'actuales'}: {len(runs)} ejecucion(es) completadas."
             )
         )

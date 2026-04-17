@@ -56,10 +56,11 @@ class Command(BaseCommand):
         optimization_runs = launch_scheduled_equity_optimization_runs(
             analysis_date=run.analysis_date,
             force=False,
+            run_inline=True,
         )
         if optimization_runs:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Optimizaciones programadas listas para {run.analysis_date}: {len(optimization_runs)} ejecucion(es)."
+                    f"Optimizaciones programadas completadas para {run.analysis_date}: {len(optimization_runs)} ejecucion(es)."
                 )
             )

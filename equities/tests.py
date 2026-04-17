@@ -3395,6 +3395,7 @@ class EquitiesServicesTests(TestCase):
 
         mocked_runner.assert_called_once()
         mocked_scheduler.assert_called_once()
+        self.assertTrue(mocked_scheduler.call_args.kwargs["run_inline"])
 
     def test_scheduled_optimization_management_command_invokes_scheduler(self):
         with patch("equities.management.commands.run_scheduled_equity_optimizations.launch_scheduled_equity_optimization_runs") as mocked_scheduler:
@@ -3421,6 +3422,25 @@ class EquitiesServicesTests(TestCase):
             call_command("run_scheduled_equity_optimizations", "--analysis-date", "2026-04-21")
 
         mocked_scheduler.assert_called_once()
+        self.assertTrue(mocked_scheduler.call_args.kwargs["run_inline"])
+
+    def test_scheduled_optimization_management_command_can_use_background_mode(self):
+        with patch("equities.management.commands.run_scheduled_equity_optimizations.launch_scheduled_equity_optimization_runs") as mocked_scheduler:
+            mocked_scheduler.return_value = [
+                EquityOptimizationRun(
+                    reference_code="OPT-SCHED-BG-001",
+                    label="Programada - 12M principal",
+                    total_investment=Decimal("100000"),
+                    max_company_pct=Decimal("20"),
+                    max_total_positions=0,
+                    max_sector_positions=0,
+                    progress_data={"scheduled_analysis_date": "2026-04-21"},
+                ),
+            ]
+            call_command("run_scheduled_equity_optimizations", "--analysis-date", "2026-04-21", "--background")
+
+        mocked_scheduler.assert_called_once()
+        self.assertFalse(mocked_scheduler.call_args.kwargs["run_inline"])
 
     def test_build_dashboard_from_nightly_cache_uses_live_position_values(self):
         analysis_day = timezone.localdate()
