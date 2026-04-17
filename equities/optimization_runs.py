@@ -1465,7 +1465,18 @@ def launch_scheduled_equity_optimization_runs(
 
     existing_runs = load_existing_scheduled_optimization_runs(analysis_date)
     if existing_runs:
-        return existing_runs
+        reusable_runs = [
+            run
+            for run in existing_runs
+            if run.status in {
+                EquityOptimizationRun.Status.PENDING,
+                EquityOptimizationRun.Status.RUNNING,
+                EquityOptimizationRun.Status.COMPLETED,
+            }
+        ]
+        if reusable_runs:
+            return reusable_runs
+        EquityOptimizationRun.objects.filter(id__in=[run.id for run in existing_runs]).delete()
 
     weekdays = scheduled_optimization_iso_weekdays()
     weekdays_label = build_scheduled_optimization_weekdays_label(weekdays)

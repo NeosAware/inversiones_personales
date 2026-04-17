@@ -2270,6 +2270,52 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual({run.id for run in first_runs}, {run.id for run in second_runs})
 
     @override_settings(
+        EQUITIES_OPTIMIZATION_ASYNC=False,
+        EQUITIES_SCHEDULED_OPTIMIZATION_ENABLED=True,
+        EQUITIES_SCHEDULED_OPTIMIZATION_ISO_WEEKDAYS=(2, 4),
+    )
+    def test_launch_scheduled_optimization_runs_replaces_failed_attempts(self):
+        analysis_day = date(2026, 4, 21)
+        failed_runs = [
+            EquityOptimizationRun.objects.create(
+                reference_code=f"OPT-FAILED-{suffix}",
+                label=f"Fallida {suffix}",
+                total_investment=Decimal("100000"),
+                max_company_pct=Decimal("20"),
+                max_total_positions=0,
+                max_sector_positions=0,
+                status=EquityOptimizationRun.Status.FAILED,
+                progress_data={
+                    "strategy_mode": strategy_mode,
+                    "strategy_label": strategy_label,
+                    "schedule_kind": "nightly",
+                    "scheduled_run_key": "scheduled-optimization:2026-04-21",
+                    "scheduled_analysis_date": "2026-04-21",
+                    "scheduled_weekdays_label": "martes y jueves",
+                },
+            )
+            for suffix, strategy_mode, strategy_label in (
+                ("12M", "12m_primary", "12M principal"),
+                ("5A", "5y_primary", "5A principal"),
+            )
+        ]
+
+        with (
+            patch("equities.optimization_runs.enqueue_equity_optimization_run") as mocked_enqueue,
+            patch("equities.optimization_runs.process_equity_optimization_run") as mocked_process,
+        ):
+            runs = launch_scheduled_equity_optimization_runs(
+                analysis_date=analysis_day,
+                force=False,
+            )
+
+        self.assertEqual(len(runs), 2)
+        self.assertEqual(EquityOptimizationRun.objects.count(), 2)
+        self.assertFalse(EquityOptimizationRun.objects.filter(id__in=[run.id for run in failed_runs]).exists())
+        self.assertEqual(mocked_enqueue.call_count, 2)
+        mocked_process.assert_not_called()
+
+    @override_settings(
         EQUITIES_SCHEDULED_OPTIMIZATION_ENABLED=True,
         EQUITIES_SCHEDULED_OPTIMIZATION_ISO_WEEKDAYS=(2, 4),
     )
