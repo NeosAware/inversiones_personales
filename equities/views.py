@@ -19,7 +19,12 @@ from .forms import (
     EquityPositionForm,
     EquityRoundInvestmentPlanForm,
 )
-from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition
+from .models import (
+    EquityClosedPosition,
+    EquityOptimizationRun,
+    EquityPosition,
+    EquityPurchaseForecastBaseline,
+)
 from .nightly_analysis import (
     build_dashboard_from_nightly_cache,
     build_ibex_recommendation_date_map,
@@ -73,6 +78,23 @@ class EquityPeriodBoundsMixin:
 
 class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, TemplateView):
     template_name = "equities/equityposition_list.html"
+
+    def _ensure_purchase_forecast_baselines(self, positions):
+        owned_positions = [position for position in positions if position.is_owned and position.id]
+        if not owned_positions:
+            return
+        existing_position_ids = set(
+            EquityPurchaseForecastBaseline.objects.filter(
+                position_id__in=[position.id for position in owned_positions]
+            ).values_list("position_id", flat=True)
+        )
+        for position in owned_positions:
+            if position.id in existing_position_ids:
+                continue
+            capture_purchase_forecast_baseline(
+                position,
+                baseline_date=position.opened_on or timezone.localdate(),
+            )
 
     def _optimizer_requested(self) -> bool:
         return bool(self.request.GET.getlist("selected_sectors")) or any(
@@ -249,6 +271,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             row["detail_url"] = reverse("equities:ibex_detail", kwargs={"ticker": row["ticker"]})
         if not context["nightly_analysis"]["available"]:
             capture_equity_ticket_snapshots(dashboard["owned_history_cards"])
+        self._ensure_purchase_forecast_baselines(positions)
         context["ticket_tracking"] = build_equity_ticket_tracking_context(
             dashboard["owned_history_cards"],
             optimizer_cards=dashboard["optimizer_cards"],

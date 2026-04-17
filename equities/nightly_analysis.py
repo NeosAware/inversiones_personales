@@ -533,6 +533,19 @@ def load_latest_completed_nightly_analysis_run_for_date(target_date: date) -> Eq
     )
 
 
+def load_first_completed_nightly_analysis_run_after_date(target_date: date) -> EquityNightlyAnalysisRun | None:
+    if not target_date:
+        return None
+    return (
+        EquityNightlyAnalysisRun.objects.filter(
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            analysis_date__gte=target_date,
+        )
+        .order_by("analysis_date", "id")
+        .first()
+    )
+
+
 def build_ibex_recommendation_date_map(tickers: list[str] | tuple[str, ...]) -> dict[str, dict]:
     normalized_tickers = sorted({clean_ticker(ticker) for ticker in tickers if ticker})
     if not normalized_tickers:
@@ -579,6 +592,10 @@ def load_purchase_baseline_source_card(
     baseline_date: date,
 ) -> tuple[EquityNightlyAnalysisRun | None, EquityNightlyAnalysisSnapshot | None, dict | None]:
     run = load_latest_completed_nightly_analysis_run_for_date(baseline_date)
+    if run is None:
+        run = load_first_completed_nightly_analysis_run_after_date(baseline_date)
+    if run is None:
+        run = load_latest_completed_nightly_analysis_run()
     if run is None:
         return None, None, None
 
@@ -665,11 +682,14 @@ def capture_purchase_forecast_baseline(
     run, snapshot, card = load_purchase_baseline_source_card(position, baseline_date=baseline_date)
     if run is None or snapshot is None or not card:
         return None
+    effective_baseline_date = baseline_date
+    if run.analysis_date and run.analysis_date > effective_baseline_date:
+        effective_baseline_date = run.analysis_date
 
     defaults = build_purchase_forecast_baseline_defaults(
         position,
         card,
-        baseline_date=baseline_date,
+        baseline_date=effective_baseline_date,
         source_run=run,
         source_snapshot=snapshot,
     )
