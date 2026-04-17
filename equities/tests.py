@@ -56,6 +56,7 @@ from .services import (
     build_equity_decision_rows,
     build_equity_history_cards,
     build_equity_investment_journey_context,
+    build_equity_round_investment_plan,
     build_equity_sale_preview,
     build_equity_ticket_tracking_context,
     archive_equity_position_sale,
@@ -1310,8 +1311,22 @@ class EquitiesServicesTests(TestCase):
             annual_dividend_income=Decimal("20.00"),
         )
         populate_position_history(position, growth=Decimal("1.0150"), benchmark_growth=Decimal("1.0060"), months=36)
+        alternative = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            broker="Seguimiento",
+            ticker="ELE",
+            quote_symbol="ELE.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Endesa",
+            shares=Decimal("0.0000"),
+            average_cost_per_share=Decimal("18.0000"),
+            current_price_per_share=Decimal("18.0000"),
+        )
+        populate_position_history(alternative, growth=Decimal("1.0220"), benchmark_growth=Decimal("1.0060"), months=36)
 
-        cards = build_equity_history_cards([position])
+        cards = build_equity_history_cards([position, alternative])
         capture_equity_ticket_snapshots(cards, snapshot_date=date(2026, 4, 16))
         position.current_price_per_share = Decimal("12.3000")
         position.save(update_fields=["current_price_per_share", "updated_at"])
@@ -1345,7 +1360,7 @@ class EquitiesServicesTests(TestCase):
             start_price=Decimal("100.0000"),
         )
         with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
-            tracking = build_equity_ticket_tracking_context(refreshed_cards)
+            tracking = build_equity_ticket_tracking_context(refreshed_cards, optimizer_cards=refreshed_cards)
 
         trade_plan = tracking["tickets"][0]["trade_plan"]
         self.assertTrue(trade_plan["available"])
@@ -1356,6 +1371,150 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(trade_plan["reentry_date_label"], "2028-04-16")
         self.assertEqual(trade_plan["drawdown_year_number"], 2)
         self.assertEqual(trade_plan["drawdown_margin_pct"], Decimal("-11.61"))
+        self.assertEqual(tracking["tickets"][0]["rotation_plan"]["action"], "rotar")
+        self.assertEqual(tracking["tickets"][0]["rotation_plan"]["alternative_ticker"], "ELE")
+
+    def test_round_investment_plan_respects_existing_weights_and_review_dates(self):
+        owned = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.OWNED,
+                broker="Interactive Brokers",
+                ticker="IBE",
+                quote_symbol="IBE.MC",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="Iberdrola",
+                shares=Decimal("1000.0000"),
+                average_cost_per_share=Decimal("20.0000"),
+                current_price_per_share=Decimal("22.0000"),
+            ),
+            "status_key": "owned",
+            "status_label": "Comprada",
+            "sector_label": "Electrica",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": ""},
+            "projection_reliability": {"label": "Alta", "score": Decimal("82.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("20.00"),
+                "price_return_pct": Decimal("16.00"),
+                "price_low_return_pct": Decimal("-8.00"),
+                "price_high_return_pct": Decimal("28.00"),
+                "projected_price": Decimal("26.4000"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("76.00"),
+                "gross_dividend_yield_pct": Decimal("3.20"),
+                "net_income_yield_pct": Decimal("2.80"),
+                "transaction_drag_pct": Decimal("0.20"),
+                "annualized_volatility_pct": Decimal("12.00"),
+                "positive_year_ratio_pct": Decimal("70.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.00"),
+                "max_drawdown_pct": Decimal("-18.00"),
+            },
+            "cycle_projection_5y": {"available": True, "annual_return_pct": Decimal("6.00"), "five_year_return_pct": Decimal("34.00")},
+        }
+        endesa = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                broker="Seguimiento",
+                ticker="ELE",
+                quote_symbol="ELE.MC",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="Endesa",
+                shares=Decimal("0.0000"),
+                average_cost_per_share=Decimal("18.0000"),
+                current_price_per_share=Decimal("18.0000"),
+            ),
+            "status_key": "watchlist",
+            "status_label": "Seguimiento",
+            "sector_label": "Electrica",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": ""},
+            "projection_reliability": {"label": "Alta", "score": Decimal("84.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("18.00"),
+                "price_return_pct": Decimal("14.50"),
+                "price_low_return_pct": Decimal("-6.00"),
+                "price_high_return_pct": Decimal("24.00"),
+                "projected_price": Decimal("20.6100"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("75.00"),
+                "gross_dividend_yield_pct": Decimal("3.50"),
+                "net_income_yield_pct": Decimal("3.00"),
+                "transaction_drag_pct": Decimal("0.10"),
+                "annualized_volatility_pct": Decimal("11.50"),
+                "positive_year_ratio_pct": Decimal("71.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.00"),
+                "max_drawdown_pct": Decimal("-17.00"),
+            },
+            "cycle_projection_5y": {"available": True, "annual_return_pct": Decimal("5.80"), "five_year_return_pct": Decimal("32.00")},
+        }
+        indra = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                broker="Seguimiento",
+                ticker="IDR",
+                quote_symbol="IDR.MC",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="Indra",
+                shares=Decimal("0.0000"),
+                average_cost_per_share=Decimal("18.0000"),
+                current_price_per_share=Decimal("18.0000"),
+            ),
+            "status_key": "watchlist",
+            "status_label": "Seguimiento",
+            "sector_label": "Tecnologia y defensa",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": ""},
+            "projection_reliability": {"label": "Alta", "score": Decimal("86.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("24.00"),
+                "price_return_pct": Decimal("21.50"),
+                "price_low_return_pct": Decimal("-7.00"),
+                "price_high_return_pct": Decimal("34.00"),
+                "projected_price": Decimal("22.3200"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("78.00"),
+                "gross_dividend_yield_pct": Decimal("1.20"),
+                "net_income_yield_pct": Decimal("1.00"),
+                "transaction_drag_pct": Decimal("0.10"),
+                "annualized_volatility_pct": Decimal("16.00"),
+                "positive_year_ratio_pct": Decimal("73.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-4.00"),
+                "max_drawdown_pct": Decimal("-22.00"),
+            },
+            "cycle_projection_5y": {"available": True, "annual_return_pct": Decimal("7.00"), "five_year_return_pct": Decimal("41.00")},
+        }
+
+        plan = build_equity_round_investment_plan(
+            [owned],
+            [owned, endesa, indra],
+            Decimal("70000"),
+            Decimal("10000"),
+            Decimal("30"),
+            as_of=date(2026, 4, 17),
+        )
+
+        self.assertTrue(plan["available"])
+        self.assertEqual(plan["current_overweights_count"], 1)
+        self.assertEqual(plan["rounds"][0]["round_date_label"], "2026-04-17")
+        self.assertEqual(plan["rounds"][1]["round_date_label"], "2026-04-21")
+        self.assertTrue(all(item["amount"] <= Decimal("10000") for item in plan["rounds"]))
+        self.assertTrue(all(item["post_weight_pct"] <= Decimal("30.00") for item in plan["rounds"]))
+        self.assertTrue(all(item["ticker"] != "IBE" for item in plan["rounds"]))
 
     def test_investment_journey_builds_active_and_closed_ticket_history(self):
         active = EquityPosition.objects.create(
@@ -5465,6 +5624,20 @@ class EquitiesViewTests(TestCase):
             current_price_per_share=Decimal("12.0000"),
         )
         populate_position_history(position, growth=Decimal("1.0180"), benchmark_growth=Decimal("1.0070"), months=48)
+        alternative = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Seguimiento",
+            ticker="ELE",
+            quote_symbol="ELE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Endesa",
+            shares=Decimal("0.0000"),
+            average_cost_per_share=Decimal("18.0000"),
+            current_price_per_share=Decimal("18.0000"),
+        )
+        populate_position_history(alternative, growth=Decimal("1.0220"), benchmark_growth=Decimal("1.0070"), months=48)
         EquityPurchaseForecastBaseline.objects.create(
             position=position,
             source_analysis_date=date(2026, 4, 16),
@@ -5499,6 +5672,55 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "2027-04-16")
         self.assertContains(response, "Reentrada sugerida")
         self.assertContains(response, "2028-04-16")
+        self.assertContains(response, "Rotacion radar")
+        self.assertContains(response, "Rotar a ELE")
+
+    def test_equities_page_can_render_round_investment_plan(self):
+        owned = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("1000.0000"),
+            average_cost_per_share=Decimal("20.0000"),
+            current_price_per_share=Decimal("22.0000"),
+        )
+        watchlist = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Seguimiento",
+            ticker="IDR",
+            quote_symbol="IDR.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Indra",
+            shares=Decimal("0.0000"),
+            average_cost_per_share=Decimal("18.0000"),
+            current_price_per_share=Decimal("18.0000"),
+        )
+        populate_position_history(owned, growth=Decimal("1.0180"), benchmark_growth=Decimal("1.0070"), months=48)
+        populate_position_history(watchlist, growth=Decimal("1.0240"), benchmark_growth=Decimal("1.0070"), months=48)
+
+        benchmark_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+        with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
+            response = self.client.get(
+                f"{reverse('equities:list')}?round_target_total_capital=70000&round_max_round_amount=10000&round_max_company_pct=30"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Plan por rondas")
+        self.assertContains(response, "Despliegue escalonado")
+        self.assertContains(response, "Paquete objetivo")
+        self.assertContains(response, "2026-04-17")
+        self.assertContains(response, "martes y jueves")
 
     def test_equities_page_keeps_watchlist_analysis_separate_from_owned_tabs(self):
         owned = EquityPosition.objects.create(

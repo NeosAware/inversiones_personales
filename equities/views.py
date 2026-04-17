@@ -11,7 +11,14 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.generic import TemplateView, View
 
-from .forms import EquityAllocationOptimizerForm, EquityClosePositionForm, EquityDocumentImportForm, EquityOptimizationRunForm, EquityPositionForm
+from .forms import (
+    EquityAllocationOptimizerForm,
+    EquityClosePositionForm,
+    EquityDocumentImportForm,
+    EquityOptimizationRunForm,
+    EquityPositionForm,
+    EquityRoundInvestmentPlanForm,
+)
 from .models import EquityClosedPosition, EquityOptimizationRun, EquityPosition
 from .nightly_analysis import (
     build_dashboard_from_nightly_cache,
@@ -39,6 +46,7 @@ from .services import (
     build_equity_analysis_dashboard,
     build_equity_allocation_plan,
     build_equity_investment_journey_context,
+    build_equity_round_investment_plan,
     build_equity_ticket_tracking_context,
     build_ibex_universe_card,
     archive_equity_position_sale,
@@ -105,11 +113,16 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         closed_positions = list(EquityClosedPosition.objects.all())
         selected_start_date, selected_end_date = self._selected_period_bounds()
         optimizer_requested = self._optimizer_requested()
-        defer_ibex_analysis = bool(active_optimization_runs) and not optimizer_requested
+        round_plan_requested = any(
+            self.request.GET.get(key)
+            for key in ("round_target_total_capital", "round_max_round_amount", "round_max_company_pct")
+        )
+        planning_requested = optimizer_requested or round_plan_requested
+        defer_ibex_analysis = bool(active_optimization_runs) and not planning_requested
         include_ibex_universe = (
             False
             if defer_ibex_analysis
-            else (True if optimizer_requested else getattr(settings, "EQUITIES_IBEX_UNIVERSE_ANALYSIS", True))
+            else (True if planning_requested else getattr(settings, "EQUITIES_IBEX_UNIVERSE_ANALYSIS", True))
         )
         dashboard = build_dashboard_from_nightly_cache(
             positions,
@@ -125,7 +138,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 include_ibex_universe=include_ibex_universe,
                 ibex_company_limit=(
                     None
-                    if optimizer_requested
+                    if planning_requested
                     else (getattr(settings, "EQUITIES_IBEX_UNIVERSE_LIMIT", 0) or None)
                 ),
             )
@@ -199,9 +212,29 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 optimizer_form.cleaned_data["max_sector_positions"],
                 selected_sectors=optimizer_form.cleaned_data["selected_sectors"],
             )
+        round_plan_default_total = max(optimizer_default_total, Decimal("70000"))
+        round_plan_form = kwargs.get(
+            "round_plan_form",
+            EquityRoundInvestmentPlanForm(
+                self.request.GET if round_plan_requested else None,
+                default_total_target=round_plan_default_total,
+            ),
+        )
+        round_plan = None
+        if round_plan_form.is_valid():
+            round_plan = build_equity_round_investment_plan(
+                dashboard["owned_history_cards"],
+                dashboard["optimizer_cards"],
+                round_plan_form.cleaned_data["round_target_total_capital"],
+                round_plan_form.cleaned_data["round_max_round_amount"],
+                round_plan_form.cleaned_data["round_max_company_pct"],
+                as_of=timezone.localdate(),
+            )
         context["optimizer_form"] = optimizer_form
         context["optimizer_run_form"] = optimizer_run_form
         context["optimizer_plan"] = optimizer_plan
+        context["round_plan_form"] = round_plan_form
+        context["round_plan"] = round_plan
         context["optimization_runs"] = optimization_runs
         context["active_optimization_runs"] = active_optimization_runs
         context["latest_completed_optimization"] = next(
@@ -216,7 +249,10 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             row["detail_url"] = reverse("equities:ibex_detail", kwargs={"ticker": row["ticker"]})
         if not context["nightly_analysis"]["available"]:
             capture_equity_ticket_snapshots(dashboard["owned_history_cards"])
-        context["ticket_tracking"] = build_equity_ticket_tracking_context(dashboard["owned_history_cards"])
+        context["ticket_tracking"] = build_equity_ticket_tracking_context(
+            dashboard["owned_history_cards"],
+            optimizer_cards=dashboard["optimizer_cards"],
+        )
         return context
 
     def post(self, request, *args, **kwargs):

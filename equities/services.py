@@ -54,6 +54,15 @@ DEFAULT_BENCHMARK_NAME = "IBEX 35"
 DEFAULT_MARKET_REQUEST_TIMEOUT_SECONDS = 12
 DEFAULT_MARKET_DATA_CACHE_MINUTES = 60
 DEFAULT_IBEX_UNIVERSE_MAX_WORKERS = 8
+SCHEDULED_REVIEW_WEEKDAY_LABELS = {
+    1: "lunes",
+    2: "martes",
+    3: "miercoles",
+    4: "jueves",
+    5: "viernes",
+    6: "sabado",
+    7: "domingo",
+}
 EURIBOR_REFERENCE_SYMBOL = "ECB:M.S0.N.C_EUR1Y.E"
 EURIBOR_REFERENCE_NAME = "Euribor 12M"
 SPAIN_HOUSE_PRICE_SYMBOL = "EUROSTAT:prc_hpi_q:ES:TOTAL:I15_Q"
@@ -3264,11 +3273,137 @@ def build_purchase_forecast_trade_plan(
     }
 
 
+def build_purchase_trade_rotation_guidance(
+    trade_plan: dict,
+    position: EquityPosition,
+    optimizer_cards: list[dict] | None,
+    *,
+    comparison_amount: Decimal = Decimal("10000"),
+) -> dict:
+    if not trade_plan.get("available") or not optimizer_cards:
+        return {"available": False}
+
+    comparison_amount = comparison_amount if comparison_amount > ZERO else Decimal("10000")
+    candidates = [
+        candidate
+        for candidate in (
+            build_equity_optimizer_candidate(card, OPTIMIZER_STRATEGY_12M_PRIMARY)
+            for card in optimizer_cards or []
+        )
+        if candidate and candidate["position"].ticker != position.ticker
+    ]
+    ranked_candidates = rank_optimizer_candidates(
+        filter_positive_optimizer_candidates(candidates, OPTIMIZER_STRATEGY_12M_PRIMARY)
+    )
+
+    selected_candidate = None
+    selected_scenario = None
+    for candidate in ranked_candidates:
+        scenario = build_optimizer_allocation_scenario(candidate, comparison_amount)
+        review = review_optimizer_ticket_efficiency(candidate, comparison_amount, scenario)
+        if review.get("keep"):
+            selected_candidate = candidate
+            selected_scenario = scenario
+            break
+
+    if selected_candidate is None or selected_scenario is None:
+        return {"available": False}
+
+    yearly_rows = trade_plan.get("yearly_rows") or []
+    sale_year_number = trade_plan.get("sale_year_number")
+    sale_row = next((item for item in yearly_rows if item.get("year_number") == sale_year_number), None)
+    future_rows = [
+        item
+        for item in yearly_rows
+        if sale_year_number is not None
+        and item.get("year_number", 0) > sale_year_number
+        and item.get("projected_price") is not None
+    ]
+    best_future_row = max(
+        future_rows,
+        key=lambda item: (
+            item.get("cumulative_return_pct")
+            if item.get("cumulative_return_pct") is not None
+            else Decimal("-9999"),
+            -item.get("year_number", 0),
+        ),
+        default=None,
+    )
+    hold_remaining_return_pct = None
+    if sale_row and best_future_row and sale_row.get("projected_price") not in {None, ZERO}:
+        hold_remaining_return_pct = percentage_change(
+            best_future_row.get("projected_price"),
+            sale_row.get("projected_price"),
+        )
+
+    reentry_reference_row = next(
+        (
+            item
+            for item in yearly_rows
+            if item.get("year_number") == trade_plan.get("drawdown_year_number")
+        ),
+        None,
+    )
+    reentry_remaining_return_pct = None
+    if reentry_reference_row and best_future_row and reentry_reference_row.get("projected_price") not in {None, ZERO}:
+        reentry_remaining_return_pct = percentage_change(
+            best_future_row.get("projected_price"),
+            reentry_reference_row.get("projected_price"),
+        )
+
+    alternative_return_pct = selected_scenario.get("net_projected_return_pct")
+    action = "mantener"
+    summary = (
+        f"La mejor alternativa actual del radar es {selected_candidate['position'].company_name} "
+        f"({selected_candidate['position'].ticker}) con retorno neto 12M del {alternative_return_pct:.2f} %."
+    )
+
+    drawdown_margin_pct = trade_plan.get("drawdown_margin_pct")
+    tactical_weak_period_pct = (
+        drawdown_margin_pct.copy_abs()
+        if isinstance(drawdown_margin_pct, Decimal) and drawdown_margin_pct < ZERO
+        else ZERO
+    )
+    if (
+        trade_plan.get("mode") in {"sale_reentry", "sale_review"}
+        and alternative_return_pct is not None
+        and alternative_return_pct >= tactical_weak_period_pct + OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT
+    ):
+        action = "rotar"
+        summary = (
+            f"En la foto actual compensa mas rotar hacia {selected_candidate['position'].company_name} "
+            f"({selected_candidate['position'].ticker}), con retorno neto 12M del {alternative_return_pct:.2f} %, "
+            "que aguantar el tramo debil previsto de esta posicion."
+        )
+    elif trade_plan.get("mode") == "sale_reentry":
+        action = "esperar_reentrada"
+        summary += " Hoy sigue pesando mas la salida tactica y esperar la reentrada sugerida."
+    elif trade_plan.get("mode") == "sale_review":
+        action = "revisar_en_venta"
+        summary += " Hoy sigue pesando mas vender en la fecha sugerida y revisar entonces el radar."
+
+    return {
+        "available": True,
+        "action": action,
+        "summary": summary,
+        "alternative_ticker": selected_candidate["position"].ticker,
+        "alternative_company_name": selected_candidate["position"].company_name,
+        "alternative_return_pct": alternative_return_pct,
+        "alternative_reference_label": selected_candidate.get("reference_label") or "",
+        "alternative_trade_alert_label": selected_candidate.get("trade_alert_label") or "",
+        "alternative_reliability_label": selected_candidate.get("reliability_label") or "",
+        "alternative_strategy_label": selected_candidate.get("strategy_label") or "",
+        "hold_remaining_return_pct": quantize_decimal(hold_remaining_return_pct),
+        "reentry_remaining_return_pct": quantize_decimal(reentry_remaining_return_pct),
+    }
+
+
 def build_equity_ticket_tracking_item(
     card: dict,
     snapshots: list[EquityTicketSnapshot],
     tracking_anchor_date: date | None = None,
     purchase_baseline: EquityPurchaseForecastBaseline | None = None,
+    optimizer_cards: list[dict] | None = None,
 ) -> dict | None:
     relevant_snapshots = filter_ticket_tracking_snapshots(snapshots, tracking_anchor_date)
     if not relevant_snapshots:
@@ -3298,6 +3433,11 @@ def build_equity_ticket_tracking_item(
         else None
     )
     trade_plan = build_purchase_forecast_trade_plan(purchase_baseline)
+    rotation_plan = build_purchase_trade_rotation_guidance(
+        trade_plan,
+        position,
+        optimizer_cards,
+    )
     return {
         "position": position,
         "card": card,
@@ -3321,6 +3461,7 @@ def build_equity_ticket_tracking_item(
         "daily_change_pct": daily_change_pct,
         "projection_end_date": projected_end_date,
         "trade_plan": trade_plan,
+        "rotation_plan": rotation_plan,
     }
 
 
@@ -3423,7 +3564,10 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
     }
 
 
-def build_equity_ticket_tracking_context(history_cards: list[dict]) -> dict:
+def build_equity_ticket_tracking_context(
+    history_cards: list[dict],
+    optimizer_cards: list[dict] | None = None,
+) -> dict:
     owned_cards = [card for card in history_cards if card["position"].is_owned]
     if not owned_cards:
         return {
@@ -3459,6 +3603,7 @@ def build_equity_ticket_tracking_context(history_cards: list[dict]) -> dict:
             grouped_snapshots.get(position_id, []),
             tracking_anchor_date=tracking_anchor_date,
             purchase_baseline=purchase_baselines.get(position_id),
+            optimizer_cards=optimizer_cards,
         )
         if item:
             ticket_items.append(item)
@@ -7395,6 +7540,42 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
     }
 
 
+def filter_positive_optimizer_candidates(
+    candidates: list[dict],
+    strategy_mode: str,
+) -> list[dict]:
+    strategy = get_optimizer_strategy_config(strategy_mode)
+    if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY:
+        return [
+            item
+            for item in candidates
+            if item["optimization_score"] > ZERO
+            and item["cycle_support_score"] > ZERO
+            and item["trade_alert_label"] != "Vender"
+        ]
+    return [
+        item
+        for item in candidates
+        if item["optimization_score"] > ZERO
+        and item["base_return_pct"] > ZERO
+        and item["trade_alert_label"] != "Vender"
+    ]
+
+
+def rank_optimizer_candidates(candidates: list[dict]) -> list[dict]:
+    return sorted(
+        candidates,
+        key=lambda item: (
+            item["optimization_score"],
+            item["primary_signal_pct"],
+            item["secondary_signal_pct"],
+            item["base_return_pct"],
+            item["safety_score"],
+        ),
+        reverse=True,
+    )
+
+
 def filter_optimizer_candidates_by_sector(
     candidates: list[dict],
     max_sector_positions: int,
@@ -7639,6 +7820,240 @@ def review_optimizer_ticket_efficiency(candidate: dict, allocated_amount: Decima
         "entry_drag_pct": entry_drag_pct,
         "roundtrip_drag_pct": roundtrip_drag_pct,
         "gain_to_roundtrip_multiple": gain_to_roundtrip_multiple,
+        }
+
+
+def scheduled_review_iso_weekdays() -> tuple[int, ...]:
+    return tuple(
+        weekday
+        for weekday in getattr(settings, "EQUITIES_SCHEDULED_OPTIMIZATION_ISO_WEEKDAYS", (2, 4))
+        if 1 <= int(weekday) <= 7
+    )
+
+
+def build_scheduled_review_weekdays_label(weekdays: tuple[int, ...] | list[int]) -> str:
+    labels = [
+        SCHEDULED_REVIEW_WEEKDAY_LABELS.get(int(weekday), str(weekday))
+        for weekday in weekdays
+        if 1 <= int(weekday) <= 7
+    ]
+    if not labels:
+        return "sin dias configurados"
+    if len(labels) == 1:
+        return labels[0]
+    return ", ".join(labels[:-1]) + " y " + labels[-1]
+
+
+def resolve_next_review_date(
+    start_date: date,
+    weekdays: tuple[int, ...] | list[int],
+    *,
+    include_today: bool = False,
+) -> date | None:
+    normalized_weekdays = tuple(sorted({int(weekday) for weekday in weekdays if 1 <= int(weekday) <= 7}))
+    if not normalized_weekdays:
+        return None
+    current_date = start_date if include_today else (start_date + timedelta(days=1))
+    for _ in range(14):
+        if current_date.isoweekday() in normalized_weekdays:
+            return current_date
+        current_date += timedelta(days=1)
+    return None
+
+
+def build_round_review_dates(as_of: date, rounds_count: int) -> list[date]:
+    if rounds_count <= 0:
+        return []
+    dates = [as_of]
+    weekdays = scheduled_review_iso_weekdays()
+    cursor = as_of
+    while len(dates) < rounds_count:
+        next_date = resolve_next_review_date(cursor, weekdays, include_today=False)
+        if next_date is None:
+            next_date = cursor + timedelta(days=7)
+        dates.append(next_date)
+        cursor = next_date
+    return dates
+
+
+def build_equity_round_investment_plan(
+    owned_history_cards: list[dict],
+    optimizer_cards: list[dict],
+    target_total_capital: Decimal,
+    max_round_amount: Decimal,
+    max_company_pct: Decimal,
+    *,
+    strategy_mode: str = OPTIMIZER_STRATEGY_12M_PRIMARY,
+    as_of: date | None = None,
+) -> dict:
+    strategy = get_optimizer_strategy_config(strategy_mode)
+    if target_total_capital <= 0 or max_round_amount <= 0 or max_company_pct <= 0:
+        return {
+            "available": False,
+            "reason": "Parametros insuficientes para calcular el plan por rondas.",
+            "strategy_label": strategy["label"],
+        }
+
+    as_of = as_of or django_timezone.localdate()
+    company_cap_amount = quantize_decimal((target_total_capital * max_company_pct) / Decimal("100"), "0.01") or ZERO
+    current_allocations_by_ticker: dict[str, Decimal] = defaultdict(lambda: ZERO)
+    current_allocations_count_by_ticker: dict[str, int] = defaultdict(int)
+    for card in owned_history_cards:
+        position = card["position"]
+        ticker = position.ticker
+        current_allocations_by_ticker[ticker] += quantize_decimal(position.current_value, "0.01") or ZERO
+        current_allocations_count_by_ticker[ticker] += 1
+    current_invested_total = sum(current_allocations_by_ticker.values(), ZERO)
+    capital_to_deploy = quantize_decimal(target_total_capital - current_invested_total, "0.01") or ZERO
+    if capital_to_deploy <= ZERO:
+        return {
+            "available": False,
+            "reason": "La cartera ya alcanza o supera el paquete objetivo indicado. No hace falta abrir nuevas rondas.",
+            "strategy_label": strategy["label"],
+            "current_invested_total": current_invested_total,
+            "target_total_capital": target_total_capital,
+        }
+
+    baseline_map = {
+        baseline.position_id: baseline
+        for baseline in EquityPurchaseForecastBaseline.objects.filter(
+            position_id__in=[
+                card["position"].id
+                for card in optimizer_cards
+                if getattr(card.get("position"), "id", None)
+            ]
+        )
+    }
+    candidate_pool = []
+    for card in optimizer_cards:
+        candidate = build_equity_optimizer_candidate(card, strategy["mode"])
+        if candidate is None:
+            continue
+        position_id = getattr(candidate["position"], "id", None)
+        if position_id:
+            trade_plan = build_purchase_forecast_trade_plan(baseline_map.get(position_id))
+            if trade_plan.get("mode") in {"sale_reentry", "sale_review"}:
+                continue
+        candidate_pool.append(candidate)
+
+    positive_candidates = rank_optimizer_candidates(
+        filter_positive_optimizer_candidates(candidate_pool, strategy["mode"])
+    )
+    if not positive_candidates:
+        return {
+            "available": False,
+            "reason": "Ahora mismo no hay candidatas con retorno neto positivo suficiente para abrir rondas nuevas.",
+            "strategy_label": strategy["label"],
+        }
+
+    planned_allocations_by_ticker: dict[str, Decimal] = defaultdict(lambda: ZERO, current_allocations_by_ticker)
+    rounds = []
+    remaining_capital = capital_to_deploy
+    max_rounds = max(int(math.ceil(float(capital_to_deploy / max_round_amount))), 1)
+    round_dates = build_round_review_dates(as_of, max_rounds)
+
+    for round_index, round_date in enumerate(round_dates, start=1):
+        if remaining_capital <= ZERO:
+            break
+        best_choice = None
+        for candidate in positive_candidates:
+            ticker = candidate["position"].ticker
+            current_amount = planned_allocations_by_ticker.get(ticker, ZERO)
+            available_capacity = quantize_decimal(company_cap_amount - current_amount, "0.01") or ZERO
+            proposed_amount = min(max_round_amount, remaining_capital, available_capacity)
+            if proposed_amount <= ZERO:
+                continue
+            scenario = build_optimizer_allocation_scenario(candidate, proposed_amount)
+            review = review_optimizer_ticket_efficiency(candidate, proposed_amount, scenario)
+            if not review.get("keep"):
+                continue
+            projected_gain_amount = scenario.get("projected_gain_amount", ZERO)
+            choice = {
+                "candidate": candidate,
+                "amount": proposed_amount,
+                "scenario": scenario,
+                "projected_gain_amount": projected_gain_amount,
+                "current_amount": current_amount,
+                "current_weight_pct": quantize_decimal((current_amount / target_total_capital) * Decimal("100"))
+                if target_total_capital
+                else ZERO,
+                "post_weight_pct": quantize_decimal(((current_amount + proposed_amount) / target_total_capital) * Decimal("100"))
+                if target_total_capital
+                else ZERO,
+            }
+            choice_key = (
+                projected_gain_amount,
+                scenario.get("net_projected_return_pct", ZERO),
+                candidate["optimization_score"],
+                Decimal("1") if current_amount == ZERO else ZERO,
+            )
+            if best_choice is None or choice_key > best_choice["choice_key"]:
+                choice["choice_key"] = choice_key
+                best_choice = choice
+
+        if best_choice is None:
+            break
+
+        candidate = best_choice["candidate"]
+        position = candidate["position"]
+        amount = best_choice["amount"]
+        planned_allocations_by_ticker[position.ticker] += amount
+        remaining_capital = quantize_decimal(remaining_capital - amount, "0.01") or ZERO
+        is_existing_holding = best_choice["current_amount"] > ZERO
+        rounds.append(
+            {
+                "round_number": round_index,
+                "round_date": round_date,
+                "round_date_label": round_date.isoformat(),
+                "ticker": position.ticker,
+                "company_name": position.company_name,
+                "action_label": "Ampliar" if is_existing_holding else "Abrir",
+                "status_label": candidate.get("status_label") or "",
+                "amount": amount,
+                "current_weight_pct": best_choice["current_weight_pct"],
+                "post_weight_pct": best_choice["post_weight_pct"],
+                "net_projected_return_pct": best_choice["scenario"].get("net_projected_return_pct"),
+                "cycle_return_5y_pct": candidate.get("cycle_return_5y_pct"),
+                "reliability_label": candidate.get("reliability_label") or "",
+                "reliability_score": candidate.get("reliability_score"),
+                "trade_alert_label": candidate.get("trade_alert_label") or "",
+                "reference_label": candidate.get("reference_label") or "",
+                "optimization_score": candidate.get("optimization_score"),
+                "note": (
+                    f"{'Suma' if is_existing_holding else 'Abre'} posicion en {position.company_name} con "
+                    f"retorno neto 12M del {best_choice['scenario'].get('net_projected_return_pct', ZERO):.2f} % "
+                    f"y peso final del {best_choice['post_weight_pct'] or ZERO:.2f} % del paquete."
+                ),
+            }
+        )
+
+    current_overweights = [
+        {
+            "ticker": ticker,
+            "amount": amount,
+            "weight_pct": quantize_decimal((amount / target_total_capital) * Decimal("100")) if target_total_capital else ZERO,
+        }
+        for ticker, amount in current_allocations_by_ticker.items()
+        if amount > company_cap_amount
+    ]
+    return {
+        "available": bool(rounds),
+        "reason": "" if rounds else "Con los limites actuales no sale ninguna ronda que compense en esta foto del radar.",
+        "strategy_label": strategy["label"],
+        "target_total_capital": target_total_capital,
+        "current_invested_total": current_invested_total,
+        "capital_to_deploy": capital_to_deploy,
+        "remaining_capital": remaining_capital,
+        "max_round_amount": max_round_amount,
+        "max_company_pct": max_company_pct,
+        "company_cap_amount": company_cap_amount,
+        "rounds": rounds,
+        "rounds_count": len(rounds),
+        "new_tickets_count": sum(1 for item in rounds if item["action_label"] == "Abrir"),
+        "top_up_rounds_count": sum(1 for item in rounds if item["action_label"] == "Ampliar"),
+        "current_overweights": current_overweights,
+        "current_overweights_count": len(current_overweights),
+        "cadence_label": build_scheduled_review_weekdays_label(scheduled_review_iso_weekdays()),
     }
 
 
@@ -7671,22 +8086,7 @@ def build_equity_allocation_plan(
             "strategy_label": strategy["label"],
         }
 
-    if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY:
-        positive_candidates = [
-            item
-            for item in candidates
-            if item["optimization_score"] > ZERO
-            and item["cycle_support_score"] > ZERO
-            and item["trade_alert_label"] != "Vender"
-        ]
-    else:
-        positive_candidates = [
-            item
-            for item in candidates
-            if item["optimization_score"] > ZERO
-            and item["base_return_pct"] > ZERO
-            and item["trade_alert_label"] != "Vender"
-        ]
+    positive_candidates = filter_positive_optimizer_candidates(candidates, strategy["mode"])
     if not positive_candidates:
         return {
             "available": False,
@@ -7735,17 +8135,7 @@ def build_equity_allocation_plan(
             ),
         }
 
-    ranked_candidates = sorted(
-        positive_candidates,
-        key=lambda item: (
-            item["optimization_score"],
-            item["primary_signal_pct"],
-            item["secondary_signal_pct"],
-            item["base_return_pct"],
-            item["safety_score"],
-        ),
-        reverse=True,
-    )
+    ranked_candidates = rank_optimizer_candidates(positive_candidates)
     sector_excluded_candidates = []
     if max_sector_positions > 0:
         ranked_candidates, sector_excluded_candidates = filter_optimizer_candidates_by_sector(

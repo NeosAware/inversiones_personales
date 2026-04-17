@@ -1462,6 +1462,71 @@
               {% endif %}
             </div>
           </details>
+          <details class="equity-inline-fold" style="margin-top:18px;">
+            <summary>Plan por rondas</summary>
+            <div class="equity-inline-body">
+              <div class="equity-panel-head">
+                <div>
+                  <p class="section-title">Despliegue escalonado</p>
+                  <h3>Cuando comprar el siguiente ticket</h3>
+                  <p>Esta vista reparte el paquete total en rondas de una sola empresa. Parte de lo ya comprado, usa las revisiones de martes y jueves y no deja que ningun valor pase del peso maximo sobre el paquete completo.</p>
+                </div>
+              </div>
+              <form method="get" class="stack">
+                <div class="equity-grid-4" style="align-items:end;">
+                  <div><label for="{{ round_plan_form.round_target_total_capital.id_for_label }}">{{ round_plan_form.round_target_total_capital.label }}</label>{{ round_plan_form.round_target_total_capital }}</div>
+                  <div><label for="{{ round_plan_form.round_max_round_amount.id_for_label }}">{{ round_plan_form.round_max_round_amount.label }}</label>{{ round_plan_form.round_max_round_amount }}</div>
+                  <div><label for="{{ round_plan_form.round_max_company_pct.id_for_label }}">{{ round_plan_form.round_max_company_pct.label }}</label>{{ round_plan_form.round_max_company_pct }}</div>
+                </div>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                  <button class="button" type="submit">Calcular rondas</button>
+                  <a class="button secondary" href="{% url 'equities:list' %}#equity-optimizer">Valores por defecto</a>
+                </div>
+              </form>
+              {% if round_plan and round_plan.available %}
+                <div class="equity-grid-4" style="margin-top:18px;">
+                  <div class="equity-box"><span>Paquete objetivo</span><strong>{{ round_plan.target_total_capital|floatformat:0 }} EUR</strong></div>
+                  <div class="equity-box"><span>Ya comprado</span><strong>{{ round_plan.current_invested_total|floatformat:0 }} EUR</strong></div>
+                  <div class="equity-box"><span>Por desplegar</span><strong>{{ round_plan.capital_to_deploy|floatformat:0 }} EUR</strong></div>
+                  <div class="equity-box"><span>Rondas previstas</span><strong>{{ round_plan.rounds_count }}</strong><small>{{ round_plan.cadence_label }}</small></div>
+                  <div class="equity-box"><span>Max por ronda</span><strong>{{ round_plan.max_round_amount|floatformat:0 }} EUR</strong></div>
+                  <div class="equity-box"><span>Max por empresa</span><strong>{{ round_plan.company_cap_amount|floatformat:0 }} EUR</strong><small>{{ round_plan.max_company_pct|floatformat:0 }} % del paquete</small></div>
+                  <div class="equity-box"><span>Tickets nuevos</span><strong>{{ round_plan.new_tickets_count }}</strong></div>
+                  <div class="equity-box"><span>Ampliaciones</span><strong>{{ round_plan.top_up_rounds_count }}</strong></div>
+                </div>
+                <div class="equity-compact-note" style="margin-top:16px;">
+                  Cada ronda compra una sola empresa y se vuelve a revisar con la siguiente foto programada.
+                  {% if round_plan.current_overweights_count %}
+                    Ya hay {{ round_plan.current_overweights_count }} valor(es) por encima del peso maximo y por eso no se proponen ampliaciones en esos nombres.
+                  {% endif %}
+                </div>
+                <div class="equity-table-wrap" style="margin-top:16px;">
+                  <table>
+                    <thead><tr><th>Ronda</th><th>Fecha</th><th>Valor</th><th>Movimiento</th><th>Importe</th><th>Peso antes</th><th>Peso despues</th><th>12M neto</th><th>5A</th><th>Fiabilidad</th><th>Motivo</th></tr></thead>
+                    <tbody>
+                      {% for row in round_plan.rounds %}
+                        <tr>
+                          <td><strong>{{ row.round_number }}</strong></td>
+                          <td>{{ row.round_date_label }}</td>
+                          <td><strong>{{ row.company_name }}</strong><br><span class="metric-sub">{{ row.ticker }} | {{ row.reference_label }}</span></td>
+                          <td>{{ row.action_label }}<br><span class="metric-sub">{{ row.trade_alert_label }}</span></td>
+                          <td>{{ row.amount|floatformat:0 }} EUR</td>
+                          <td>{{ row.current_weight_pct|floatformat:1 }} %</td>
+                          <td>{{ row.post_weight_pct|floatformat:1 }} %</td>
+                          <td class="{% if row.net_projected_return_pct is not None and row.net_projected_return_pct >= 0 %}good{% elif row.net_projected_return_pct is not None %}warn{% endif %}">{% if row.net_projected_return_pct is not None %}{{ row.net_projected_return_pct|floatformat:1 }} %{% else %}-{% endif %}</td>
+                          <td class="{% if row.cycle_return_5y_pct is not None and row.cycle_return_5y_pct >= 0 %}good{% elif row.cycle_return_5y_pct is not None %}warn{% endif %}">{% if row.cycle_return_5y_pct is not None %}{{ row.cycle_return_5y_pct|floatformat:1 }} %{% else %}-{% endif %}</td>
+                          <td>{{ row.reliability_label }}{% if row.reliability_score is not None %}<br><span class="metric-sub">{{ row.reliability_score|floatformat:0 }}/100</span>{% endif %}</td>
+                          <td>{{ row.note }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% elif round_plan %}
+                <div class="message info" style="margin-top:16px;">{{ round_plan.reason }}</div>
+              {% endif %}
+            </div>
+          </details>
         </div>
       </div>
     </details>

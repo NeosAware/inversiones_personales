@@ -374,6 +374,51 @@ class EquityOptimizationRunForm(EquityAllocationOptimizerForm):
         return str(self.cleaned_data.get("restrictions_note") or "").strip()
 
 
+class EquityRoundInvestmentPlanForm(forms.Form):
+    round_target_total_capital = FlexibleDecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("1"),
+        label="Paquete objetivo total",
+    )
+    round_max_round_amount = FlexibleDecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("1"),
+        label="Maximo por ronda y empresa",
+    )
+    round_max_company_pct = FlexibleDecimalField(
+        max_digits=5,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("1"),
+        max_value=Decimal("100"),
+        label="Peso maximo por empresa (%)",
+    )
+
+    def __init__(self, *args, **kwargs):
+        default_total_target = kwargs.pop("default_total_target", Decimal("70000"))
+        super().__init__(*args, **kwargs)
+        self.fields["round_target_total_capital"].initial = default_total_target
+        self.fields["round_max_round_amount"].initial = Decimal("10000")
+        self.fields["round_max_company_pct"].initial = Decimal("30")
+        self.fields["round_target_total_capital"].widget.attrs.update({"placeholder": "Ejemplo: 70000"})
+        self.fields["round_max_round_amount"].widget.attrs.update({"placeholder": "Ejemplo: 10000"})
+        self.fields["round_max_company_pct"].widget.attrs.update({"placeholder": "Ejemplo: 30"})
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if cleaned_data.get("round_target_total_capital") is None:
+            cleaned_data["round_target_total_capital"] = self.fields["round_target_total_capital"].initial or Decimal("70000")
+        if cleaned_data.get("round_max_round_amount") is None:
+            cleaned_data["round_max_round_amount"] = self.fields["round_max_round_amount"].initial or Decimal("10000")
+        if cleaned_data.get("round_max_company_pct") is None:
+            cleaned_data["round_max_company_pct"] = self.fields["round_max_company_pct"].initial or Decimal("30")
+        return cleaned_data
+
+
 class EquityClosePositionForm(forms.Form):
     closed_on = forms.DateField(
         label="Fecha de venta",

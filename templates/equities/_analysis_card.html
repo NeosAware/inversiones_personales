@@ -93,6 +93,28 @@
             </strong>
             <small>{{ tracking_ticket.trade_plan.summary }}</small>
           </div>
+          {% if tracking_ticket.rotation_plan.available %}
+            <div class="equity-mini-stat">
+              <span>Rotacion radar</span>
+              <strong>
+                {% if tracking_ticket.rotation_plan.action == "rotar" %}
+                  Rotar a {{ tracking_ticket.rotation_plan.alternative_ticker }}
+                {% elif tracking_ticket.rotation_plan.action == "esperar_reentrada" %}
+                  Esperar reentrada
+                {% elif tracking_ticket.rotation_plan.action == "revisar_en_venta" %}
+                  Revisar en venta
+                {% else %}
+                  Mantener
+                {% endif %}
+              </strong>
+              <small>
+                {{ tracking_ticket.rotation_plan.summary }}
+                {% if tracking_ticket.rotation_plan.alternative_reliability_label %}
+                  Fiabilidad {{ tracking_ticket.rotation_plan.alternative_reliability_label }}.
+                {% endif %}
+              </small>
+            </div>
+          {% endif %}
         </div>
       {% endif %}
       {% if tracking_ticket.chart.available %}
