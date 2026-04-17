@@ -7453,6 +7453,7 @@ def build_equity_analysis_overview(
 
     weighted_projected_return_12m = None
     weighted_safety_score = None
+    next_sale_recommendation = {"available": False}
     owned_projection_cards = [
         card
         for card in history_cards
@@ -7469,6 +7470,47 @@ def build_equity_analysis_overview(
                 (card["projection"].get("safety_score") or ZERO) * card["position"].current_value
                 for card in owned_projection_cards
             ) / projection_weight_total
+    owned_trade_cards = [card for card in history_cards if card["position"].is_owned]
+    next_sale_candidates = []
+    for card in owned_trade_cards:
+        try:
+            trade_plan = build_owned_cycle_trade_timing_plan(card)
+        except Exception:
+            logger.exception(
+                "No se pudo calcular la primera venta tactica para %s",
+                card["position"].ticker,
+            )
+            continue
+        if not trade_plan.get("available") or trade_plan.get("mode") not in {"sale_reentry", "sale_review"}:
+            continue
+        sale_month_number = trade_plan.get("sale_month_number")
+        sale_window_label = trade_plan.get("sale_window_label")
+        if sale_month_number is None or not sale_window_label:
+            continue
+        signal_value_pct = trade_plan.get("signal_value_pct")
+        next_sale_candidates.append(
+            {
+                "available": True,
+                "ticker": card["position"].ticker,
+                "company_name": card["position"].company_name,
+                "sale_month_number": sale_month_number,
+                "sale_date": trade_plan.get("sale_date"),
+                "sale_window_label": sale_window_label,
+                "mode": trade_plan.get("mode"),
+                "signal_value_pct": quantize_decimal(signal_value_pct, "0.01") if signal_value_pct is not None else None,
+                "summary": trade_plan.get("summary") or "",
+            }
+        )
+    if next_sale_candidates:
+        next_sale_recommendation = min(
+            next_sale_candidates,
+            key=lambda item: (
+                item.get("sale_date") or date.max,
+                item.get("sale_month_number") or 999,
+                item.get("signal_value_pct") if item.get("signal_value_pct") is not None else Decimal("9999"),
+                item.get("company_name") or "",
+            ),
+        )
 
     return {
         "positions_count": len(positions),
@@ -7497,6 +7539,7 @@ def build_equity_analysis_overview(
         "watchlist_latest_price_count": sum(1 for position in watchlist_positions if position.current_price_per_share),
         "best_decision": decision_rows[0] if decision_rows else ibex_universe_summary.get("top_pick"),
         "comparable_summary": comparable_summary,
+        "next_sale_recommendation": next_sale_recommendation,
     }
 
 

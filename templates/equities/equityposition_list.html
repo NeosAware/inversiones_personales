@@ -658,6 +658,9 @@
           {% if analysis_overview.best_decision %}<span class="equity-chip">Mejor lectura {{ analysis_overview.best_decision.ticker }}</span>{% endif %}
           {% if ibex_universe_summary.available %}<span class="equity-chip">Radar IBEX {{ ibex_universe_summary.analyzed_count }}</span>{% endif %}
           {% if reference_guide_summary.workbook_loaded %}<span class="equity-chip">{{ reference_guide_summary.source_label }}</span>{% endif %}
+          {% if analysis_overview.next_sale_recommendation.available %}
+            <span class="equity-chip">Primera venta {{ analysis_overview.next_sale_recommendation.ticker }} {{ analysis_overview.next_sale_recommendation.sale_window_label }}</span>
+          {% endif %}
           {% if nightly_analysis.available %}
             <span class="equity-chip">Analisis exhaustivo {{ nightly_analysis.status_badge }}</span>
             <span class="equity-chip">Ultima ejecucion {{ nightly_analysis.completed_at_label }}</span>
@@ -688,6 +691,9 @@
           {% if nightly_analysis.status_key == "failed" and nightly_analysis.error_message %} Error: {{ nightly_analysis.error_message|truncatechars:160 }}{% endif %}
         {% else %}
           Aun no hay un analisis exhaustivo nocturno disponible. La vista usa calculo en vivo hasta que corra la tarea de madrugada.
+        {% endif %}
+        {% if analysis_overview.next_sale_recommendation.available %}
+          La primera salida tactica sugerida hoy seria {{ analysis_overview.next_sale_recommendation.company_name }} en {{ analysis_overview.next_sale_recommendation.sale_window_label }}.
         {% endif %}
       </p>
       <div class="equity-kpis">

@@ -1173,6 +1173,66 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(dashboard["overview"]["invested_amount"], Decimal("100.0000"))
         self.assertEqual(dashboard["overview"]["current_value"], Decimal("120.0000"))
 
+    def test_dashboard_overview_includes_first_owned_sale_recommendation(self):
+        iberdrola = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        enagas = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="ENG",
+            quote_symbol="ENG.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Enagas",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("14.0000"),
+            current_price_per_share=Decimal("15.0000"),
+        )
+        populate_position_history(iberdrola, growth=Decimal("1.0150"), benchmark_growth=Decimal("1.0060"), months=36)
+        populate_position_history(enagas, growth=Decimal("1.0140"), benchmark_growth=Decimal("1.0060"), months=36)
+        plan_payloads = {
+            "IBE": {
+                "available": True,
+                "mode": "sale_reentry",
+                "sale_month_number": 12,
+                "sale_date": date(2027, 4, 17),
+                "sale_window_label": "abril 2027 (mes 12)",
+                "signal_value_pct": Decimal("-0.13"),
+                "summary": "Salida tactica en abril 2027.",
+            },
+            "ENG": {
+                "available": True,
+                "mode": "sale_review",
+                "sale_month_number": 9,
+                "sale_date": date(2027, 1, 17),
+                "sale_window_label": "enero 2027 (mes 9)",
+                "signal_value_pct": Decimal("-0.22"),
+                "summary": "Salida tactica en enero 2027.",
+            },
+        }
+
+        with patch(
+            "equities.services.build_owned_cycle_trade_timing_plan",
+            side_effect=lambda card: plan_payloads[card["position"].ticker],
+        ):
+            dashboard = build_equity_analysis_dashboard(
+                list(EquityPosition.objects.prefetch_related("price_history"))
+            )
+
+        recommendation = dashboard["overview"]["next_sale_recommendation"]
+        self.assertTrue(recommendation["available"])
+        self.assertEqual(recommendation["ticker"], "ENG")
+        self.assertEqual(recommendation["company_name"], "Enagas")
+        self.assertEqual(recommendation["sale_window_label"], "enero 2027 (mes 9)")
+
     def test_dashboard_builds_comparable_return_summary_for_owned_positions(self):
         owned = EquityPosition.objects.create(
             broker="Interactive Brokers",
@@ -4231,12 +4291,26 @@ class EquitiesViewTests(TestCase):
             },
         )
 
-        response = self.client.get(reverse("equities:list"))
+        with patch(
+            "equities.services.build_owned_cycle_trade_timing_plan",
+            return_value={
+                "available": True,
+                "mode": "sale_reentry",
+                "sale_month_number": 12,
+                "sale_date": date(2027, 4, 17),
+                "sale_window_label": "abril 2027 (mes 12)",
+                "signal_value_pct": Decimal("-0.13"),
+                "summary": "Salida tactica en abril 2027.",
+            },
+        ):
+            response = self.client.get(reverse("equities:list"))
 
         self.assertContains(response, "Analisis exhaustivo OK")
         self.assertContains(response, "Ultima ejecucion")
         self.assertContains(response, "Claude claude-sonnet-4-20250514")
         self.assertContains(response, "IA 1/1")
+        self.assertContains(response, "Primera venta IBE abril 2027 (mes 12)")
+        self.assertContains(response, "La primera salida tactica sugerida hoy seria Iberdrola en abril 2027 (mes 12).")
 
     def test_equities_page_reused_ai_status_does_not_label_pending_as_api_failures(self):
         analysis_day = timezone.localdate()
