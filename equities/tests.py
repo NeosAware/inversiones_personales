@@ -41,6 +41,7 @@ from .optimization_runs import launch_equity_optimization_run, launch_equity_opt
 from .optimization_runs import (
     build_scheduled_optimization_persistence_context,
     launch_scheduled_equity_optimization_runs,
+    purge_stale_scheduled_optimization_runs,
 )
 from .services import (
     EURIBOR_REFERENCE_NAME,
@@ -2267,6 +2268,9 @@ class EquitiesServicesTests(TestCase):
             {run.progress_data["scheduled_weekdays_label"] for run in first_runs},
             {"martes y jueves"},
         )
+        self.assertEqual({Decimal(str(run.max_company_pct)) for run in first_runs}, {Decimal("30.00")})
+        self.assertEqual({run.max_total_positions for run in first_runs}, {5})
+        self.assertEqual({run.max_sector_positions for run in first_runs}, {2})
         self.assertEqual({run.id for run in first_runs}, {run.id for run in second_runs})
 
     @override_settings(
@@ -2281,9 +2285,9 @@ class EquitiesServicesTests(TestCase):
                 reference_code=f"OPT-FAILED-{suffix}",
                 label=f"Fallida {suffix}",
                 total_investment=Decimal("100000"),
-                max_company_pct=Decimal("20"),
-                max_total_positions=0,
-                max_sector_positions=0,
+                max_company_pct=Decimal("30"),
+                max_total_positions=5,
+                max_sector_positions=2,
                 status=EquityOptimizationRun.Status.FAILED,
                 progress_data={
                     "strategy_mode": strategy_mode,
@@ -2315,13 +2319,64 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(mocked_enqueue.call_count, 2)
         mocked_process.assert_not_called()
 
+    def test_purge_stale_scheduled_optimizations_removes_old_and_wrong_policy_runs(self):
+        recent_valid = EquityOptimizationRun.objects.create(
+            reference_code="OPT-RECENT-VALID",
+            label="Reciente valida",
+            total_investment=Decimal("100000"),
+            max_company_pct=Decimal("30"),
+            max_total_positions=5,
+            max_sector_positions=2,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            progress_data={
+                "schedule_kind": "nightly",
+                "scheduled_run_key": "scheduled-optimization:2026-04-16",
+                "scheduled_analysis_date": "2026-04-16",
+            },
+        )
+        old_run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-OLD-RUN",
+            label="Antigua",
+            total_investment=Decimal("100000"),
+            max_company_pct=Decimal("30"),
+            max_total_positions=5,
+            max_sector_positions=2,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            progress_data={
+                "schedule_kind": "nightly",
+                "scheduled_run_key": "scheduled-optimization:2025-12-01",
+                "scheduled_analysis_date": "2025-12-01",
+            },
+        )
+        wrong_policy_run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-WRONG-POLICY",
+            label="Politica vieja",
+            total_investment=Decimal("100000"),
+            max_company_pct=Decimal("20"),
+            max_total_positions=0,
+            max_sector_positions=0,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            progress_data={
+                "schedule_kind": "nightly",
+                "scheduled_run_key": "scheduled-optimization:2026-04-10",
+                "scheduled_analysis_date": "2026-04-10",
+            },
+        )
+
+        deleted_count = purge_stale_scheduled_optimization_runs(as_of=date(2026, 4, 17))
+
+        self.assertGreaterEqual(deleted_count, 2)
+        self.assertTrue(EquityOptimizationRun.objects.filter(pk=recent_valid.pk).exists())
+        self.assertFalse(EquityOptimizationRun.objects.filter(pk=old_run.pk).exists())
+        self.assertFalse(EquityOptimizationRun.objects.filter(pk=wrong_policy_run.pk).exists())
+
     @override_settings(
         EQUITIES_SCHEDULED_OPTIMIZATION_ENABLED=True,
         EQUITIES_SCHEDULED_OPTIMIZATION_ISO_WEEKDAYS=(2, 4),
     )
     def test_build_scheduled_optimization_persistence_context_aggregates_recent_repetition(self):
         today = timezone.localdate()
-        scheduled_days = [today - timedelta(days=3), today - timedelta(days=10), today - timedelta(days=38)]
+        scheduled_days = [today - timedelta(days=3), today - timedelta(days=10), today - timedelta(days=38), today - timedelta(days=110)]
         strategy_runs = [
             ("12M principal", "12m_primary"),
             ("5A principal", "5y_primary"),
@@ -2333,9 +2388,9 @@ class EquitiesServicesTests(TestCase):
                     reference_code=f"OPT-SCHED-{index}-{strategy_mode}",
                     label=f"Programada {analysis_day.isoformat()} - {strategy_label}",
                     total_investment=Decimal("100000"),
-                    max_company_pct=Decimal("20"),
-                    max_total_positions=0,
-                    max_sector_positions=0,
+                    max_company_pct=Decimal("30"),
+                    max_total_positions=5,
+                    max_sector_positions=2,
                     status=EquityOptimizationRun.Status.COMPLETED,
                     progress_data={
                         "strategy_label": strategy_label,
@@ -2356,6 +2411,7 @@ class EquitiesServicesTests(TestCase):
                             "company_name": "Iberdrola",
                             "ticker": "IBE",
                             "net_projected_return_pct": 12.0 if strategy_mode == "12m_primary" else 10.0,
+                            "cycle_return_5y_pct": 74.0 if strategy_mode == "12m_primary" else 70.0,
                             "reliability_label": "Alta",
                             "reliability_score": 82.0 if strategy_mode == "12m_primary" else 78.0,
                             "cycle_yearly_margins": [
@@ -2371,6 +2427,7 @@ class EquitiesServicesTests(TestCase):
                             "company_name": "Repsol",
                             "ticker": "REP",
                             "net_projected_return_pct": 6.0,
+                            "cycle_return_5y_pct": 28.0,
                             "reliability_label": "Media",
                             "reliability_score": 64.0,
                             "cycle_yearly_margins": [
@@ -2388,22 +2445,22 @@ class EquitiesServicesTests(TestCase):
         context = build_scheduled_optimization_persistence_context(as_of=today)
 
         self.assertTrue(context["available"])
-        self.assertEqual(context["runs_30d"], 4)
-        self.assertEqual(context["runs_60d"], 6)
-        self.assertEqual(context["distinct_days_30d"], 2)
-        self.assertEqual(context["distinct_days_60d"], 3)
+        self.assertEqual(context["runs_count_3m"], 6)
+        self.assertEqual(context["distinct_days_count_3m"], 3)
+        self.assertEqual(context["policy"]["max_total_positions"], 5)
+        self.assertEqual(context["policy"]["max_sector_positions"], 2)
+        self.assertEqual(context["policy"]["max_company_pct"], Decimal("30"))
         top_row = context["rows"][0]
         self.assertEqual(top_row["ticker"], "IBE")
-        self.assertEqual(top_row["appearances_30d"], 4)
-        self.assertEqual(top_row["distinct_days_30d"], 2)
-        self.assertEqual(top_row["appearances_60d"], 6)
-        self.assertEqual(top_row["distinct_days_60d"], 3)
-        self.assertEqual(top_row["top3_60d"], 6)
+        self.assertEqual(top_row["appearances_3m"], 6)
+        self.assertEqual(top_row["distinct_days_3m"], 3)
+        self.assertEqual(top_row["top3_3m"], 6)
         self.assertEqual(top_row["persistence_label"], "Media")
-        self.assertEqual(top_row["strategy_labels_60d_label"], "12M principal, 5A principal")
-        self.assertEqual(top_row["average_return_60d"], Decimal("11.0"))
-        self.assertEqual(top_row["average_reliability_label_60d"], "Alta")
-        self.assertEqual(top_row["average_reliability_score_60d"], Decimal("80.0"))
+        self.assertEqual(top_row["strategy_labels_3m_label"], "12M principal, 5A principal")
+        self.assertEqual(top_row["average_return_12m_3m"], Decimal("11.0"))
+        self.assertEqual(top_row["average_return_5y_3m"], Decimal("72.0"))
+        self.assertEqual(top_row["average_reliability_label_3m"], "Alta")
+        self.assertEqual(top_row["average_reliability_score_3m"], Decimal("80.0"))
         self.assertEqual(
             [item["margin_pct"] for item in top_row["average_year_margins"]],
             [Decimal("11.0"), Decimal("7.0"), Decimal("8.0"), Decimal("9.0"), Decimal("10.0")],
@@ -4948,9 +5005,9 @@ class EquitiesViewTests(TestCase):
                 reference_code=f"OPT-PERSIST-{strategy_mode}",
                 label=f"Programada {strategy_label}",
                 total_investment=Decimal("200000"),
-                max_company_pct=Decimal("20"),
-                max_total_positions=0,
-                max_sector_positions=0,
+                max_company_pct=Decimal("30"),
+                max_total_positions=5,
+                max_sector_positions=2,
                 status=EquityOptimizationRun.Status.COMPLETED,
                 progress_data={
                     "strategy_label": strategy_label,
@@ -4971,6 +5028,7 @@ class EquitiesViewTests(TestCase):
                         "company_name": "Iberdrola",
                         "ticker": "IBE",
                         "net_projected_return_pct": 12.5,
+                        "cycle_return_5y_pct": 68.0,
                         "reliability_label": "Alta",
                         "reliability_score": 82.0,
                         "cycle_yearly_margins": [
@@ -4986,6 +5044,7 @@ class EquitiesViewTests(TestCase):
                         "company_name": "Endesa",
                         "ticker": "ELE",
                         "net_projected_return_pct": 9.0,
+                        "cycle_return_5y_pct": 44.0,
                         "reliability_label": "Media",
                         "reliability_score": 64.0,
                         "cycle_yearly_margins": [
@@ -5007,9 +5066,11 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Iberdrola")
         self.assertContains(response, "2 apariciones")
         self.assertContains(response, "12M principal, 5A principal")
-        self.assertContains(response, "% medio")
+        self.assertContains(response, "12M medio")
         self.assertContains(response, "Fiabilidad")
         self.assertContains(response, "A&Ntilde;O 1")
+        self.assertContains(response, "5A acumulada")
+        self.assertContains(response, "Max 5 empresas")
 
     def test_completed_optimization_run_can_be_deleted_from_history(self):
         run = EquityOptimizationRun.objects.create(

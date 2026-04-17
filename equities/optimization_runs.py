@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from datetime import date, datetime, timedelta
@@ -39,6 +40,10 @@ from .services import (
 
 
 ZERO = Decimal("0.00")
+SCHEDULED_OPTIMIZATION_MAX_COMPANY_PCT = Decimal("30.00")
+SCHEDULED_OPTIMIZATION_MAX_TOTAL_POSITIONS = 5
+SCHEDULED_OPTIMIZATION_MAX_SECTOR_POSITIONS = 2
+SCHEDULED_OPTIMIZATION_RETENTION_MONTHS = 3
 SCHEDULED_OPTIMIZATION_WEEKDAY_LABELS = {
     1: "lunes",
     2: "martes",
@@ -173,6 +178,59 @@ def build_scheduled_optimization_run_key(analysis_date: date) -> str:
     return f"scheduled-optimization:{analysis_date.isoformat()}"
 
 
+def shift_date_by_months(value: date, months: int) -> date:
+    total_month = (value.year * 12) + (value.month - 1) + months
+    year = total_month // 12
+    month = (total_month % 12) + 1
+    day = min(value.day, monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def scheduled_optimization_retention_cutoff(as_of: date | None = None) -> date:
+    as_of = as_of or timezone.localdate()
+    return shift_date_by_months(as_of, -SCHEDULED_OPTIMIZATION_RETENTION_MONTHS)
+
+
+def resolve_scheduled_run_date(run: EquityOptimizationRun) -> date:
+    progress_data = dict(run.progress_data or {})
+    summary_data = dict(run.summary_data or {})
+    run_date_label = progress_data.get("scheduled_analysis_date") or summary_data.get("scheduled_analysis_date") or ""
+    try:
+        return date.fromisoformat(run_date_label) if run_date_label else timezone.localtime(run.created_at).date()
+    except ValueError:
+        return timezone.localtime(run.created_at).date()
+
+
+def scheduled_optimization_matches_policy(run: EquityOptimizationRun) -> bool:
+    return (
+        Decimal(str(run.max_company_pct or "0")) == SCHEDULED_OPTIMIZATION_MAX_COMPANY_PCT
+        and int(run.max_total_positions or 0) == SCHEDULED_OPTIMIZATION_MAX_TOTAL_POSITIONS
+        and int(run.max_sector_positions or 0) == SCHEDULED_OPTIMIZATION_MAX_SECTOR_POSITIONS
+        and not list(run.selected_sectors or [])
+    )
+
+
+def purge_stale_scheduled_optimization_runs(*, as_of: date | None = None) -> int:
+    cutoff = scheduled_optimization_retention_cutoff(as_of)
+    stale_ids = []
+    for run in EquityOptimizationRun.objects.filter(progress_data__schedule_kind="nightly").only(
+        "id",
+        "created_at",
+        "max_company_pct",
+        "max_total_positions",
+        "max_sector_positions",
+        "selected_sectors",
+        "progress_data",
+        "summary_data",
+    ):
+        if resolve_scheduled_run_date(run) < cutoff or not scheduled_optimization_matches_policy(run):
+            stale_ids.append(run.id)
+    if stale_ids:
+        deleted_count, _ = EquityOptimizationRun.objects.filter(id__in=stale_ids).delete()
+        return deleted_count
+    return 0
+
+
 def load_existing_scheduled_optimization_runs(analysis_date: date) -> list[EquityOptimizationRun]:
     return list(
         EquityOptimizationRun.objects.filter(
@@ -198,7 +256,11 @@ def build_scheduled_optimization_note(analysis_date: date, weekdays_label: str) 
     )
     if weekdays_label != "sin dias configurados":
         note += f" Se refresca en {weekdays_label}."
-    note += " La persistencia mide repeticion, no garantia."
+    note += (
+        f" Limites fijos: maximo {SCHEDULED_OPTIMIZATION_MAX_TOTAL_POSITIONS} empresas, "
+        f"{SCHEDULED_OPTIMIZATION_MAX_SECTOR_POSITIONS} por sector y "
+        f"{SCHEDULED_OPTIMIZATION_MAX_COMPANY_PCT.quantize(Decimal('0'))} % por empresa."
+    )
     return note
 
 
@@ -883,32 +945,36 @@ def build_optimization_comparison_context(runs: list[EquityOptimizationRun]) -> 
 def build_scheduled_optimization_persistence_context(
     *,
     as_of: date | None = None,
-    windows: tuple[int, ...] = (30, 60),
     max_rows: int = 12,
 ) -> dict:
     as_of = as_of or timezone.localdate()
-    normalized_windows = tuple(sorted({int(window) for window in windows if int(window) > 0}))
-    if not normalized_windows:
-        normalized_windows = (30, 60)
-    max_window = max(normalized_windows)
-    cutoff_date = as_of - timedelta(days=max_window - 1)
+    cutoff_date = scheduled_optimization_retention_cutoff(as_of)
     completed_runs = list(
         EquityOptimizationRun.objects.filter(
             status=EquityOptimizationRun.Status.COMPLETED,
             progress_data__schedule_kind="nightly",
-            created_at__date__gte=cutoff_date,
         ).order_by("-created_at", "-id")
     )
     weekdays = scheduled_optimization_iso_weekdays()
     weekdays_label = build_scheduled_optimization_weekdays_label(weekdays)
     next_run_date = resolve_next_scheduled_optimization_date(as_of, weekdays, include_today=False)
+    completed_runs = [
+        run
+        for run in completed_runs
+        if resolve_scheduled_run_date(run) >= cutoff_date and scheduled_optimization_matches_policy(run)
+    ]
     if not completed_runs:
         return {
             "available": False,
             "rows": [],
             "weekdays_label": weekdays_label,
             "next_run_date_label": next_run_date.isoformat() if next_run_date else "",
-            "windows": normalized_windows,
+            "window_label": "ultimos 3 meses",
+            "policy": {
+                "max_company_pct": SCHEDULED_OPTIMIZATION_MAX_COMPANY_PCT.quantize(Decimal("0")),
+                "max_total_positions": SCHEDULED_OPTIMIZATION_MAX_TOTAL_POSITIONS,
+                "max_sector_positions": SCHEDULED_OPTIMIZATION_MAX_SECTOR_POSITIONS,
+            },
         }
 
     def reliability_label_from_score(score: Decimal | None) -> str:
@@ -921,31 +987,20 @@ def build_scheduled_optimization_persistence_context(
         return "Baja"
 
     stats_by_ticker: dict[str, dict] = {}
-    runs_in_window = {window: 0 for window in normalized_windows}
-    distinct_days_in_window = {window: set() for window in normalized_windows}
-    window_cutoffs = {
-        window: as_of - timedelta(days=window - 1)
-        for window in normalized_windows
-    }
+    runs_count = 0
+    distinct_days = set()
 
     for run in completed_runs:
         progress_data = dict(run.progress_data or {})
         summary_data = dict(run.summary_data or {})
-        run_date_label = progress_data.get("scheduled_analysis_date") or summary_data.get("scheduled_analysis_date") or ""
-        try:
-            run_date = date.fromisoformat(run_date_label) if run_date_label else timezone.localtime(run.created_at).date()
-        except ValueError:
-            run_date = timezone.localtime(run.created_at).date()
+        run_date = resolve_scheduled_run_date(run)
         strategy_label = (
             summary_data.get("strategy_label")
             or progress_data.get("strategy_label")
             or ""
         )
-
-        for window, cutoff in window_cutoffs.items():
-            if run_date >= cutoff:
-                runs_in_window[window] += 1
-                distinct_days_in_window[window].add(run_date)
+        runs_count += 1
+        distinct_days.add(run_date)
 
         for item in run.allocations_data or []:
             ticker = str(item.get("ticker") or "").strip().upper()
@@ -957,43 +1012,43 @@ def build_scheduled_optimization_persistence_context(
                     "ticker": ticker,
                     "company_name": str(item.get("company_name") or ticker),
                     "last_seen_on": run_date,
-                    "last_seen_strategy_labels": set(),
-                    "strategy_labels_60d": set(),
-                    "distinct_days_60d": set(),
-                    "distinct_days_30d": set(),
-                    "appearances_60d": 0,
-                    "appearances_30d": 0,
-                    "top3_60d": 0,
-                    "rank_total_60d": Decimal("0"),
-                    "rank_count_60d": 0,
-                    "return_total_60d": Decimal("0"),
-                    "return_count_60d": 0,
-                    "reliability_total_60d": Decimal("0"),
-                    "reliability_count_60d": 0,
+                    "strategy_labels_3m": set(),
+                    "distinct_days_3m": set(),
+                    "appearances_3m": 0,
+                    "top3_3m": 0,
+                    "rank_total_3m": Decimal("0"),
+                    "rank_count_3m": 0,
+                    "return_total_12m_3m": Decimal("0"),
+                    "return_count_12m_3m": 0,
+                    "return_total_5y_3m": Decimal("0"),
+                    "return_count_5y_3m": 0,
+                    "reliability_total_3m": Decimal("0"),
+                    "reliability_count_3m": 0,
                     "year_margin_totals": {year_number: Decimal("0") for year_number in range(1, 6)},
                     "year_margin_counts": {year_number: 0 for year_number in range(1, 6)},
                     "daily_strategies": {},
                 },
             )
             stats["company_name"] = str(item.get("company_name") or stats["company_name"] or ticker)
-            stats["appearances_60d"] += 1
-            stats["distinct_days_60d"].add(run_date)
+            stats["appearances_3m"] += 1
+            stats["distinct_days_3m"].add(run_date)
             if strategy_label:
-                stats["strategy_labels_60d"].add(strategy_label)
+                stats["strategy_labels_3m"].add(strategy_label)
                 stats["daily_strategies"].setdefault(run_date, set()).add(strategy_label)
-            if run_date >= window_cutoffs.get(30, cutoff_date):
-                stats["appearances_30d"] += 1
-                stats["distinct_days_30d"].add(run_date)
             net_return_pct = item.get("net_projected_return_pct")
             if net_return_pct is not None:
-                stats["return_total_60d"] += Decimal(str(net_return_pct))
-                stats["return_count_60d"] += 1
+                stats["return_total_12m_3m"] += Decimal(str(net_return_pct))
+                stats["return_count_12m_3m"] += 1
+            cycle_return_5y_pct = item.get("cycle_return_5y_pct")
+            if cycle_return_5y_pct is not None:
+                stats["return_total_5y_3m"] += Decimal(str(cycle_return_5y_pct))
+                stats["return_count_5y_3m"] += 1
             reliability_score = item.get("reliability_score")
             if reliability_score is None and item.get("reliability_label"):
                 reliability_score = projection_reliability_score(str(item.get("reliability_label") or ""))
             if reliability_score is not None:
-                stats["reliability_total_60d"] += Decimal(str(reliability_score))
-                stats["reliability_count_60d"] += 1
+                stats["reliability_total_3m"] += Decimal(str(reliability_score))
+                stats["reliability_count_3m"] += 1
             for year_item in item.get("cycle_yearly_margins") or []:
                 try:
                     year_number = int(year_item.get("year_number") or 0)
@@ -1013,10 +1068,10 @@ def build_scheduled_optimization_persistence_context(
                 except (TypeError, ValueError):
                     rank_number = 0
                 if rank_number > 0:
-                    stats["rank_total_60d"] += Decimal(str(rank_number))
-                    stats["rank_count_60d"] += 1
+                    stats["rank_total_3m"] += Decimal(str(rank_number))
+                    stats["rank_count_3m"] += 1
                     if rank_number <= 3:
-                        stats["top3_60d"] += 1
+                        stats["top3_3m"] += 1
             if run_date >= stats["last_seen_on"]:
                 stats["last_seen_on"] = run_date
 
@@ -1024,19 +1079,24 @@ def build_scheduled_optimization_persistence_context(
     for stats in stats_by_ticker.values():
         latest_strategies = stats["daily_strategies"].get(stats["last_seen_on"], set())
         average_rank = None
-        if stats["rank_count_60d"]:
+        if stats["rank_count_3m"]:
             average_rank = (
-                stats["rank_total_60d"] / Decimal(str(stats["rank_count_60d"]))
+                stats["rank_total_3m"] / Decimal(str(stats["rank_count_3m"]))
             ).quantize(Decimal("0.1"))
-        average_return = None
-        if stats["return_count_60d"]:
-            average_return = (
-                stats["return_total_60d"] / Decimal(str(stats["return_count_60d"]))
+        average_return_12m = None
+        if stats["return_count_12m_3m"]:
+            average_return_12m = (
+                stats["return_total_12m_3m"] / Decimal(str(stats["return_count_12m_3m"]))
+            ).quantize(Decimal("0.1"))
+        average_return_5y = None
+        if stats["return_count_5y_3m"]:
+            average_return_5y = (
+                stats["return_total_5y_3m"] / Decimal(str(stats["return_count_5y_3m"]))
             ).quantize(Decimal("0.1"))
         average_reliability_score = None
-        if stats["reliability_count_60d"]:
+        if stats["reliability_count_3m"]:
             average_reliability_score = (
-                stats["reliability_total_60d"] / Decimal(str(stats["reliability_count_60d"]))
+                stats["reliability_total_3m"] / Decimal(str(stats["reliability_count_3m"]))
             ).quantize(Decimal("0.1"))
         average_year_margins = []
         for year_number in range(1, 6):
@@ -1052,11 +1112,11 @@ def build_scheduled_optimization_persistence_context(
                     "margin_pct": year_average,
                 }
             )
-        distinct_days_60d = len(stats["distinct_days_60d"])
+        distinct_days_count = len(stats["distinct_days_3m"])
         latest_strategy_count = len(latest_strategies)
-        if distinct_days_60d >= 4 and latest_strategy_count >= 2:
+        if distinct_days_count >= 4 and latest_strategy_count >= 2:
             persistence_label = "Alta"
-        elif distinct_days_60d >= 2:
+        elif distinct_days_count >= 2:
             persistence_label = "Media"
         else:
             persistence_label = "Puntual"
@@ -1064,19 +1124,18 @@ def build_scheduled_optimization_persistence_context(
             {
                 "ticker": stats["ticker"],
                 "company_name": stats["company_name"],
-                "appearances_30d": stats["appearances_30d"],
-                "distinct_days_30d": len(stats["distinct_days_30d"]),
-                "appearances_60d": stats["appearances_60d"],
-                "distinct_days_60d": distinct_days_60d,
-                "top3_60d": stats["top3_60d"],
-                "average_rank_60d": average_rank,
-                "average_return_60d": average_return,
+                "appearances_3m": stats["appearances_3m"],
+                "distinct_days_3m": distinct_days_count,
+                "top3_3m": stats["top3_3m"],
+                "average_rank_3m": average_rank,
+                "average_return_12m_3m": average_return_12m,
+                "average_return_5y_3m": average_return_5y,
                 "average_year_margins": average_year_margins,
-                "average_reliability_score_60d": average_reliability_score,
-                "average_reliability_label_60d": reliability_label_from_score(average_reliability_score),
+                "average_reliability_score_3m": average_reliability_score,
+                "average_reliability_label_3m": reliability_label_from_score(average_reliability_score),
                 "persistence_label": persistence_label,
-                "strategy_labels_60d": sorted(stats["strategy_labels_60d"]),
-                "strategy_labels_60d_label": ", ".join(sorted(stats["strategy_labels_60d"])) or "-",
+                "strategy_labels_3m": sorted(stats["strategy_labels_3m"]),
+                "strategy_labels_3m_label": ", ".join(sorted(stats["strategy_labels_3m"])) or "-",
                 "latest_day_strategy_count": latest_strategy_count,
                 "latest_day_strategy_label": ", ".join(sorted(latest_strategies)) or "-",
                 "last_seen_on": stats["last_seen_on"],
@@ -1086,10 +1145,10 @@ def build_scheduled_optimization_persistence_context(
 
     rows.sort(
         key=lambda item: (
-            -item["distinct_days_30d"],
-            -item["appearances_30d"],
-            -item["top3_60d"],
-            item["average_rank_60d"] if item["average_rank_60d"] is not None else Decimal("999.9"),
+            -item["distinct_days_3m"],
+            -item["appearances_3m"],
+            -item["top3_3m"],
+            item["average_rank_3m"] if item["average_rank_3m"] is not None else Decimal("999.9"),
             item["ticker"],
         )
     )
@@ -1099,11 +1158,15 @@ def build_scheduled_optimization_persistence_context(
         "total_rows": len(rows),
         "weekdays_label": weekdays_label,
         "next_run_date_label": next_run_date.isoformat() if next_run_date else "",
-        "runs_30d": runs_in_window.get(30, 0),
-        "runs_60d": runs_in_window.get(60, 0),
-        "distinct_days_30d": len(distinct_days_in_window.get(30, set())),
-        "distinct_days_60d": len(distinct_days_in_window.get(60, set())),
-        "windows": normalized_windows,
+        "window_label": "ultimos 3 meses",
+        "runs_count_3m": runs_count,
+        "distinct_days_count_3m": len(distinct_days),
+        "cutoff_date_label": cutoff_date.isoformat(),
+        "policy": {
+            "max_company_pct": SCHEDULED_OPTIMIZATION_MAX_COMPANY_PCT.quantize(Decimal("0")),
+            "max_total_positions": SCHEDULED_OPTIMIZATION_MAX_TOTAL_POSITIONS,
+            "max_sector_positions": SCHEDULED_OPTIMIZATION_MAX_SECTOR_POSITIONS,
+        },
     }
 
 
@@ -1536,10 +1599,15 @@ def launch_scheduled_equity_optimization_runs(
     run_inline: bool = False,
 ) -> list[EquityOptimizationRun]:
     analysis_date = analysis_date or timezone.localdate()
+    purge_stale_scheduled_optimization_runs(as_of=analysis_date)
     if not should_launch_scheduled_optimizations(analysis_date=analysis_date, force=force):
         return []
 
-    existing_runs = load_existing_scheduled_optimization_runs(analysis_date)
+    existing_runs = [
+        run
+        for run in load_existing_scheduled_optimization_runs(analysis_date)
+        if scheduled_optimization_matches_policy(run)
+    ]
     if existing_runs:
         reusable_runs = [
             run
@@ -1558,9 +1626,9 @@ def launch_scheduled_equity_optimization_runs(
     weekdays_label = build_scheduled_optimization_weekdays_label(weekdays)
     return launch_equity_optimization_run_pair(
         total_investment=resolve_scheduled_optimization_total_investment(),
-        max_company_pct=Decimal("20"),
-        max_total_positions=0,
-        max_sector_positions=0,
+        max_company_pct=SCHEDULED_OPTIMIZATION_MAX_COMPANY_PCT,
+        max_total_positions=SCHEDULED_OPTIMIZATION_MAX_TOTAL_POSITIONS,
+        max_sector_positions=SCHEDULED_OPTIMIZATION_MAX_SECTOR_POSITIONS,
         selected_sectors=[],
         reference_label=f"Optimizacion programada {analysis_date.isoformat()}",
         restrictions_note=build_scheduled_optimization_note(analysis_date, weekdays_label),
