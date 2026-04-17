@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
 import html
@@ -38,6 +38,15 @@ from .services import (
 
 
 ZERO = Decimal("0.00")
+SCHEDULED_OPTIMIZATION_WEEKDAY_LABELS = {
+    1: "lunes",
+    2: "martes",
+    3: "miercoles",
+    4: "jueves",
+    5: "viernes",
+    6: "sabado",
+    7: "domingo",
+}
 NEWS_LOOKBACK_DAYS = 45
 NEWS_MAX_ITEMS = 6
 NEWS_REQUEST_TIMEOUT_SECONDS = 10
@@ -102,6 +111,94 @@ _queued_run_ids_lock = threading.Lock()
 
 def optimization_async_enabled() -> bool:
     return bool(getattr(settings, "EQUITIES_OPTIMIZATION_ASYNC", True))
+
+
+def scheduled_optimization_enabled() -> bool:
+    return bool(getattr(settings, "EQUITIES_SCHEDULED_OPTIMIZATION_ENABLED", True))
+
+
+def scheduled_optimization_iso_weekdays() -> tuple[int, ...]:
+    return tuple(
+        weekday
+        for weekday in getattr(settings, "EQUITIES_SCHEDULED_OPTIMIZATION_ISO_WEEKDAYS", (2, 4))
+        if 1 <= int(weekday) <= 7
+    )
+
+
+def build_scheduled_optimization_weekdays_label(weekdays: tuple[int, ...] | list[int]) -> str:
+    labels = [
+        SCHEDULED_OPTIMIZATION_WEEKDAY_LABELS.get(int(weekday), str(weekday))
+        for weekday in weekdays
+        if 1 <= int(weekday) <= 7
+    ]
+    if not labels:
+        return "sin dias configurados"
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} y {labels[1]}"
+    return f"{', '.join(labels[:-1])} y {labels[-1]}"
+
+
+def resolve_next_scheduled_optimization_date(
+    analysis_date: date,
+    weekdays: tuple[int, ...],
+    *,
+    include_today: bool = True,
+) -> date | None:
+    if not weekdays:
+        return None
+    start_offset = 0 if include_today else 1
+    for offset in range(start_offset, start_offset + 14):
+        candidate = analysis_date + timedelta(days=offset)
+        if candidate.isoweekday() in weekdays:
+            return candidate
+    return None
+
+
+def should_launch_scheduled_optimizations(*, analysis_date: date | None = None, force: bool = False) -> bool:
+    if not scheduled_optimization_enabled():
+        return False
+    if force:
+        return True
+    analysis_date = analysis_date or timezone.localdate()
+    weekdays = scheduled_optimization_iso_weekdays()
+    if not weekdays:
+        return False
+    return analysis_date.isoweekday() in weekdays
+
+
+def build_scheduled_optimization_run_key(analysis_date: date) -> str:
+    return f"scheduled-optimization:{analysis_date.isoformat()}"
+
+
+def load_existing_scheduled_optimization_runs(analysis_date: date) -> list[EquityOptimizationRun]:
+    return list(
+        EquityOptimizationRun.objects.filter(
+            progress_data__scheduled_run_key=build_scheduled_optimization_run_key(analysis_date),
+        ).order_by("created_at", "id")
+    )
+
+
+def resolve_scheduled_optimization_total_investment() -> Decimal:
+    positions = list(EquityPosition.objects.all())
+    current_value = sum((position.current_value for position in positions if position.is_owned), ZERO)
+    if current_value > ZERO:
+        return current_value.quantize(Decimal("0.01"))
+    invested_amount = sum((position.invested_amount for position in positions if position.is_owned), ZERO)
+    if invested_amount > ZERO:
+        return invested_amount.quantize(Decimal("0.01"))
+    return Decimal("100000.00")
+
+
+def build_scheduled_optimization_note(analysis_date: date, weekdays_label: str) -> str:
+    note = (
+        f"Optimizacion programada automaticamente tras el analisis nocturno del {analysis_date.isoformat()}."
+    )
+    if weekdays_label != "sin dias configurados":
+        note += f" Se refresca en {weekdays_label}."
+    note += " La persistencia mide repeticion, no garantia."
+    return note
 
 
 def news_cache_bucket(now: datetime | None = None) -> int:
@@ -576,6 +673,11 @@ def update_run_progress(
 ) -> None:
     run = EquityOptimizationRun.objects.get(pk=run_id)
     progress_data = dict(run.progress_data or {})
+    preserved_metadata = {
+        key: value
+        for key, value in progress_data.items()
+        if key in {"strategy_mode", "strategy_label", "schedule_kind", "scheduled_run_key", "scheduled_analysis_date", "scheduled_weekdays_label"}
+    }
     previous_stage = progress_data.get("stage_key")
     previous_note = progress_data.get("note")
     events = list(progress_data.get("events") or [])
@@ -601,6 +703,7 @@ def update_run_progress(
         "preview_allocations": preview_allocations or progress_data.get("preview_allocations", []),
         "events": events[-8:],
         "updated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+        **preserved_metadata,
     }
     run.status_note = note
     run.save(update_fields=["progress_data", "status_note", "updated_at"])
@@ -611,6 +714,7 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
     created_at = timezone.localtime(run.created_at)
     top_pick = plan.get("top_pick")
     top_pick_name = top_pick["position"].company_name if top_pick else ""
+    progress_data = dict(run.progress_data or {})
     return {
         "reference_code": run.reference_code,
         "label": run.display_label,
@@ -650,6 +754,11 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "negative_news_count": news_overview["negative_count"],
         "neutral_news_count": news_overview["neutral_count"],
         "methodology_note": plan.get("methodology_note", ""),
+        "schedule_kind": progress_data.get("schedule_kind", ""),
+        "scheduled_run_key": progress_data.get("scheduled_run_key", ""),
+        "scheduled_analysis_date": progress_data.get("scheduled_analysis_date", ""),
+        "scheduled_analysis_date_label": progress_data.get("scheduled_analysis_date", ""),
+        "scheduled_weekdays_label": progress_data.get("scheduled_weekdays_label", ""),
     }
 
 
@@ -757,6 +866,168 @@ def build_optimization_comparison_context(runs: list[EquityOptimizationRun]) -> 
         "best_return": best_return,
         "best_protection": best_protection,
         "best_safety": best_safety,
+    }
+
+
+def build_scheduled_optimization_persistence_context(
+    *,
+    as_of: date | None = None,
+    windows: tuple[int, ...] = (30, 60),
+    max_rows: int = 12,
+) -> dict:
+    as_of = as_of or timezone.localdate()
+    normalized_windows = tuple(sorted({int(window) for window in windows if int(window) > 0}))
+    if not normalized_windows:
+        normalized_windows = (30, 60)
+    max_window = max(normalized_windows)
+    cutoff_date = as_of - timedelta(days=max_window - 1)
+    completed_runs = list(
+        EquityOptimizationRun.objects.filter(
+            status=EquityOptimizationRun.Status.COMPLETED,
+            progress_data__schedule_kind="nightly",
+            created_at__date__gte=cutoff_date,
+        ).order_by("-created_at", "-id")
+    )
+    weekdays = scheduled_optimization_iso_weekdays()
+    weekdays_label = build_scheduled_optimization_weekdays_label(weekdays)
+    next_run_date = resolve_next_scheduled_optimization_date(as_of, weekdays, include_today=False)
+    if not completed_runs:
+        return {
+            "available": False,
+            "rows": [],
+            "weekdays_label": weekdays_label,
+            "next_run_date_label": next_run_date.isoformat() if next_run_date else "",
+            "windows": normalized_windows,
+        }
+
+    stats_by_ticker: dict[str, dict] = {}
+    runs_in_window = {window: 0 for window in normalized_windows}
+    distinct_days_in_window = {window: set() for window in normalized_windows}
+    window_cutoffs = {
+        window: as_of - timedelta(days=window - 1)
+        for window in normalized_windows
+    }
+
+    for run in completed_runs:
+        progress_data = dict(run.progress_data or {})
+        summary_data = dict(run.summary_data or {})
+        run_date_label = progress_data.get("scheduled_analysis_date") or summary_data.get("scheduled_analysis_date") or ""
+        try:
+            run_date = date.fromisoformat(run_date_label) if run_date_label else timezone.localtime(run.created_at).date()
+        except ValueError:
+            run_date = timezone.localtime(run.created_at).date()
+        strategy_label = (
+            summary_data.get("strategy_label")
+            or progress_data.get("strategy_label")
+            or ""
+        )
+
+        for window, cutoff in window_cutoffs.items():
+            if run_date >= cutoff:
+                runs_in_window[window] += 1
+                distinct_days_in_window[window].add(run_date)
+
+        for item in run.allocations_data or []:
+            ticker = str(item.get("ticker") or "").strip().upper()
+            if not ticker:
+                continue
+            stats = stats_by_ticker.setdefault(
+                ticker,
+                {
+                    "ticker": ticker,
+                    "company_name": str(item.get("company_name") or ticker),
+                    "last_seen_on": run_date,
+                    "last_seen_strategy_labels": set(),
+                    "strategy_labels_60d": set(),
+                    "distinct_days_60d": set(),
+                    "distinct_days_30d": set(),
+                    "appearances_60d": 0,
+                    "appearances_30d": 0,
+                    "top3_60d": 0,
+                    "rank_total_60d": Decimal("0"),
+                    "rank_count_60d": 0,
+                    "daily_strategies": {},
+                },
+            )
+            stats["company_name"] = str(item.get("company_name") or stats["company_name"] or ticker)
+            stats["appearances_60d"] += 1
+            stats["distinct_days_60d"].add(run_date)
+            if strategy_label:
+                stats["strategy_labels_60d"].add(strategy_label)
+                stats["daily_strategies"].setdefault(run_date, set()).add(strategy_label)
+            if run_date >= window_cutoffs.get(30, cutoff_date):
+                stats["appearances_30d"] += 1
+                stats["distinct_days_30d"].add(run_date)
+            rank_value = item.get("rank")
+            if rank_value is not None:
+                try:
+                    rank_number = int(rank_value)
+                except (TypeError, ValueError):
+                    rank_number = 0
+                if rank_number > 0:
+                    stats["rank_total_60d"] += Decimal(str(rank_number))
+                    stats["rank_count_60d"] += 1
+                    if rank_number <= 3:
+                        stats["top3_60d"] += 1
+            if run_date >= stats["last_seen_on"]:
+                stats["last_seen_on"] = run_date
+
+    rows = []
+    for stats in stats_by_ticker.values():
+        latest_strategies = stats["daily_strategies"].get(stats["last_seen_on"], set())
+        average_rank = None
+        if stats["rank_count_60d"]:
+            average_rank = (
+                stats["rank_total_60d"] / Decimal(str(stats["rank_count_60d"]))
+            ).quantize(Decimal("0.1"))
+        distinct_days_60d = len(stats["distinct_days_60d"])
+        latest_strategy_count = len(latest_strategies)
+        if distinct_days_60d >= 4 and latest_strategy_count >= 2:
+            persistence_label = "Alta"
+        elif distinct_days_60d >= 2:
+            persistence_label = "Media"
+        else:
+            persistence_label = "Puntual"
+        rows.append(
+            {
+                "ticker": stats["ticker"],
+                "company_name": stats["company_name"],
+                "appearances_30d": stats["appearances_30d"],
+                "distinct_days_30d": len(stats["distinct_days_30d"]),
+                "appearances_60d": stats["appearances_60d"],
+                "distinct_days_60d": distinct_days_60d,
+                "top3_60d": stats["top3_60d"],
+                "average_rank_60d": average_rank,
+                "persistence_label": persistence_label,
+                "strategy_labels_60d": sorted(stats["strategy_labels_60d"]),
+                "strategy_labels_60d_label": ", ".join(sorted(stats["strategy_labels_60d"])) or "-",
+                "latest_day_strategy_count": latest_strategy_count,
+                "latest_day_strategy_label": ", ".join(sorted(latest_strategies)) or "-",
+                "last_seen_on": stats["last_seen_on"],
+                "last_seen_on_label": stats["last_seen_on"].isoformat(),
+            }
+        )
+
+    rows.sort(
+        key=lambda item: (
+            -item["distinct_days_30d"],
+            -item["appearances_30d"],
+            -item["top3_60d"],
+            item["average_rank_60d"] if item["average_rank_60d"] is not None else Decimal("999.9"),
+            item["ticker"],
+        )
+    )
+    return {
+        "available": bool(rows),
+        "rows": rows[:max_rows],
+        "total_rows": len(rows),
+        "weekdays_label": weekdays_label,
+        "next_run_date_label": next_run_date.isoformat() if next_run_date else "",
+        "runs_30d": runs_in_window.get(30, 0),
+        "runs_60d": runs_in_window.get(60, 0),
+        "distinct_days_30d": len(distinct_days_in_window.get(30, set())),
+        "distinct_days_60d": len(distinct_days_in_window.get(60, set())),
+        "windows": normalized_windows,
     }
 
 
@@ -904,7 +1175,13 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
     run = EquityOptimizationRun.objects.get(pk=run_id)
     if run.status == EquityOptimizationRun.Status.COMPLETED and run.report_html:
         return run
-    strategy_mode = (run.progress_data or {}).get("strategy_mode") or OPTIMIZER_STRATEGY_12M_PRIMARY
+    existing_progress_data = dict(run.progress_data or {})
+    preserved_metadata = {
+        key: value
+        for key, value in existing_progress_data.items()
+        if key in {"strategy_mode", "strategy_label", "schedule_kind", "scheduled_run_key", "scheduled_analysis_date", "scheduled_weekdays_label"}
+    }
+    strategy_mode = existing_progress_data.get("strategy_mode") or OPTIMIZER_STRATEGY_12M_PRIMARY
     strategy = get_optimizer_strategy_config(strategy_mode)
 
     EquityOptimizationRun.objects.filter(pk=run_id).update(
@@ -914,6 +1191,7 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
             **build_optimizer_progress_payload(strategy_mode, "Preparando analisis", percent=1),
             "stages": build_progress_stages("sync"),
             "events": [{"label": "Preparando analisis", "stage_key": "sync", "recorded_at": timezone.localtime().strftime("%H:%M:%S")}],
+            **preserved_metadata,
         },
         started_at=timezone.now(),
         completed_at=None,
@@ -1109,6 +1387,7 @@ def launch_equity_optimization_run(
     run_inline: bool = False,
     strategy_mode: str = OPTIMIZER_STRATEGY_12M_PRIMARY,
     reference_code: str | None = None,
+    progress_metadata: dict | None = None,
 ) -> EquityOptimizationRun:
     strategy = get_optimizer_strategy_config(strategy_mode)
     run = EquityOptimizationRun.objects.create(
@@ -1123,7 +1402,10 @@ def launch_equity_optimization_run(
         max_sector_positions=max_sector_positions,
         selected_sectors=selected_sectors,
         restrictions_note=restrictions_note,
-        progress_data=build_optimizer_progress_payload(strategy["mode"], "Pendiente de analisis"),
+        progress_data={
+            **build_optimizer_progress_payload(strategy["mode"], "Pendiente de analisis"),
+            **(progress_metadata or {}),
+        },
     )
     if run_inline:
         process_equity_optimization_run(run.id)
@@ -1144,6 +1426,7 @@ def launch_equity_optimization_run_pair(
     reference_label: str = "",
     restrictions_note: str = "",
     run_inline: bool = False,
+    progress_metadata: dict | None = None,
 ) -> list[EquityOptimizationRun]:
     family_code = generate_optimization_reference_family_code()
     runs = []
@@ -1164,9 +1447,44 @@ def launch_equity_optimization_run_pair(
                 run_inline=run_inline,
                 strategy_mode=strategy_mode,
                 reference_code=generate_optimization_reference_code(family_code, suffix=suffix),
+                progress_metadata=progress_metadata,
             )
         )
     return runs
+
+
+def launch_scheduled_equity_optimization_runs(
+    *,
+    analysis_date: date | None = None,
+    force: bool = False,
+    run_inline: bool = False,
+) -> list[EquityOptimizationRun]:
+    analysis_date = analysis_date or timezone.localdate()
+    if not should_launch_scheduled_optimizations(analysis_date=analysis_date, force=force):
+        return []
+
+    existing_runs = load_existing_scheduled_optimization_runs(analysis_date)
+    if existing_runs:
+        return existing_runs
+
+    weekdays = scheduled_optimization_iso_weekdays()
+    weekdays_label = build_scheduled_optimization_weekdays_label(weekdays)
+    return launch_equity_optimization_run_pair(
+        total_investment=resolve_scheduled_optimization_total_investment(),
+        max_company_pct=Decimal("20"),
+        max_total_positions=0,
+        max_sector_positions=0,
+        selected_sectors=[],
+        reference_label=f"Optimizacion programada {analysis_date.isoformat()}",
+        restrictions_note=build_scheduled_optimization_note(analysis_date, weekdays_label),
+        run_inline=run_inline,
+        progress_metadata={
+            "schedule_kind": "nightly",
+            "scheduled_run_key": build_scheduled_optimization_run_key(analysis_date),
+            "scheduled_analysis_date": analysis_date.isoformat(),
+            "scheduled_weekdays_label": weekdays_label,
+        },
+    )
 
 
 def resume_equity_optimization_runs() -> None:

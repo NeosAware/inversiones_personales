@@ -3,6 +3,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from equities.nightly_analysis import nightly_analysis_start_hour, run_nightly_equity_analysis
+from equities.optimization_runs import launch_scheduled_equity_optimization_runs
 
 
 class Command(BaseCommand):
@@ -17,6 +18,11 @@ class Command(BaseCommand):
             "--force",
             action="store_true",
             help="Ejecuta el analisis aunque todavia no se haya alcanzado la hora nocturna configurada.",
+        )
+        parser.add_argument(
+            "--skip-scheduled-optimizations",
+            action="store_true",
+            help="No lanza las optimizaciones programadas al terminar el analisis nocturno.",
         )
 
     def handle(self, *args, **options):
@@ -44,3 +50,16 @@ class Command(BaseCommand):
                 f"Analisis nocturno {run.analysis_date} completado con {run.snapshots.count()} snapshot(s) usando {run.agent_label} ({run.agent_provider})."
             )
         )
+        if options.get("skip_scheduled_optimizations"):
+            return
+
+        optimization_runs = launch_scheduled_equity_optimization_runs(
+            analysis_date=run.analysis_date,
+            force=False,
+        )
+        if optimization_runs:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Optimizaciones programadas listas para {run.analysis_date}: {len(optimization_runs)} ejecucion(es)."
+                )
+            )

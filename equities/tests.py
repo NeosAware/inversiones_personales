@@ -3,7 +3,7 @@ import json
 import os
 import tempfile
 from calendar import monthrange
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -38,6 +38,10 @@ from .nightly_analysis import (
     serialize_cached_value,
 )
 from .optimization_runs import launch_equity_optimization_run, launch_equity_optimization_run_pair, process_equity_optimization_run
+from .optimization_runs import (
+    build_scheduled_optimization_persistence_context,
+    launch_scheduled_equity_optimization_runs,
+)
 from .services import (
     EURIBOR_REFERENCE_NAME,
     EURIBOR_REFERENCE_SYMBOL,
@@ -2225,6 +2229,116 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(mocked_enqueue.call_count, 2)
         mocked_process.assert_not_called()
 
+    @override_settings(
+        EQUITIES_OPTIMIZATION_ASYNC=False,
+        EQUITIES_SCHEDULED_OPTIMIZATION_ENABLED=True,
+        EQUITIES_SCHEDULED_OPTIMIZATION_ISO_WEEKDAYS=(2, 4),
+    )
+    def test_launch_scheduled_optimization_runs_creates_pair_once_per_day(self):
+        analysis_day = date(2026, 4, 21)
+
+        with (
+            patch("equities.optimization_runs.enqueue_equity_optimization_run") as mocked_enqueue,
+            patch("equities.optimization_runs.process_equity_optimization_run") as mocked_process,
+        ):
+            first_runs = launch_scheduled_equity_optimization_runs(
+                analysis_date=analysis_day,
+                force=False,
+            )
+            second_runs = launch_scheduled_equity_optimization_runs(
+                analysis_date=analysis_day,
+                force=False,
+            )
+
+        self.assertEqual(len(first_runs), 2)
+        self.assertEqual(len(second_runs), 2)
+        self.assertEqual(EquityOptimizationRun.objects.count(), 2)
+        self.assertEqual(mocked_enqueue.call_count, 2)
+        mocked_process.assert_not_called()
+        self.assertEqual(
+            {run.progress_data["scheduled_run_key"] for run in first_runs},
+            {"scheduled-optimization:2026-04-21"},
+        )
+        self.assertEqual(
+            {run.progress_data["schedule_kind"] for run in first_runs},
+            {"nightly"},
+        )
+        self.assertEqual(
+            {run.progress_data["scheduled_weekdays_label"] for run in first_runs},
+            {"martes y jueves"},
+        )
+        self.assertEqual({run.id for run in first_runs}, {run.id for run in second_runs})
+
+    @override_settings(
+        EQUITIES_SCHEDULED_OPTIMIZATION_ENABLED=True,
+        EQUITIES_SCHEDULED_OPTIMIZATION_ISO_WEEKDAYS=(2, 4),
+    )
+    def test_build_scheduled_optimization_persistence_context_aggregates_recent_repetition(self):
+        today = timezone.localdate()
+        scheduled_days = [today - timedelta(days=3), today - timedelta(days=10), today - timedelta(days=38)]
+        strategy_runs = [
+            ("12M principal", "12m_primary"),
+            ("5A principal", "5y_primary"),
+        ]
+
+        for index, analysis_day in enumerate(scheduled_days, start=1):
+            for strategy_label, strategy_mode in strategy_runs:
+                run = EquityOptimizationRun.objects.create(
+                    reference_code=f"OPT-SCHED-{index}-{strategy_mode}",
+                    label=f"Programada {analysis_day.isoformat()} - {strategy_label}",
+                    total_investment=Decimal("100000"),
+                    max_company_pct=Decimal("20"),
+                    max_total_positions=0,
+                    max_sector_positions=0,
+                    status=EquityOptimizationRun.Status.COMPLETED,
+                    progress_data={
+                        "strategy_label": strategy_label,
+                        "strategy_mode": strategy_mode,
+                        "schedule_kind": "nightly",
+                        "scheduled_run_key": f"scheduled-optimization:{analysis_day.isoformat()}",
+                        "scheduled_analysis_date": analysis_day.isoformat(),
+                        "scheduled_weekdays_label": "martes y jueves",
+                    },
+                    summary_data={
+                        "available": True,
+                        "strategy_label": strategy_label,
+                        "scheduled_analysis_date": analysis_day.isoformat(),
+                    },
+                    allocations_data=[
+                        {
+                            "rank": 1 if strategy_mode == "12m_primary" else 2,
+                            "company_name": "Iberdrola",
+                            "ticker": "IBE",
+                        },
+                        {
+                            "rank": 4,
+                            "company_name": "Repsol",
+                            "ticker": "REP",
+                        },
+                    ],
+                )
+                EquityOptimizationRun.objects.filter(pk=run.pk).update(
+                    created_at=timezone.make_aware(datetime.combine(analysis_day, datetime.min.time())),
+                    completed_at=timezone.make_aware(datetime.combine(analysis_day, datetime.min.time())),
+                )
+
+        context = build_scheduled_optimization_persistence_context(as_of=today)
+
+        self.assertTrue(context["available"])
+        self.assertEqual(context["runs_30d"], 4)
+        self.assertEqual(context["runs_60d"], 6)
+        self.assertEqual(context["distinct_days_30d"], 2)
+        self.assertEqual(context["distinct_days_60d"], 3)
+        top_row = context["rows"][0]
+        self.assertEqual(top_row["ticker"], "IBE")
+        self.assertEqual(top_row["appearances_30d"], 4)
+        self.assertEqual(top_row["distinct_days_30d"], 2)
+        self.assertEqual(top_row["appearances_60d"], 6)
+        self.assertEqual(top_row["distinct_days_60d"], 3)
+        self.assertEqual(top_row["top3_60d"], 6)
+        self.assertEqual(top_row["persistence_label"], "Media")
+        self.assertEqual(top_row["strategy_labels_60d_label"], "12M principal, 5A principal")
+
     def test_dashboard_can_extend_optimizer_to_full_ibex_universe(self):
         acerinox = find_equity_company_profile("Acerinox")
         acs = find_equity_company_profile("ACS")
@@ -3261,7 +3375,10 @@ class EquitiesServicesTests(TestCase):
         self.assertIn("respaldo previo", run.status_note)
 
     def test_management_command_invokes_nightly_analysis_runner(self):
-        with patch("equities.management.commands.run_equity_nightly_analysis.run_nightly_equity_analysis") as mocked_runner:
+        with (
+            patch("equities.management.commands.run_equity_nightly_analysis.run_nightly_equity_analysis") as mocked_runner,
+            patch("equities.management.commands.run_equity_nightly_analysis.launch_scheduled_equity_optimization_runs") as mocked_scheduler,
+        ):
             mocked_run = type(
                 "NightlyRun",
                 (),
@@ -3273,9 +3390,37 @@ class EquitiesServicesTests(TestCase):
                 },
             )()
             mocked_runner.return_value = mocked_run
+            mocked_scheduler.return_value = []
             call_command("run_equity_nightly_analysis", "--force")
 
         mocked_runner.assert_called_once()
+        mocked_scheduler.assert_called_once()
+
+    def test_scheduled_optimization_management_command_invokes_scheduler(self):
+        with patch("equities.management.commands.run_scheduled_equity_optimizations.launch_scheduled_equity_optimization_runs") as mocked_scheduler:
+            mocked_scheduler.return_value = [
+                EquityOptimizationRun(
+                    reference_code="OPT-SCHED-001",
+                    label="Programada - 12M principal",
+                    total_investment=Decimal("100000"),
+                    max_company_pct=Decimal("20"),
+                    max_total_positions=0,
+                    max_sector_positions=0,
+                    progress_data={"scheduled_analysis_date": "2026-04-21"},
+                ),
+                EquityOptimizationRun(
+                    reference_code="OPT-SCHED-002",
+                    label="Programada - 5A principal",
+                    total_investment=Decimal("100000"),
+                    max_company_pct=Decimal("20"),
+                    max_total_positions=0,
+                    max_sector_positions=0,
+                    progress_data={"scheduled_analysis_date": "2026-04-21"},
+                ),
+            ]
+            call_command("run_scheduled_equity_optimizations", "--analysis-date", "2026-04-21")
+
+        mocked_scheduler.assert_called_once()
 
     def test_build_dashboard_from_nightly_cache_uses_live_position_values(self):
         analysis_day = timezone.localdate()
@@ -4704,6 +4849,49 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "35,0 %")
         self.assertContains(response, "Repsol")
         self.assertContains(response, "25,0 %")
+
+    def test_equities_page_shows_scheduled_optimization_persistence_panel(self):
+        today = timezone.localdate()
+        scheduled_day = today - timedelta(days=3)
+        for strategy_label, strategy_mode in (("12M principal", "12m_primary"), ("5A principal", "5y_primary")):
+            run = EquityOptimizationRun.objects.create(
+                reference_code=f"OPT-PERSIST-{strategy_mode}",
+                label=f"Programada {strategy_label}",
+                total_investment=Decimal("200000"),
+                max_company_pct=Decimal("20"),
+                max_total_positions=0,
+                max_sector_positions=0,
+                status=EquityOptimizationRun.Status.COMPLETED,
+                progress_data={
+                    "strategy_label": strategy_label,
+                    "strategy_mode": strategy_mode,
+                    "schedule_kind": "nightly",
+                    "scheduled_run_key": f"scheduled-optimization:{scheduled_day.isoformat()}",
+                    "scheduled_analysis_date": scheduled_day.isoformat(),
+                    "scheduled_weekdays_label": "martes y jueves",
+                },
+                summary_data={
+                    "available": True,
+                    "strategy_label": strategy_label,
+                    "scheduled_analysis_date": scheduled_day.isoformat(),
+                },
+                allocations_data=[
+                    {"rank": 1, "company_name": "Iberdrola", "ticker": "IBE"},
+                    {"rank": 3, "company_name": "Endesa", "ticker": "ELE"},
+                ],
+            )
+            EquityOptimizationRun.objects.filter(pk=run.pk).update(
+                created_at=timezone.make_aware(datetime.combine(scheduled_day, datetime.min.time())),
+                completed_at=timezone.make_aware(datetime.combine(scheduled_day, datetime.min.time())),
+            )
+
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Valores que mas se repiten en optimizaciones automáticas")
+        self.assertContains(response, "Iberdrola")
+        self.assertContains(response, "2 apariciones")
+        self.assertContains(response, "12M principal, 5A principal")
 
     def test_completed_optimization_run_can_be_deleted_from_history(self):
         run = EquityOptimizationRun.objects.create(

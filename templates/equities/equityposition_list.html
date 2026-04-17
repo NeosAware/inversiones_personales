@@ -1091,6 +1091,44 @@
             </div>
           {% endif %}
 
+          {% if scheduled_optimization_persistence.available %}
+            <div class="equity-panel" style="margin-top:18px;">
+              <div class="equity-panel-head">
+                <div>
+                  <p class="section-title">Persistencia programada</p>
+                  <h3>Valores que mas se repiten en optimizaciones automáticas</h3>
+                  <p>La tabla resume solo las optimizaciones programadas de {{ scheduled_optimization_persistence.weekdays_label }}. Si un valor aparece muchos dias distintos y ademas coincide en 12M y 5A, la señal gana consistencia. Sigue siendo una pista de conviccion, no una garantia.</p>
+                </div>
+                <div class="equity-chip-row">
+                  <span class="pill">{{ scheduled_optimization_persistence.runs_30d }} ejecuciones 30d</span>
+                  <span class="pill">{{ scheduled_optimization_persistence.distinct_days_30d }} dias distintos 30d</span>
+                  <span class="pill">{{ scheduled_optimization_persistence.runs_60d }} ejecuciones 60d</span>
+                  {% if scheduled_optimization_persistence.next_run_date_label %}<span class="pill">Proxima {{ scheduled_optimization_persistence.next_run_date_label }}</span>{% endif %}
+                </div>
+              </div>
+              <div class="equity-table-wrap" style="margin-top:18px;">
+                <table>
+                  <thead><tr><th>Empresa</th><th>Persistencia</th><th>30d</th><th>60d</th><th>Top 3 60d</th><th>Rango medio 60d</th><th>Estrategias</th><th>Ultima coincidencia</th><th>Gestion</th></tr></thead>
+                  <tbody>
+                    {% for row in scheduled_optimization_persistence.rows %}
+                      <tr>
+                        <td><strong>{{ row.company_name }}</strong><br><span class="metric-sub">{{ row.ticker }}</span></td>
+                        <td><strong class="{% if row.persistence_label == 'Alta' %}good{% elif row.persistence_label == 'Media' %}warn{% endif %}">{{ row.persistence_label }}</strong><br><span class="metric-sub">{{ row.distinct_days_60d }} dias en 60d</span></td>
+                        <td>{{ row.appearances_30d }} apariciones<br><span class="metric-sub">{{ row.distinct_days_30d }} dias distintos</span></td>
+                        <td>{{ row.appearances_60d }} apariciones<br><span class="metric-sub">{{ row.distinct_days_60d }} dias distintos</span></td>
+                        <td>{{ row.top3_60d }}</td>
+                        <td>{% if row.average_rank_60d is not None %}{{ row.average_rank_60d|floatformat:1 }}{% else %}-{% endif %}</td>
+                        <td>{{ row.strategy_labels_60d_label }}<br><span class="metric-sub">Ultimo dia: {{ row.latest_day_strategy_label }}</span></td>
+                        <td>{{ row.last_seen_on_label }}</td>
+                        <td><a class="button secondary" href="{{ row.detail_url }}" target="_blank" rel="noopener">Abrir analisis</a></td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          {% endif %}
+
           {% if latest_completed_optimization %}
             <div class="equity-panel" style="margin-top:18px;">
               <div class="equity-panel-head">

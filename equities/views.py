@@ -22,6 +22,7 @@ from .nightly_analysis import (
 )
 from .optimization_runs import (
     build_fallback_report_pdf_html,
+    build_scheduled_optimization_persistence_context,
     launch_equity_optimization_run_pair,
     render_report_pdf,
     resume_equity_optimization_runs,
@@ -207,9 +208,12 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             (run for run in optimization_runs if run.status == EquityOptimizationRun.Status.COMPLETED and run.summary_data),
             None,
         )
+        context["scheduled_optimization_persistence"] = build_scheduled_optimization_persistence_context()
         context["prefill_source_filename"] = kwargs.get("prefill_source_filename")
         context["equity_company_catalog"] = get_equity_company_catalog()
         context["today"] = timezone.localdate()
+        for row in context["scheduled_optimization_persistence"].get("rows", []):
+            row["detail_url"] = reverse("equities:ibex_detail", kwargs={"ticker": row["ticker"]})
         if not context["nightly_analysis"]["available"]:
             capture_equity_ticket_snapshots(dashboard["owned_history_cards"])
         context["ticket_tracking"] = build_equity_ticket_tracking_context(dashboard["owned_history_cards"])
