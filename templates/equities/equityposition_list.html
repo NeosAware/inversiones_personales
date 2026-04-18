@@ -1442,9 +1442,9 @@
                     <div class="equity-preview-columns">
                       <section class="equity-preview-card">
                         <div>
-                          <p class="section-title">Ranking provisional</p>
-                          <h4>Candidatos mas fuertes</h4>
-                          <p>Valores que ya destacan antes de cerrar la optimizacion final.</p>
+                          <p class="section-title">Ranking bruto provisional</p>
+                          <h4>Ideas mejor puntuadas</h4>
+                          <p>Es solo el orden bruto de candidatos. Aqui todavia no mandan del todo los limites de peso, sector, costes ni diversificacion.</p>
                         </div>
                         <div class="equity-table-wrap">
                           <table>
@@ -1464,12 +1464,15 @@
                             </tbody>
                           </table>
                         </div>
+                        <div class="equity-compact-note" style="margin-top:14px;">
+                          Este ranking no tiene por que parecerse a la cartera final. Sirve para ver que valores salen fuertes en bruto antes de aplicar restricciones reales de construccion.
+                        </div>
                       </section>
                       <section class="equity-preview-card">
                         <div>
                           <p class="section-title">Cartera provisional</p>
                           <h4>Distribucion que va saliendo</h4>
-                          <p>En cuanto el reparto arranque, veras peso, importe y retorno neto provisional.</p>
+                          <p>Esta ya es la cartera que va saliendo con limites de peso, maximo de empresas, diversificacion sectorial, costes y caja en reserva.</p>
                         </div>
                         <div class="equity-table-wrap">
                           <table>
@@ -1488,6 +1491,9 @@
                               {% endfor %}
                             </tbody>
                           </table>
+                        </div>
+                        <div class="equity-compact-note" style="margin-top:14px;">
+                          Si una empresa sale muy arriba en el ranking bruto pero no entra aqui, normalmente es por capacidad, diversificacion, costes o porque otra combinacion da una cartera mas equilibrada.
                         </div>
                       </section>
                     </div>
@@ -1785,6 +1791,28 @@
                 <div class="equity-compact-note" style="margin-top:16px;">
                   {{ latest_completed_optimization.summary_data.methodology_note }}
                   {% if latest_completed_optimization.summary_data.top_pick_name %} La mejor idea de la ultima ejecucion fue <strong>{{ latest_completed_optimization.summary_data.top_pick_name }}</strong>.{% endif %}
+                </div>
+              {% endif %}
+              <div class="equity-compact-note" style="margin-top:16px;">
+                El <strong>ranking bruto</strong> y la <strong>cartera final</strong> no tienen por que coincidir. El ranking solo ordena ideas por fuerza estadistica; la cartera final ya aplica limites de peso, maximo de empresas, diversificacion sectorial, costes y caja en reserva.
+              </div>
+              {% if latest_completed_optimization.progress_data.preview_candidates %}
+                <div class="equity-table-wrap" style="margin-top:18px;">
+                  <table>
+                    <thead><tr><th>Orden bruto</th><th>Empresa</th><th>Sector</th><th>Alerta</th><th>Retorno</th><th>Seguridad</th></tr></thead>
+                    <tbody>
+                      {% for item in latest_completed_optimization.progress_data.preview_candidates %}
+                        <tr>
+                          <td>{{ forloop.counter }}</td>
+                          <td><strong>{{ item.company_name }}</strong><br><span class="metric-sub">{{ item.ticker }}</span></td>
+                          <td>{{ item.sector_label|default:"-" }}</td>
+                          <td>{{ item.trade_alert_label|default:"-" }}</td>
+                          <td>{% if item.net_return_pct is not None %}{{ item.net_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+                          <td>{% if item.safety_score is not None %}{{ item.safety_score|floatformat:0 }}/100{% else %}-{% endif %}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
                 </div>
               {% endif %}
               {% if latest_completed_optimization.allocations_data %}

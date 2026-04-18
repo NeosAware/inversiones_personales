@@ -154,9 +154,32 @@
         {% if plan.ticket_filter_note %} {{ plan.ticket_filter_note }}{% endif %}
         {% if plan.reserve_reason %} {{ plan.reserve_reason }}{% endif %}
         {% if plan.material_event_allocations_count %} Hay {{ plan.material_event_allocations_count }} valor(es) con penalizacion expresa por evento material o por aumento de incertidumbre informativa.{% endif %}
-        El objetivo es que la lectura sea clara: rentabilidad neta significa beneficio esperado despues de dividendos, compra, venta y mantenimiento; peor escenario es una lectura prudente; y la comprobacion historica ayuda a ver si el modelo habria sido razonable en el pasado.
+        El objetivo es que la lectura sea clara: rentabilidad neta significa beneficio esperado despues de dividendos, compra, venta y mantenimiento; peor escenario es una lectura prudente; y la comprobacion historica ayuda a ver si el modelo habria sido razonable en el pasado. El ranking bruto de ideas no tiene por que coincidir con la cartera final, porque la cartera aplica ademas limites reales de peso, numero total de empresas, diversificacion sectorial, costes y caja en reserva.
       </div>
     </section>
+
+    {% if run.progress_data.preview_candidates %}
+      <section class="section">
+        <h2>Ranking Bruto Antes De Restricciones</h2>
+        <div class="card">
+          <table>
+            <thead><tr><th>Orden bruto</th><th>Empresa</th><th>Sector</th><th>Alerta</th><th>Retorno</th><th>Seguridad</th></tr></thead>
+            <tbody>
+              {% for item in run.progress_data.preview_candidates %}
+                <tr>
+                  <td>{{ forloop.counter }}</td>
+                  <td><strong>{{ item.company_name }}</strong><br><span class="muted">{{ item.ticker }}</span></td>
+                  <td>{{ item.sector_label|default:"-" }}</td>
+                  <td>{{ item.trade_alert_label|default:"-" }}</td>
+                  <td>{% if item.net_return_pct is not None %}{{ item.net_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
+                  <td>{% if item.safety_score is not None %}{{ item.safety_score|floatformat:0 }}/100{% else %}-{% endif %}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
 
     {% if plan.available %}
       <section class="section">
