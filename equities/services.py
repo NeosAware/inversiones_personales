@@ -9360,6 +9360,120 @@ def get_optimizer_strategy_config(strategy_mode: str | None = None) -> dict:
     return {"mode": normalized_mode, **strategy}
 
 
+def build_optimizer_scenario_summary(
+    scenarios: list[dict] | None,
+    *,
+    return_key: str,
+    fallback_value: Decimal | None = None,
+) -> dict:
+    normalized_rows = []
+    for row in list(scenarios or []):
+        value = row.get(return_key)
+        probability_pct = row.get("probability_pct")
+        if value is None:
+            continue
+        normalized_rows.append(
+            {
+                "key": str(row.get("key") or "").strip().lower(),
+                "label": str(row.get("label") or "").strip(),
+                "value": Decimal(str(value)),
+                "probability_pct": Decimal(str(probability_pct or "0")),
+            }
+        )
+
+    if not normalized_rows:
+        return {
+            "available": False,
+            "expected_return_pct": fallback_value,
+            "base_return_pct": fallback_value,
+            "worst_return_pct": fallback_value,
+            "best_return_pct": fallback_value,
+            "spread_pct": ZERO,
+            "bear_probability_pct": None,
+            "base_probability_pct": None,
+            "bull_probability_pct": None,
+        }
+
+    total_probability_pct = sum((item["probability_pct"] for item in normalized_rows), ZERO)
+    if total_probability_pct <= ZERO:
+        total_probability_pct = ONE_HUNDRED
+    expected_return_pct = sum(
+        ((item["value"] * item["probability_pct"]) / total_probability_pct for item in normalized_rows),
+        ZERO,
+    )
+    base_row = next((item for item in normalized_rows if item["key"] == "base"), None)
+    bear_row = next((item for item in normalized_rows if item["key"] == "bear"), None)
+    bull_row = next((item for item in normalized_rows if item["key"] == "bull"), None)
+    base_return_pct = base_row["value"] if base_row is not None else fallback_value if fallback_value is not None else expected_return_pct
+    worst_return_pct = min((item["value"] for item in normalized_rows), default=base_return_pct)
+    best_return_pct = max((item["value"] for item in normalized_rows), default=base_return_pct)
+    spread_pct = best_return_pct - worst_return_pct if best_return_pct is not None and worst_return_pct is not None else ZERO
+    return {
+        "available": True,
+        "expected_return_pct": quantize_decimal(expected_return_pct),
+        "base_return_pct": quantize_decimal(base_return_pct),
+        "worst_return_pct": quantize_decimal(worst_return_pct),
+        "best_return_pct": quantize_decimal(best_return_pct),
+        "spread_pct": quantize_decimal(spread_pct),
+        "bear_probability_pct": quantize_decimal(bear_row["probability_pct"], "0.1") if bear_row is not None else None,
+        "base_probability_pct": quantize_decimal(base_row["probability_pct"], "0.1") if base_row is not None else None,
+        "bull_probability_pct": quantize_decimal(bull_row["probability_pct"], "0.1") if bull_row is not None else None,
+    }
+
+
+def build_optimizer_uncertainty_profile(
+    card: dict,
+    projection: dict,
+    cycle_projection: dict,
+    external_signal: dict,
+) -> dict:
+    projection_news_adjustment = projection.get("news_adjustment") or {}
+    cycle_news_adjustment = cycle_projection.get("news_adjustment") or {}
+    news_context = card.get("news_context") or {}
+    external_signal_score = Decimal(str(external_signal.get("score", "0") or "0"))
+    external_signal_items_count = int(external_signal.get("items_count") or 0)
+    model_confidence_penalty_pct = Decimal(str(projection_news_adjustment.get("confidence_penalty_pct") or "0"))
+    model_band_multiplier = Decimal(str(projection_news_adjustment.get("band_multiplier") or "1"))
+    model_spread_multiplier = Decimal(str(cycle_news_adjustment.get("spread_multiplier") or "1"))
+    material_event = bool(
+        news_context.get("material_event")
+        or projection_news_adjustment.get("applied")
+        or cycle_news_adjustment.get("applied")
+    )
+    model_uncertainty_penalty_pct = clamp_decimal(
+        (model_confidence_penalty_pct * Decimal("0.16"))
+        + (max(model_band_multiplier - Decimal("1.00"), ZERO) * Decimal("5.50"))
+        + (max(model_spread_multiplier - Decimal("1.00"), ZERO) * Decimal("4.50")),
+        ZERO,
+        Decimal("4.50"),
+    )
+    external_signal_penalty_pct = clamp_decimal(
+        abs(min(external_signal_score, ZERO)) * Decimal("0.42"),
+        ZERO,
+        Decimal("3.00"),
+    )
+    coverage_penalty_pct = clamp_decimal(
+        Decimal(str(external_signal_items_count)) * Decimal("0.12"),
+        ZERO,
+        Decimal("0.75"),
+    ) if external_signal_score < ZERO else ZERO
+    uncertainty_penalty_pct = clamp_decimal(
+        model_uncertainty_penalty_pct
+        + external_signal_penalty_pct
+        + coverage_penalty_pct
+        + (Decimal("0.85") if material_event else ZERO),
+        ZERO,
+        Decimal("6.50"),
+    )
+    return {
+        "material_event": material_event,
+        "model_uncertainty_penalty_pct": quantize_decimal(model_uncertainty_penalty_pct),
+        "external_signal_penalty_pct": quantize_decimal(external_signal_penalty_pct),
+        "coverage_penalty_pct": quantize_decimal(coverage_penalty_pct),
+        "uncertainty_penalty_pct": quantize_decimal(uncertainty_penalty_pct),
+    }
+
+
 def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_STRATEGY_12M_PRIMARY) -> dict | None:
     projection = card.get("projection") or {}
     if not projection.get("available") or projection.get("projected_price") is None:
@@ -9401,6 +9515,30 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         Decimal("-2.50"),
         Decimal("2.50"),
     )
+    twelve_month_scenario = build_optimizer_scenario_summary(
+        projection.get("scenarios"),
+        return_key="total_return_pct",
+        fallback_value=base_return_pct,
+    )
+    five_year_scenario = build_optimizer_scenario_summary(
+        cycle_projection.get("scenarios"),
+        return_key="annual_return_pct",
+        fallback_value=cycle_return_annual_pct,
+    )
+    uncertainty_profile = build_optimizer_uncertainty_profile(card, projection, cycle_projection, external_signal)
+    scenario_expected_return_pct = twelve_month_scenario.get("expected_return_pct") or base_return_pct
+    downside_stress_return_pct = twelve_month_scenario.get("worst_return_pct")
+    if downside_stress_return_pct is None:
+        downside_stress_return_pct = low_return_pct if low_return_pct is not None else base_return_pct
+    scenario_spread_pct = twelve_month_scenario.get("spread_pct") or ZERO
+    cycle_expected_annual_return_pct = five_year_scenario.get("expected_return_pct")
+    if cycle_expected_annual_return_pct is None:
+        cycle_expected_annual_return_pct = cycle_return_annual_pct
+    cycle_downside_stress_annual_pct = five_year_scenario.get("worst_return_pct")
+    if cycle_downside_stress_annual_pct is None:
+        cycle_downside_stress_annual_pct = cycle_return_annual_pct
+    cycle_scenario_spread_pct = five_year_scenario.get("spread_pct") or ZERO
+    uncertainty_penalty_pct = uncertainty_profile.get("uncertainty_penalty_pct") or ZERO
 
     downside_return_pct = ZERO
     if low_return_pct is not None and low_return_pct < ZERO:
@@ -9438,6 +9576,25 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         - risk_penalty_pct
         + clamp_decimal(external_signal_score * Decimal("0.12"), Decimal("-1.20"), Decimal("1.20"))
     )
+    scenario_expectation_adjustment_pct = clamp_decimal(
+        ((scenario_expected_return_pct or ZERO) - (base_return_pct or ZERO)) * Decimal("0.70"),
+        Decimal("-3.00"),
+        Decimal("3.00"),
+    )
+    scenario_stress_penalty_pct = clamp_decimal(
+        (abs(min(downside_stress_return_pct or ZERO, ZERO)) * Decimal("0.14"))
+        + (scenario_spread_pct * Decimal("0.05")),
+        ZERO,
+        Decimal("8.00"),
+    )
+    robust_return_signal_pct = clamp_decimal(
+        risk_adjusted_return_pct
+        + scenario_expectation_adjustment_pct
+        - scenario_stress_penalty_pct
+        - uncertainty_penalty_pct,
+        Decimal("-25.00"),
+        Decimal("25.00"),
+    )
     cycle_support_score = ZERO
     if cycle_projection.get("available") and cycle_return_annual_pct is not None:
         cycle_quality_multiplier = (
@@ -9456,13 +9613,32 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         )
         if cycle_return_5y_pct is not None and cycle_return_5y_pct < ZERO:
             cycle_support_score += clamp_decimal(cycle_return_5y_pct * Decimal("0.05"), Decimal("-3.00"), ZERO)
+    cycle_expectation_adjustment_pct = clamp_decimal(
+        ((cycle_expected_annual_return_pct or ZERO) - (cycle_return_annual_pct or ZERO)) * Decimal("0.85"),
+        Decimal("-2.50"),
+        Decimal("2.50"),
+    )
+    cycle_stress_penalty_pct = clamp_decimal(
+        (abs(min(cycle_downside_stress_annual_pct or ZERO, ZERO)) * Decimal("0.45"))
+        + (cycle_scenario_spread_pct * Decimal("0.18")),
+        ZERO,
+        Decimal("6.00"),
+    )
+    robust_cycle_support_score = clamp_decimal(
+        cycle_support_score
+        + cycle_expectation_adjustment_pct
+        - cycle_stress_penalty_pct
+        - (uncertainty_penalty_pct * Decimal("0.55")),
+        Decimal("-12.00"),
+        Decimal("12.00"),
+    )
     strategy = get_optimizer_strategy_config(strategy_mode)
     if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY:
-        primary_signal_pct = cycle_support_score
-        secondary_signal_pct = risk_adjusted_return_pct
+        primary_signal_pct = robust_cycle_support_score
+        secondary_signal_pct = robust_return_signal_pct
     else:
-        primary_signal_pct = risk_adjusted_return_pct
-        secondary_signal_pct = cycle_support_score
+        primary_signal_pct = robust_return_signal_pct
+        secondary_signal_pct = robust_cycle_support_score
     blended_return_signal_pct = (
         (primary_signal_pct * strategy["primary_weight"])
         + (secondary_signal_pct * strategy["secondary_weight"])
@@ -9496,9 +9672,16 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         "reliability_score": reliability_score,
         "safety_score": safety_score,
         "base_return_pct": base_return_pct,
+        "scenario_expected_return_pct": scenario_expected_return_pct,
+        "downside_stress_return_pct": downside_stress_return_pct,
+        "scenario_spread_pct": scenario_spread_pct,
+        "cycle_expected_annual_return_pct": cycle_expected_annual_return_pct,
+        "cycle_downside_stress_annual_pct": cycle_downside_stress_annual_pct,
+        "cycle_scenario_spread_pct": cycle_scenario_spread_pct,
         "primary_signal_pct": primary_signal_pct,
         "secondary_signal_pct": secondary_signal_pct,
         "risk_adjusted_return_pct": risk_adjusted_return_pct,
+        "robust_return_signal_pct": robust_return_signal_pct,
         "blended_return_signal_pct": blended_return_signal_pct,
         "optimization_score": optimization_score,
         "downside_return_pct": downside_return_pct,
@@ -9510,6 +9693,11 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         "cycle_return_annual_pct": cycle_return_annual_pct,
         "cycle_return_5y_pct": cycle_return_5y_pct,
         "cycle_support_score": cycle_support_score,
+        "robust_cycle_support_score": robust_cycle_support_score,
+        "scenario_expectation_adjustment_pct": scenario_expectation_adjustment_pct,
+        "scenario_stress_penalty_pct": scenario_stress_penalty_pct,
+        "cycle_expectation_adjustment_pct": cycle_expectation_adjustment_pct,
+        "cycle_stress_penalty_pct": cycle_stress_penalty_pct,
         "years_covered": years_covered,
         "cycle_phase": projection.get("cycle_phase") or "Sin ciclo",
         "max_drawdown_pct": max_drawdown_pct,
@@ -9523,6 +9711,11 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         "external_signal_adjustment": external_signal_adjustment,
         "external_signal_note": external_signal.get("note", ""),
         "external_signal_items_count": external_signal.get("items_count", 0),
+        "material_event": uncertainty_profile.get("material_event", False),
+        "uncertainty_penalty_pct": uncertainty_penalty_pct,
+        "model_uncertainty_penalty_pct": uncertainty_profile.get("model_uncertainty_penalty_pct") or ZERO,
+        "external_signal_penalty_pct": uncertainty_profile.get("external_signal_penalty_pct") or ZERO,
+        "coverage_penalty_pct": uncertainty_profile.get("coverage_penalty_pct") or ZERO,
     }
 
 
@@ -9536,14 +9729,14 @@ def filter_positive_optimizer_candidates(
             item
             for item in candidates
             if item["optimization_score"] > ZERO
-            and item["cycle_support_score"] > ZERO
+            and item.get("robust_cycle_support_score", item["cycle_support_score"]) > ZERO
             and item["trade_alert_label"] != "Vender"
         ]
     return [
         item
         for item in candidates
         if item["optimization_score"] > ZERO
-        and item["base_return_pct"] > ZERO
+        and item.get("robust_return_signal_pct", item["base_return_pct"]) > ZERO
         and item["trade_alert_label"] != "Vender"
     ]
 
@@ -9555,6 +9748,8 @@ def rank_optimizer_candidates(candidates: list[dict]) -> list[dict]:
             item["optimization_score"],
             item["primary_signal_pct"],
             item["secondary_signal_pct"],
+            item.get("scenario_expected_return_pct") if item.get("scenario_expected_return_pct") is not None else Decimal("-9999"),
+            item.get("downside_stress_return_pct") if item.get("downside_stress_return_pct") is not None else Decimal("-9999"),
             item["base_return_pct"],
             item["safety_score"],
         ),
@@ -10224,9 +10419,13 @@ def build_equity_allocation_plan(
                 "allocated_amount": allocated_amount,
                 "allocated_weight_pct": (allocated_amount / total_investment) * Decimal("100"),
                 "base_return_pct": candidate["base_return_pct"],
+                "scenario_expected_return_pct": candidate.get("scenario_expected_return_pct"),
+                "downside_stress_return_pct": candidate.get("downside_stress_return_pct"),
+                "scenario_spread_pct": candidate.get("scenario_spread_pct"),
                 "primary_signal_pct": candidate["primary_signal_pct"],
                 "secondary_signal_pct": candidate["secondary_signal_pct"],
                 "adjusted_return_pct": candidate["risk_adjusted_return_pct"],
+                "robust_return_signal_pct": candidate.get("robust_return_signal_pct"),
                 "blended_return_signal_pct": candidate["blended_return_signal_pct"],
                 "net_projected_return_pct": scenario["net_projected_return_pct"],
                 "low_return_pct": scenario["low_return_pct"],
@@ -10260,6 +10459,9 @@ def build_equity_allocation_plan(
                 "cycle_projection_available": candidate["cycle_projection_available"],
                 "cycle_return_annual_pct": candidate["cycle_return_annual_pct"],
                 "cycle_return_5y_pct": candidate["cycle_return_5y_pct"],
+                "cycle_expected_annual_return_pct": candidate.get("cycle_expected_annual_return_pct"),
+                "cycle_downside_stress_annual_pct": candidate.get("cycle_downside_stress_annual_pct"),
+                "cycle_scenario_spread_pct": candidate.get("cycle_scenario_spread_pct"),
                 "cycle_yearly_margins": build_cycle_projection_yearly_margins(
                     candidate["position"].current_price_per_share,
                     candidate["card"].get("cycle_projection_5y") or {},
@@ -10267,6 +10469,9 @@ def build_equity_allocation_plan(
                     first_year_return_pct=candidate["base_return_pct"],
                 ),
                 "cycle_support_score": candidate["cycle_support_score"],
+                "robust_cycle_support_score": candidate.get("robust_cycle_support_score"),
+                "material_event": candidate.get("material_event", False),
+                "uncertainty_penalty_pct": candidate.get("uncertainty_penalty_pct", ZERO),
                 "max_drawdown_pct": candidate["max_drawdown_pct"],
                 "current_drawdown_pct": candidate["current_drawdown_pct"],
                 "projected_price": candidate["projection"].get("projected_price"),
@@ -10282,6 +10487,32 @@ def build_equity_allocation_plan(
     )
     weighted_low_return_pct = (
         (sum((item["downside_amount"] for item in allocations), ZERO) / allocated_amount_total) * Decimal("100")
+        if allocated_amount_total
+        else None
+    )
+    weighted_expected_return_pct = (
+        sum(
+            (
+                (item["scenario_expected_return_pct"] * item["allocated_amount"])
+                for item in allocations
+                if item.get("scenario_expected_return_pct") is not None
+            ),
+            ZERO,
+        )
+        / allocated_amount_total
+        if allocated_amount_total
+        else None
+    )
+    weighted_stress_return_pct = (
+        sum(
+            (
+                (item["downside_stress_return_pct"] * item["allocated_amount"])
+                for item in allocations
+                if item.get("downside_stress_return_pct") is not None
+            ),
+            ZERO,
+        )
+        / allocated_amount_total
         if allocated_amount_total
         else None
     )
@@ -10330,6 +10561,11 @@ def build_equity_allocation_plan(
         if allocated_amount_total
         else None
     )
+    weighted_uncertainty_penalty_pct = (
+        sum((item["uncertainty_penalty_pct"] * item["allocated_amount"] for item in allocations), ZERO) / allocated_amount_total
+        if allocated_amount_total
+        else None
+    )
     net_dividend_income_total = sum((item["expected_net_dividend_income"] for item in allocations), ZERO)
     annual_cost_total = sum((item["annual_cost_used"] for item in allocations), ZERO)
     roundtrip_cost_total = sum((item["roundtrip_total_cost"] for item in allocations), ZERO)
@@ -10342,6 +10578,8 @@ def build_equity_allocation_plan(
     )
     sectors_used = sorted({item["sector_label"] for item in allocations if item.get("sector_label")})
     external_signal_used_count = sum(1 for item in allocations if item.get("external_signal_items_count"))
+    material_event_allocations_count = sum(1 for item in allocations if item.get("material_event"))
+    shock_adjusted_allocations_count = sum(1 for item in allocations if (item.get("uncertainty_penalty_pct") or ZERO) > ZERO)
 
     if remaining_amount > ZERO:
         reserve_reason = (
@@ -10415,11 +10653,14 @@ def build_equity_allocation_plan(
         "projected_gain_total": projected_gain_total,
         "weighted_return_pct": weighted_return_pct,
         "weighted_low_return_pct": weighted_low_return_pct,
+        "weighted_expected_return_pct": weighted_expected_return_pct,
+        "weighted_stress_return_pct": weighted_stress_return_pct,
         "weighted_safety_score": weighted_safety_score,
         "weighted_reliability_score": weighted_reliability_score,
         "weighted_cycle_return_annual_pct": weighted_cycle_return_annual_pct,
         "weighted_cycle_return_5y_pct": weighted_cycle_return_5y_pct,
         "weighted_volatility_pct": weighted_volatility_pct,
+        "weighted_uncertainty_penalty_pct": weighted_uncertainty_penalty_pct,
         "net_dividend_income_total": net_dividend_income_total,
         "annual_cost_total": annual_cost_total,
         "roundtrip_cost_total": roundtrip_cost_total,
@@ -10432,6 +10673,8 @@ def build_equity_allocation_plan(
         "sectors_used": sectors_used,
         "sectors_used_count": len(sectors_used),
         "external_signal_used_count": external_signal_used_count,
+        "material_event_allocations_count": material_event_allocations_count,
+        "shock_adjusted_allocations_count": shock_adjusted_allocations_count,
         "sector_filtered_count": len(sector_excluded_candidates),
         "sector_filter_note": sector_limit_note,
         "ticket_filtered_count": ticket_filtered_count,
@@ -10442,7 +10685,7 @@ def build_equity_allocation_plan(
         "methodology_note": (
             f"Esta ejecucion usa la estrategia {strategy['label']}: "
             f"prioriza la lectura de {strategy['primary_horizon_label']} y deja {strategy['secondary_horizon_label']} como contraste secundario para reforzar o penalizar la jerarquia final. "
-            "Sigue integrando dividendos netos, costes de compra/venta y mantenimiento, seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa y riesgo historico. "
+            "La jerarquia ya no depende solo del caso central: combina retorno esperado por escenarios, peor caso, dispersion entre escenarios, seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa y castigo automatico por shocks informativos. "
             "Las cifras monetarias del informe siguen expresadas a 12 meses para mantener comparables dividendos, costes, caja y peor escenario, aunque la jerarquia de seleccion pueda priorizar 5 anos. "
             "eficiencia real del ticket de compra y, si lo marcas, un maximo total de empresas y diversificacion maxima por sector. En la version robusta se "
             "analiza siempre todo el IBEX, no solo los valores que ya tienes en seguimiento."

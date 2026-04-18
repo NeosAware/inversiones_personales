@@ -127,8 +127,11 @@
         <div class="grid cols-4">
           <div class="card box"><span>Ganancia 12M</span><strong class="{% if plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ plan.projected_gain_total|floatformat:0 }} EUR</strong><small>Escenario central neto.</small></div>
           <div class="card box"><span>Rentabilidad neta</span><strong>{% if plan.weighted_return_pct is not None %}{{ plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Media ponderada de la propuesta.</small></div>
+          <div class="card box"><span>Retorno robusto</span><strong>{% if plan.weighted_expected_return_pct is not None %}{{ plan.weighted_expected_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Valor esperado por escenarios.</small></div>
           <div class="card box"><span>Peor escenario</span><strong class="{% if plan.weighted_low_return_pct is not None and plan.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if plan.weighted_low_return_pct is not None %}{{ plan.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Lectura conservadora 12M.</small></div>
+          <div class="card box"><span>Estres escenarios</span><strong class="{% if plan.weighted_stress_return_pct is not None and plan.weighted_stress_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if plan.weighted_stress_return_pct is not None %}{{ plan.weighted_stress_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Bajista ponderado.</small></div>
           <div class="card box"><span>Ciclo 5A</span><strong>{% if plan.weighted_cycle_return_annual_pct is not None %}{{ plan.weighted_cycle_return_annual_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>{% if plan.weighted_cycle_return_5y_pct is not None %}Escenario acumulado {{ plan.weighted_cycle_return_5y_pct|floatformat:1 }} %.{% else %}Lectura larga usada como apoyo secundario.{% endif %}</small></div>
+          <div class="card box"><span>Penalizacion shock</span><strong>{% if plan.weighted_uncertainty_penalty_pct is not None %}{{ plan.weighted_uncertainty_penalty_pct|floatformat:2 }} pts{% else %}-{% endif %}</strong><small>{{ plan.shock_adjusted_allocations_count|default:0 }} valor(es) ajustados.</small></div>
           <div class="card box"><span>Caja en reserva</span><strong>{{ plan.cash_reserve_amount|floatformat:0 }} EUR</strong><small>Capital no asignado por filtros de calidad.</small></div>
           <div class="card box"><span>Dividendos netos</span><strong>{{ plan.net_dividend_income_total|floatformat:0 }} EUR</strong><small>Flujo esperado menos comisiones de dividendo.</small></div>
           <div class="card box"><span>Coste anual</span><strong>{{ plan.annual_cost_total|floatformat:0 }} EUR</strong><small>Custodia y mantenimiento.</small></div>
@@ -150,6 +153,7 @@
         {% if plan.sector_filter_note %} {{ plan.sector_filter_note }}{% endif %}
         {% if plan.ticket_filter_note %} {{ plan.ticket_filter_note }}{% endif %}
         {% if plan.reserve_reason %} {{ plan.reserve_reason }}{% endif %}
+        {% if plan.material_event_allocations_count %} Hay {{ plan.material_event_allocations_count }} valor(es) con penalizacion expresa por evento material o por aumento de incertidumbre informativa.{% endif %}
         El objetivo es que la lectura sea clara: rentabilidad neta significa beneficio esperado despues de dividendos, compra, venta y mantenimiento; peor escenario es una lectura prudente; y la comprobacion historica ayuda a ver si el modelo habria sido razonable en el pasado.
       </div>
     </section>
@@ -168,7 +172,7 @@
         <h2>Tabla de asignacion</h2>
         <div class="card">
           <table>
-            <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
+            <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Retorno robusto</th><th>Peor escenario</th><th>Shock</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
             <tbody>
               {% for item in plan.allocations %}
                 <tr>
@@ -181,7 +185,9 @@
                   <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>
                   <td>{{ item.allocated_amount|floatformat:0 }} EUR</td>
                   <td class="{% if item.net_projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.net_projected_return_pct|floatformat:2 }} %</td>
+                  <td class="{% if item.scenario_expected_return_pct is not None and item.scenario_expected_return_pct >= 0 %}good{% elif item.scenario_expected_return_pct is not None %}warn{% endif %}">{% if item.scenario_expected_return_pct is not None %}{{ item.scenario_expected_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
                   <td class="{% if item.low_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.low_return_pct|floatformat:2 }} %</td>
+                  <td>{% if item.uncertainty_penalty_pct is not None %}{{ item.uncertainty_penalty_pct|floatformat:2 }}{% else %}-{% endif %}{% if item.material_event %}<br><span class="muted">evento</span>{% endif %}</td>
                   <td>{{ item.expected_net_dividend_income|floatformat:0 }} EUR</td>
                   <td>{{ item.annual_cost_used|floatformat:0 }} + {{ item.roundtrip_total_cost|floatformat:0 }} EUR</td>
                 </tr>
