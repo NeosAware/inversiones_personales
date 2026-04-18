@@ -360,6 +360,74 @@
       color:var(--muted);
       line-height:1.5;
     }
+    .equity-label-with-help{
+      display:inline-flex !important;
+      align-items:center;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .equity-help-dot{
+      position:relative;
+      display:inline-flex !important;
+      align-items:center;
+      justify-content:center;
+      width:18px;
+      height:18px;
+      border-radius:999px;
+      border:1px solid #b9d3e4;
+      background:#ffffff;
+      color:#0d5d78 !important;
+      font-size:11px !important;
+      font-weight:800;
+      line-height:1;
+      text-transform:none !important;
+      letter-spacing:0 !important;
+      cursor:help;
+      box-shadow:0 4px 10px rgba(13,93,120,.12);
+    }
+    .equity-help-dot::before{
+      content:"";
+      position:absolute;
+      left:50%;
+      bottom:calc(100% + 4px);
+      transform:translateX(-50%);
+      border:6px solid transparent;
+      border-top-color:#17384e;
+      opacity:0;
+      pointer-events:none;
+      transition:opacity .15s ease;
+      z-index:30;
+    }
+    .equity-help-dot::after{
+      content:attr(data-tooltip);
+      position:absolute;
+      left:50%;
+      bottom:calc(100% + 14px);
+      transform:translateX(-50%);
+      width:240px;
+      padding:10px 12px;
+      border-radius:12px;
+      background:#17384e;
+      color:#ffffff !important;
+      font-size:12px !important;
+      font-weight:600;
+      line-height:1.45;
+      text-transform:none !important;
+      letter-spacing:0 !important;
+      white-space:normal;
+      opacity:0;
+      pointer-events:none;
+      box-shadow:0 16px 32px rgba(16,36,51,.22);
+      transition:opacity .15s ease, transform .15s ease;
+      z-index:30;
+    }
+    .equity-help-dot:hover::before, .equity-help-dot:hover::after,
+    .equity-help-dot:focus::before, .equity-help-dot:focus::after{
+      opacity:1;
+    }
+    .equity-help-dot:hover::after, .equity-help-dot:focus::after{
+      transform:translateX(-50%) translateY(-2px);
+    }
     .equity-kpi small{ color:var(--muted); }
     .equity-panel, .equity-fold{
       background:linear-gradient(180deg, #ffffff 0%, #fbfcfd 100%);
@@ -734,6 +802,10 @@
       text-transform:uppercase;
       letter-spacing:.1em;
     }
+    .equity-page table thead th .equity-label-with-help{
+      align-items:center;
+      justify-content:flex-start;
+    }
     .equity-page table tbody td{
       padding:16px 14px;
       border-bottom:1px solid #e8eef3;
@@ -1044,7 +1116,7 @@
         <div>
           <p class="section-title">Mesa de decision</p>
           <h2>Que valor ofrece mejor equilibrio entre beneficio y seguridad</h2>
-          <p>Una sola tabla para decidir: alerta de compra o venta, referencia actual, mejor ajuste, correlacion 10A, retorno neto esperado a 12 meses, seguridad y fiabilidad.</p>
+          <p>Una sola tabla para decidir: alerta de compra o venta, referencia actual, mejor ajuste, relacion historica 10A, retorno neto esperado a 12 meses, seguridad y fiabilidad.</p>
         </div>
         {% if reference_guide_summary.workbook_loaded %}<span class="pill">{{ reference_guide_summary.source_label }}</span>{% endif %}
       </div>
@@ -1058,7 +1130,7 @@
                 <th>Compra recom.</th>
                 <th>Venta recom.</th>
                 <th>Referencia</th>
-                <th>Corr 10A</th>
+                <th><span class="equity-label-with-help">Relacion 10A <span class="equity-help-dot" tabindex="0" data-tooltip="Mide cuanto se ha movido la accion junto a su referencia principal en los ultimos 10 anos.">i</span></span></th>
                 <th>Pred. 12M</th>
                 <th>Seguridad</th>
                 <th>Fiabilidad</th>
@@ -1089,7 +1161,6 @@
                   <td>
                     {% if row.correlation is not None %}
                       {{ row.correlation|floatformat:2 }}<br><span class="metric-sub">{{ row.years_covered|floatformat:1 }}A</span>
-                      {% if row.coefficient_alert_label %}<br><span class="metric-sub">Coef {{ row.coefficient_alert_label }}</span>{% endif %}
                     {% else %}
                       -
                     {% endif %}
@@ -1155,7 +1226,7 @@
                 <th>Compra recom.</th>
                 <th>Venta recom.</th>
                 <th>Referencia</th>
-                <th>Corr 10A</th>
+                <th><span class="equity-label-with-help">Relacion 10A <span class="equity-help-dot" tabindex="0" data-tooltip="Mide cuanto se ha movido la accion junto a su referencia principal en los ultimos 10 anos.">i</span></span></th>
                 <th>Pred. 12M</th>
                 <th>Pred. 5 AÑOS</th>
                 <th>Márgenes por AÑO</th>
@@ -1201,7 +1272,6 @@
                   <td>
                     {% if row.correlation is not None %}
                       {{ row.correlation|floatformat:2 }}<br><span class="metric-sub">{{ row.years_covered|floatformat:1 }}A</span>
-                      {% if row.coefficient_alert_label %}<br><span class="metric-sub">Coef {{ row.coefficient_alert_label }}</span>{% endif %}
                     {% else %}
                       -
                     {% endif %}

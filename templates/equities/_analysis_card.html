@@ -239,31 +239,34 @@
   {% endif %}
 
   {% if card.cycle_projection_5y.factor_model_available %}
-    <div class="equity-section-head" style="margin-top:18px;">
-      <div>
-        <h5>Modelo multifactor exhaustivo</h5>
-        <p>Aqui se ve como entra cada coeficiente, que correcciones se le aplican y como termina moviendo la senda final 5A de la accion.</p>
-      </div>
-    </div>
+    <details class="equity-inline-fold" style="margin-top:18px;">
+      <summary>Auditoria multifactor 5A</summary>
+      <div class="equity-inline-body">
+        <div class="equity-section-head">
+          <div>
+            <h5>Auditoria multifactor 5A</h5>
+            <p>Este bloque queda plegado para no recargar la vista principal. Abrelo solo si quieres auditar de donde sale la proyeccion 5A y que correcciones se aplican a cada factor.</p>
+          </div>
+        </div>
 
     <div class="equity-detail-grid" style="margin-top:14px;">
       <div class="equity-mini-stat">
-        <span>Ciclo base</span>
+        <span class="equity-label-with-help">Ciclo propio 5A <span class="equity-help-dot" tabindex="0" data-tooltip="Es la proyeccion que sale solo del historial de la accion, sin ayuda de factores externos.">i</span></span>
         <strong>{% if card.cycle_projection_5y.base_annual_return_pct is not None %}{{ card.cycle_projection_5y.base_annual_return_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
         <small>Lectura propia del historico antes de mezclar factores.</small>
       </div>
       <div class="equity-mini-stat">
-        <span>Bloque factores</span>
+        <span class="equity-label-with-help">Aporte de factores <span class="equity-help-dot" tabindex="0" data-tooltip="Resume lo que aportan vivienda, tipos, energia u otras referencias externas al escenario 5A.">i</span></span>
         <strong>{% if card.cycle_projection_5y.factor_annual_return_pct is not None %}{{ card.cycle_projection_5y.factor_annual_return_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
         <small>{% if card.cycle_projection_5y.forward_signal_count %}Incluye {{ card.cycle_projection_5y.forward_signal_count }} ancla(s) web forward.{% else %}Sin anclas forward adicionales.{% endif %}</small>
       </div>
       <div class="equity-mini-stat">
-        <span>Mezcla factor</span>
+        <span class="equity-label-with-help">Peso de factores <span class="equity-help-dot" tabindex="0" data-tooltip="Indica que parte del escenario final depende de los factores externos. Cuanto mas alto, mas influye el entorno.">i</span></span>
         <strong>{{ card.cycle_projection_5y.factor_blend_ratio_pct|floatformat:0 }} %</strong>
         <small>Cuanto del escenario final viene del bloque multifactor.</small>
       </div>
       <div class="equity-mini-stat">
-        <span>Ajuste final</span>
+        <span class="equity-label-with-help">Correccion final <span class="equity-help-dot" tabindex="0" data-tooltip="Es el ajuste total que se hace sobre la senda 5A para que el escenario final encaje con el bloque multifactor.">i</span></span>
         <strong>{% if card.cycle_projection_5y.final_step_shift is not None %}{{ card.cycle_projection_5y.final_step_shift|floatformat:2 }} %{% else %}-{% endif %}</strong>
         <small>Desplazamiento aplicado a la secuencia semestral para casar la senda final.</small>
       </div>
@@ -355,32 +358,32 @@
 
         <div class="equity-detail-grid" style="margin-top:14px;">
           <div class="equity-mini-stat">
-            <span>Impacto 5A en la accion</span>
+            <span class="equity-label-with-help">Impacto 5A en la accion <span class="equity-help-dot" tabindex="0" data-tooltip="Cuanto empuja este factor la proyeccion final a 5 anos de la accion.">i</span></span>
             <strong>{% if factor.implied_stock_return_5y_pct is not None %}{{ factor.implied_stock_return_5y_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
             <small>Peso final {{ factor.weight_pct|floatformat:0 }} % dentro del bloque multifactor.</small>
           </div>
           <div class="equity-mini-stat">
-            <span>Coef. / beta</span>
+            <span class="equity-label-with-help">Coef. / beta <span class="equity-help-dot" tabindex="0" data-tooltip="El coeficiente mide la relacion entre la accion y este factor. La beta indica si la accion se mueve mas o menos que el propio factor.">i</span></span>
             <strong>{% if factor.coefficient is not None %}{{ factor.coefficient|floatformat:2 }}{% else %}-{% endif %} / {% if factor.beta is not None %}{{ factor.beta|floatformat:2 }}{% else %}-{% endif %}</strong>
             <small>Reciente {% if factor.recent_coefficient is not None %}{{ factor.recent_coefficient|floatformat:2 }}{% else %}-{% endif %} | {{ factor.stability_label }}</small>
           </div>
           <div class="equity-mini-stat">
-            <span>Tendencia anual</span>
+            <span class="equity-label-with-help">Tendencia anual <span class="equity-help-dot" tabindex="0" data-tooltip="Es la variacion anual que el modelo espera para este factor antes de trasladarla a la accion.">i</span></span>
             <strong>{% if factor.annual_change is not None %}{{ factor.annual_change|floatformat:2 }} {{ factor.change_unit_label }}{% else %}-{% endif %}</strong>
             <small>Bruta {% if factor.raw_annual_change is not None %}{{ factor.raw_annual_change|floatformat:2 }} {{ factor.change_unit_label }}{% else %}-{% endif %}{% if factor.annual_change_clamped %} | recortada por limites{% endif %}</small>
           </div>
           <div class="equity-mini-stat">
-            <span>Componentes base</span>
+            <span class="equity-label-with-help">Componentes base <span class="equity-help-dot" tabindex="0" data-tooltip="Separa la tendencia larga, media y corta del factor para que puedas ver que parte pesa mas en la extrapolacion.">i</span></span>
             <strong>L {{ factor.long_annual_change|floatformat:2 }} | M {{ factor.medium_annual_change|floatformat:2 }} | C {{ factor.recent_annual_change|floatformat:2 }}</strong>
             <small>{{ factor.change_unit_label }} por ano. La componente corta pesa {{ factor.recent_weight_pct|floatformat:0 }} %.</small>
           </div>
           <div class="equity-mini-stat">
-            <span>Peso raw</span>
+            <span class="equity-label-with-help">Peso raw <span class="equity-help-dot" tabindex="0" data-tooltip="Es el peso inicial del factor antes de normalizarlo con el resto. Cuanto mas alto, mas intenta influir en el bloque multifactor.">i</span></span>
             <strong>{% if factor.raw_weight is not None %}{{ factor.raw_weight|floatformat:2 }}{% else %}-{% endif %}</strong>
             <small>Corr {{ factor.weight_inputs.coefficient_component|floatformat:2 }} + muestra {{ factor.weight_inputs.observations_component|floatformat:2 }} + bonus {{ factor.weight_inputs.forward_bonus|floatformat:2 }}</small>
           </div>
           <div class="equity-mini-stat">
-            <span>Ancla web / limites</span>
+            <span class="equity-label-with-help">Ancla web / limites <span class="equity-help-dot" tabindex="0" data-tooltip="Indica si el modelo ha usado una referencia futura oficial de la web y si ha puesto topes para evitar extrapolar demasiado.">i</span></span>
             <strong>{% if factor.forward_signal.available %}Forward{% else %}Sin forward{% endif %}</strong>
             <small>
               {% if factor.forward_signal.available %}
@@ -428,6 +431,8 @@
         </div>
       </section>
     {% endfor %}
+      </div>
+    </details>
   {% endif %}
 
   {% if card.projection.available %}
@@ -469,7 +474,7 @@
           <strong class="{% if card.sale_preview.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}">{{ card.sale_preview.annualized_margin_pct|floatformat:2 }} %</strong>
           <small>{{ card.sale_preview.holding_days }} dias de tenencia llevados al mismo patron anual.</small>
         {% else %}
-          <span>Corr 10A</span>
+          <span class="equity-label-with-help">Relacion 10A <span class="equity-help-dot" tabindex="0" data-tooltip="Mide cuanto se ha movido esta accion junto a su referencia principal en los ultimos 10 anos. Cerca de 1 significa una relacion fuerte.">i</span></span>
           <strong>{% if card.correlation.coefficient is not None %}{{ card.correlation.coefficient|floatformat:2 }}{% else %}-{% endif %}</strong>
           <small>{{ card.reference_label }} | {{ card.correlation.stability_label }}</small>
         {% endif %}
@@ -513,6 +518,7 @@
 
     <div class="equity-compact-note" style="margin-top:14px;">
       <strong style="display:block; color:#17384e; margin-bottom:6px;">Como leer esta ficha</strong>
+      Pasa el raton por los puntos <strong>i</strong> para ver una explicacion sencilla de cada termino tecnico.
       Seguridad {{ card.projection.safety_score|floatformat:0 }}/100 y fiabilidad {{ card.projection_reliability.label|lower }}, con {{ card.projection.confidence_label|lower }} en el modelo.
       {% if card.projection_backtest.available %}
         La comprobacion historica es {{ card.projection_backtest.precision_label|lower }}, con error medio {{ card.projection_backtest.mean_absolute_error_pct|floatformat:1 }} %, acierto direccional {{ card.projection_backtest.direction_hit_rate_pct|floatformat:0 }} % y {{ card.projection_backtest.in_range_rate_pct|floatformat:0 }} % dentro del rango previsto.
@@ -807,17 +813,17 @@
           <div class="equity-section-head">
             <div>
               <h5>Metricas ampliadas</h5>
-              <p>Riesgo, ciclo, costes y fundamentos para profundizar solo cuando lo necesites.</p>
+              <p>Riesgo, ciclo, costes y fundamentos para profundizar solo cuando lo necesites. Los puntos i explican los terminos mas tecnicos.</p>
             </div>
           </div>
           <div class="equity-detail-grid" style="margin-top:14px;">
             <div class="equity-mini-stat">
-              <span>Ciclo 10A</span>
+              <span class="equity-label-with-help">Ciclo 10A <span class="equity-help-dot" tabindex="0" data-tooltip="Resume en que parte del ciclo de 10 anos parece estar la accion segun su propio historial.">i</span></span>
               <strong>{{ card.projection.cycle_phase }}</strong>
               <small>{{ card.projection.years_covered|floatformat:1 }} anos de base.</small>
             </div>
             <div class="equity-mini-stat">
-              <span>Modelo 5A</span>
+              <span class="equity-label-with-help">Modelo 5A <span class="equity-help-dot" tabindex="0" data-tooltip="Indica si la proyeccion a 5 anos sale solo del ciclo historico o si tambien se apoya en factores externos.">i</span></span>
               <strong>{% if card.cycle_projection_5y.factor_model_available %}{{ card.cycle_projection_5y.factor_model_label }}{% else %}Solo ciclo{% endif %}</strong>
               <small>
                 {% if card.cycle_projection_5y.factor_model_available %}
@@ -828,32 +834,32 @@
               </small>
             </div>
             <div class="equity-mini-stat">
-              <span>Alerta coef.</span>
+              <span class="equity-label-with-help">Senal de referencia <span class="equity-help-dot" tabindex="0" data-tooltip="Resume si la relacion reciente con la referencia principal refuerza una compra, una venta o una lectura neutra.">i</span></span>
               <strong class="{% if card.coefficient_alert.tone == 'sell' %}warn{% endif %}">{{ card.coefficient_alert.label }}</strong>
               <small>{{ card.coefficient_alert.trigger_label }}</small>
             </div>
             <div class="equity-mini-stat">
-              <span>Corr reciente</span>
+              <span class="equity-label-with-help">Relacion reciente <span class="equity-help-dot" tabindex="0" data-tooltip="Mide si, en los tramos mas recientes, la accion sigue moviendose en linea con su referencia o se esta desacoplando.">i</span></span>
               <strong>{% if card.projection.recent_coefficient is not None %}{{ card.projection.recent_coefficient|floatformat:2 }}{% else %}-{% endif %}</strong>
-              <small>{{ card.coefficient_alert.periods_label|default:"tramo reciente" }} | {{ card.coefficient_alert.windows_count|default:0 }} ventanas</small>
+              <small>{{ card.coefficient_alert.periods_label|default:"tramo reciente" }} | {{ card.coefficient_alert.windows_count|default:0 }} tramos comparables</small>
             </div>
             <div class="equity-mini-stat">
-              <span>CAGR ciclo</span>
+              <span class="equity-label-with-help">Ritmo historico anual <span class="equity-help-dot" tabindex="0" data-tooltip="Es el ritmo anual medio al que ha avanzado la accion en el tramo historico util del modelo.">i</span></span>
               <strong>{% if card.projection.cagr_pct is not None %}{{ card.projection.cagr_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
               <small>Ritmo anual del historico util.</small>
             </div>
             <div class="equity-mini-stat">
-              <span>Volatilidad</span>
+              <span class="equity-label-with-help">Volatilidad <span class="equity-help-dot" tabindex="0" data-tooltip="Mide lo mucho que suele oscilar la accion. Cuanto mas alta, mas bruscos pueden ser los movimientos.">i</span></span>
               <strong>{% if card.projection.annualized_volatility_pct is not None %}{{ card.projection.annualized_volatility_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
               <small>Drawdown actual {% if card.projection.current_drawdown_pct is not None %}{{ card.projection.current_drawdown_pct|floatformat:1 }} %{% else %}-{% endif %}</small>
             </div>
             <div class="equity-mini-stat">
-              <span>Beneficio / riesgo</span>
+              <span class="equity-label-with-help">Beneficio / riesgo <span class="equity-help-dot" tabindex="0" data-tooltip="Compara el retorno neto esperado con la amplitud del rango previsto. Cuanto mas alto, mejor compensacion entre premio y riesgo.">i</span></span>
               <strong>{% if card.projection.benefit_risk_ratio is not None %}{{ card.projection.benefit_risk_ratio|floatformat:2 }}{% else %}-{% endif %}</strong>
               <small>Retorno neto frente al rango esperado.</small>
             </div>
             <div class="equity-mini-stat">
-              <span>Pendiente relativa</span>
+              <span class="equity-label-with-help">Momento frente a la referencia <span class="equity-help-dot" tabindex="0" data-tooltip="Indica si la accion gana o pierde fuerza frente a su referencia principal en el tramo mas reciente.">i</span></span>
               <strong class="{% if card.trade_alert.tone == 'buy' %}good{% elif card.trade_alert.tone == 'sell' %}warn{% endif %}">{{ card.trade_alert.trend_label }}</strong>
               <small>
                 {% if card.relative_trend.available %}
@@ -881,19 +887,8 @@
           </div>
 
           {% if card.cycle_projection_5y.factor_model_available and card.cycle_projection_5y.factors %}
-            <div class="equity-detail-grid" style="margin-top:14px;">
-              {% for factor in card.cycle_projection_5y.factors %}
-                <div class="equity-mini-stat">
-                  <span>{{ factor.reference_label }}</span>
-                  <strong>{% if factor.implied_stock_return_5y_pct is not None %}{{ factor.implied_stock_return_5y_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
-                  <small>
-                    Peso {{ factor.weight_pct|floatformat:0 }} % |
-                    corr {% if factor.coefficient is not None %}{{ factor.coefficient|floatformat:2 }}{% else %}-{% endif %} |
-                    5A coef. {% if factor.projected_change_5y is not None %}{{ factor.projected_change_5y|floatformat:1 }} {{ factor.change_unit_label }}{% else %}-{% endif %}
-                    {% if factor.forward_signal.available %}| web forward{% endif %}
-                  </small>
-                </div>
-              {% endfor %}
+            <div class="equity-compact-note" style="margin-top:14px;">
+              El detalle de cada factor, su peso y las correcciones aplicadas se ha movido a <strong>Auditoria multifactor 5A</strong> para no recargar la vista principal.
             </div>
           {% endif %}
 
