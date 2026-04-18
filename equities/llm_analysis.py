@@ -250,6 +250,21 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
             )
         return rows
 
+    def build_scenario_rows(rows, *, annualized: bool = False):
+        scenario_rows = []
+        for row in list(rows or [])[:3]:
+            scenario_rows.append(
+                {
+                    "label": row.get("label") or "",
+                    "probability_pct": json_ready_number(row.get("probability_pct"), "0.1"),
+                    "annual_return_pct": json_ready_number(row.get("annual_return_pct")) if annualized else None,
+                    "total_return_pct": json_ready_number(row.get("total_return_pct")) if not annualized else json_ready_number(row.get("five_year_return_pct")),
+                    "price_return_pct": json_ready_number(row.get("price_return_pct")) if not annualized else None,
+                    "projected_price": json_ready_number(row.get("projected_price"), "0.0001"),
+                }
+            )
+        return scenario_rows
+
     context = {
         "analysis_date": analysis_date.isoformat(),
         "scope": scope,
@@ -271,6 +286,7 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
             "projected_price": json_ready_number(projection.get("projected_price"), "0.0001"),
             "low_return_pct": json_ready_number(projection.get("low_return_pct")),
             "high_return_pct": json_ready_number(projection.get("high_return_pct")),
+            "band_pct": json_ready_number(projection.get("band_pct")),
             "safety_score": json_ready_number(projection.get("safety_score"), "0.1"),
             "confidence_label": projection.get("confidence_label"),
             "volatility_pct": json_ready_number(projection.get("annualized_volatility_pct")),
@@ -280,6 +296,14 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
             "net_income_yield_pct": json_ready_number(projection.get("net_income_yield_pct")),
             "transaction_drag_pct": json_ready_number(projection.get("transaction_drag_pct")),
             "quarterly_path": build_path_steps(projection.get("quarterly_path"), value_key="projected_price", step_limit=4),
+            "scenarios": build_scenario_rows(projection.get("scenarios")),
+            "news_adjustment": {
+                "applied": bool((projection.get("news_adjustment") or {}).get("applied")),
+                "aggregate_score": json_ready_number((projection.get("news_adjustment") or {}).get("aggregate_score"), "0.01"),
+                "price_return_adjustment_pct": json_ready_number((projection.get("news_adjustment") or {}).get("price_return_adjustment_pct")),
+                "band_multiplier": json_ready_number((projection.get("news_adjustment") or {}).get("band_multiplier"), "0.01"),
+                "note": trim_text((projection.get("news_adjustment") or {}).get("note") or "", 220),
+            },
         },
         "five_year_view": {
             "available": bool(cycle_projection.get("available")),
@@ -288,12 +312,21 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
             "projected_price": json_ready_number(cycle_projection.get("projected_price"), "0.0001"),
             "cycle_phase": cycle_projection.get("cycle_phase"),
             "analysis_years_used": json_ready_number(cycle_projection.get("analysis_years_used"), "0.1"),
+            "scenario_spread_annual_pct": json_ready_number(cycle_projection.get("scenario_spread_annual_pct")),
             "factor_model_available": bool(cycle_projection.get("factor_model_available")),
             "factor_model_label": cycle_projection.get("factor_model_label"),
             "factor_blend_ratio_pct": json_ready_number(cycle_projection.get("factor_blend_ratio_pct")),
             "weighted_abs_correlation": json_ready_number(cycle_projection.get("weighted_abs_correlation"), "0.01"),
             "forward_signal_count": int(cycle_projection.get("forward_signal_count") or 0),
             "half_year_path": build_path_steps(cycle_projection.get("path"), value_key="projected_price"),
+            "scenarios": build_scenario_rows(cycle_projection.get("scenarios"), annualized=True),
+            "news_adjustment": {
+                "applied": bool((cycle_projection.get("news_adjustment") or {}).get("applied")),
+                "aggregate_score": json_ready_number((cycle_projection.get("news_adjustment") or {}).get("aggregate_score"), "0.01"),
+                "annual_return_adjustment_pct": json_ready_number((cycle_projection.get("news_adjustment") or {}).get("annual_return_adjustment_pct")),
+                "spread_multiplier": json_ready_number((cycle_projection.get("news_adjustment") or {}).get("spread_multiplier"), "0.01"),
+                "note": trim_text((cycle_projection.get("news_adjustment") or {}).get("note") or "", 220),
+            },
             "factors": [
                 {
                     "reference_label": factor.get("reference_label"),
@@ -373,6 +406,7 @@ def build_system_prompt() -> str:
         "action_label debe ser una de estas opciones: Comprar, Mantener, Vigilar, Reducir, Vender. "
         "confidence_label debe ser Alta, Media o Baja. "
         "Distingue entre lo que viene del modelo cuantitativo y lo que viene del contexto web reciente. "
+        "Si el JSON trae escenarios 12M o 5A, usalos para explicar rango y no solo el caso central. "
         "Si material_event es true, explicitalo y reduce la confianza si la tesis cuantitativa puede quedar temporalmente desfasada. "
         "El objetivo es explicar de forma potente pero compacta el escenario 12M, la lectura 5A, la validacion historica del modelo y cualquier riesgo informativo reciente."
     )
@@ -383,6 +417,7 @@ def build_user_prompt(card_context: dict) -> str:
     return (
         "Analiza esta empresa del IBEX o de la cartera usando exclusivamente este JSON estructurado. "
         "Prioriza rentabilidad 12M, ciclo 5A, backtest, coherencia con la alerta cuantitativa y contexto web reciente si esta disponible. "
+        "Si hay escenarios, explica cual parece mas probable y que haria cambiar de escenario. "
         "Si el bloque news_context detecta un evento material, explica si cambia el timing o la confianza aunque la tesis base siga igual. "
         "Si la fiabilidad o el historico son flojos, dilo claramente. JSON de entrada: "
         f"{payload}"

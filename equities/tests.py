@@ -52,6 +52,7 @@ from .services import (
     SPAIN_GAS_CONSUMPTION_NAME,
     SPAIN_GAS_CONSUMPTION_SYMBOL,
     ZERO,
+    apply_news_context_adjustments_to_dashboard,
     build_equity_allocation_plan,
     build_equity_analysis_dashboard,
     build_equity_decision_rows,
@@ -389,6 +390,88 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(len(euribor_factor["correction_rows"]), 5)
         self.assertTrue(any(row["anchor_path_value"] is not None for row in euribor_factor["correction_rows"]))
         self.assertIsNotNone(euribor_factor["weight_inputs"]["coefficient_component"])
+
+    def test_equity_history_card_exposes_12m_and_5y_scenarios(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position, months=96)
+
+        card = build_equity_history_cards([position])[0]
+
+        self.assertTrue(card["projection"]["available"])
+        self.assertEqual([row["label"] for row in card["projection"]["scenarios"]], ["Bajista", "Base", "Alcista"])
+        self.assertEqual(len(card["cycle_projection_5y"]["scenarios"]), 3)
+        self.assertIsNotNone(card["projection"]["band_pct"])
+        self.assertIsNotNone(card["cycle_projection_5y"]["scenario_spread_annual_pct"])
+        self.assertGreater(
+            sum((row["probability_pct"] for row in card["projection"]["scenarios"]), ZERO),
+            Decimal("99.0"),
+        )
+
+    def test_material_news_event_penalizes_projection_confidence_and_widens_ranges(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="REP",
+            quote_symbol="REP.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Repsol",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("20.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position, growth=Decimal("1.0180"), benchmark_growth=Decimal("1.0070"), months=108)
+
+        dashboard = build_equity_analysis_dashboard([position])
+        card = dashboard["history_cards"][0]
+        original_confidence_score = card["projection"]["confidence_score_pct"]
+        original_band_pct = card["projection"]["band_pct"]
+        original_reliability_score = card["projection_reliability"]["score"]
+        original_cycle_spread = card["cycle_projection_5y"]["scenario_spread_annual_pct"]
+
+        card["news_context"] = {
+            "available": True,
+            "label": "Contexto adverso",
+            "score": Decimal("-4.20"),
+            "items_count": 4,
+            "top_tags": ["geopolitica", "energia"],
+            "material_event": True,
+            "material_note": "El shock geopolitico altera el escenario base y obliga a penalizar confianza.",
+            "note": "Shock adverso de energia y geostrategia.",
+            "company_signal": {"available": True, "label": "Empresa Adversa", "score": Decimal("-2.00"), "items": []},
+            "sector_signal": {"available": True, "label": "Sector Adversa", "score": Decimal("-1.60"), "items": []},
+            "market_signal": {"available": True, "label": "Mercado Adversa", "score": Decimal("-3.20"), "items": []},
+            "top_items": [],
+            "captured_at_label": "2026-04-18 01:10",
+        }
+
+        summary = apply_news_context_adjustments_to_dashboard(dashboard)
+        adjusted_card = dashboard["history_cards"][0]
+
+        self.assertEqual(summary["adjusted_cards_count"], 1)
+        self.assertTrue(adjusted_card["projection"]["news_adjustment"]["applied"])
+        self.assertTrue(adjusted_card["cycle_projection_5y"]["news_adjustment"]["applied"])
+        self.assertLess(adjusted_card["projection"]["confidence_score_pct"], original_confidence_score)
+        self.assertGreater(adjusted_card["projection"]["band_pct"], original_band_pct)
+        self.assertLess(adjusted_card["projection_reliability"]["score"], original_reliability_score)
+        self.assertGreater(adjusted_card["cycle_projection_5y"]["scenario_spread_annual_pct"], original_cycle_spread)
+        self.assertGreater(
+            adjusted_card["projection"]["scenarios"][0]["probability_pct"],
+            adjusted_card["projection"]["scenarios"][-1]["probability_pct"],
+        )
 
     def test_build_reference_suggestions_for_iberdrola_prioritizes_electricity_demand(self):
         suggestions = build_reference_suggestions_for_equity("Iberdrola", "IBE")
@@ -4181,6 +4264,8 @@ class EquitiesServicesTests(TestCase):
         snapshot = run.snapshots.get(scope=EquityNightlyAnalysisSnapshot.Scope.TRACKED, ticker="ACS")
         self.assertTrue(snapshot.analysis_payload["ai_analysis"]["available"])
         self.assertTrue(snapshot.analysis_payload["news_context"]["material_event"])
+        self.assertTrue(snapshot.analysis_payload["projection"]["news_adjustment"]["applied"])
+        self.assertTrue(snapshot.analysis_payload["cycle_projection_5y"]["news_adjustment"]["applied"])
 
     @override_settings(
         AI_LLM_PROVIDER="anthropic",

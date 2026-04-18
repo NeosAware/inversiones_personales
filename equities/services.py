@@ -3528,6 +3528,31 @@ def build_base_five_year_cycle_projection(
     analysis_years_used = min(years_covered, Decimal(str(LONG_ANALYSIS_YEARS))) if years_covered else ZERO
     if analysis_years_used >= Decimal(str(LONG_ANALYSIS_YEARS)) - Decimal("0.15"):
         analysis_years_used = Decimal(str(LONG_ANALYSIS_YEARS))
+    confidence = build_projection_confidence(
+        correlation.get("coefficient"),
+        correlation.get("observations_count", 0),
+        cycle_metrics.get("monthly_observations_count", 0),
+        years_covered=years_covered,
+        positive_year_ratio_pct=cycle_metrics.get("positive_year_ratio_pct"),
+        stability_gap=correlation.get("stability_gap"),
+    )
+    safety = build_safety_score(cycle_metrics, correlation)
+    scenario_spread_annual_pct = resolve_cycle_projection_scenario_spread(
+        cycle_metrics.get("annualized_volatility_pct"),
+        confidence["label"],
+        safety["label"],
+    )
+    scenarios = build_five_year_projection_scenarios(
+        latest_price,
+        latest_date=latest_date,
+        annual_return_pct=annual_return_pct,
+        scenario_spread_annual_pct=scenario_spread_annual_pct,
+        step_return_pcts=step_return_pcts,
+        annualized_volatility_pct=cycle_metrics.get("annualized_volatility_pct"),
+        current_drawdown_pct=current_drawdown_pct,
+        cycle_phase=cycle_metrics.get("cycle_phase") or "Transicion",
+        confidence_label=confidence["label"],
+    )
     explanation = (
         f"Esta vista 5A usa los ultimos {analysis_years_used:.1f} anos para leer el ciclo de {position.company_name}. "
         f"Combina CAGR del ciclo, ritmo a 3-5 anos, drawdown actual y fase {cycle_metrics.get('cycle_phase', 'sin ciclo').lower()} "
@@ -3548,6 +3573,12 @@ def build_base_five_year_cycle_projection(
         "latest_date": latest_date,
         "annualized_volatility_pct": cycle_metrics.get("annualized_volatility_pct"),
         "current_drawdown_pct": current_drawdown_pct,
+        "confidence_label": confidence["label"],
+        "confidence_score_pct": confidence["score_pct"],
+        "safety_label": safety["label"],
+        "safety_score": safety["score"],
+        "scenario_spread_annual_pct": quantize_decimal(scenario_spread_annual_pct),
+        "scenarios": scenarios,
         "base_explanation": explanation,
         "explanation": explanation,
     }
@@ -3630,22 +3661,38 @@ def build_five_year_cycle_projection(
         step_return_pcts=factor_step_returns,
     )
 
-    final_path = build_cycle_projection_path(
+    final_path, adjusted_step_returns, step_shift = build_cycle_projection_path_for_target(
         latest_price,
-        final_annual_return_pct,
+        annual_return_pct=final_annual_return_pct,
+        step_return_pcts=original_step_returns,
         annualized_volatility_pct=base_projection.get("annualized_volatility_pct"),
         current_drawdown_pct=base_projection.get("current_drawdown_pct"),
         cycle_phase=base_projection.get("cycle_phase") or "Transicion",
         anchor_date=latest_date,
         years=5,
         step_months=6,
-        step_return_pcts=adjusted_step_returns,
     )
     if not final_path:
         return base_projection
 
     projected_price = final_path[-1]["projected_price"]
     five_year_return_pct = percentage_change(projected_price, latest_price)
+    scenario_spread_annual_pct = resolve_cycle_projection_scenario_spread(
+        base_projection.get("annualized_volatility_pct"),
+        base_projection.get("confidence_label") or "Media",
+        base_projection.get("safety_label") or "Media",
+    )
+    scenarios = build_five_year_projection_scenarios(
+        latest_price,
+        latest_date=latest_date,
+        annual_return_pct=final_annual_return_pct,
+        scenario_spread_annual_pct=scenario_spread_annual_pct,
+        step_return_pcts=adjusted_step_returns,
+        annualized_volatility_pct=base_projection.get("annualized_volatility_pct"),
+        current_drawdown_pct=base_projection.get("current_drawdown_pct"),
+        cycle_phase=base_projection.get("cycle_phase") or "Transicion",
+        confidence_label=base_projection.get("confidence_label") or "Media",
+    )
     explanation = (
         f"{base_projection.get('base_explanation', '').strip()} "
         f"{factor_bundle.get('note', '').strip()} "
@@ -3684,6 +3731,8 @@ def build_five_year_cycle_projection(
         "uses_forward_web_signals": bool(factor_bundle.get("forward_signal_count")),
         "forward_signal_count": factor_bundle.get("forward_signal_count", 0),
         "weighted_abs_correlation": factor_bundle.get("weighted_abs_correlation"),
+        "scenario_spread_annual_pct": quantize_decimal(scenario_spread_annual_pct),
+        "scenarios": scenarios,
         "comparison_chart": comparison_chart,
         "explanation": explanation,
     }
@@ -6666,6 +6715,251 @@ def build_cycle_projection_path(
     return path
 
 
+def confidence_label_from_score(score_pct: Decimal | None) -> str:
+    score_pct = score_pct if score_pct is not None else Decimal("40.00")
+    if score_pct >= Decimal("75.00"):
+        return "Alta"
+    if score_pct >= Decimal("58.00"):
+        return "Media"
+    return "Baja"
+
+
+def safety_label_from_score(score: Decimal | None) -> str:
+    score = score if score is not None else Decimal("55.00")
+    if score >= Decimal("72.00"):
+        return "Alta"
+    if score >= Decimal("56.00"):
+        return "Media"
+    return "Baja"
+
+
+def build_scenario_probability_weights(
+    confidence_label: str,
+    *,
+    shock_adjusted: bool = False,
+    sentiment_score: Decimal | None = None,
+) -> dict[str, Decimal]:
+    if confidence_label == "Alta":
+        bear_weight = Decimal("22.00")
+        base_weight = Decimal("56.00")
+        bull_weight = Decimal("22.00")
+    elif confidence_label == "Media":
+        bear_weight = Decimal("27.00")
+        base_weight = Decimal("46.00")
+        bull_weight = Decimal("27.00")
+    else:
+        bear_weight = Decimal("33.00")
+        base_weight = Decimal("34.00")
+        bull_weight = Decimal("33.00")
+
+    if shock_adjusted:
+        bear_weight += Decimal("5.00")
+        bull_weight += Decimal("5.00")
+        base_weight -= Decimal("10.00")
+
+    if sentiment_score is not None:
+        bounded_sentiment = clamp_decimal(Decimal(str(sentiment_score)), Decimal("-6.00"), Decimal("6.00"))
+        sentiment_bias = clamp_decimal(abs(bounded_sentiment) * Decimal("1.40"), ZERO, Decimal("8.00"))
+        if bounded_sentiment < ZERO:
+            bear_weight += sentiment_bias
+            bull_weight -= sentiment_bias
+        elif bounded_sentiment > ZERO:
+            bull_weight += sentiment_bias
+            bear_weight -= sentiment_bias
+
+    bear_weight = max(Decimal("12.00"), bear_weight)
+    base_weight = max(Decimal("22.00"), base_weight)
+    bull_weight = max(Decimal("12.00"), bull_weight)
+    total_weight = bear_weight + base_weight + bull_weight
+    if total_weight <= ZERO:
+        return {
+            "bear": Decimal("33.00"),
+            "base": Decimal("34.00"),
+            "bull": Decimal("33.00"),
+        }
+    return {
+        "bear": quantize_decimal((bear_weight * ONE_HUNDRED) / total_weight, "0.1") or Decimal("33.0"),
+        "base": quantize_decimal((base_weight * ONE_HUNDRED) / total_weight, "0.1") or Decimal("34.0"),
+        "bull": quantize_decimal((bull_weight * ONE_HUNDRED) / total_weight, "0.1") or Decimal("33.0"),
+    }
+
+
+def build_one_year_projection_scenarios(
+    current_price: Decimal | None,
+    *,
+    price_return_pct: Decimal | None,
+    price_low_return_pct: Decimal | None,
+    price_high_return_pct: Decimal | None,
+    base_return_pct: Decimal | None,
+    low_return_pct: Decimal | None,
+    high_return_pct: Decimal | None,
+    confidence_label: str,
+    shock_adjusted: bool = False,
+    sentiment_score: Decimal | None = None,
+) -> list[dict]:
+    probability_weights = build_scenario_probability_weights(
+        confidence_label,
+        shock_adjusted=shock_adjusted,
+        sentiment_score=sentiment_score,
+    )
+    scenario_rows = [
+        {
+            "key": "bear",
+            "label": "Bajista",
+            "probability_pct": probability_weights["bear"],
+            "price_return_pct": price_low_return_pct,
+            "total_return_pct": low_return_pct,
+            "projected_price": project_price_from_return(current_price, price_low_return_pct),
+        },
+        {
+            "key": "base",
+            "label": "Base",
+            "probability_pct": probability_weights["base"],
+            "price_return_pct": price_return_pct,
+            "total_return_pct": base_return_pct,
+            "projected_price": project_price_from_return(current_price, price_return_pct),
+        },
+        {
+            "key": "bull",
+            "label": "Alcista",
+            "probability_pct": probability_weights["bull"],
+            "price_return_pct": price_high_return_pct,
+            "total_return_pct": high_return_pct,
+            "projected_price": project_price_from_return(current_price, price_high_return_pct),
+        },
+    ]
+    for row in scenario_rows:
+        row["price_return_pct"] = quantize_decimal(row.get("price_return_pct"))
+        row["total_return_pct"] = quantize_decimal(row.get("total_return_pct"))
+        row["projected_price"] = quantize_decimal(row.get("projected_price"), "0.0001")
+    return scenario_rows
+
+
+def build_half_year_target_average(annual_return_pct: Decimal | None) -> Decimal:
+    if annual_return_pct is None:
+        return ZERO
+    return Decimal(
+        str(round(((max(0.01, 1 + (float(annual_return_pct) / 100)) ** 0.5) - 1) * 100, 4))
+    )
+
+
+def build_cycle_projection_path_for_target(
+    current_price: Decimal | None,
+    *,
+    annual_return_pct: Decimal | None,
+    step_return_pcts: list[Decimal],
+    annualized_volatility_pct: Decimal | None,
+    current_drawdown_pct: Decimal | None,
+    cycle_phase: str,
+    anchor_date: date | None,
+    years: int = 5,
+    step_months: int = 6,
+) -> tuple[list[dict], list[Decimal], Decimal]:
+    source_steps = [Decimal(str(value)) for value in (step_return_pcts or [])]
+    current_average = average_decimal(source_steps) or ZERO
+    target_average = build_half_year_target_average(annual_return_pct)
+    step_shift = target_average - current_average
+    adjusted_steps = [
+        clamp_decimal(step_return + step_shift, Decimal("-14.00"), Decimal("14.00"))
+        for step_return in source_steps
+    ]
+    path = build_cycle_projection_path(
+        current_price,
+        annual_return_pct,
+        annualized_volatility_pct=annualized_volatility_pct,
+        current_drawdown_pct=current_drawdown_pct,
+        cycle_phase=cycle_phase,
+        anchor_date=anchor_date,
+        years=years,
+        step_months=step_months,
+        step_return_pcts=adjusted_steps,
+    )
+    return path, adjusted_steps, step_shift
+
+
+def resolve_cycle_projection_scenario_spread(
+    annualized_volatility_pct: Decimal | None,
+    confidence_label: str,
+    safety_label: str = "Media",
+) -> Decimal:
+    spread_pct = (
+        annualized_volatility_pct * Decimal("0.18")
+        if annualized_volatility_pct is not None
+        else Decimal("3.60")
+    )
+    if confidence_label == "Alta":
+        spread_pct -= Decimal("0.80")
+    elif confidence_label == "Baja":
+        spread_pct += Decimal("1.10")
+    if safety_label == "Alta":
+        spread_pct -= Decimal("0.45")
+    elif safety_label == "Baja":
+        spread_pct += Decimal("0.85")
+    return clamp_decimal(spread_pct, Decimal("1.80"), Decimal("7.00"))
+
+
+def build_five_year_projection_scenarios(
+    current_price: Decimal | None,
+    *,
+    latest_date: date | None,
+    annual_return_pct: Decimal | None,
+    scenario_spread_annual_pct: Decimal,
+    step_return_pcts: list[Decimal],
+    annualized_volatility_pct: Decimal | None,
+    current_drawdown_pct: Decimal | None,
+    cycle_phase: str,
+    confidence_label: str,
+    shock_adjusted: bool = False,
+    sentiment_score: Decimal | None = None,
+) -> list[dict]:
+    probability_weights = build_scenario_probability_weights(
+        confidence_label,
+        shock_adjusted=shock_adjusted,
+        sentiment_score=sentiment_score,
+    )
+    lower_annual_return_pct = clamp_decimal(
+        (annual_return_pct or ZERO) - scenario_spread_annual_pct,
+        Decimal("-14.00"),
+        Decimal("20.00"),
+    )
+    upper_annual_return_pct = clamp_decimal(
+        (annual_return_pct or ZERO) + scenario_spread_annual_pct,
+        Decimal("-14.00"),
+        Decimal("22.00"),
+    )
+    scenario_specs = [
+        ("bear", "Bajista", probability_weights["bear"], lower_annual_return_pct),
+        ("base", "Base", probability_weights["base"], annual_return_pct or ZERO),
+        ("bull", "Alcista", probability_weights["bull"], upper_annual_return_pct),
+    ]
+    scenario_rows = []
+    for key, label, probability_pct, scenario_annual_return_pct in scenario_specs:
+        scenario_path, _, step_shift = build_cycle_projection_path_for_target(
+            current_price,
+            annual_return_pct=scenario_annual_return_pct,
+            step_return_pcts=step_return_pcts,
+            annualized_volatility_pct=annualized_volatility_pct,
+            current_drawdown_pct=current_drawdown_pct,
+            cycle_phase=cycle_phase,
+            anchor_date=latest_date,
+            years=5,
+            step_months=6,
+        )
+        projected_price = scenario_path[-1]["projected_price"] if scenario_path else None
+        scenario_rows.append(
+            {
+                "key": key,
+                "label": label,
+                "probability_pct": probability_pct,
+                "annual_return_pct": quantize_decimal(scenario_annual_return_pct),
+                "five_year_return_pct": quantize_decimal(percentage_change(projected_price, current_price)),
+                "projected_price": quantize_decimal(projected_price, "0.0001"),
+                "step_shift": quantize_decimal(step_shift),
+            }
+        )
+    return scenario_rows
+
+
 def build_backtest_monthly_chart(rows: list[dict], width: int = 640, height: int = 220, padding: int = 18, max_points: int = 60) -> dict:
     normalized_rows = []
     for row in rows[-max_points:]:
@@ -6920,6 +7214,16 @@ def build_one_year_projection(
 
     price_low_return_pct = clamp_decimal(price_return_pct - band_pct, Decimal("-80.00"), Decimal("120.00"))
     price_high_return_pct = clamp_decimal(price_return_pct + band_pct, Decimal("-80.00"), Decimal("140.00"))
+    scenarios = build_one_year_projection_scenarios(
+        latest_price,
+        price_return_pct=price_return_pct,
+        price_low_return_pct=price_low_return_pct,
+        price_high_return_pct=price_high_return_pct,
+        base_return_pct=base_return_pct,
+        low_return_pct=low_return_pct,
+        high_return_pct=high_return_pct,
+        confidence_label=confidence["label"],
+    )
 
     return {
         "available": True,
@@ -6927,12 +7231,14 @@ def build_one_year_projection(
         "price_low_return_pct": price_low_return_pct,
         "price_high_return_pct": price_high_return_pct,
         "base_return_pct": base_return_pct,
+        "band_pct": quantize_decimal(band_pct),
         "low_return_pct": low_return_pct,
         "high_return_pct": high_return_pct,
         "projected_price": project_price_from_return(latest_price, price_return_pct),
         "low_price": project_price_from_return(latest_price, price_low_return_pct),
         "high_price": project_price_from_return(latest_price, price_high_return_pct),
         "quarterly_path": build_projection_path(latest_price, price_return_pct, anchor_date=history[-1].price_date),
+        "scenarios": scenarios,
         "confidence_label": confidence["label"],
         "confidence_note": confidence["note"],
         "confidence_score_pct": confidence["score_pct"],
@@ -7276,6 +7582,304 @@ def build_trade_alert(
         "note": note,
         "trend_label": trend_label,
     }
+
+
+def apply_news_context_adjustments_to_card(card: dict) -> dict:
+    projection = card.get("projection") or {}
+    news_context = card.get("news_context") or {}
+    if not projection.get("available") or not news_context.get("material_event"):
+        return card
+    if (projection.get("news_adjustment") or {}).get("applied"):
+        return card
+
+    position = card["position"]
+    cycle_projection = card.get("cycle_projection_5y") or {}
+    aggregate_score = Decimal(str(news_context.get("score") or "0"))
+    items_count = int(news_context.get("items_count") or 0)
+    top_tags = [str(tag).strip().lower() for tag in (news_context.get("top_tags") or []) if str(tag).strip()]
+    severe_tag_bonus = Decimal("0.12") if {"geopolitica", "regulacion", "resultados"} & set(top_tags) else ZERO
+    severity = clamp_decimal(
+        (abs(aggregate_score) / Decimal("8.00")) + (Decimal(items_count) * Decimal("0.04")) + severe_tag_bonus,
+        Decimal("0.25"),
+        Decimal("1.00"),
+    )
+    confidence_penalty = clamp_decimal(
+        Decimal("6.00") + (severity * Decimal("8.00")),
+        Decimal("6.00"),
+        Decimal("14.00"),
+    )
+    safety_penalty = clamp_decimal(
+        Decimal("3.00") + (severity * Decimal("5.00")),
+        Decimal("3.00"),
+        Decimal("8.00"),
+    )
+    reliability_penalty = clamp_decimal(
+        Decimal("4.00") + (severity * Decimal("6.00")),
+        Decimal("4.00"),
+        Decimal("10.00"),
+    )
+    band_multiplier = clamp_decimal(
+        Decimal("1.18") + (severity * Decimal("0.22")),
+        Decimal("1.18"),
+        Decimal("1.40"),
+    )
+    spread_multiplier = clamp_decimal(
+        Decimal("1.16") + (severity * Decimal("0.20")),
+        Decimal("1.16"),
+        Decimal("1.36"),
+    )
+    price_return_adjustment_pct = clamp_decimal(
+        aggregate_score * Decimal("0.55"),
+        Decimal("-4.50"),
+        Decimal("2.50"),
+    )
+    annual_return_adjustment_pct = clamp_decimal(
+        price_return_adjustment_pct * Decimal("0.28"),
+        Decimal("-1.75"),
+        Decimal("1.00"),
+    )
+    note = (
+        str(news_context.get("material_note") or news_context.get("note") or "").strip()
+        or "El contexto web reciente detecta un evento material que puede desordenar temporalmente el patron historico."
+    )
+    latest_price = position.current_price_per_share
+    latest_date = card.get("end_date") or position.latest_price_date
+    net_income_yield_pct = projection.get("net_income_yield_pct")
+    transaction_drag_pct = projection.get("transaction_drag_pct")
+    adjusted_price_return_pct = clamp_decimal(
+        (projection.get("price_return_pct") or ZERO) + price_return_adjustment_pct,
+        Decimal("-45.00"),
+        Decimal("45.00"),
+    )
+    adjusted_base_return_pct = adjusted_price_return_pct
+    if net_income_yield_pct is not None:
+        adjusted_base_return_pct += net_income_yield_pct
+    if transaction_drag_pct is not None:
+        adjusted_base_return_pct -= transaction_drag_pct
+    adjusted_base_return_pct = clamp_decimal(adjusted_base_return_pct, Decimal("-50.00"), Decimal("50.00"))
+    adjusted_band_pct = clamp_decimal(
+        (projection.get("band_pct") or Decimal("16.00")) * band_multiplier,
+        Decimal("10.00"),
+        Decimal("40.00"),
+    )
+    adjusted_low_return_pct = clamp_decimal(
+        adjusted_base_return_pct - adjusted_band_pct,
+        Decimal("-80.00"),
+        Decimal("120.00"),
+    )
+    adjusted_high_return_pct = clamp_decimal(
+        adjusted_base_return_pct + adjusted_band_pct,
+        Decimal("-80.00"),
+        Decimal("140.00"),
+    )
+    adjusted_price_low_return_pct = clamp_decimal(
+        adjusted_price_return_pct - adjusted_band_pct,
+        Decimal("-80.00"),
+        Decimal("120.00"),
+    )
+    adjusted_price_high_return_pct = clamp_decimal(
+        adjusted_price_return_pct + adjusted_band_pct,
+        Decimal("-80.00"),
+        Decimal("140.00"),
+    )
+    adjusted_confidence_score_pct = clamp_decimal(
+        (projection.get("confidence_score_pct") or projection_reliability_score(projection.get("confidence_label") or "Baja"))
+        - confidence_penalty,
+        Decimal("18.00"),
+        Decimal("92.00"),
+    )
+    adjusted_confidence_label = confidence_label_from_score(adjusted_confidence_score_pct)
+    adjusted_safety_score = clamp_decimal(
+        (projection.get("safety_score") or Decimal("55.00")) - safety_penalty,
+        Decimal("18.00"),
+        Decimal("92.00"),
+    )
+    adjusted_safety_label = safety_label_from_score(adjusted_safety_score)
+    benefit_risk_ratio = None
+    if adjusted_band_pct > ZERO:
+        benefit_risk_ratio = adjusted_base_return_pct / adjusted_band_pct
+    decision_score = (
+        adjusted_base_return_pct
+        * projection_confidence_multiplier(adjusted_confidence_label)
+        * (adjusted_safety_score / ONE_HUNDRED)
+    )
+    projection["price_return_pct"] = quantize_decimal(adjusted_price_return_pct)
+    projection["price_low_return_pct"] = quantize_decimal(adjusted_price_low_return_pct)
+    projection["price_high_return_pct"] = quantize_decimal(adjusted_price_high_return_pct)
+    projection["base_return_pct"] = quantize_decimal(adjusted_base_return_pct)
+    projection["band_pct"] = quantize_decimal(adjusted_band_pct)
+    projection["low_return_pct"] = quantize_decimal(adjusted_low_return_pct)
+    projection["high_return_pct"] = quantize_decimal(adjusted_high_return_pct)
+    projection["projected_price"] = project_price_from_return(latest_price, adjusted_price_return_pct)
+    projection["low_price"] = project_price_from_return(latest_price, adjusted_price_low_return_pct)
+    projection["high_price"] = project_price_from_return(latest_price, adjusted_price_high_return_pct)
+    projection["quarterly_path"] = build_projection_path(latest_price, adjusted_price_return_pct, anchor_date=latest_date)
+    projection["confidence_label"] = adjusted_confidence_label
+    projection["confidence_score_pct"] = quantize_decimal(adjusted_confidence_score_pct)
+    projection["confidence_note"] = (
+        f"{str(projection.get('confidence_note') or '').strip()} "
+        "El evento material reciente reduce la confianza y obliga a ampliar el rango del escenario."
+    ).strip()
+    projection["safety_score"] = quantize_decimal(adjusted_safety_score)
+    projection["safety_label"] = adjusted_safety_label
+    projection["benefit_risk_ratio"] = quantize_decimal(benefit_risk_ratio)
+    projection["decision_score"] = quantize_decimal(decision_score)
+    projection["scenarios"] = build_one_year_projection_scenarios(
+        latest_price,
+        price_return_pct=adjusted_price_return_pct,
+        price_low_return_pct=adjusted_price_low_return_pct,
+        price_high_return_pct=adjusted_price_high_return_pct,
+        base_return_pct=adjusted_base_return_pct,
+        low_return_pct=adjusted_low_return_pct,
+        high_return_pct=adjusted_high_return_pct,
+        confidence_label=adjusted_confidence_label,
+        shock_adjusted=True,
+        sentiment_score=aggregate_score,
+    )
+    projection["news_adjustment"] = {
+        "applied": True,
+        "aggregate_score": quantize_decimal(aggregate_score, "0.01"),
+        "severity": quantize_decimal(severity, "0.01"),
+        "price_return_adjustment_pct": quantize_decimal(price_return_adjustment_pct),
+        "annual_return_adjustment_pct": quantize_decimal(annual_return_adjustment_pct),
+        "confidence_penalty_pct": quantize_decimal(confidence_penalty),
+        "safety_penalty_pct": quantize_decimal(safety_penalty),
+        "band_multiplier": quantize_decimal(band_multiplier, "0.01"),
+        "note": note,
+    }
+    projection["explanation"] = f"{str(projection.get('explanation') or '').strip()} {note}".strip()
+
+    reliability = card.get("projection_reliability") or {"label": "Baja", "score": Decimal("40.00")}
+    adjusted_reliability_score = clamp_decimal(
+        (reliability.get("score") or projection_reliability_score(reliability.get("label") or "Baja")) - reliability_penalty,
+        Decimal("18.00"),
+        Decimal("92.00"),
+    )
+    reliability["score"] = quantize_decimal(adjusted_reliability_score)
+    reliability["label"] = confidence_label_from_score(adjusted_reliability_score)
+    reliability["news_adjustment"] = {
+        "applied": True,
+        "reliability_penalty_pct": quantize_decimal(reliability_penalty),
+        "note": note,
+    }
+    card["projection_reliability"] = reliability
+
+    if cycle_projection.get("available"):
+        adjusted_annual_return_pct = clamp_decimal(
+            (cycle_projection.get("annual_return_pct") or ZERO) + annual_return_adjustment_pct,
+            Decimal("-12.00"),
+            Decimal("18.00"),
+        )
+        scenario_spread_annual_pct = clamp_decimal(
+            (cycle_projection.get("scenario_spread_annual_pct") or Decimal("3.50")) * spread_multiplier,
+            Decimal("2.00"),
+            Decimal("9.00"),
+        )
+        cycle_path, adjusted_steps, news_step_shift = build_cycle_projection_path_for_target(
+            latest_price,
+            annual_return_pct=adjusted_annual_return_pct,
+            step_return_pcts=[Decimal(str(value)) for value in (cycle_projection.get("step_return_pcts") or [])],
+            annualized_volatility_pct=cycle_projection.get("annualized_volatility_pct"),
+            current_drawdown_pct=cycle_projection.get("current_drawdown_pct"),
+            cycle_phase=cycle_projection.get("cycle_phase") or "Transicion",
+            anchor_date=cycle_projection.get("latest_date") or latest_date,
+            years=5,
+            step_months=6,
+        )
+        if cycle_path:
+            projected_price = cycle_path[-1]["projected_price"]
+            cycle_projection["annual_return_pct"] = quantize_decimal(adjusted_annual_return_pct)
+            cycle_projection["projected_price"] = projected_price
+            cycle_projection["five_year_return_pct"] = quantize_decimal(percentage_change(projected_price, latest_price))
+            cycle_projection["path"] = cycle_path
+            cycle_projection["step_return_pcts"] = [quantize_decimal(value) or ZERO for value in adjusted_steps]
+            cycle_projection["news_step_shift"] = quantize_decimal(news_step_shift)
+            cycle_projection["scenario_spread_annual_pct"] = quantize_decimal(scenario_spread_annual_pct)
+            cycle_projection["scenarios"] = build_five_year_projection_scenarios(
+                latest_price,
+                latest_date=cycle_projection.get("latest_date") or latest_date,
+                annual_return_pct=adjusted_annual_return_pct,
+                scenario_spread_annual_pct=scenario_spread_annual_pct,
+                step_return_pcts=adjusted_steps,
+                annualized_volatility_pct=cycle_projection.get("annualized_volatility_pct"),
+                current_drawdown_pct=cycle_projection.get("current_drawdown_pct"),
+                cycle_phase=cycle_projection.get("cycle_phase") or "Transicion",
+                confidence_label=adjusted_confidence_label,
+                shock_adjusted=True,
+                sentiment_score=aggregate_score,
+            )
+            cycle_projection["news_adjustment"] = {
+                "applied": True,
+                "aggregate_score": quantize_decimal(aggregate_score, "0.01"),
+                "annual_return_adjustment_pct": quantize_decimal(annual_return_adjustment_pct),
+                "spread_multiplier": quantize_decimal(spread_multiplier, "0.01"),
+                "note": note,
+            }
+            cycle_projection["explanation"] = f"{str(cycle_projection.get('explanation') or '').strip()} {note}".strip()
+
+    one_year_snapshot = next(
+        (snapshot for snapshot in (card.get("period_snapshots") or []) if snapshot.get("label") == "1Y"),
+        {"available": False},
+    )
+    six_month_snapshot = card.get("six_month_snapshot") or {"available": False}
+    trade_alert = build_trade_alert(
+        position,
+        projection,
+        card.get("correlation") or {},
+        reliability,
+        card.get("relative_trend") or {},
+        six_month_snapshot,
+        one_year_snapshot,
+    )
+    trade_alert["note"] = f"{str(trade_alert.get('note') or '').strip()} {note}".strip()
+    card["trade_alert"] = trade_alert
+    return card
+
+
+def apply_news_context_adjustments_to_dashboard(dashboard: dict) -> dict:
+    history_cards = list(dashboard.get("history_cards") or [])
+    ibex_cards = list(dashboard.get("ibex_universe_cards") or [])
+    cards = [*history_cards, *ibex_cards]
+    adjusted_cards_count = 0
+    material_event_count = 0
+    for card in cards:
+        if (card.get("news_context") or {}).get("material_event"):
+            material_event_count += 1
+        was_adjusted = bool(((card.get("projection") or {}).get("news_adjustment") or {}).get("applied"))
+        apply_news_context_adjustments_to_card(card)
+        is_adjusted = bool(((card.get("projection") or {}).get("news_adjustment") or {}).get("applied"))
+        if is_adjusted and not was_adjusted:
+            adjusted_cards_count += 1
+
+    if history_cards:
+        dashboard["decision_rows"] = build_equity_decision_rows(history_cards)
+        dashboard["optimizer_cards"] = build_optimizer_master_cards(history_cards, ibex_cards)
+        positions = [*(dashboard.get("owned_positions") or []), *(dashboard.get("watchlist_positions") or [])]
+        if positions and dashboard.get("overview") is not None:
+            dashboard["overview"] = build_equity_analysis_overview(
+                positions,
+                history_cards,
+                dashboard["decision_rows"],
+                dashboard.get("ibex_universe_summary") or {},
+            )
+    if ibex_cards:
+        dashboard["ibex_universe_rows"] = build_equity_decision_rows(ibex_cards)
+        ibex_summary = dashboard.get("ibex_universe_summary") or {}
+        ibex_rows = dashboard["ibex_universe_rows"]
+        ibex_summary.update(
+            {
+                "buy_alert_count": sum(1 for row in ibex_rows if row.get("trade_alert_label") == "Comprar"),
+                "sell_alert_count": sum(1 for row in ibex_rows if row.get("trade_alert_label") == "Vender"),
+                "watch_alert_count": sum(1 for row in ibex_rows if row.get("trade_alert_label") == "Vigilar"),
+                "top_pick": ibex_rows[0] if ibex_rows else ibex_summary.get("top_pick"),
+            }
+        )
+        dashboard["ibex_universe_summary"] = ibex_summary
+    dashboard["news_adjustment_summary"] = {
+        "adjusted_cards_count": adjusted_cards_count,
+        "material_event_count": material_event_count,
+    }
+    return dashboard["news_adjustment_summary"]
 
 
 def build_decision_action_label(
@@ -7883,6 +8487,7 @@ def build_equity_history_card(
         "projection_line": dual_axis_chart["projection_line"],
         "dual_axis_chart": dual_axis_chart,
         "period_snapshots": period_snapshots,
+        "six_month_snapshot": six_month_snapshot,
         "selected_period": selected_period,
         "net_unrealized_gain": position.unrealized_gain_after_costs,
         "net_unrealized_return_pct": position.unrealized_return_pct,

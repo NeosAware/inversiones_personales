@@ -28,6 +28,7 @@ from .news_context import (
 )
 from .services import (
     ZERO,
+    apply_news_context_adjustments_to_dashboard,
     build_analysis_broker_costs,
     build_cycle_projection_yearly_margins,
     build_equity_analysis_dashboard,
@@ -1082,6 +1083,7 @@ def run_nightly_equity_analysis(
             ibex_include_fundamentals=True,
         )
         news_summary = attach_llm_news_context_to_dashboard(dashboard)
+        apply_news_context_adjustments_to_dashboard(dashboard)
         scheduled_refresh = bool(ai_config.available and should_refresh_nightly_llm(analysis_date=analysis_date, force=force))
         material_news_refresh = bool(
             ai_config.available

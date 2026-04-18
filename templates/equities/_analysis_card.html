@@ -476,6 +476,41 @@
       </div>
     </div>
 
+    {% if card.projection.scenarios or card.cycle_projection_5y.scenarios %}
+      <div class="equity-section-head" style="margin-top:18px;">
+        <div>
+          <h5>Escenarios</h5>
+          <p>Lectura rapida de los casos bajista, base y alcista para 12M y 5A.</p>
+        </div>
+      </div>
+      <div class="equity-detail-grid" style="margin-top:14px;">
+        {% for scenario in card.projection.scenarios %}
+          <div class="equity-mini-stat">
+            <span>12M {{ scenario.label }}</span>
+            <strong class="{% if scenario.total_return_pct >= 0 %}good{% else %}warn{% endif %}">
+              {% if scenario.total_return_pct is not None %}{{ scenario.total_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+            </strong>
+            <small>
+              Prob. {{ scenario.probability_pct|floatformat:0 }} % |
+              precio {% if scenario.projected_price is not None %}{{ scenario.projected_price|floatformat:4 }}{% else %}-{% endif %}
+            </small>
+          </div>
+        {% endfor %}
+        {% for scenario in card.cycle_projection_5y.scenarios %}
+          <div class="equity-mini-stat">
+            <span>5A {{ scenario.label }}</span>
+            <strong class="{% if scenario.five_year_return_pct >= 0 %}good{% else %}warn{% endif %}">
+              {% if scenario.five_year_return_pct is not None %}{{ scenario.five_year_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+            </strong>
+            <small>
+              Prob. {{ scenario.probability_pct|floatformat:0 }} % |
+              anual {% if scenario.annual_return_pct is not None %}{{ scenario.annual_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+            </small>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
     <div class="equity-compact-note" style="margin-top:14px;">
       <strong style="display:block; color:#17384e; margin-bottom:6px;">Como leer esta ficha</strong>
       Seguridad {{ card.projection.safety_score|floatformat:0 }}/100 y fiabilidad {{ card.projection_reliability.label|lower }}, con {{ card.projection.confidence_label|lower }} en el modelo.
@@ -502,6 +537,16 @@
         <p style="margin:0 0 8px;"><strong>Mercado:</strong> {{ card.news_context.market_signal.label }}{% if card.news_context.market_signal.score is not None %} ({{ card.news_context.market_signal.score|floatformat:2 }}){% endif %}</p>
         {% if card.news_context.material_event and card.news_context.material_note %}
           <p style="margin:0 0 8px;"><strong>Alerta:</strong> {{ card.news_context.material_note }}</p>
+        {% endif %}
+        {% if card.projection.news_adjustment.applied %}
+          <p style="margin:0 0 8px;">
+            <strong>Ajuste del modelo:</strong>
+            {{ card.projection.news_adjustment.note }}
+            Rango 12M x{{ card.projection.news_adjustment.band_multiplier|floatformat:2 }}
+            {% if card.cycle_projection_5y.news_adjustment.spread_multiplier is not None %}
+              | spread 5A x{{ card.cycle_projection_5y.news_adjustment.spread_multiplier|floatformat:2 }}
+            {% endif %}
+          </p>
         {% endif %}
         {% if card.news_context.top_items %}
           <div class="equity-detail-grid" style="margin-top:10px;">
