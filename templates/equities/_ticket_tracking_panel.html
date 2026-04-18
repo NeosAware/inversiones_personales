@@ -75,6 +75,34 @@
       </div>
     </div>
   {% endif %}
+  {% if ticket_tracking.global.chart_5y.available %}
+    <div class="equity-chart-shell" style="margin-top:18px;">
+      <strong style="display:block; color:#17384e; margin-bottom:8px;">Cartera global 5A desde {{ ticket_tracking.global.chart_5y.start_label }}</strong>
+      <svg viewBox="0 0 640 220">
+        <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+        <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+        <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ ticket_tracking.global.chart_5y.expected_line }}" />
+        {% if ticket_tracking.global.chart_5y.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ ticket_tracking.global.chart_5y.actual_line }}" />{% endif %}
+        {% for marker in ticket_tracking.global.chart_5y.x_markers %}
+          <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+          <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+        {% endfor %}
+        {% for point in ticket_tracking.global.chart_5y.actual_points %}
+          <circle cx="{{ point.x }}" cy="{{ point.y }}" r="4.5" fill="#0d5d78">
+            <title>{{ point.date_label }} | {{ point.value_label }}</title>
+          </circle>
+        {% endfor %}
+        <text x="8" y="20" font-size="12" fill="#17384e">{{ ticket_tracking.global.chart_5y.max_label }}</text>
+        <text x="8" y="214" font-size="12" fill="#17384e">{{ ticket_tracking.global.chart_5y.min_label }}</text>
+      </svg>
+      <div class="equity-chart-foot">
+        <span>Azul: valor real total</span>
+        <span>Naranja: senda agregada 5A de tus posiciones actuales</span>
+        <span>{{ ticket_tracking.global.chart_5y.latest_label }} a {{ ticket_tracking.global.chart_5y.projection_end_label }}</span>
+        {% if ticket_tracking.global.expected_total_value_5y is not None %}<span>Escenario total 5A {{ ticket_tracking.global.expected_total_value_5y|floatformat:0 }} EUR</span>{% endif %}
+      </div>
+    </div>
+  {% endif %}
   {% if ticket_tracking.tickets %}
     <div class="equity-stock-tabs-shell" data-equity-tabs style="margin-top:18px;">
       <div class="equity-section-head">

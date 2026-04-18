@@ -46,6 +46,7 @@ MONTHLY_RECENT_WINDOW = 12
 QUARTERLY_RECENT_WINDOW = 4
 TRACKING_HORIZON_DAYS = 365
 TRACKING_FORECAST_MARKERS = (91, 182, 273, TRACKING_HORIZON_DAYS)
+TRACKING_FIVE_YEAR_MARKERS = (1, 2, 3, 4, 5)
 COMPARABLE_MONTH_DAYS = Decimal("30.4375")
 OPTIMIZER_MAX_ENTRY_DRAG_PCT = Decimal("1.00")
 OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT = Decimal("2.00")
@@ -3980,6 +3981,137 @@ def build_ticket_expected_series(
     return series, latest_expected_value, projected_end_date
 
 
+def build_segmented_expected_series(
+    snapshots: list[EquityTicketSnapshot],
+    anchors: list[dict],
+) -> tuple[list[dict], Decimal | None, date | None]:
+    if not snapshots:
+        return [], None, None
+
+    baseline = snapshots[0]
+    normalized_anchors = [
+        {
+            "date": baseline.snapshot_date,
+            "value": quantize_decimal(baseline.current_value, "0.01") or ZERO,
+        }
+    ]
+    for anchor in sorted(anchors, key=lambda item: item.get("date") or baseline.snapshot_date):
+        anchor_date = anchor.get("date")
+        anchor_value = anchor.get("value")
+        if anchor_date is None or anchor_value is None or anchor_date <= baseline.snapshot_date:
+            continue
+        normalized_anchors.append(
+            {
+                "date": anchor_date,
+                "value": quantize_decimal(anchor_value, "0.01") or ZERO,
+            }
+        )
+
+    if len(normalized_anchors) < 2:
+        return [], None, None
+
+    series_dates = {baseline.snapshot_date}
+    for snapshot in snapshots:
+        series_dates.add(snapshot.snapshot_date)
+    for anchor in normalized_anchors[1:]:
+        series_dates.add(anchor["date"])
+
+    def project_on_anchor_path(point_date: date) -> Decimal | None:
+        if point_date <= normalized_anchors[0]["date"]:
+            return normalized_anchors[0]["value"]
+        for index in range(1, len(normalized_anchors)):
+            previous_anchor = normalized_anchors[index - 1]
+            next_anchor = normalized_anchors[index]
+            if point_date <= next_anchor["date"]:
+                segment_days = max((next_anchor["date"] - previous_anchor["date"]).days, 1)
+                return project_expected_value_on_date(
+                    previous_anchor["value"],
+                    next_anchor["value"],
+                    previous_anchor["date"],
+                    point_date,
+                    horizon_days=segment_days,
+                )
+        return normalized_anchors[-1]["value"]
+
+    series = []
+    for point_date in sorted(series_dates):
+        expected_value = project_on_anchor_path(point_date)
+        if expected_value is not None:
+            series.append({"date": point_date, "value": expected_value})
+
+    latest_snapshot_date = snapshots[-1].snapshot_date
+    latest_expected_value = next(
+        (point["value"] for point in reversed(series) if point["date"] <= latest_snapshot_date),
+        None,
+    )
+    return series, latest_expected_value, normalized_anchors[-1]["date"]
+
+
+def build_ticket_expected_series_5y(
+    card: dict,
+    snapshots: list[EquityTicketSnapshot],
+    purchase_baseline: EquityPurchaseForecastBaseline | None = None,
+) -> tuple[list[dict], Decimal | None, date | None, Decimal | None]:
+    if not snapshots:
+        return [], None, None, None
+
+    baseline_snapshot = snapshots[0]
+    position = card["position"]
+    anchors = []
+
+    def add_anchor(months: int | None, value: Decimal | None):
+        if months is None or months <= 0 or value is None:
+            return
+        anchor_date = add_calendar_months(baseline_snapshot.snapshot_date, months)
+        if anchor_date is None:
+            return
+        anchors.append({"date": anchor_date, "value": quantize_decimal(value, "0.01") or ZERO})
+
+    baseline_current_value = quantize_decimal(baseline_snapshot.current_value, "0.01") or ZERO
+    if purchase_baseline:
+        for year in TRACKING_FIVE_YEAR_MARKERS:
+            projected_price = getattr(purchase_baseline, f"projected_price_{year}y", None)
+            projected_return_pct = getattr(purchase_baseline, f"projected_return_pct_{year}y", None)
+            projected_value = None
+            if projected_price is not None:
+                projected_value = quantize_decimal(position.shares * projected_price, "0.01")
+            elif projected_return_pct is not None:
+                projected_value = quantize_decimal(
+                    baseline_current_value * (Decimal("1") + (projected_return_pct / ONE_HUNDRED)),
+                    "0.01",
+                )
+            add_anchor(year * 12, projected_value)
+
+    if not anchors:
+        cycle_projection = card.get("cycle_projection_5y") or {}
+        path_rows = cycle_projection.get("path") or []
+        for row in path_rows:
+            months = parse_projection_label_months(row.get("label"))
+            projected_price = row.get("projected_price")
+            if projected_price is None:
+                continue
+            add_anchor(months, quantize_decimal(position.shares * projected_price, "0.01"))
+
+        if not anchors:
+            projected_price = cycle_projection.get("projected_price")
+            if projected_price is not None:
+                add_anchor(60, quantize_decimal(position.shares * projected_price, "0.01"))
+            else:
+                five_year_return_pct = cycle_projection.get("five_year_return_pct")
+                if five_year_return_pct is not None:
+                    add_anchor(
+                        60,
+                        quantize_decimal(
+                            baseline_current_value * (Decimal("1") + (five_year_return_pct / ONE_HUNDRED)),
+                            "0.01",
+                        ),
+                    )
+
+    series, latest_expected_value, projected_end_date = build_segmented_expected_series(snapshots, anchors)
+    expected_total_value_5y = series[-1]["value"] if series else None
+    return series, latest_expected_value, projected_end_date, expected_total_value_5y
+
+
 def filter_ticket_tracking_snapshots(
     snapshots: list[EquityTicketSnapshot],
     tracking_anchor_date: date | None = None,
@@ -4609,6 +4741,11 @@ def build_equity_ticket_tracking_item(
         relevant_snapshots,
         expected_market_value_12m,
     )
+    expected_series_5y, current_expected_value_5y, projected_end_date_5y, expected_total_value_5y = build_ticket_expected_series_5y(
+        card,
+        relevant_snapshots,
+        purchase_baseline=purchase_baseline,
+    )
     chart = build_value_tracking_chart(actual_series, expected_series)
     gap_value = (
         quantize_decimal(latest.current_value - current_expected_value, "0.01")
@@ -4654,6 +4791,10 @@ def build_equity_ticket_tracking_item(
         "current_expected_value": current_expected_value,
         "expected_market_value_12m": expected_market_value_12m,
         "expected_total_value_12m": expected_total_value_12m,
+        "expected_series_5y": expected_series_5y,
+        "current_expected_value_5y": current_expected_value_5y,
+        "expected_total_value_5y": expected_total_value_5y,
+        "projection_end_date_5y": projected_end_date_5y,
         "actual_change_pct": percentage_change(latest.current_value, baseline.current_value),
         "expected_change_pct": percentage_change(current_expected_value, baseline.current_value)
         if current_expected_value is not None
@@ -4671,10 +4812,17 @@ def build_equity_ticket_tracking_item(
 def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
     actual_map: dict[date, Decimal] = defaultdict(lambda: ZERO)
     tracked_dates: set[date] = set()
+    expected_map_5y: dict[date, Decimal] = defaultdict(lambda: ZERO)
     for item in ticket_items:
         for point in item["actual_series"]:
             actual_map[point["date"]] += point["value"]
             tracked_dates.add(point["date"])
+        for point in item.get("expected_series_5y", []):
+            point_date = point.get("date")
+            point_value = point.get("value")
+            if point_date is None or point_value is None:
+                continue
+            expected_map_5y[point_date] += point_value
 
     if not actual_map:
         return {"available": False}
@@ -4730,16 +4878,26 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         expected_series,
         benchmark_series=benchmark["series"],
     )
+    expected_series_5y = [
+        {"date": point_date, "value": quantize_decimal(expected_map_5y[point_date], "0.01") or ZERO}
+        for point_date in sorted(expected_map_5y)
+    ]
+    chart_5y = build_value_tracking_chart(actual_series, expected_series_5y) if expected_series_5y else {"available": False}
     latest_actual = actual_series[-1]["value"]
     latest_date = actual_series[-1]["date"]
     current_expected_value = next(
         (point["value"] for point in reversed(expected_series) if point["date"] <= latest_date),
         None,
     )
+    current_expected_value_5y = next(
+        (point["value"] for point in reversed(expected_series_5y) if point["date"] <= latest_date),
+        None,
+    )
     expected_total_value_12m = sum(
         (item["expected_total_value_12m"] or item["expected_market_value_12m"] or ZERO)
         for item in ticket_items
     )
+    expected_total_value_5y = sum((item.get("expected_total_value_5y") or ZERO) for item in ticket_items)
     previous_actual = actual_series[-2]["value"] if len(actual_series) >= 2 else None
     gap_value = (
         quantize_decimal(latest_actual - current_expected_value, "0.01")
@@ -4756,11 +4914,14 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
     return {
         "available": True,
         "chart": chart,
+        "chart_5y": chart_5y,
         "baseline_value": baseline_value,
         "latest_value": latest_actual,
         "expected_today_value": current_expected_value,
+        "expected_today_value_5y": current_expected_value_5y,
         "expected_market_value_12m": expected_series[-1]["value"] if expected_series else baseline_value,
         "expected_total_value_12m": quantize_decimal(expected_total_value_12m, "0.01") or ZERO,
+        "expected_total_value_5y": quantize_decimal(expected_total_value_5y, "0.01") or ZERO,
         "actual_change_pct": actual_change_pct,
         "expected_change_pct": percentage_change(current_expected_value, baseline_value)
         if current_expected_value is not None
