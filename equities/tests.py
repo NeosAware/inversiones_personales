@@ -18,7 +18,7 @@ from django.utils import timezone
 from portfolio.ownership import AssetOwnershipCategory
 
 from .broker_costs import estimate_broker_costs
-from .llm_analysis import enrich_dashboard_with_ai_analysis
+from .llm_analysis import build_card_llm_context, enrich_dashboard_with_ai_analysis
 from .models import (
     EquityClosedPosition,
     EquityNightlyAnalysisRun,
@@ -51,11 +51,13 @@ from .services import (
     SPAIN_ELECTRICITY_DEMAND_SYMBOL,
     SPAIN_GAS_CONSUMPTION_NAME,
     SPAIN_GAS_CONSUMPTION_SYMBOL,
+    ZERO,
     build_equity_allocation_plan,
     build_equity_analysis_dashboard,
     build_equity_decision_rows,
     build_equity_history_cards,
     build_equity_investment_journey_context,
+    build_reference_correlation,
     build_equity_round_investment_plan,
     build_equity_sale_preview,
     build_equity_ticket_tracking_context,
@@ -217,6 +219,176 @@ class EquitiesServicesTests(TestCase):
         self.assertGreaterEqual(len(suggestions), 2)
         self.assertEqual(suggestions[0]["benchmark_name"], SPAIN_GAS_CONSUMPTION_NAME)
         self.assertEqual(suggestions[0]["benchmark_symbol"], SPAIN_GAS_CONSUMPTION_SYMBOL)
+
+    def test_reference_correlation_uses_absolute_changes_for_euribor_series(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            reference_profile=EquityPosition.ReferenceProfile.EURIBOR_12M,
+            benchmark_symbol=EURIBOR_REFERENCE_SYMBOL,
+            benchmark_name=EURIBOR_REFERENCE_NAME,
+            company_name="Banco Santander, S.A.",
+            shares=Decimal("20"),
+            average_cost_per_share=Decimal("3.0000"),
+            current_price_per_share=Decimal("3.0000"),
+        )
+        stock_price = Decimal("3.0000")
+        euribor_value = Decimal("-0.45")
+        stock_return_pattern = [Decimal("2.8"), Decimal("-0.6"), Decimal("3.1"), Decimal("0.9")]
+        euribor_delta_pattern = [Decimal("0.08"), Decimal("-0.02"), Decimal("0.09"), Decimal("0.01")]
+        for index in range(36):
+            year = 2023 + (index // 12)
+            month = (index % 12) + 1
+            month_end = monthrange(year, month)[1]
+            stock_price = (stock_price * (Decimal("1.00") + (stock_return_pattern[index % 4] / Decimal("100")))).quantize(Decimal("0.0001"))
+            euribor_value = (euribor_value + euribor_delta_pattern[index % 4]).quantize(Decimal("0.0001"))
+            position.price_history.create(
+                price_date=date(year, month, month_end),
+                close_price=stock_price,
+                benchmark_close=euribor_value,
+            )
+
+        correlation = build_reference_correlation(list(position.price_history.order_by("price_date")), position)
+
+        self.assertEqual(correlation["change_mode"], "absolute")
+        self.assertIsNotNone(correlation["coefficient"])
+        self.assertIsNotNone(correlation["beta"])
+
+    def test_cycle_projection_5y_builds_multifactor_model_with_bce_forward_signal(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            reference_profile=EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE,
+            benchmark_symbol="EUROSTAT:prc_hpi_q:ES:TOTAL:I15_Q",
+            benchmark_name="Precio vivienda Espana",
+            company_name="ACS, Actividades de Construccion y Servicios, S.A.",
+            shares=Decimal("25"),
+            average_cost_per_share=Decimal("20.0000"),
+            current_price_per_share=Decimal("20.0000"),
+        )
+        stock_price = Decimal("20.0000")
+        benchmark_price = Decimal("100.0000")
+        stock_return_pattern = [Decimal("3.2"), Decimal("-0.7"), Decimal("2.8"), Decimal("0.9")]
+        benchmark_return_pattern = [Decimal("1.1"), Decimal("0.2"), Decimal("1.0"), Decimal("0.4")]
+        for index in range(120):
+            year = 2016 + (index // 12)
+            month = (index % 12) + 1
+            month_end = monthrange(year, month)[1]
+            stock_price = (stock_price * (Decimal("1.00") + (stock_return_pattern[index % 4] / Decimal("100")))).quantize(Decimal("0.0001"))
+            benchmark_price = (benchmark_price * (Decimal("1.00") + (benchmark_return_pattern[index % 4] / Decimal("100")))).quantize(Decimal("0.0001"))
+            position.price_history.create(
+                price_date=date(year, month, month_end),
+                close_price=stock_price,
+                benchmark_close=benchmark_price,
+            )
+
+        def build_quarterly_series(symbol: str, name: str, start_value: Decimal, growth_pattern: list[Decimal]) -> MarketSeries:
+            points = []
+            value = start_value
+            for index in range(40):
+                year = 2016 + (index // 4)
+                quarter = (index % 4) + 1
+                month = quarter * 3
+                month_end = {3: 31, 6: 30, 9: 30, 12: 31}[month]
+                value = (value * growth_pattern[index % len(growth_pattern)]).quantize(Decimal("0.0001"))
+                points.append(
+                    {
+                        "date": date(year, month, month_end),
+                        "open": value,
+                        "high": value,
+                        "low": value,
+                        "close": value,
+                    }
+                )
+            return MarketSeries(symbol=symbol, name=name, latest_price=points[-1]["close"], latest_date=points[-1]["date"], points=points)
+
+        def build_monthly_absolute_series(symbol: str, name: str, start_value: Decimal, deltas: list[Decimal]) -> MarketSeries:
+            points = []
+            value = start_value
+            for index in range(120):
+                year = 2016 + (index // 12)
+                month = (index % 12) + 1
+                month_end = monthrange(year, month)[1]
+                value = (value + deltas[index % len(deltas)]).quantize(Decimal("0.0001"))
+                points.append(
+                    {
+                        "date": date(year, month, month_end),
+                        "open": value,
+                        "high": value,
+                        "low": value,
+                        "close": value,
+                    }
+                )
+            return MarketSeries(symbol=symbol, name=name, latest_price=points[-1]["close"], latest_date=points[-1]["date"], points=points)
+
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+            if reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
+                return build_quarterly_series(
+                    benchmark_symbol,
+                    benchmark_name,
+                    Decimal("100.0000"),
+                    [Decimal("1.0180"), Decimal("1.0100"), Decimal("1.0160"), Decimal("1.0080")],
+                )
+            if reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
+                return build_monthly_absolute_series(
+                    benchmark_symbol,
+                    benchmark_name,
+                    Decimal("-0.4000"),
+                    [Decimal("0.08"), Decimal("-0.02"), Decimal("0.10"), Decimal("0.01")],
+                )
+            return build_compound_market_series(
+                benchmark_symbol or "^IBEX",
+                benchmark_name or "IBEX 35",
+                growth=Decimal("1.0080"),
+                months=120,
+                start_year=2016,
+                start_month=1,
+                start_price=Decimal("100.0000"),
+            )
+
+        forward_signal_series = MarketSeries(
+            symbol="ECB:YC.B.U2.EUR.4F.G_N_C.SV_C_YM.IF_5Y",
+            name="Curva BCE forward 5A",
+            latest_price=Decimal("2.4000"),
+            latest_date=date(2025, 12, 31),
+            points=[
+                {
+                    "date": date(2025, 12, 31),
+                    "open": None,
+                    "high": None,
+                    "low": None,
+                    "close": Decimal("2.4000"),
+                }
+            ],
+        )
+
+        with (
+            patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series),
+            patch("equities.services.fetch_ecb_yield_curve_series", return_value=forward_signal_series),
+        ):
+            card = build_equity_history_cards([position])[0]
+
+        cycle_projection = card["cycle_projection_5y"]
+        self.assertTrue(cycle_projection["available"])
+        self.assertTrue(cycle_projection["factor_model_available"])
+        self.assertGreaterEqual(len(cycle_projection["factors"]), 2)
+        self.assertGreater(cycle_projection["factor_blend_ratio_pct"], ZERO)
+        self.assertGreaterEqual(cycle_projection["forward_signal_count"], 1)
+        self.assertTrue(cycle_projection["comparison_chart"]["available"])
+
+        euribor_factor = next(
+            factor for factor in cycle_projection["factors"] if factor["reference_label"] == EURIBOR_REFERENCE_NAME
+        )
+        self.assertTrue(euribor_factor["forward_signal"]["available"])
+        self.assertEqual(euribor_factor["change_unit_label"], "pp")
+        self.assertIsNotNone(euribor_factor["projected_change_5y"])
+        self.assertTrue(euribor_factor["projection_chart"]["available"])
+        self.assertTrue(euribor_factor["coefficient_chart"]["available"])
+        self.assertEqual(len(euribor_factor["correction_rows"]), 5)
+        self.assertTrue(any(row["anchor_path_value"] is not None for row in euribor_factor["correction_rows"]))
+        self.assertIsNotNone(euribor_factor["weight_inputs"]["coefficient_component"])
 
     def test_build_reference_suggestions_for_iberdrola_prioritizes_electricity_demand(self):
         suggestions = build_reference_suggestions_for_equity("Iberdrola", "IBE")
@@ -3338,6 +3510,97 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(history_card["ai_analysis"]["confidence_label"], "Alta")
         self.assertIn("Claude", history_card["ai_analysis"]["model_label"])
 
+    def test_build_card_llm_context_includes_news_context_when_available(self):
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            shares=Decimal("1.0000"),
+            average_cost_per_share=Decimal("34.0000"),
+            current_price_per_share=Decimal("34.0000"),
+        )
+        populate_position_history(position)
+        history_card = build_equity_history_cards([position])[0]
+        history_card["news_context"] = {
+            "available": True,
+            "label": "Contexto adverso",
+            "score": Decimal("-3.40"),
+            "items_count": 3,
+            "top_tags": ["geopolitica", "energia"],
+            "material_event": True,
+            "material_note": "Se detecta un evento geopolitico reciente con capacidad de alterar el escenario base.",
+            "captured_at_label": "2026-04-18 01:30",
+            "note": "Empresa adversa | mercado adversa",
+            "company_signal": {
+                "available": True,
+                "label": "Empresa Adversa",
+                "score": Decimal("-2.10"),
+                "items_count": 1,
+                "positive_count": 0,
+                "negative_count": 1,
+                "neutral_count": 0,
+                "top_tags": ["geopolitica"],
+                "note": "Hay presion sobre la compania.",
+                "items": [
+                    {
+                        "title": "ACS cae por tension geopolitica",
+                        "source": "Fuente Test",
+                        "published_label": "2026-04-18",
+                        "tone": "negative",
+                        "score": Decimal("-2.10"),
+                        "tags": ["geopolitica"],
+                    }
+                ],
+            },
+            "sector_signal": {
+                "available": True,
+                "label": "Sector Adversa",
+                "score": Decimal("-1.20"),
+                "items_count": 1,
+                "positive_count": 0,
+                "negative_count": 1,
+                "neutral_count": 0,
+                "top_tags": ["energia"],
+                "note": "El sector sufre por costes energeticos.",
+                "items": [],
+            },
+            "market_signal": {
+                "available": True,
+                "label": "Mercado Adversa",
+                "score": Decimal("-2.80"),
+                "items_count": 1,
+                "positive_count": 0,
+                "negative_count": 1,
+                "neutral_count": 0,
+                "top_tags": ["geopolitica", "energia"],
+                "note": "El mercado se pone defensivo.",
+                "items": [],
+            },
+            "top_items": [
+                {
+                    "title": "ACS cae por tension geopolitica",
+                    "source": "Fuente Test",
+                    "published_label": "2026-04-18",
+                    "tone": "negative",
+                    "score": Decimal("-2.10"),
+                    "tags": ["geopolitica"],
+                }
+            ],
+        }
+
+        context = build_card_llm_context(history_card, analysis_date=date(2026, 4, 18), scope="ibex")
+
+        self.assertTrue(context["news_context"]["available"])
+        self.assertTrue(context["news_context"]["material_event"])
+        self.assertEqual(context["news_context"]["top_tags"][0], "geopolitica")
+        self.assertEqual(context["news_context"]["company_signal"]["label"], "Empresa Adversa")
+        self.assertEqual(context["news_context"]["top_headlines"][0]["title"], "ACS cae por tension geopolitica")
+
     @override_settings(
         AI_LLM_PROVIDER="anthropic",
         ANTHROPIC_API_KEY="test-anthropic-key",
@@ -3547,6 +3810,10 @@ class EquitiesServicesTests(TestCase):
             patch("equities.nightly_analysis.sync_all_equities_market_data", return_value=[]),
             patch("equities.nightly_analysis.build_equity_analysis_dashboard", return_value=dashboard) as mocked_dashboard,
             patch(
+                "equities.nightly_analysis.attach_llm_news_context_to_dashboard",
+                return_value={"enabled": True, "signals_count": 2, "items_count": 0, "material_event_count": 0},
+            ),
+            patch(
                 "equities.nightly_analysis.resolve_ai_provider_config",
                 return_value=type(
                     "ProviderConfig",
@@ -3750,6 +4017,10 @@ class EquitiesServicesTests(TestCase):
         with (
             patch("equities.nightly_analysis.sync_all_equities_market_data", return_value=[]),
             patch("equities.nightly_analysis.build_equity_analysis_dashboard", return_value=dashboard),
+            patch(
+                "equities.nightly_analysis.attach_llm_news_context_to_dashboard",
+                return_value={"enabled": True, "signals_count": 1, "items_count": 0, "material_event_count": 0},
+            ),
             patch("equities.nightly_analysis.enrich_dashboard_with_ai_analysis") as mocked_llm,
         ):
             run = run_nightly_equity_analysis(
@@ -3769,6 +4040,147 @@ class EquitiesServicesTests(TestCase):
             "Lectura Claude guardada para reutilizar entre semana.",
         )
         self.assertIn("reutilizando la ultima lectura IA", run.status_note)
+
+    @override_settings(
+        AI_LLM_PROVIDER="anthropic",
+        ANTHROPIC_API_KEY="test-anthropic-key",
+        CLAUDE_DEFAULT_MODEL="claude-sonnet-4-20250514",
+        EQUITIES_NIGHTLY_LLM_REFRESH_ISO_WEEKDAYS=(2, 4),
+    )
+    def test_run_nightly_equity_analysis_refreshes_claude_on_material_news_shock_outside_schedule(self):
+        analysis_day = date(2026, 4, 17)
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            opened_on=date(2024, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position)
+        fresh_card = build_equity_history_cards([position])[0]
+        dashboard = {
+            "history_cards": [fresh_card],
+            "owned_history_cards": [fresh_card],
+            "ibex_universe_cards": [],
+            "ibex_universe_summary": {
+                "available": False,
+                "analyzed_count": 0,
+                "buy_alert_count": 0,
+                "sell_alert_count": 0,
+                "watch_alert_count": 0,
+                "registered_count": 0,
+                "registered_owned_count": 0,
+                "registered_watchlist_count": 0,
+                "radar_only_count": 0,
+                "failed_count": 0,
+                "failures": [],
+                "broker_assumption": "",
+                "trade_channel_label": "",
+                "top_pick": None,
+            },
+            "reference_guide_summary": {
+                "available": True,
+                "workbook_loaded": False,
+                "source_label": "",
+                "tracked_count": 1,
+                "owned_count": 1,
+                "watchlist_count": 0,
+                "guide_only_count": 0,
+            },
+        }
+
+        def attach_news_context(current_dashboard):
+            current_dashboard["history_cards"][0]["news_context"] = {
+                "available": True,
+                "label": "Contexto adverso",
+                "score": Decimal("-4.20"),
+                "items_count": 3,
+                "top_tags": ["geopolitica", "energia"],
+                "material_event": True,
+                "material_note": "Se detecta un evento geopolitico reciente con capacidad de alterar el escenario base.",
+                "note": "Empresa adversa | mercado adversa",
+                "company_signal": {"available": True, "label": "Empresa Adversa", "score": Decimal("-2.30"), "items_count": 1, "positive_count": 0, "negative_count": 1, "neutral_count": 0, "top_tags": ["geopolitica"], "note": "Presion sobre la compania.", "items": []},
+                "sector_signal": {"available": True, "label": "Sector Adversa", "score": Decimal("-1.40"), "items_count": 1, "positive_count": 0, "negative_count": 1, "neutral_count": 0, "top_tags": ["energia"], "note": "Presion sectorial.", "items": []},
+                "market_signal": {"available": True, "label": "Mercado Adversa", "score": Decimal("-3.20"), "items_count": 1, "positive_count": 0, "negative_count": 1, "neutral_count": 0, "top_tags": ["geopolitica", "energia"], "note": "Shock macro.", "items": []},
+                "top_items": [],
+                "captured_at_label": "2026-04-17 01:10",
+            }
+            return {
+                "enabled": True,
+                "signals_count": 1,
+                "items_count": 3,
+                "material_event_count": 1,
+            }
+
+        def successful_refresh(current_dashboard, analysis_date):
+            current_dashboard["history_cards"][0]["ai_analysis"] = {
+                "available": True,
+                "provider": "anthropic",
+                "label": "Claude claude-sonnet-4-20250514",
+                "model": "claude-sonnet-4-20250514",
+                "model_label": "Claude claude-sonnet-4-20250514",
+                "summary": "Claude relee la accion por el shock informativo reciente.",
+                "action_label": "Vigilar",
+                "action_note": "Reducir confianza hasta que se estabilice el contexto.",
+                "confidence_label": "Media",
+                "drivers": ["La lectura cuantitativa base sigue viva"],
+                "risks": ["El shock geopolitico puede desordenar el corto plazo"],
+                "backtest_note": "El backtest no captura bien cisnes negros.",
+                "cycle_note": "El ciclo 5A sigue util pero puede quedar temporalmente desfasado.",
+                "news_note": "El evento geopolitico reciente obliga a vigilar mas de cerca.",
+                "consistency_label": "Mixto",
+                "consistency_note": "La IA introduce cautela extra por contexto web.",
+                "generated_at": timezone.now().isoformat(),
+                "generated_at_label": timezone.localtime().strftime("%Y-%m-%d %H:%M"),
+                "usage": {"input_tokens": 450, "output_tokens": 160, "estimated_cost_usd": "0.0042"},
+            }
+            return {
+                "enabled": True,
+                "provider": "anthropic",
+                "label": "Claude claude-sonnet-4-20250514",
+                "model": "claude-sonnet-4-20250514",
+                "completed_count": 1,
+                "failed_count": 0,
+                "skipped_budget_count": 0,
+                "total_count": 1,
+                "input_tokens": 450,
+                "output_tokens": 160,
+                "estimated_cost_usd": "0.0042",
+                "monthly_budget_usd": "50.0000",
+                "monthly_cost_before_run_usd": "0.0000",
+                "monthly_cost_after_run_usd": "0.0042",
+                "failures": [],
+            }
+
+        with (
+            patch("equities.nightly_analysis.sync_all_equities_market_data", return_value=[]),
+            patch("equities.nightly_analysis.build_equity_analysis_dashboard", return_value=dashboard),
+            patch("equities.nightly_analysis.attach_llm_news_context_to_dashboard", side_effect=attach_news_context),
+            patch("equities.nightly_analysis.enrich_dashboard_with_ai_analysis", side_effect=successful_refresh) as mocked_llm,
+        ):
+            run = run_nightly_equity_analysis(
+                analysis_date=analysis_day,
+                force=False,
+            )
+
+        self.assertIsNotNone(run)
+        mocked_llm.assert_called_once()
+        self.assertTrue(run.summary_data["llm"]["refresh_performed"])
+        self.assertEqual(run.summary_data["llm"]["refresh_reason"], "news_shock")
+        self.assertEqual(run.summary_data["llm"]["material_news_event_count"], 1)
+        self.assertIn("evento informativo material", run.status_note)
+        snapshot = run.snapshots.get(scope=EquityNightlyAnalysisSnapshot.Scope.TRACKED, ticker="ACS")
+        self.assertTrue(snapshot.analysis_payload["ai_analysis"]["available"])
+        self.assertTrue(snapshot.analysis_payload["news_context"]["material_event"])
 
     @override_settings(
         AI_LLM_PROVIDER="anthropic",
@@ -3935,6 +4347,10 @@ class EquitiesServicesTests(TestCase):
         with (
             patch("equities.nightly_analysis.sync_all_equities_market_data", return_value=[]),
             patch("equities.nightly_analysis.build_equity_analysis_dashboard", return_value=dashboard),
+            patch(
+                "equities.nightly_analysis.attach_llm_news_context_to_dashboard",
+                return_value={"enabled": True, "signals_count": 1, "items_count": 0, "material_event_count": 0},
+            ),
             patch("equities.nightly_analysis.enrich_dashboard_with_ai_analysis", side_effect=failing_refresh) as mocked_llm,
         ):
             run = run_nightly_equity_analysis(

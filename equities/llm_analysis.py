@@ -191,6 +191,38 @@ def trim_text(value: str, max_length: int) -> str:
     return cleaned[: max(max_length - 1, 1)].rstrip() + "…"
 
 
+def build_news_item_context_rows(items, *, limit: int = 4) -> list[dict]:
+    rows = []
+    for item in list(items or [])[:limit]:
+        rows.append(
+            {
+                "title": trim_text(item.get("title") or "", 180),
+                "source": trim_text(item.get("source") or "", 60),
+                "published_on": item.get("published_label") or "",
+                "tone": item.get("tone") or "neutral",
+                "score": json_ready_number(item.get("score"), "0.01"),
+                "tags": list(item.get("tags") or [])[:4],
+            }
+        )
+    return rows
+
+
+def build_signal_context_payload(signal: dict) -> dict:
+    signal = signal or {}
+    return {
+        "available": bool(signal.get("available")),
+        "label": signal.get("label") or "",
+        "score": json_ready_number(signal.get("score"), "0.01"),
+        "items_count": int(signal.get("items_count") or 0),
+        "positive_count": int(signal.get("positive_count") or 0),
+        "negative_count": int(signal.get("negative_count") or 0),
+        "neutral_count": int(signal.get("neutral_count") or 0),
+        "top_tags": list(signal.get("top_tags") or [])[:4],
+        "note": trim_text(signal.get("note") or "", 180),
+        "headlines": build_news_item_context_rows(signal.get("items"), limit=2),
+    }
+
+
 def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> dict:
     position = card["position"]
     projection = card.get("projection") or {}
@@ -200,6 +232,7 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
     trade_alert = card.get("trade_alert") or {}
     reliability = card.get("projection_reliability") or {}
     sale_preview = card.get("sale_preview") or {}
+    news_context = card.get("news_context") or {}
     snapshots_by_label = {
         snapshot.get("label"): snapshot
         for snapshot in (card.get("period_snapshots") or [])
@@ -255,7 +288,26 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
             "projected_price": json_ready_number(cycle_projection.get("projected_price"), "0.0001"),
             "cycle_phase": cycle_projection.get("cycle_phase"),
             "analysis_years_used": json_ready_number(cycle_projection.get("analysis_years_used"), "0.1"),
+            "factor_model_available": bool(cycle_projection.get("factor_model_available")),
+            "factor_model_label": cycle_projection.get("factor_model_label"),
+            "factor_blend_ratio_pct": json_ready_number(cycle_projection.get("factor_blend_ratio_pct")),
+            "weighted_abs_correlation": json_ready_number(cycle_projection.get("weighted_abs_correlation"), "0.01"),
+            "forward_signal_count": int(cycle_projection.get("forward_signal_count") or 0),
             "half_year_path": build_path_steps(cycle_projection.get("path"), value_key="projected_price"),
+            "factors": [
+                {
+                    "reference_label": factor.get("reference_label"),
+                    "weight_pct": json_ready_number(factor.get("weight_pct"), "0.1"),
+                    "correlation": json_ready_number(factor.get("coefficient"), "0.01"),
+                    "recent_correlation": json_ready_number(factor.get("recent_coefficient"), "0.01"),
+                    "beta": json_ready_number(factor.get("beta"), "0.01"),
+                    "projected_change_5y": json_ready_number(factor.get("projected_change_5y")),
+                    "change_unit": factor.get("change_unit_label"),
+                    "implied_stock_return_5y_pct": json_ready_number(factor.get("implied_stock_return_5y_pct")),
+                    "forward_signal": bool((factor.get("forward_signal") or {}).get("available")),
+                }
+                for factor in (cycle_projection.get("factors") or [])[:3]
+            ],
         },
         "backtest": {
             "available": bool(projection_backtest.get("available")),
@@ -291,6 +343,21 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
             "net_unrealized_return_pct": json_ready_number(card.get("net_unrealized_return_pct")),
             "annualized_margin_pct": json_ready_number(sale_preview.get("annualized_margin_pct")) if sale_preview.get("available") else None,
         },
+        "news_context": {
+            "available": bool(news_context.get("available")),
+            "label": news_context.get("label") or "",
+            "aggregate_score": json_ready_number(news_context.get("score"), "0.01"),
+            "items_count": int(news_context.get("items_count") or 0),
+            "top_tags": list(news_context.get("top_tags") or [])[:4],
+            "material_event": bool(news_context.get("material_event")),
+            "material_note": trim_text(news_context.get("material_note") or "", 220),
+            "captured_at_label": news_context.get("captured_at_label") or "",
+            "note": trim_text(news_context.get("note") or "", 220),
+            "company_signal": build_signal_context_payload(news_context.get("company_signal") or {}),
+            "sector_signal": build_signal_context_payload(news_context.get("sector_signal") or {}),
+            "market_signal": build_signal_context_payload(news_context.get("market_signal") or {}),
+            "top_headlines": build_news_item_context_rows(news_context.get("top_items"), limit=4),
+        },
     }
     return context
 
@@ -298,21 +365,25 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
 def build_system_prompt() -> str:
     return (
         "Eres el analista nocturno de un dashboard de inversion en acciones. "
-        "Trabajas SOLO con el JSON cuantitativo que recibes; no inventes noticias, resultados ni fundamentales externos. "
+        "Trabajas SOLO con el JSON que recibes; puede incluir bloque cuantitativo y bloque de noticias recientes obtenido de la web. "
+        "No inventes noticias, resultados, fundamentales ni eventos externos que no esten en ese JSON. "
         "Responde siempre en espanol y devuelve un JSON valido, sin markdown ni texto extra. "
-        "La salida debe incluir: summary, action_label, action_note, confidence_label, drivers, risks, backtest_note y cycle_note. "
+        "La salida debe incluir: summary, action_label, action_note, confidence_label, drivers, risks, backtest_note, cycle_note y news_note. "
         "summary debe ser una sintesis clara de 2 a 4 frases. drivers y risks deben tener entre 1 y 3 elementos cada uno. "
         "action_label debe ser una de estas opciones: Comprar, Mantener, Vigilar, Reducir, Vender. "
         "confidence_label debe ser Alta, Media o Baja. "
-        "El objetivo es explicar de forma potente pero compacta el escenario 12M, la lectura 5A y la validacion historica del modelo."
+        "Distingue entre lo que viene del modelo cuantitativo y lo que viene del contexto web reciente. "
+        "Si material_event es true, explicitalo y reduce la confianza si la tesis cuantitativa puede quedar temporalmente desfasada. "
+        "El objetivo es explicar de forma potente pero compacta el escenario 12M, la lectura 5A, la validacion historica del modelo y cualquier riesgo informativo reciente."
     )
 
 
 def build_user_prompt(card_context: dict) -> str:
     payload = json.dumps(card_context, ensure_ascii=True, separators=(",", ":"))
     return (
-        "Analiza esta empresa del IBEX o de la cartera usando exclusivamente este JSON cuantitativo. "
-        "Prioriza rentabilidad 12M, ciclo 5A, backtest y coherencia con la alerta cuantitativa. "
+        "Analiza esta empresa del IBEX o de la cartera usando exclusivamente este JSON estructurado. "
+        "Prioriza rentabilidad 12M, ciclo 5A, backtest, coherencia con la alerta cuantitativa y contexto web reciente si esta disponible. "
+        "Si el bloque news_context detecta un evento material, explica si cambia el timing o la confianza aunque la tesis base siga igual. "
         "Si la fiabilidad o el historico son flojos, dilo claramente. JSON de entrada: "
         f"{payload}"
     )
@@ -513,6 +584,7 @@ def normalize_text_list(value, *, fallback: str) -> list[str]:
 
 def normalize_agent_response(raw_payload: dict, *, card: dict, config: ProviderConfig, usage: dict) -> dict:
     trade_alert = card.get("trade_alert") or {}
+    news_context = card.get("news_context") or {}
     fallback_action = trade_alert.get("label") or "Vigilar"
     action_label = str(raw_payload.get("action_label") or fallback_action).strip().title()
     if action_label not in SUPPORTED_ACTIONS:
@@ -552,6 +624,13 @@ def normalize_agent_response(raw_payload: dict, *, card: dict, config: ProviderC
             raw_payload.get("cycle_note")
             or (card.get("cycle_projection_5y") or {}).get("explanation")
             or "Sin ciclo 5A disponible.",
+            220,
+        ),
+        "news_note": trim_text(
+            raw_payload.get("news_note")
+            or news_context.get("material_note")
+            or news_context.get("note")
+            or "Sin contexto web reciente util para modular la tesis.",
             220,
         ),
         "consistency_label": consistency_label,

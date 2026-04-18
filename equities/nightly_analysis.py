@@ -22,6 +22,10 @@ from .models import (
     EquityPosition,
     EquityPurchaseForecastBaseline,
 )
+from .news_context import (
+    attach_llm_news_context_to_dashboard,
+    nightly_llm_news_shock_refresh_enabled,
+)
 from .services import (
     ZERO,
     build_analysis_broker_costs,
@@ -365,6 +369,8 @@ def build_current_dashboard_llm_summary(
     pending_count: int = 0,
     latest_llm_run: EquityNightlyAnalysisRun | None = None,
     refresh_performed: bool,
+    refresh_reason: str = "",
+    news_summary: dict | None = None,
 ) -> dict:
     cards = [card for _, card in iter_dashboard_cards(dashboard)]
     completed_count = 0
@@ -430,6 +436,10 @@ def build_current_dashboard_llm_summary(
         "refresh_weekdays_label": build_refresh_weekdays_label(refresh_weekdays),
         "next_refresh_date": next_refresh.isoformat() if next_refresh else "",
         "next_refresh_date_label": next_refresh.isoformat() if next_refresh else "",
+        "refresh_reason": refresh_reason,
+        "news_enabled": bool((news_summary or {}).get("enabled")),
+        "news_items_count": int((news_summary or {}).get("items_count") or 0),
+        "material_news_event_count": int((news_summary or {}).get("material_event_count") or 0),
     }
 
 
@@ -872,6 +882,8 @@ def build_nightly_completion_note(llm_summary: dict | None) -> str:
             note += f" Ultima actualizacion IA {llm_summary['source_analysis_date_label']}."
         if llm_summary.get("next_refresh_date_label"):
             note += f" Proxima actualizacion programada {llm_summary['next_refresh_date_label']}."
+        if llm_summary.get("news_enabled") and llm_summary.get("news_items_count"):
+            note += f" Contexto web actualizado con {int(llm_summary.get('news_items_count') or 0)} titular(es)."
         note += f" Coste estimado {llm_summary.get('estimated_cost_usd') or '0'} USD."
         return note
 
@@ -892,10 +904,14 @@ def build_nightly_completion_note(llm_summary: dict | None) -> str:
     if detail_bits:
         note += f" ({', '.join(detail_bits)})"
     note += f". Coste estimado {cost_label} USD."
+    if llm_summary.get("refresh_reason") == "news_shock":
+        note += " Actualizacion IA disparada por un evento informativo material."
     if llm_summary.get("retained_previous_count"):
         note += f" Se han conservado {int(llm_summary.get('retained_previous_count') or 0)} lectura(s) previas de Claude hasta la siguiente actualizacion."
     if llm_summary.get("next_refresh_date_label"):
         note += f" Proxima actualizacion programada {llm_summary['next_refresh_date_label']}."
+    if llm_summary.get("news_enabled") and llm_summary.get("news_items_count"):
+        note += f" Prensa integrada: {int(llm_summary.get('news_items_count') or 0)} titular(es)."
     if len(note) > 255:
         return note[:252].rstrip() + "..."
     return note
@@ -1000,6 +1016,7 @@ def persist_nightly_analysis_dashboard(
                 "ibex_count": len(dashboard["ibex_universe_cards"]),
                 "ibex_universe_summary": dashboard["ibex_universe_summary"],
                 "reference_guide_summary": dashboard["reference_guide_summary"],
+                "news_summary": dashboard.get("news_summary") or {},
                 "llm": llm_summary or {},
             }
         )
@@ -1064,7 +1081,16 @@ def run_nightly_equity_analysis(
             ibex_include_reference_suggestions=True,
             ibex_include_fundamentals=True,
         )
-        refresh_llm = bool(ai_config.available and should_refresh_nightly_llm(analysis_date=analysis_date, force=force))
+        news_summary = attach_llm_news_context_to_dashboard(dashboard)
+        scheduled_refresh = bool(ai_config.available and should_refresh_nightly_llm(analysis_date=analysis_date, force=force))
+        material_news_refresh = bool(
+            ai_config.available
+            and not scheduled_refresh
+            and nightly_llm_news_shock_refresh_enabled()
+            and int(news_summary.get("material_event_count") or 0) > 0
+        )
+        refresh_reason = "scheduled" if scheduled_refresh else "news_shock" if material_news_refresh else ""
+        refresh_llm = bool(ai_config.available and (scheduled_refresh or material_news_refresh))
         if refresh_llm:
             raw_llm_summary = enrich_dashboard_with_ai_analysis(
                 dashboard,
@@ -1090,6 +1116,8 @@ def run_nightly_equity_analysis(
                 pending_count=int(carry_forward_stats.get("pending_count") or 0),
                 latest_llm_run=latest_llm_run,
                 refresh_performed=True,
+                refresh_reason=refresh_reason,
+                news_summary=news_summary,
             )
         else:
             carry_forward_stats = apply_ai_analysis_carry_forward(
@@ -1108,6 +1136,8 @@ def run_nightly_equity_analysis(
                 pending_count=int(carry_forward_stats.get("pending_count") or 0),
                 latest_llm_run=latest_llm_run,
                 refresh_performed=False,
+                refresh_reason="carry_forward",
+                news_summary=news_summary,
             )
         capture_equity_ticket_snapshots(dashboard["owned_history_cards"], snapshot_date=analysis_date)
         return persist_nightly_analysis_dashboard(

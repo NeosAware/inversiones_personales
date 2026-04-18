@@ -238,6 +238,198 @@
     </div>
   {% endif %}
 
+  {% if card.cycle_projection_5y.factor_model_available %}
+    <div class="equity-section-head" style="margin-top:18px;">
+      <div>
+        <h5>Modelo multifactor exhaustivo</h5>
+        <p>Aqui se ve como entra cada coeficiente, que correcciones se le aplican y como termina moviendo la senda final 5A de la accion.</p>
+      </div>
+    </div>
+
+    <div class="equity-detail-grid" style="margin-top:14px;">
+      <div class="equity-mini-stat">
+        <span>Ciclo base</span>
+        <strong>{% if card.cycle_projection_5y.base_annual_return_pct is not None %}{{ card.cycle_projection_5y.base_annual_return_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+        <small>Lectura propia del historico antes de mezclar factores.</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Bloque factores</span>
+        <strong>{% if card.cycle_projection_5y.factor_annual_return_pct is not None %}{{ card.cycle_projection_5y.factor_annual_return_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+        <small>{% if card.cycle_projection_5y.forward_signal_count %}Incluye {{ card.cycle_projection_5y.forward_signal_count }} ancla(s) web forward.{% else %}Sin anclas forward adicionales.{% endif %}</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Mezcla factor</span>
+        <strong>{{ card.cycle_projection_5y.factor_blend_ratio_pct|floatformat:0 }} %</strong>
+        <small>Cuanto del escenario final viene del bloque multifactor.</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Ajuste final</span>
+        <strong>{% if card.cycle_projection_5y.final_step_shift is not None %}{{ card.cycle_projection_5y.final_step_shift|floatformat:2 }} %{% else %}-{% endif %}</strong>
+        <small>Desplazamiento aplicado a la secuencia semestral para casar la senda final.</small>
+      </div>
+    </div>
+
+    {% if card.cycle_projection_5y.comparison_chart.available %}
+      <div class="equity-chart-shell" style="margin-top:16px;">
+        <strong style="display:block; color:#17384e; margin-bottom:8px;">Ajuste final de la senda 5A</strong>
+        <svg viewBox="0 0 640 220">
+          <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+          <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+          <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ card.cycle_projection_5y.comparison_chart.stock_line }}" />
+          <polyline fill="none" stroke="#7c8a96" stroke-width="3" stroke-dasharray="8 6" points="{{ card.cycle_projection_5y.comparison_chart.base_line }}" />
+          <polyline fill="none" stroke="#aa7c2a" stroke-width="3" stroke-dasharray="6 6" points="{{ card.cycle_projection_5y.comparison_chart.factor_line }}" />
+          <polyline fill="none" stroke="#b7642d" stroke-width="4" points="{{ card.cycle_projection_5y.comparison_chart.final_line }}" />
+          {% for marker in card.cycle_projection_5y.comparison_chart.x_markers %}
+            <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+            <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+          {% endfor %}
+          <text x="8" y="20" font-size="12" fill="#17384e">{{ card.cycle_projection_5y.comparison_chart.max_label }}</text>
+          <text x="8" y="214" font-size="12" fill="#17384e">{{ card.cycle_projection_5y.comparison_chart.min_label }}</text>
+        </svg>
+        <div class="equity-chart-foot">
+          <span>Azul: precio historico reciente</span>
+          <span>Gris: ciclo base sin factores</span>
+          <span>Ocre: bloque multifactor aislado</span>
+          <span>Naranja: senda final ajustada</span>
+        </div>
+      </div>
+    {% endif %}
+
+    {% for factor in card.cycle_projection_5y.factors %}
+      <section class="equity-candidate-section" style="margin-top:16px;">
+        <div class="equity-section-head">
+          <div>
+            <h5>{{ factor.reference_label }}</h5>
+            <p>Serie economica usada como coeficiente. Aqui puedes contrastar su historial, su senda 5A y el ajuste aplicado antes de trasladarlo a la accion.</p>
+          </div>
+        </div>
+
+        <div style="display:grid; gap:16px; grid-template-columns:repeat(auto-fit, minmax(280px,1fr)); margin-top:14px;">
+          {% if factor.projection_chart.available %}
+            <div class="equity-chart-shell">
+              <strong style="display:block; color:#17384e; margin-bottom:8px;">Serie y proyeccion del coeficiente</strong>
+              <svg viewBox="0 0 640 220">
+                <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ factor.projection_chart.history_line }}" />
+                <polyline fill="none" stroke="#7c8a96" stroke-width="3" stroke-dasharray="8 6" points="{{ factor.projection_chart.raw_line }}" />
+                <polyline fill="none" stroke="#b7642d" stroke-width="4" points="{{ factor.projection_chart.adjusted_line }}" />
+                {% for marker in factor.projection_chart.x_markers %}
+                  <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                  <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                {% endfor %}
+                <text x="8" y="20" font-size="12" fill="#17384e">{{ factor.projection_chart.max_label }}</text>
+                <text x="8" y="214" font-size="12" fill="#17384e">{{ factor.projection_chart.min_label }}</text>
+              </svg>
+              <div class="equity-chart-foot">
+                <span>Azul: historico del coeficiente</span>
+                <span>Gris: senda bruta sin correcciones</span>
+                <span>Naranja: senda ajustada usada en el modelo</span>
+              </div>
+            </div>
+          {% endif %}
+
+          {% if factor.coefficient_chart.available %}
+            <div class="equity-chart-shell">
+              <strong style="display:block; color:#17384e; margin-bottom:8px;">Tendencia del coeficiente estadistico</strong>
+              <svg viewBox="0 0 640 220">
+                <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ factor.coefficient_chart.coefficient_line }}" />
+                <polyline fill="none" stroke="#b7642d" stroke-width="3" stroke-dasharray="8 6" points="{{ factor.coefficient_chart.baseline_line }}" />
+                {% for marker in factor.coefficient_chart.x_markers %}
+                  <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                  <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                {% endfor %}
+                <text x="8" y="20" font-size="12" fill="#17384e">{{ factor.coefficient_chart.max_label }}</text>
+                <text x="8" y="214" font-size="12" fill="#17384e">{{ factor.coefficient_chart.min_label }}</text>
+              </svg>
+              <div class="equity-chart-foot">
+                <span>Azul: coeficiente rodante reciente</span>
+                <span>Naranja: coeficiente largo de referencia</span>
+                <span>{{ factor.coefficient_chart.points_count }} ventanas</span>
+              </div>
+            </div>
+          {% endif %}
+        </div>
+
+        <div class="equity-detail-grid" style="margin-top:14px;">
+          <div class="equity-mini-stat">
+            <span>Impacto 5A en la accion</span>
+            <strong>{% if factor.implied_stock_return_5y_pct is not None %}{{ factor.implied_stock_return_5y_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+            <small>Peso final {{ factor.weight_pct|floatformat:0 }} % dentro del bloque multifactor.</small>
+          </div>
+          <div class="equity-mini-stat">
+            <span>Coef. / beta</span>
+            <strong>{% if factor.coefficient is not None %}{{ factor.coefficient|floatformat:2 }}{% else %}-{% endif %} / {% if factor.beta is not None %}{{ factor.beta|floatformat:2 }}{% else %}-{% endif %}</strong>
+            <small>Reciente {% if factor.recent_coefficient is not None %}{{ factor.recent_coefficient|floatformat:2 }}{% else %}-{% endif %} | {{ factor.stability_label }}</small>
+          </div>
+          <div class="equity-mini-stat">
+            <span>Tendencia anual</span>
+            <strong>{% if factor.annual_change is not None %}{{ factor.annual_change|floatformat:2 }} {{ factor.change_unit_label }}{% else %}-{% endif %}</strong>
+            <small>Bruta {% if factor.raw_annual_change is not None %}{{ factor.raw_annual_change|floatformat:2 }} {{ factor.change_unit_label }}{% else %}-{% endif %}{% if factor.annual_change_clamped %} | recortada por limites{% endif %}</small>
+          </div>
+          <div class="equity-mini-stat">
+            <span>Componentes base</span>
+            <strong>L {{ factor.long_annual_change|floatformat:2 }} | M {{ factor.medium_annual_change|floatformat:2 }} | C {{ factor.recent_annual_change|floatformat:2 }}</strong>
+            <small>{{ factor.change_unit_label }} por ano. La componente corta pesa {{ factor.recent_weight_pct|floatformat:0 }} %.</small>
+          </div>
+          <div class="equity-mini-stat">
+            <span>Peso raw</span>
+            <strong>{% if factor.raw_weight is not None %}{{ factor.raw_weight|floatformat:2 }}{% else %}-{% endif %}</strong>
+            <small>Corr {{ factor.weight_inputs.coefficient_component|floatformat:2 }} + muestra {{ factor.weight_inputs.observations_component|floatformat:2 }} + bonus {{ factor.weight_inputs.forward_bonus|floatformat:2 }}</small>
+          </div>
+          <div class="equity-mini-stat">
+            <span>Ancla web / limites</span>
+            <strong>{% if factor.forward_signal.available %}Forward{% else %}Sin forward{% endif %}</strong>
+            <small>
+              {% if factor.forward_signal.available %}
+                Objetivo {{ factor.forward_signal.target_value|floatformat:2 }} {{ factor.change_unit_label }}
+              {% else %}
+                Sin ancla futura oficial
+              {% endif %}
+              {% if factor.lower_bound is not None or factor.upper_bound is not None %}
+                | Limites {{ factor.lower_bound|default:"-" }} / {{ factor.upper_bound|default:"-" }}
+              {% endif %}
+            </small>
+          </div>
+        </div>
+
+        <div class="equity-detail-grid" style="margin-top:14px;">
+          {% for row in factor.correction_rows %}
+            <div class="equity-mini-stat">
+              <span>{{ row.label }}</span>
+              <strong>{% if row.adjusted_projected_value is not None %}{{ row.adjusted_projected_value|floatformat:2 }}{% else %}-{% endif %}</strong>
+              <small>
+                Bruto {% if row.raw_projected_value is not None %}{{ row.raw_projected_value|floatformat:2 }}{% else %}-{% endif %}
+                {% if row.anchor_path_value is not None %}
+                  | ancla {{ row.anchor_weight_pct|floatformat:0 }} %
+                {% endif %}
+                {% if row.bounds_adjustment_applied %}
+                  | limitado
+                {% endif %}
+              </small>
+            </div>
+          {% endfor %}
+        </div>
+
+        <div class="equity-compact-note" style="margin-top:14px;">
+          {% if factor.recent_sign_conflict %}
+            La tendencia corta iba en sentido contrario a la larga y por eso se le ha recortado el peso.
+          {% else %}
+            La tendencia corta acompana la base y no ha necesitado penalizacion especial.
+          {% endif %}
+          {% if factor.forward_signal.available %}
+            Se mezcla ademas una ancla futura oficial de la web para evitar extrapolar a ciegas solo con el pasado.
+          {% endif %}
+          {% if factor.annual_change_clamped %}
+            La pendiente anual tambien se ha acotado para no dejar que una serie extrema distorsione la proyeccion.
+          {% endif %}
+        </div>
+      </section>
+    {% endfor %}
+  {% endif %}
+
   {% if card.projection.available %}
     <div class="equity-section-head" style="margin-top:18px;">
       <div>
@@ -294,6 +486,41 @@
       {% endif %}
     </div>
 
+    {% if card.news_context.available %}
+      <div class="equity-compact-note" style="margin-top:14px; border-color:#d7e4ee; background:#f7fbfd; color:#17384e;">
+        <strong style="display:block; color:#17384e; margin-bottom:6px;">Contexto web reciente</strong>
+        <p style="margin:0 0 10px;">{{ card.news_context.note }}</p>
+        <div class="equity-meta-stack" style="margin-bottom:10px;">
+          <span>{{ card.news_context.label }}</span>
+          <span>Score {{ card.news_context.score|floatformat:2 }}</span>
+          <span>{{ card.news_context.items_count }} titulares</span>
+          {% if card.news_context.captured_at_label %}<span>{{ card.news_context.captured_at_label }}</span>{% endif %}
+          {% if card.news_context.material_event %}<span>Evento material</span>{% endif %}
+        </div>
+        <p style="margin:0 0 8px;"><strong>Empresa:</strong> {{ card.news_context.company_signal.label }}{% if card.news_context.company_signal.score is not None %} ({{ card.news_context.company_signal.score|floatformat:2 }}){% endif %}</p>
+        <p style="margin:0 0 8px;"><strong>Sector:</strong> {{ card.news_context.sector_signal.label }}{% if card.news_context.sector_signal.score is not None %} ({{ card.news_context.sector_signal.score|floatformat:2 }}){% endif %}</p>
+        <p style="margin:0 0 8px;"><strong>Mercado:</strong> {{ card.news_context.market_signal.label }}{% if card.news_context.market_signal.score is not None %} ({{ card.news_context.market_signal.score|floatformat:2 }}){% endif %}</p>
+        {% if card.news_context.material_event and card.news_context.material_note %}
+          <p style="margin:0 0 8px;"><strong>Alerta:</strong> {{ card.news_context.material_note }}</p>
+        {% endif %}
+        {% if card.news_context.top_items %}
+          <div class="equity-detail-grid" style="margin-top:10px;">
+            {% for item in card.news_context.top_items %}
+              <div class="equity-mini-stat">
+                <span>{{ item.published_label|default:item.source|default:"Titular" }}</span>
+                <strong>{{ item.title }}</strong>
+                <small>
+                  {% if item.source %}{{ item.source }}{% endif %}
+                  {% if item.published_label %}{% if item.source %} | {% endif %}{{ item.published_label }}{% endif %}
+                  {% if item.tags %} | {{ item.tags|join:", " }}{% endif %}
+                </small>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
     {% if card.ai_analysis.available %}
       <div class="equity-compact-note" style="margin-top:14px; border-color:#cfe0ea; background:#eff7fb; color:#17384e;">
         <strong style="display:block; color:#17384e; margin-bottom:6px;">Lectura IA nocturna</strong>
@@ -307,6 +534,7 @@
         </div>
         <p style="margin:0 0 8px;"><strong>Catalizadores:</strong> {{ card.ai_analysis.drivers|join:" | " }}</p>
         <p style="margin:0 0 8px;"><strong>Riesgos:</strong> {{ card.ai_analysis.risks|join:" | " }}</p>
+        <p style="margin:0 0 8px;"><strong>Contexto web:</strong> {{ card.ai_analysis.news_note }}</p>
         <p style="margin:0 0 8px;"><strong>Backtest:</strong> {{ card.ai_analysis.backtest_note }}</p>
         <p style="margin:0;"><strong>Ciclo 5A:</strong> {{ card.ai_analysis.cycle_note }} <span style="color:#627380;">{{ card.ai_analysis.consistency_note }}</span></p>
       </div>
@@ -544,6 +772,17 @@
               <small>{{ card.projection.years_covered|floatformat:1 }} anos de base.</small>
             </div>
             <div class="equity-mini-stat">
+              <span>Modelo 5A</span>
+              <strong>{% if card.cycle_projection_5y.factor_model_available %}{{ card.cycle_projection_5y.factor_model_label }}{% else %}Solo ciclo{% endif %}</strong>
+              <small>
+                {% if card.cycle_projection_5y.factor_model_available %}
+                  Mezcla factor {{ card.cycle_projection_5y.factor_blend_ratio_pct|floatformat:0 }} % | corr. media {% if card.cycle_projection_5y.weighted_abs_correlation is not None %}{{ card.cycle_projection_5y.weighted_abs_correlation|floatformat:2 }}{% else %}-{% endif %}
+                {% else %}
+                  Sin bloque multifactor suficiente
+                {% endif %}
+              </small>
+            </div>
+            <div class="equity-mini-stat">
               <span>Alerta coef.</span>
               <strong class="{% if card.coefficient_alert.tone == 'sell' %}warn{% endif %}">{{ card.coefficient_alert.label }}</strong>
               <small>{{ card.coefficient_alert.trigger_label }}</small>
@@ -595,6 +834,23 @@
               <small>{{ card.broker_costs.profile_label }} | {{ card.broker_costs.market_scope_label }}{% if card.broker_costs.analysis_value_source == "normalized_watchlist" %} | Base normalizada{% endif %}</small>
             </div>
           </div>
+
+          {% if card.cycle_projection_5y.factor_model_available and card.cycle_projection_5y.factors %}
+            <div class="equity-detail-grid" style="margin-top:14px;">
+              {% for factor in card.cycle_projection_5y.factors %}
+                <div class="equity-mini-stat">
+                  <span>{{ factor.reference_label }}</span>
+                  <strong>{% if factor.implied_stock_return_5y_pct is not None %}{{ factor.implied_stock_return_5y_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+                  <small>
+                    Peso {{ factor.weight_pct|floatformat:0 }} % |
+                    corr {% if factor.coefficient is not None %}{{ factor.coefficient|floatformat:2 }}{% else %}-{% endif %} |
+                    5A coef. {% if factor.projected_change_5y is not None %}{{ factor.projected_change_5y|floatformat:1 }} {{ factor.change_unit_label }}{% else %}-{% endif %}
+                    {% if factor.forward_signal.available %}| web forward{% endif %}
+                  </small>
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
 
           {% if card.fundamentals.available %}
             <div class="equity-detail-grid" style="margin-top:14px;">

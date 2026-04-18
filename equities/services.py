@@ -83,6 +83,8 @@ SCHEDULED_REVIEW_WEEKDAY_LABELS = {
 }
 EURIBOR_REFERENCE_SYMBOL = "ECB:M.S0.N.C_EUR1Y.E"
 EURIBOR_REFERENCE_NAME = "Euribor 12M"
+EURIBOR_FORWARD_REFERENCE_SYMBOL = "ECB:YC.B.U2.EUR.4F.G_N_C.SV_C_YM.IF_5Y"
+EURIBOR_FORWARD_REFERENCE_NAME = "Curva BCE forward 5A"
 SPAIN_HOUSE_PRICE_SYMBOL = "EUROSTAT:prc_hpi_q:ES:TOTAL:I15_Q"
 SPAIN_HOUSE_PRICE_NAME = "Precio vivienda Espana"
 SPAIN_ELECTRICITY_DEMAND_SYMBOL = "REE:demand:es:peninsular"
@@ -541,6 +543,7 @@ def clear_market_data_caches() -> None:
     _fetch_market_series_cached.cache_clear()
     _fetch_reference_series_for_choice_cached.cache_clear()
     _fetch_equity_fundamentals_cached.cache_clear()
+    _fetch_ecb_yield_curve_series_cached.cache_clear()
 
 
 @dataclass
@@ -1512,6 +1515,90 @@ def fetch_ecb_reference_series(
     )
 
 
+def parse_sdmx_period_label_to_date(period_label: str) -> date:
+    text = str(period_label or "").strip()
+    if re.fullmatch(r"\d{4}-Q[1-4]", text):
+        return parse_eurostat_quarter_label(text)
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return date.fromisoformat(text)
+    if re.fullmatch(r"\d{4}-\d{2}", text):
+        year, month = map(int, text.split("-"))
+        return date(year, month, 1)
+    if re.fullmatch(r"\d{4}", text):
+        return date(int(text), 12, 31)
+    raise MarketDataError(f"No se ha podido interpretar el periodo SDMX '{text}'.")
+
+
+def build_market_series_from_sdmx_payload(payload: dict, *, symbol: str, name: str) -> MarketSeries:
+    time_values = payload["structure"]["dimensions"]["observation"][0]["values"]
+    series_map = payload["dataSets"][0]["series"]
+    if not series_map:
+        raise MarketDataError(f"No se han recibido observaciones SDMX para {name}.")
+
+    observations = next(iter(series_map.values()))["observations"]
+    points = []
+    for raw_index, values in observations.items():
+        point_date = parse_sdmx_period_label_to_date(time_values[int(raw_index)]["id"])
+        points.append(
+            {
+                "date": point_date,
+                "open": None,
+                "high": None,
+                "low": None,
+                "close": Decimal(str(values[0])),
+            }
+        )
+
+    if not points:
+        raise MarketDataError(f"No se han recibido observaciones SDMX para {name}.")
+
+    latest = points[-1]
+    return MarketSeries(
+        symbol=symbol,
+        name=name,
+        latest_price=latest["close"],
+        latest_date=latest["date"],
+        points=points,
+    )
+
+
+@lru_cache(maxsize=32)
+def _fetch_ecb_yield_curve_series_cached(
+    series_key: str,
+    series_name: str,
+    last_n_observations: int = LONG_MONTHLY_OBSERVATIONS,
+    cache_bucket: int = 0,
+) -> MarketSeries:
+    url = (
+        "https://data-api.ecb.europa.eu/service/data/YC/"
+        f"{series_key}?format=jsondata&lastNObservations={last_n_observations}"
+    )
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(request, timeout=20) as response:
+        payload = json.load(response)
+
+    return build_market_series_from_sdmx_payload(
+        payload,
+        symbol=f"ECB:YC.{series_key}",
+        name=series_name,
+    )
+
+
+def fetch_ecb_yield_curve_series(
+    series_key: str,
+    series_name: str,
+    last_n_observations: int = LONG_MONTHLY_OBSERVATIONS,
+) -> MarketSeries:
+    return clone_market_series(
+        _fetch_ecb_yield_curve_series_cached(
+            series_key,
+            series_name,
+            last_n_observations,
+            build_market_data_cache_bucket(),
+        )
+    )
+
+
 def parse_eurostat_quarter_label(value: str) -> date:
     year_text, quarter_text = value.split("-Q")
     year = int(year_text)
@@ -2455,6 +2542,192 @@ def build_stock_history_chart(history) -> dict:
     }
 
 
+def build_same_axis_multi_line_chart(
+    series_map: dict[str, list[dict]],
+    width: int = 640,
+    height: int = 220,
+    padding: int = 18,
+) -> dict:
+    normalized_map: dict[str, list[tuple[date, Decimal]]] = {}
+    all_values: list[Decimal] = []
+    all_dates: list[date] = []
+    for key, points in (series_map or {}).items():
+        normalized_points = []
+        for point in points or []:
+            raw_date = point.get("date") if isinstance(point, dict) else None
+            raw_value = point.get("value") if isinstance(point, dict) else None
+            if raw_date is None or raw_value is None:
+                continue
+            normalized_points.append((raw_date, Decimal(str(raw_value))))
+        if normalized_points:
+            normalized_map[key] = normalized_points
+            all_values.extend(value for _, value in normalized_points)
+            all_dates.extend(point_date for point_date, _ in normalized_points)
+
+    if len(all_values) < 2 or len(all_dates) < 2:
+        return {
+            "available": False,
+            "min_label": "-",
+            "max_label": "-",
+            "x_markers": [],
+            "start_label": "",
+            "end_label": "",
+            "points_count": 0,
+            "lines": {},
+        }
+
+    series_min = min(all_values)
+    series_max = max(all_values)
+    if series_min == series_max:
+        series_max += Decimal("1")
+
+    min_date = min(all_dates)
+    max_date = max(all_dates)
+    total_days = max((max_date - min_date).days, 1)
+    span_x = width - (padding * 2)
+    span_y = height - (padding * 2)
+
+    def scale_series(points: list[tuple[date, Decimal]]) -> str:
+        line_points = []
+        for point_date, value in points:
+            x = padding + (span_x * ((point_date - min_date).days / total_days))
+            normalized = (value - series_min) / (series_max - series_min)
+            y = height - padding - (normalized * span_y)
+            line_points.append(f"{x:.1f},{y:.1f}")
+        return " ".join(line_points)
+
+    return {
+        "available": True,
+        "min_label": format_axis_value(series_min),
+        "max_label": format_axis_value(series_max),
+        "x_markers": build_time_axis_markers(all_dates, width=width, height=height, padding=padding),
+        "start_label": min_date.isoformat(),
+        "end_label": max_date.isoformat(),
+        "points_count": max(len(points) for points in normalized_map.values()),
+        "lines": {key: scale_series(points) for key, points in normalized_map.items()},
+    }
+
+
+def build_reference_projection_detail_chart(
+    historical_points: list[dict],
+    raw_projection_points: list[dict],
+    adjusted_projection_points: list[dict],
+) -> dict:
+    chart = build_same_axis_multi_line_chart(
+        {
+            "history": historical_points,
+            "raw": raw_projection_points,
+            "adjusted": adjusted_projection_points,
+        }
+    )
+    return {
+        "available": chart.get("available", False),
+        "history_line": chart.get("lines", {}).get("history", ""),
+        "raw_line": chart.get("lines", {}).get("raw", ""),
+        "adjusted_line": chart.get("lines", {}).get("adjusted", ""),
+        "min_label": chart.get("min_label", "-"),
+        "max_label": chart.get("max_label", "-"),
+        "x_markers": chart.get("x_markers", []),
+        "start_label": chart.get("start_label", ""),
+        "end_label": chart.get("end_label", ""),
+        "points_count": chart.get("points_count", 0),
+    }
+
+
+def build_reference_coefficient_trend_chart(rolling_rows: list[dict], baseline: Decimal | None) -> dict:
+    if len(rolling_rows or []) < 2:
+        return {"available": False}
+
+    coefficient_points = [
+        {"date": row["end_date"], "value": row["coefficient"]}
+        for row in rolling_rows
+        if row.get("end_date") and row.get("coefficient") is not None
+    ]
+    baseline_points = []
+    if baseline is not None and coefficient_points:
+        baseline_points = [
+            {"date": point["date"], "value": baseline}
+            for point in coefficient_points
+        ]
+    chart = build_same_axis_multi_line_chart(
+        {
+            "coefficient": coefficient_points,
+            "baseline": baseline_points,
+        }
+    )
+    return {
+        "available": chart.get("available", False),
+        "coefficient_line": chart.get("lines", {}).get("coefficient", ""),
+        "baseline_line": chart.get("lines", {}).get("baseline", ""),
+        "min_label": chart.get("min_label", "-"),
+        "max_label": chart.get("max_label", "-"),
+        "x_markers": chart.get("x_markers", []),
+        "start_label": chart.get("start_label", ""),
+        "end_label": chart.get("end_label", ""),
+        "points_count": chart.get("points_count", 0),
+    }
+
+
+def build_cycle_projection_comparison_chart(
+    history,
+    base_path: list[dict],
+    factor_path: list[dict],
+    final_path: list[dict],
+) -> dict:
+    if len(history) < 2:
+        return {"available": False}
+
+    latest_date = history[-1].price_date
+    recent_history = filter_history_window(
+        history,
+        start_date=latest_date - timedelta(days=365 * 5),
+        end_date=latest_date,
+    )
+    if len(recent_history) < 2:
+        recent_history = history
+    latest_history_price = recent_history[-1].close_price
+    stock_series = [{"date": point.price_date, "value": point.close_price} for point in recent_history]
+    base_series = [{"date": latest_date, "value": latest_history_price}]
+    base_series.extend(
+        {"date": step["projected_date"], "value": step["projected_price"]}
+        for step in base_path or []
+        if step.get("projected_date") and step.get("projected_price") is not None
+    )
+    factor_series = [{"date": latest_date, "value": latest_history_price}]
+    factor_series.extend(
+        {"date": step["projected_date"], "value": step["projected_price"]}
+        for step in factor_path or []
+        if step.get("projected_date") and step.get("projected_price") is not None
+    )
+    final_series = [{"date": latest_date, "value": latest_history_price}]
+    final_series.extend(
+        {"date": step["projected_date"], "value": step["projected_price"]}
+        for step in final_path or []
+        if step.get("projected_date") and step.get("projected_price") is not None
+    )
+    chart = build_same_axis_multi_line_chart(
+        {
+            "stock": stock_series,
+            "base": base_series,
+            "factor": factor_series,
+            "final": final_series,
+        }
+    )
+    return {
+        "available": chart.get("available", False),
+        "stock_line": chart.get("lines", {}).get("stock", ""),
+        "base_line": chart.get("lines", {}).get("base", ""),
+        "factor_line": chart.get("lines", {}).get("factor", ""),
+        "final_line": chart.get("lines", {}).get("final", ""),
+        "min_label": chart.get("min_label", "-"),
+        "max_label": chart.get("max_label", "-"),
+        "x_markers": chart.get("x_markers", []),
+        "start_label": chart.get("start_label", ""),
+        "end_label": chart.get("end_label", ""),
+        "points_count": chart.get("points_count", 0),
+    }
+
+
 def build_best_correlation_chart(history, suggestions: list[dict], reference_cache: dict) -> dict:
     best_suggestion = next(
         (
@@ -2556,7 +2829,498 @@ def build_projection_12m_chart(history, projection: dict) -> dict:
     }
 
 
-def build_five_year_cycle_projection(
+def collapse_market_points_to_frequency(points: list[dict], frequency: str) -> list[dict]:
+    buckets = {}
+    for point in points:
+        point_date = point.get("date")
+        if point_date is None:
+            continue
+        buckets[bucket_label_for_date(point_date, frequency)] = point
+    return [buckets[label] for label in sorted(buckets.keys())]
+
+
+def calculate_native_annual_change(
+    series_points: list[dict],
+    *,
+    periods_back: int,
+    change_mode: str,
+) -> Decimal | None:
+    if len(series_points) < 2:
+        return None
+    end_point = series_points[-1]
+    start_index = max(len(series_points) - 1 - periods_back, 0)
+    start_point = series_points[start_index]
+    years_covered = calculate_years_between(start_point.get("date"), end_point.get("date"))
+    if years_covered in {None, ZERO}:
+        return None
+    start_value = start_point.get("close")
+    end_value = end_point.get("close")
+    if change_mode == "absolute":
+        if start_value is None or end_value is None:
+            return None
+        return Decimal(str(round(float((end_value - start_value) / years_covered), 4)))
+    return calculate_series_cagr_pct(start_value, end_value, years_covered)
+
+
+def calculate_reference_projection_change(
+    projected_value: Decimal | None,
+    current_value: Decimal | None,
+    *,
+    change_mode: str,
+) -> Decimal | None:
+    return calculate_series_change(projected_value, current_value, change_mode=change_mode)
+
+
+def resolve_reference_projection_bounds(
+    reference_profile: str,
+    latest_value: Decimal,
+) -> tuple[Decimal | None, Decimal | None]:
+    if reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
+        return Decimal("-1.50"), Decimal("7.50")
+    if latest_value <= ZERO:
+        return None, None
+    return None, None
+
+
+def clamp_reference_projected_value(
+    value: Decimal,
+    *,
+    lower_bound: Decimal | None,
+    upper_bound: Decimal | None,
+) -> Decimal:
+    if lower_bound is not None:
+        value = max(value, lower_bound)
+    if upper_bound is not None:
+        value = min(value, upper_bound)
+    return value
+
+
+def resolve_reference_forward_signal(reference_profile: str) -> dict:
+    if reference_profile != EquityPosition.ReferenceProfile.EURIBOR_12M:
+        return {
+            "available": False,
+            "source_label": "",
+            "symbol": "",
+            "target_value": None,
+            "latest_date": None,
+            "note": "",
+        }
+
+    try:
+        forward_series = fetch_ecb_yield_curve_series(
+            "B.U2.EUR.4F.G_N_C.SV_C_YM.IF_5Y",
+            EURIBOR_FORWARD_REFERENCE_NAME,
+            last_n_observations=260,
+        )
+    except Exception as exc:
+        return {
+            "available": False,
+            "source_label": "Curva BCE forward 5A",
+            "symbol": EURIBOR_FORWARD_REFERENCE_SYMBOL,
+            "target_value": None,
+            "latest_date": None,
+            "note": f"No se ha podido cargar la senal adelantada oficial del BCE: {exc}",
+        }
+
+    return {
+        "available": True,
+        "source_label": EURIBOR_FORWARD_REFERENCE_NAME,
+        "symbol": EURIBOR_FORWARD_REFERENCE_SYMBOL,
+        "target_value": quantize_decimal(forward_series.latest_price),
+        "latest_date": forward_series.latest_date,
+        "note": "La proyeccion incorpora la curva forward 5A del BCE como ancla de tipos futuros.",
+    }
+
+
+def build_reference_projection_5y(
+    history,
+    reference_choice: dict,
+    reference_cache: dict | None = None,
+    include_visuals: bool = True,
+) -> dict:
+    reference_cache = reference_cache if reference_cache is not None else {}
+    cache_key = (
+        reference_choice["reference_profile"],
+        reference_choice["benchmark_symbol"],
+        reference_choice["benchmark_name"],
+    )
+    try:
+        cached_value = reference_cache.get(cache_key)
+        if cached_value is None:
+            cached_value = fetch_reference_series_for_choice(
+                reference_choice["reference_profile"],
+                benchmark_symbol=reference_choice["benchmark_symbol"],
+                benchmark_name=reference_choice["benchmark_name"],
+            )
+            reference_cache[cache_key] = cached_value
+        if isinstance(cached_value, Exception):
+            raise cached_value
+        reference_series = cached_value
+    except Exception as exc:
+        reference_cache[cache_key] = exc
+        return {
+            "available": False,
+            "reference_label": reference_choice["benchmark_name"],
+            "note": f"No se ha podido leer la serie de referencia: {exc}",
+        }
+
+    if reference_series is None:
+        return {
+            "available": False,
+            "reference_label": reference_choice["benchmark_name"],
+            "note": "No hay serie disponible para esta referencia.",
+        }
+
+    correlation = build_reference_correlation_for_series(
+        history,
+        reference_series,
+        reference_choice["reference_profile"],
+    )
+    frequency = infer_reference_frequency_from_profile(reference_choice["reference_profile"])
+    change_mode = infer_reference_change_mode(reference_choice["reference_profile"])
+    collapsed_points = collapse_market_points_to_frequency(reference_series.points, frequency)
+    minimum_points = 8 if frequency == "monthly" else 6
+    if len(collapsed_points) < minimum_points:
+        return {
+            "available": False,
+            "reference_label": reference_choice["benchmark_name"],
+            "note": "No hay suficiente historico de la referencia para proyectarla a 5 anos.",
+        }
+
+    latest_point = collapsed_points[-1]
+    latest_value = latest_point.get("close")
+    latest_date = latest_point.get("date")
+    if latest_value is None or latest_date is None:
+        return {
+            "available": False,
+            "reference_label": reference_choice["benchmark_name"],
+            "note": "La referencia no tiene un ultimo valor valido.",
+        }
+
+    long_periods = 60 if frequency == "monthly" else 20
+    medium_periods = 36 if frequency == "monthly" else 12
+    recent_periods = 12 if frequency == "monthly" else 4
+    long_annual_change = calculate_native_annual_change(
+        collapsed_points,
+        periods_back=long_periods,
+        change_mode=change_mode,
+    )
+    medium_annual_change = calculate_native_annual_change(
+        collapsed_points,
+        periods_back=medium_periods,
+        change_mode=change_mode,
+    )
+    recent_annual_change = calculate_native_annual_change(
+        collapsed_points,
+        periods_back=recent_periods,
+        change_mode=change_mode,
+    )
+
+    change_components = []
+    recent_weight_used = Decimal("0.00")
+    recent_sign_conflict = False
+    if long_annual_change is not None:
+        change_components.append(long_annual_change * Decimal("0.55"))
+    if medium_annual_change is not None:
+        change_components.append(medium_annual_change * Decimal("0.30"))
+    if recent_annual_change is not None:
+        recent_weight = Decimal("0.15")
+        if long_annual_change is not None and recent_annual_change * long_annual_change < ZERO:
+            recent_weight = Decimal("0.08")
+            recent_sign_conflict = True
+        recent_weight_used = recent_weight
+        change_components.append(recent_annual_change * recent_weight)
+    if not change_components:
+        return {
+            "available": False,
+            "reference_label": reference_choice["benchmark_name"],
+            "note": "No se ha podido inferir una tendencia anual util para esta referencia.",
+        }
+
+    base_annual_change = sum(change_components, ZERO)
+    raw_annual_change = base_annual_change
+    if change_mode == "absolute":
+        base_annual_change = clamp_decimal(base_annual_change, Decimal("-1.50"), Decimal("1.50"))
+    else:
+        base_annual_change = clamp_decimal(base_annual_change, Decimal("-14.00"), Decimal("14.00"))
+    annual_change_clamped = base_annual_change != raw_annual_change
+
+    forward_signal = resolve_reference_forward_signal(reference_choice["reference_profile"])
+    lower_bound, upper_bound = resolve_reference_projection_bounds(
+        reference_choice["reference_profile"],
+        latest_value,
+    )
+
+    beta = correlation.get("beta")
+    current_projected_value = latest_value
+    current_raw_projected_value = latest_value
+    path = []
+    raw_path = []
+    correction_rows = []
+    for year in range(1, 6):
+        decay = Decimal(str(round(0.90 ** (year - 1), 4)))
+        if change_mode == "absolute":
+            yearly_trend = base_annual_change * decay
+            trend_value = current_projected_value + yearly_trend
+            raw_yearly_trend = raw_annual_change * decay
+            raw_trend_value = current_raw_projected_value + raw_yearly_trend
+        else:
+            yearly_trend = base_annual_change * decay
+            trend_value = project_price_from_return(current_projected_value, yearly_trend) or current_projected_value
+            raw_yearly_trend = raw_annual_change * decay
+            raw_trend_value = project_price_from_return(current_raw_projected_value, raw_yearly_trend) or current_raw_projected_value
+
+        projected_value = trend_value
+        anchor_weight = ZERO
+        anchor_path_value = None
+        if forward_signal.get("available") and forward_signal.get("target_value") is not None:
+            anchor_weight = Decimal("0.35") + (Decimal(str(year - 1)) * Decimal("0.02"))
+            anchor_path_value = latest_value + (
+                (Decimal(str(forward_signal["target_value"])) - latest_value) * Decimal(str(year)) / Decimal("5")
+            )
+            projected_value = (trend_value * (Decimal("1.00") - anchor_weight)) + (anchor_path_value * anchor_weight)
+
+        unclamped_projected_value = projected_value
+        projected_value = clamp_reference_projected_value(
+            projected_value,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
+        )
+        bounds_adjustment_applied = projected_value != unclamped_projected_value
+        cumulative_change = calculate_reference_projection_change(
+            projected_value,
+            latest_value,
+            change_mode=change_mode,
+        )
+        raw_cumulative_change = calculate_reference_projection_change(
+            raw_trend_value,
+            latest_value,
+            change_mode=change_mode,
+        )
+        implied_stock_return_pct = None
+        raw_implied_stock_return_pct = None
+        if beta is not None and cumulative_change is not None:
+            implied_stock_return_pct = clamp_decimal(beta * cumulative_change, Decimal("-80.00"), Decimal("140.00"))
+        if beta is not None and raw_cumulative_change is not None:
+            raw_implied_stock_return_pct = clamp_decimal(beta * raw_cumulative_change, Decimal("-80.00"), Decimal("140.00"))
+        point_date = latest_date + timedelta(days=365 * year)
+        raw_path.append(
+            {
+                "label": f"{year}A",
+                "projected_date": point_date,
+                "projected_value": quantize_decimal(raw_trend_value, "0.0001"),
+                "cumulative_change": quantize_decimal(raw_cumulative_change),
+                "implied_stock_return_pct": quantize_decimal(raw_implied_stock_return_pct),
+            }
+        )
+        path.append(
+            {
+                "label": f"{year}A",
+                "projected_date": point_date,
+                "projected_value": quantize_decimal(projected_value, "0.0001"),
+                "cumulative_change": quantize_decimal(cumulative_change),
+                "implied_stock_return_pct": quantize_decimal(implied_stock_return_pct),
+            }
+        )
+        correction_rows.append(
+            {
+                "label": f"{year}A",
+                "projected_date": point_date,
+                "raw_projected_value": quantize_decimal(raw_trend_value, "0.0001"),
+                "trend_projected_value": quantize_decimal(trend_value, "0.0001"),
+                "adjusted_projected_value": quantize_decimal(projected_value, "0.0001"),
+                "anchor_path_value": quantize_decimal(anchor_path_value, "0.0001") if anchor_path_value is not None else None,
+                "anchor_weight_pct": quantize_decimal(anchor_weight * ONE_HUNDRED),
+                "bounds_adjustment_applied": bounds_adjustment_applied,
+                "raw_implied_stock_return_pct": quantize_decimal(raw_implied_stock_return_pct),
+                "adjusted_implied_stock_return_pct": quantize_decimal(implied_stock_return_pct),
+            }
+        )
+        current_projected_value = projected_value
+        current_raw_projected_value = raw_trend_value
+
+    projected_value_5y = path[-1]["projected_value"]
+    implied_stock_return_5y_pct = path[-1]["implied_stock_return_pct"]
+    implied_stock_annual_return_pct = annualize_return_pct(implied_stock_return_5y_pct, 60)
+    rolling_rows = build_reference_rolling_correlation_rows_for_series(
+        history,
+        reference_series,
+        reference_choice["reference_profile"],
+    )
+    history_periods = 60 if frequency == "monthly" else 20
+    historical_points = [
+        {"date": point["date"], "value": point["close"]}
+        for point in collapsed_points[-history_periods:]
+        if point.get("date") and point.get("close") is not None
+    ]
+    projection_chart = (
+        build_reference_projection_detail_chart(
+            historical_points,
+            [{"date": row["projected_date"], "value": row["projected_value"]} for row in raw_path],
+            [{"date": row["projected_date"], "value": row["projected_value"]} for row in path],
+        )
+        if include_visuals
+        else {"available": False}
+    )
+    coefficient_chart = (
+        build_reference_coefficient_trend_chart(rolling_rows, correlation.get("coefficient"))
+        if include_visuals
+        else {"available": False}
+    )
+    return {
+        "available": True,
+        "reference_label": reference_choice["benchmark_name"],
+        "reference_profile": reference_choice["reference_profile"],
+        "benchmark_symbol": reference_choice["benchmark_symbol"],
+        "change_mode": change_mode,
+        "change_unit_label": change_unit_label(change_mode),
+        "current_value": quantize_decimal(latest_value, "0.0001"),
+        "projected_value_5y": projected_value_5y,
+        "raw_annual_change": quantize_decimal(raw_annual_change),
+        "annual_change": quantize_decimal(base_annual_change),
+        "projected_change_5y": path[-1]["cumulative_change"],
+        "coefficient": correlation.get("coefficient"),
+        "recent_coefficient": correlation.get("recent_coefficient"),
+        "beta": beta,
+        "recent_beta": correlation.get("recent_beta"),
+        "observations_count": correlation.get("observations_count", 0),
+        "stability_label": correlation.get("stability_label"),
+        "path": path,
+        "raw_path": raw_path,
+        "rolling_rows": rolling_rows,
+        "projection_chart": projection_chart,
+        "coefficient_chart": coefficient_chart,
+        "long_annual_change": quantize_decimal(long_annual_change),
+        "medium_annual_change": quantize_decimal(medium_annual_change),
+        "recent_annual_change": quantize_decimal(recent_annual_change),
+        "recent_weight_pct": quantize_decimal(recent_weight_used * ONE_HUNDRED),
+        "recent_sign_conflict": recent_sign_conflict,
+        "annual_change_clamped": annual_change_clamped,
+        "lower_bound": quantize_decimal(lower_bound) if lower_bound is not None else None,
+        "upper_bound": quantize_decimal(upper_bound) if upper_bound is not None else None,
+        "correction_rows": correction_rows,
+        "forward_signal": forward_signal,
+        "implied_stock_return_5y_pct": implied_stock_return_5y_pct,
+        "implied_stock_annual_return_pct": quantize_decimal(implied_stock_annual_return_pct),
+        "note": (
+            f"Se proyecta {reference_choice['benchmark_name']} a 5A con serie web oficial, "
+            f"mezclando tendencia larga/media/corta y usando senal adelantada cuando existe."
+        ),
+    }
+
+
+def build_multifactor_reference_projection_bundle(
+    history,
+    position: EquityPosition,
+    reference_cache: dict | None = None,
+    include_visuals: bool = True,
+) -> dict:
+    reference_cache = reference_cache if reference_cache is not None else {}
+    factors = []
+    for reference_choice in build_reference_suggestions_for_equity(position.company_name, position.ticker):
+        factor = build_reference_projection_5y(
+            history,
+            reference_choice,
+            reference_cache=reference_cache,
+            include_visuals=include_visuals,
+        )
+        if not factor.get("available"):
+            continue
+        coefficient = factor.get("coefficient")
+        beta = factor.get("beta")
+        if coefficient is None or beta is None or factor.get("implied_stock_return_5y_pct") is None:
+            continue
+        factors.append(factor)
+
+    if not factors:
+        return {
+            "available": False,
+            "factors": [],
+            "note": "No hay suficientes coeficientes consistentes para levantar un modelo multifactor 5A.",
+            "forward_signal_count": 0,
+        }
+
+    factors.sort(
+        key=lambda item: (
+            -(abs(item.get("coefficient") or ZERO)),
+            -(item.get("observations_count") or 0),
+            0 if item.get("forward_signal", {}).get("available") else 1,
+            item.get("reference_label") or "",
+        )
+    )
+    selected_factors = factors[:3]
+    raw_weights = []
+    for factor in selected_factors:
+        coefficient = abs(factor.get("coefficient") or ZERO)
+        observations_count = Decimal(str(min(int(factor.get("observations_count") or 0), 60)))
+        coefficient_component = coefficient
+        observations_component = observations_count / Decimal("100")
+        raw_weight = coefficient_component + observations_component
+        stability_multiplier = Decimal("1.00")
+        if factor.get("stability_label") == "Estable":
+            stability_multiplier = Decimal("1.08")
+        elif factor.get("stability_label") == "Cambiante":
+            stability_multiplier = Decimal("0.82")
+        raw_weight *= stability_multiplier
+        forward_bonus = ZERO
+        if factor.get("forward_signal", {}).get("available"):
+            forward_bonus = Decimal("0.10")
+            raw_weight += forward_bonus
+        factor["weight_inputs"] = {
+            "coefficient_component": quantize_decimal(coefficient_component),
+            "observations_component": quantize_decimal(observations_component),
+            "stability_multiplier": quantize_decimal(stability_multiplier),
+            "forward_bonus": quantize_decimal(forward_bonus),
+        }
+        factor["raw_weight"] = quantize_decimal(raw_weight)
+        raw_weights.append(max(raw_weight, Decimal("0.10")))
+
+    total_weight = sum(raw_weights, ZERO)
+    if total_weight <= ZERO:
+        total_weight = Decimal(str(len(selected_factors) or 1))
+        raw_weights = [Decimal("1.00")] * len(selected_factors)
+
+    weighted_five_year_return_pct = ZERO
+    weighted_abs_correlation = ZERO
+    forward_signal_count = 0
+    for factor, raw_weight in zip(selected_factors, raw_weights):
+        weight_ratio = raw_weight / total_weight
+        factor["weight_pct"] = quantize_decimal(weight_ratio * ONE_HUNDRED)
+        weighted_five_year_return_pct += (factor.get("implied_stock_return_5y_pct") or ZERO) * weight_ratio
+        weighted_abs_correlation += abs(factor.get("coefficient") or ZERO) * weight_ratio
+        if factor.get("forward_signal", {}).get("available"):
+            forward_signal_count += 1
+
+    weighted_five_year_return_pct = clamp_decimal(weighted_five_year_return_pct, Decimal("-65.00"), Decimal("120.00"))
+    weighted_annual_return_pct = annualize_return_pct(weighted_five_year_return_pct, 60)
+    blend_ratio_pct = clamp_decimal(
+        Decimal("18.00")
+        + (weighted_abs_correlation * Decimal("28.00"))
+        + (Decimal("4.00") * Decimal(str(max(len(selected_factors) - 1, 0))))
+        + (Decimal("6.00") if forward_signal_count else ZERO),
+        Decimal("18.00"),
+        Decimal("42.00"),
+    )
+    factor_labels = ", ".join(factor.get("reference_label") or "" for factor in selected_factors)
+    note = (
+        f"El ajuste multifactor incorpora {len(selected_factors)} coeficiente(s): {factor_labels}. "
+        f"Se ponderan por correlacion, muestra historica y estabilidad, y explican un {blend_ratio_pct:.0f} % de la senda 5A final."
+    )
+    if forward_signal_count:
+        note += " Cuando existe una senal adelantada oficial en la web, se usa como ancla adicional del escenario."
+    return {
+        "available": True,
+        "factors": selected_factors,
+        "five_year_return_pct": quantize_decimal(weighted_five_year_return_pct),
+        "annual_return_pct": quantize_decimal(weighted_annual_return_pct),
+        "blend_ratio_pct": quantize_decimal(blend_ratio_pct),
+        "weighted_abs_correlation": quantize_decimal(weighted_abs_correlation),
+        "forward_signal_count": forward_signal_count,
+        "note": note,
+    }
+
+
+def build_base_five_year_cycle_projection(
     history,
     position: EquityPosition,
     correlation: dict,
@@ -2582,14 +3346,17 @@ def build_five_year_cycle_projection(
         "3Y",
         start_date=latest_date - timedelta(days=365 * 3),
         end_date=latest_date,
+        reference_profile=position.reference_profile,
     )
     five_year_snapshot = build_period_snapshot(
         analysis_history,
         "5Y",
         start_date=latest_date - timedelta(days=365 * 5),
         end_date=latest_date,
+        reference_profile=position.reference_profile,
     )
     coefficient = correlation.get("coefficient")
+    beta = correlation.get("beta")
     annual_return_components = []
 
     cagr_pct = cycle_metrics.get("cagr_pct")
@@ -2603,9 +3370,13 @@ def build_five_year_cycle_projection(
         three_year_signal = annualize_return_pct(three_year_snapshot["stock_return_pct"], 36)
         if three_year_signal is not None:
             annual_return_components.append(three_year_signal * Decimal("0.20"))
-    reference_five_year_return_pct = five_year_snapshot.get("benchmark_return_pct") if five_year_snapshot.get("available") else None
-    if coefficient is not None and reference_five_year_return_pct is not None:
-        reference_five_year_signal = annualize_return_pct(reference_five_year_return_pct, 60)
+    reference_five_year_change = five_year_snapshot.get("benchmark_change") if five_year_snapshot.get("available") else None
+    if beta is not None and reference_five_year_change is not None:
+        reference_five_year_signal = annualize_return_pct(beta * reference_five_year_change, 60)
+        if reference_five_year_signal is not None:
+            annual_return_components.append(reference_five_year_signal * Decimal("0.08"))
+    elif coefficient is not None and five_year_snapshot.get("benchmark_return_pct") is not None:
+        reference_five_year_signal = annualize_return_pct(five_year_snapshot["benchmark_return_pct"], 60)
         if reference_five_year_signal is not None:
             annual_return_components.append(reference_five_year_signal * coefficient * Decimal("0.08"))
 
@@ -2773,6 +3544,147 @@ def build_five_year_cycle_projection(
         "history_window_label": "Ultimos 5 anos",
         "model_window_label": f"{analysis_years_used:.1f} anos de historico",
         "step_return_pcts": [quantize_decimal(value) or ZERO for value in step_return_pcts],
+        "latest_price": quantize_decimal(latest_price, "0.0001"),
+        "latest_date": latest_date,
+        "annualized_volatility_pct": cycle_metrics.get("annualized_volatility_pct"),
+        "current_drawdown_pct": current_drawdown_pct,
+        "base_explanation": explanation,
+        "explanation": explanation,
+    }
+
+
+def build_five_year_cycle_projection(
+    history,
+    position: EquityPosition,
+    correlation: dict,
+    cycle_metrics: dict | None = None,
+    reference_cache: dict | None = None,
+    include_visuals: bool = True,
+) -> dict:
+    base_projection = build_base_five_year_cycle_projection(
+        history,
+        position,
+        correlation,
+        cycle_metrics=cycle_metrics,
+    )
+    if not base_projection.get("available"):
+        return base_projection
+
+    factor_bundle = build_multifactor_reference_projection_bundle(
+        history,
+        position,
+        reference_cache=reference_cache,
+        include_visuals=include_visuals,
+    )
+    if not factor_bundle.get("available"):
+        return {
+            **base_projection,
+            "factor_model_available": False,
+            "factor_blend_ratio_pct": ZERO,
+            "factor_five_year_return_pct": None,
+            "factor_annual_return_pct": None,
+            "factors": [],
+            "factor_model_label": "Solo ciclo historico",
+        }
+
+    latest_price = base_projection.get("latest_price")
+    latest_date = base_projection.get("latest_date")
+    base_annual_return_pct = base_projection.get("annual_return_pct") or ZERO
+    factor_annual_return_pct = factor_bundle.get("annual_return_pct") or ZERO
+    blend_ratio_pct = factor_bundle.get("blend_ratio_pct") or ZERO
+    blend_ratio = blend_ratio_pct / ONE_HUNDRED
+    final_annual_return_pct = clamp_decimal(
+        (base_annual_return_pct * (Decimal("1.00") - blend_ratio)) + (factor_annual_return_pct * blend_ratio),
+        Decimal("-10.00"),
+        Decimal("18.00"),
+    )
+
+    original_step_returns = [Decimal(str(value)) for value in (base_projection.get("step_return_pcts") or [])]
+    current_average = average_decimal(original_step_returns) or ZERO
+    target_average = Decimal(
+        str(round(((max(0.01, 1 + (float(final_annual_return_pct) / 100)) ** 0.5) - 1) * 100, 4))
+    )
+    step_shift = target_average - current_average
+    factor_target_average = Decimal(
+        str(round(((max(0.01, 1 + (float(factor_annual_return_pct) / 100)) ** 0.5) - 1) * 100, 4))
+    )
+    factor_step_shift = factor_target_average - current_average
+    factor_step_returns = [
+        clamp_decimal(step_return + factor_step_shift, Decimal("-12.00"), Decimal("12.00"))
+        for step_return in original_step_returns
+    ]
+    adjusted_step_returns = [
+        clamp_decimal(step_return + step_shift, Decimal("-12.00"), Decimal("12.00"))
+        for step_return in original_step_returns
+    ]
+
+    factor_path = build_cycle_projection_path(
+        latest_price,
+        factor_annual_return_pct,
+        annualized_volatility_pct=base_projection.get("annualized_volatility_pct"),
+        current_drawdown_pct=base_projection.get("current_drawdown_pct"),
+        cycle_phase=base_projection.get("cycle_phase") or "Transicion",
+        anchor_date=latest_date,
+        years=5,
+        step_months=6,
+        step_return_pcts=factor_step_returns,
+    )
+
+    final_path = build_cycle_projection_path(
+        latest_price,
+        final_annual_return_pct,
+        annualized_volatility_pct=base_projection.get("annualized_volatility_pct"),
+        current_drawdown_pct=base_projection.get("current_drawdown_pct"),
+        cycle_phase=base_projection.get("cycle_phase") or "Transicion",
+        anchor_date=latest_date,
+        years=5,
+        step_months=6,
+        step_return_pcts=adjusted_step_returns,
+    )
+    if not final_path:
+        return base_projection
+
+    projected_price = final_path[-1]["projected_price"]
+    five_year_return_pct = percentage_change(projected_price, latest_price)
+    explanation = (
+        f"{base_projection.get('base_explanation', '').strip()} "
+        f"{factor_bundle.get('note', '').strip()} "
+        f"La senda final mezcla un {max(Decimal('0.00'), Decimal('100.00') - blend_ratio_pct):.0f} % de ciclo propio "
+        f"y un {blend_ratio_pct:.0f} % de lectura multifactor."
+    ).strip()
+    comparison_chart = (
+        build_cycle_projection_comparison_chart(
+            history,
+            base_projection.get("path") or [],
+            factor_path,
+            final_path,
+        )
+        if include_visuals
+        else {"available": False}
+    )
+    return {
+        **base_projection,
+        "annual_return_pct": quantize_decimal(final_annual_return_pct),
+        "projected_price": projected_price,
+        "five_year_return_pct": quantize_decimal(five_year_return_pct),
+        "path": final_path,
+        "step_return_pcts": [quantize_decimal(value) or ZERO for value in adjusted_step_returns],
+        "base_annual_return_pct": quantize_decimal(base_annual_return_pct),
+        "base_projected_price": base_projection.get("projected_price"),
+        "base_path": base_projection.get("path") or [],
+        "factor_path": factor_path,
+        "factor_model_available": True,
+        "factor_model_label": f"{len(factor_bundle.get('factors', []))} coeficientes",
+        "factor_blend_ratio_pct": quantize_decimal(blend_ratio_pct),
+        "factor_five_year_return_pct": factor_bundle.get("five_year_return_pct"),
+        "factor_annual_return_pct": factor_bundle.get("annual_return_pct"),
+        "final_step_shift": quantize_decimal(step_shift),
+        "factor_step_shift": quantize_decimal(factor_step_shift),
+        "factors": factor_bundle.get("factors", []),
+        "uses_forward_web_signals": bool(factor_bundle.get("forward_signal_count")),
+        "forward_signal_count": factor_bundle.get("forward_signal_count", 0),
+        "weighted_abs_correlation": factor_bundle.get("weighted_abs_correlation"),
+        "comparison_chart": comparison_chart,
         "explanation": explanation,
     }
 
@@ -4484,6 +5396,29 @@ def percentage_change(current: Decimal | None, reference: Decimal | None) -> Dec
     return ((current / reference) - Decimal("1")) * Decimal("100")
 
 
+def infer_reference_change_mode(reference_profile: str) -> str:
+    if reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
+        return "absolute"
+    return "pct"
+
+
+def calculate_series_change(
+    current: Decimal | None,
+    reference: Decimal | None,
+    *,
+    change_mode: str = "pct",
+) -> Decimal | None:
+    if current is None or reference is None:
+        return None
+    if change_mode == "absolute":
+        return current - reference
+    return percentage_change(current, reference)
+
+
+def change_unit_label(change_mode: str) -> str:
+    return "pp" if change_mode == "absolute" else "%"
+
+
 def format_compact_currency_value(value: Decimal | None, currency_code: str = "") -> str:
     if value is None:
         return "-"
@@ -4620,12 +5555,18 @@ def build_return_series_from_collapsed_rows(
     collapsed_rows: list[dict],
     primary_key: str,
     secondary_key: str,
+    *,
+    secondary_change_mode: str = "pct",
 ) -> tuple[list[Decimal], list[Decimal]]:
     primary_returns = []
     secondary_returns = []
     for previous, current in zip(collapsed_rows, collapsed_rows[1:]):
         primary_return = percentage_change(current.get(primary_key), previous.get(primary_key))
-        secondary_return = percentage_change(current.get(secondary_key), previous.get(secondary_key))
+        secondary_return = calculate_series_change(
+            current.get(secondary_key),
+            previous.get(secondary_key),
+            change_mode=secondary_change_mode,
+        )
         if primary_return is None or secondary_return is None:
             continue
         primary_returns.append(primary_return)
@@ -4811,6 +5752,22 @@ def pearson_correlation(xs: list[Decimal], ys: list[Decimal]) -> Decimal | None:
     return Decimal(str(round(correlation, 4)))
 
 
+def calculate_regression_beta(xs: list[Decimal], ys: list[Decimal]) -> Decimal | None:
+    if len(xs) != len(ys) or len(xs) < 3:
+        return None
+
+    x_values = [float(value) for value in xs]
+    y_values = [float(value) for value in ys]
+    mean_x = sum(x_values) / len(x_values)
+    mean_y = sum(y_values) / len(y_values)
+    variance_x = sum((x - mean_x) ** 2 for x in x_values)
+    if variance_x <= 0:
+        return None
+    covariance = sum((x - mean_x) * (y - mean_y) for x, y in zip(x_values, y_values))
+    beta = covariance / variance_x
+    return Decimal(str(round(beta, 4)))
+
+
 def describe_correlation(coefficient: Decimal | None) -> str:
     if coefficient is None:
         return "Sin correlacion suficiente"
@@ -4823,7 +5780,7 @@ def describe_correlation(coefficient: Decimal | None) -> str:
     return "Relacion debil"
 
 
-def build_correlation_from_rows(rows: list[dict], frequency: str) -> dict:
+def build_correlation_from_rows(rows: list[dict], frequency: str, *, secondary_change_mode: str = "pct") -> dict:
     buckets = {}
     for row in rows:
         buckets[bucket_label_for_date(row["date"], frequency)] = row
@@ -4833,11 +5790,14 @@ def build_correlation_from_rows(rows: list[dict], frequency: str) -> dict:
         collapsed,
         "stock_close",
         "reference_close",
+        secondary_change_mode=secondary_change_mode,
     )
     window_size = correlation_window_size(frequency)
     recent_window = recent_correlation_window_size(frequency)
     coefficient = pearson_correlation(stock_returns[-window_size:], reference_returns[-window_size:])
     recent_coefficient = pearson_correlation(stock_returns[-recent_window:], reference_returns[-recent_window:])
+    beta = calculate_regression_beta(reference_returns[-window_size:], stock_returns[-window_size:])
+    recent_beta = calculate_regression_beta(reference_returns[-recent_window:], stock_returns[-recent_window:])
     stability_gap = abs(coefficient - recent_coefficient) if coefficient is not None and recent_coefficient is not None else None
     if stability_gap is None or stability_gap <= Decimal("0.15"):
         stability_label = "Estable"
@@ -4847,8 +5807,11 @@ def build_correlation_from_rows(rows: list[dict], frequency: str) -> dict:
         stability_label = "Cambiante"
     return {
         "frequency": frequency,
+        "change_mode": secondary_change_mode,
         "coefficient": coefficient,
         "recent_coefficient": recent_coefficient,
+        "beta": beta,
+        "recent_beta": recent_beta,
         "label": describe_correlation(coefficient),
         "observations_count": len(stock_returns),
         "years_covered": calculate_years_between(
@@ -4871,7 +5834,11 @@ def build_reference_correlation(history, position: EquityPosition) -> dict:
         }
         for point in history
     ]
-    return build_correlation_from_rows(rows, frequency)
+    return build_correlation_from_rows(
+        rows,
+        frequency,
+        secondary_change_mode=infer_reference_change_mode(position.reference_profile),
+    )
 
 
 def build_reference_correlation_for_series(history, reference_series: MarketSeries, reference_profile: str) -> dict:
@@ -4887,7 +5854,61 @@ def build_reference_correlation_for_series(history, reference_series: MarketSeri
         }
         for point in history
     ]
-    return build_correlation_from_rows(rows, infer_reference_frequency_from_profile(reference_profile))
+    return build_correlation_from_rows(
+        rows,
+        infer_reference_frequency_from_profile(reference_profile),
+        secondary_change_mode=infer_reference_change_mode(reference_profile),
+    )
+
+
+def build_reference_rolling_correlation_rows_for_series(
+    history,
+    reference_series: MarketSeries,
+    reference_profile: str,
+) -> list[dict]:
+    frequency = infer_reference_frequency_from_profile(reference_profile)
+    aligned = align_reference_points(
+        [{"date": point.price_date} for point in history],
+        reference_series.points,
+    )
+    rows = [
+        {
+            "date": point.price_date,
+            "stock_close": point.close_price,
+            "reference_close": aligned.get(point.price_date),
+        }
+        for point in history
+        if aligned.get(point.price_date) is not None
+    ]
+    buckets = {}
+    for row in rows:
+        buckets[bucket_label_for_date(row["date"], frequency)] = row
+    collapsed = [buckets[label] for label in sorted(buckets.keys())]
+    stock_returns, reference_returns = build_return_series_from_collapsed_rows(
+        collapsed,
+        "stock_close",
+        "reference_close",
+        secondary_change_mode=infer_reference_change_mode(reference_profile),
+    )
+    recent_window = recent_correlation_window_size(frequency)
+    if len(stock_returns) < recent_window + 2:
+        return []
+
+    rolling_rows = []
+    for end_index in range(recent_window, len(stock_returns) + 1):
+        rolling_coefficient = pearson_correlation(
+            stock_returns[end_index - recent_window : end_index],
+            reference_returns[end_index - recent_window : end_index],
+        )
+        if rolling_coefficient is None:
+            continue
+        rolling_rows.append(
+            {
+                "end_date": collapsed[end_index]["date"],
+                "coefficient": rolling_coefficient,
+            }
+        )
+    return rolling_rows
 
 
 def filter_history_window(history, start_date: date | None = None, end_date: date | None = None):
@@ -4898,14 +5919,24 @@ def filter_history_window(history, start_date: date | None = None, end_date: dat
     ]
 
 
-def build_period_snapshot(history, label: str, start_date: date | None = None, end_date: date | None = None) -> dict:
+def build_period_snapshot(
+    history,
+    label: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    *,
+    reference_profile: str | None = None,
+) -> dict:
     window = filter_history_window(history, start_date=start_date, end_date=end_date)
+    benchmark_change_mode = infer_reference_change_mode(reference_profile or EquityPosition.ReferenceProfile.MARKET_INDEX)
     if len(window) < 2:
         return {
             "label": label,
             "available": False,
             "stock_return_pct": None,
             "benchmark_return_pct": None,
+            "benchmark_change": None,
+            "benchmark_change_mode": benchmark_change_mode,
             "alpha_pct": None,
             "start_date": window[0].price_date if window else start_date,
             "end_date": window[-1].price_date if window else end_date,
@@ -4915,9 +5946,14 @@ def build_period_snapshot(history, label: str, start_date: date | None = None, e
     last_point = window[-1]
     stock_return_pct = percentage_change(last_point.close_price, first_point.close_price)
     benchmark_return_pct = percentage_change(last_point.benchmark_close, first_point.benchmark_close)
+    benchmark_change = calculate_series_change(
+        last_point.benchmark_close,
+        first_point.benchmark_close,
+        change_mode=benchmark_change_mode,
+    )
     alpha_pct = (
         stock_return_pct - benchmark_return_pct
-        if stock_return_pct is not None and benchmark_return_pct is not None
+        if benchmark_change_mode == "pct" and stock_return_pct is not None and benchmark_return_pct is not None
         else None
     )
 
@@ -4926,6 +5962,8 @@ def build_period_snapshot(history, label: str, start_date: date | None = None, e
         "available": True,
         "stock_return_pct": stock_return_pct,
         "benchmark_return_pct": benchmark_return_pct,
+        "benchmark_change": benchmark_change,
+        "benchmark_change_mode": benchmark_change_mode,
         "alpha_pct": alpha_pct,
         "start_date": first_point.price_date,
         "end_date": last_point.price_date,
@@ -5129,7 +6167,7 @@ def consecutive_tail_matches(values: list, predicate) -> int:
 def build_relative_strength_trend(
     history,
     position: EquityPosition,
-    coefficient: Decimal | None,
+    reference_sensitivity: Decimal | None,
     periods_back: int = 8,
 ) -> dict:
     if not history:
@@ -5149,21 +6187,30 @@ def build_relative_strength_trend(
         end_date=latest_date,
     )
     collapsed_history = collapse_history_to_frequency(recent_history, frequency)[-(periods_back + 1) :]
+    change_mode = infer_reference_change_mode(position.reference_profile)
 
     rows = []
     for previous, current in zip(collapsed_history, collapsed_history[1:]):
         stock_return_pct = percentage_change(current.close_price, previous.close_price)
-        reference_return_pct = percentage_change(current.benchmark_close, previous.benchmark_close)
-        if stock_return_pct is None or reference_return_pct is None:
+        reference_change = calculate_series_change(
+            current.benchmark_close,
+            previous.benchmark_close,
+            change_mode=change_mode,
+        )
+        if stock_return_pct is None or reference_change is None:
             continue
-        expected_return_pct = reference_return_pct * coefficient if coefficient is not None else reference_return_pct
+        expected_return_pct = (
+            reference_change * reference_sensitivity
+            if reference_sensitivity is not None
+            else reference_change
+        )
         relative_gap_pct = stock_return_pct - expected_return_pct
         rows.append(
             {
                 "start_date": previous.price_date,
                 "end_date": current.price_date,
                 "stock_return_pct": stock_return_pct,
-                "reference_return_pct": reference_return_pct,
+                "reference_return_pct": reference_change,
                 "expected_return_pct": expected_return_pct,
                 "relative_gap_pct": relative_gap_pct,
             }
@@ -5268,6 +6315,7 @@ def build_reference_coefficient_alert(
         collapsed,
         "stock_close",
         "reference_close",
+        secondary_change_mode=infer_reference_change_mode(position.reference_profile),
     )
     recent_window = recent_correlation_window_size(frequency)
     if len(stock_returns) < recent_window + 2:
@@ -5725,21 +6773,25 @@ def build_one_year_projection(
     latest_date = history[-1].price_date
     cycle_metrics = cycle_metrics or build_cycle_metrics(history)
     stock_6m_return_pct = six_month_snapshot.get("stock_return_pct") if six_month_snapshot.get("available") else None
-    reference_6m_return_pct = six_month_snapshot.get("benchmark_return_pct") if six_month_snapshot.get("available") else None
+    reference_6m_change = six_month_snapshot.get("benchmark_change") if six_month_snapshot.get("available") else None
     one_year_snapshot = build_period_snapshot(
         history,
         "1Y",
         start_date=latest_date - timedelta(days=365),
         end_date=latest_date,
+        reference_profile=position.reference_profile,
     )
     three_year_snapshot = build_period_snapshot(
         history,
         "3Y",
         start_date=latest_date - timedelta(days=365 * 3),
         end_date=latest_date,
+        reference_profile=position.reference_profile,
     )
     coefficient = correlation.get("coefficient")
     recent_coefficient = correlation.get("recent_coefficient")
+    beta = correlation.get("beta")
+    recent_beta = correlation.get("recent_beta")
     observations_count = correlation.get("observations_count", 0)
     price_return_components = []
 
@@ -5762,9 +6814,9 @@ def build_one_year_projection(
         elif current_drawdown_pct >= Decimal("-3.00"):
             price_return_components.append(-mean_reversion_pct * Decimal("0.40"))
 
-    reference_one_year_return_pct = one_year_snapshot.get("benchmark_return_pct") if one_year_snapshot.get("available") else None
-    if coefficient is not None and reference_one_year_return_pct is not None:
-        price_return_components.append(reference_one_year_return_pct * coefficient * Decimal("0.15"))
+    reference_one_year_change = one_year_snapshot.get("benchmark_change") if one_year_snapshot.get("available") else None
+    if beta is not None and reference_one_year_change is not None:
+        price_return_components.append((beta * reference_one_year_change) * Decimal("0.15"))
     if coefficient is not None and recent_coefficient is not None:
         price_return_components.append(
             clamp_decimal((recent_coefficient - coefficient) * Decimal("8.00"), Decimal("-2.50"), Decimal("2.00"))
@@ -5834,16 +6886,19 @@ def build_one_year_projection(
         benefit_risk_ratio = base_return_pct / band_pct
     decision_score = base_return_pct * projection_confidence_multiplier(confidence["label"]) * (safety["score"] / ONE_HUNDRED)
     years_covered = cycle_metrics.get("years_covered", ZERO)
-    if coefficient is None or reference_one_year_return_pct is None:
+    if coefficient is None or beta is None or reference_one_year_change is None:
         explanation = (
             f"La proyeccion 12M mezcla el ciclo propio de la accion y su historico de {years_covered:.2f} anos. "
             f"Hoy pesa mas la trayectoria del valor que la referencia porque la relacion con {position.analysis_reference_label} "
             f"todavia no es lo bastante robusta."
         )
     else:
+        change_mode = correlation.get("change_mode", "pct")
+        reference_change_unit = change_unit_label(change_mode)
         explanation = (
             f"La proyeccion usa hasta {years_covered:.2f} anos de serie, fase {cycle_metrics.get('cycle_phase', 'sin ciclo').lower()} "
             f"y la referencia {position.analysis_reference_label} con correlacion 10A de {coefficient:.2f}. "
+            f"El beta historico frente a esa referencia es {beta:.2f} por {reference_change_unit}. "
             f"El retorno total incluye dividendos netos y penaliza comisiones y custodia del broker."
         )
     if coefficient is not None and recent_coefficient is not None:
@@ -5886,11 +6941,14 @@ def build_one_year_projection(
         "benefit_risk_ratio": benefit_risk_ratio,
         "decision_score": decision_score,
         "stock_6m_return_pct": stock_6m_return_pct,
-        "reference_6m_return_pct": reference_6m_return_pct,
+        "reference_6m_return_pct": reference_6m_change,
         "stock_1y_return_pct": one_year_snapshot.get("stock_return_pct") if one_year_snapshot.get("available") else None,
-        "reference_1y_return_pct": reference_one_year_return_pct,
+        "reference_1y_return_pct": reference_one_year_change,
         "coefficient": coefficient,
         "recent_coefficient": recent_coefficient,
+        "beta": beta,
+        "recent_beta": recent_beta,
+        "reference_change_mode": correlation.get("change_mode", "pct"),
         "cycle_phase": cycle_metrics.get("cycle_phase"),
         "years_covered": years_covered,
         "cagr_pct": cycle_metrics.get("cagr_pct"),
@@ -5959,6 +7017,7 @@ def build_projection_backtest(
             "6M",
             start_date=anchor_date - timedelta(days=182),
             end_date=anchor_date,
+            reference_profile=position.reference_profile,
         )
         if not six_month_snapshot["available"]:
             continue
@@ -6645,6 +7704,7 @@ def build_equity_history_card(
             "Periodo elegido",
             start_date=selected_start_date,
             end_date=selected_end_date,
+            reference_profile=position.reference_profile,
         )
     else:
         selected_period = {"available": False}
@@ -6654,13 +7714,14 @@ def build_equity_history_card(
             "1Y",
             start_date=latest_point.price_date - timedelta(days=365),
             end_date=latest_point.price_date,
+            reference_profile=position.reference_profile,
         )
 
     period_snapshots = [
-        build_period_snapshot(history, "1Y", start_date=latest_point.price_date - timedelta(days=365), end_date=latest_point.price_date),
-        build_period_snapshot(history, "3Y", start_date=latest_point.price_date - timedelta(days=365 * 3), end_date=latest_point.price_date),
-        build_period_snapshot(history, "5Y", start_date=latest_point.price_date - timedelta(days=365 * 5), end_date=latest_point.price_date),
-        build_period_snapshot(history, "10Y", start_date=latest_point.price_date - timedelta(days=LONG_ANALYSIS_DAYS), end_date=latest_point.price_date),
+        build_period_snapshot(history, "1Y", start_date=latest_point.price_date - timedelta(days=365), end_date=latest_point.price_date, reference_profile=position.reference_profile),
+        build_period_snapshot(history, "3Y", start_date=latest_point.price_date - timedelta(days=365 * 3), end_date=latest_point.price_date, reference_profile=position.reference_profile),
+        build_period_snapshot(history, "5Y", start_date=latest_point.price_date - timedelta(days=365 * 5), end_date=latest_point.price_date, reference_profile=position.reference_profile),
+        build_period_snapshot(history, "10Y", start_date=latest_point.price_date - timedelta(days=LONG_ANALYSIS_DAYS), end_date=latest_point.price_date, reference_profile=position.reference_profile),
     ]
     one_year_snapshot = next((snapshot for snapshot in period_snapshots if snapshot["label"] == "1Y"), {"available": False})
     correlation = build_reference_correlation(history, position)
@@ -6669,10 +7730,18 @@ def build_equity_history_card(
         "6M",
         start_date=latest_point.price_date - timedelta(days=182),
         end_date=latest_point.price_date,
+        reference_profile=position.reference_profile,
     )
     cycle_metrics = build_cycle_metrics(history)
     projection = build_one_year_projection(history, position, correlation, six_month_snapshot, cycle_metrics=cycle_metrics)
-    cycle_projection_5y = build_five_year_cycle_projection(history, position, correlation, cycle_metrics=cycle_metrics)
+    cycle_projection_5y = build_five_year_cycle_projection(
+        history,
+        position,
+        correlation,
+        cycle_metrics=cycle_metrics,
+        reference_cache=reference_cache,
+        include_visuals=include_visuals,
+    )
     projection_backtest = build_projection_backtest(
         history,
         position,
@@ -6683,7 +7752,11 @@ def build_equity_history_card(
         if projection.get("available")
         else {"label": "Baja", "score": Decimal("40.00")}
     )
-    relative_trend = build_relative_strength_trend(history, position, correlation.get("coefficient"))
+    relative_trend = build_relative_strength_trend(
+        history,
+        position,
+        correlation.get("beta") if correlation.get("beta") is not None else correlation.get("coefficient"),
+    )
     coefficient_alert = build_reference_coefficient_alert(history, position, correlation)
     trade_alert = build_trade_alert(
         position,
