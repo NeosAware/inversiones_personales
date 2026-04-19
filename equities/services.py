@@ -9512,7 +9512,14 @@ OPTIMIZER_STRATEGIES = {
 }
 OPTIMIZER_MIN_SAFETY_SCORE = Decimal("55.00")
 OPTIMIZER_MIN_RELIABILITY_SCORE = Decimal("58.00")
-OPTIMIZER_ALLOWED_ACTION_LABELS = {"Priorizar", "Seguir", "Mantener"}
+OPTIMIZER_DECISION_ACTION_ADJUSTMENTS = {
+    "Priorizar": Decimal("1.80"),
+    "Seguir": Decimal("0.75"),
+    "Mantener": Decimal("0.75"),
+    "Vigilar": Decimal("-1.85"),
+    "Esperar": Decimal("-3.60"),
+    "Reducir riesgo": Decimal("-4.40"),
+}
 
 
 def get_optimizer_strategy_config(strategy_mode: str | None = None) -> dict:
@@ -9524,29 +9531,43 @@ def get_optimizer_strategy_config(strategy_mode: str | None = None) -> dict:
     return {"mode": normalized_mode, **strategy}
 
 
-def optimizer_candidate_passes_quality_gate(candidate: dict, strategy_mode: str) -> bool:
-    safety_score = candidate.get("safety_score") or ZERO
-    reliability_score = candidate.get("reliability_score") or ZERO
-    decision_action_label = str(candidate.get("decision_action_label") or "").strip()
-    strategy = get_optimizer_strategy_config(strategy_mode)
-
-    if safety_score < OPTIMIZER_MIN_SAFETY_SCORE:
-        return False
-    if reliability_score < OPTIMIZER_MIN_RELIABILITY_SCORE:
-        return False
-    if decision_action_label not in OPTIMIZER_ALLOWED_ACTION_LABELS:
-        return False
-
-    if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY:
-        cycle_expected_return_pct = candidate.get("cycle_expected_annual_return_pct")
-        if cycle_expected_return_pct is None:
-            cycle_expected_return_pct = candidate.get("cycle_return_annual_pct")
-        return (cycle_expected_return_pct or ZERO) > ZERO
-
-    expected_return_pct = candidate.get("scenario_expected_return_pct")
-    if expected_return_pct is None:
-        expected_return_pct = candidate.get("base_return_pct")
-    return (expected_return_pct or ZERO) > ZERO and (candidate.get("base_return_pct") or ZERO) > ZERO
+def build_optimizer_quality_adjustments(
+    safety_score: Decimal | None,
+    reliability_score: Decimal | None,
+    decision_action_label: str | None,
+) -> dict:
+    safety_score = safety_score or ZERO
+    reliability_score = reliability_score or ZERO
+    decision_action_label = str(decision_action_label or "").strip()
+    safety_gap = max(OPTIMIZER_MIN_SAFETY_SCORE - safety_score, ZERO)
+    reliability_gap = max(OPTIMIZER_MIN_RELIABILITY_SCORE - reliability_score, ZERO)
+    safety_floor_penalty_pct = clamp_decimal(
+        safety_gap * Decimal("0.11"),
+        ZERO,
+        Decimal("5.20"),
+    )
+    reliability_floor_penalty_pct = clamp_decimal(
+        reliability_gap * Decimal("0.09"),
+        ZERO,
+        Decimal("4.20"),
+    )
+    quality_floor_penalty_pct = clamp_decimal(
+        safety_floor_penalty_pct + reliability_floor_penalty_pct,
+        ZERO,
+        Decimal("8.20"),
+    )
+    decision_action_adjustment = OPTIMIZER_DECISION_ACTION_ADJUSTMENTS.get(
+        decision_action_label,
+        Decimal("-2.75"),
+    )
+    return {
+        "safety_gap": quantize_decimal(safety_gap),
+        "reliability_gap": quantize_decimal(reliability_gap),
+        "safety_floor_penalty_pct": quantize_decimal(safety_floor_penalty_pct),
+        "reliability_floor_penalty_pct": quantize_decimal(reliability_floor_penalty_pct),
+        "quality_floor_penalty_pct": quantize_decimal(quality_floor_penalty_pct),
+        "decision_action_adjustment": quantize_decimal(decision_action_adjustment),
+    }
 
 
 def build_optimizer_scenario_summary(
@@ -9700,6 +9721,11 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         safety_score,
         reliability_score,
     )
+    quality_adjustments = build_optimizer_quality_adjustments(
+        safety_score,
+        reliability_score,
+        decision_action_label,
+    )
     trade_signal_adjustment = {
         "Comprar": Decimal("1.75"),
         "Vigilar": ZERO,
@@ -9844,6 +9870,8 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         - cost_efficiency_penalty_pct
         + trade_signal_adjustment
         + external_signal_adjustment
+        + (quality_adjustments.get("decision_action_adjustment") or ZERO)
+        - (quality_adjustments.get("quality_floor_penalty_pct") or ZERO)
     )
 
     return {
@@ -9901,6 +9929,12 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         "trade_alert_tone": trade_alert.get("tone", "watch"),
         "trade_alert_note": trade_alert.get("note", ""),
         "decision_action_label": decision_action_label,
+        "decision_action_adjustment": quality_adjustments.get("decision_action_adjustment") or ZERO,
+        "safety_gap": quality_adjustments.get("safety_gap") or ZERO,
+        "reliability_gap": quality_adjustments.get("reliability_gap") or ZERO,
+        "safety_floor_penalty_pct": quality_adjustments.get("safety_floor_penalty_pct") or ZERO,
+        "reliability_floor_penalty_pct": quality_adjustments.get("reliability_floor_penalty_pct") or ZERO,
+        "quality_floor_penalty_pct": quality_adjustments.get("quality_floor_penalty_pct") or ZERO,
         "trade_signal_adjustment": trade_signal_adjustment,
         "external_signal_label": external_signal_label,
         "external_signal_score": external_signal_score,
@@ -9927,7 +9961,6 @@ def filter_positive_optimizer_candidates(
             if item["optimization_score"] > ZERO
             and item.get("robust_cycle_support_score", item["cycle_support_score"]) > ZERO
             and item["trade_alert_label"] != "Vender"
-            and optimizer_candidate_passes_quality_gate(item, strategy["mode"])
         ]
     return [
         item
@@ -9935,7 +9968,6 @@ def filter_positive_optimizer_candidates(
         if item["optimization_score"] > ZERO
         and item.get("robust_return_signal_pct", item["base_return_pct"]) > ZERO
         and item["trade_alert_label"] != "Vender"
-        and optimizer_candidate_passes_quality_gate(item, strategy["mode"])
     ]
 
 
@@ -10432,6 +10464,8 @@ def build_equity_allocation_plan(
     max_total_positions: int = 0,
     max_sector_positions: int = 0,
     selected_sectors: list[str] | None = None,
+    selected_owned_tickers: list[str] | None = None,
+    selected_owned_tickers_applied: bool = False,
     strategy_mode: str = OPTIMIZER_STRATEGY_12M_PRIMARY,
 ) -> dict:
     strategy = get_optimizer_strategy_config(strategy_mode)
@@ -10459,13 +10493,14 @@ def build_equity_allocation_plan(
         return {
             "available": False,
             "reason": (
-                "Ahora mismo ninguna accion supera el filtro de retorno neto y riesgo "
-                f"para una optimizacion equilibrada con prioridad en {strategy['primary_horizon_label']}."
+                "Ahora mismo ninguna accion ofrece retorno robusto positivo "
+                f"con prioridad en {strategy['primary_horizon_label']} despues de descontar riesgo, costes y penalizaciones de incertidumbre."
             ),
             "strategy_mode": strategy["mode"],
             "strategy_label": strategy["label"],
         }
 
+    owned_positions_available_count = sum(1 for item in candidates if item["position"].is_owned)
     normalized_selected_sectors = []
     seen_selected_sectors = set()
     for sector in selected_sectors or []:
@@ -10475,7 +10510,18 @@ def build_equity_allocation_plan(
         seen_selected_sectors.add(normalized_sector)
         normalized_selected_sectors.append(normalized_sector)
     selected_sector_set = set(normalized_selected_sectors)
+    normalized_selected_owned_tickers = []
+    seen_selected_owned_tickers = set()
+    for ticker in selected_owned_tickers or []:
+        normalized_ticker = str(ticker or "").strip().upper()
+        if not normalized_ticker or normalized_ticker in seen_selected_owned_tickers:
+            continue
+        seen_selected_owned_tickers.add(normalized_ticker)
+        normalized_selected_owned_tickers.append(normalized_ticker)
+    selected_owned_ticker_set = set(normalized_selected_owned_tickers)
+    selected_owned_tickers_applied = bool(selected_owned_tickers_applied and owned_positions_available_count > 0)
     selected_sector_excluded_candidates = []
+    selected_owned_ticker_excluded_candidates = []
     if selected_sector_set:
         selected_sector_filtered_candidates = []
         for item in positive_candidates:
@@ -10486,21 +10532,47 @@ def build_equity_allocation_plan(
                 selected_sector_excluded_candidates.append(item)
         positive_candidates = selected_sector_filtered_candidates
 
-    if not positive_candidates and selected_sector_set:
+    if selected_owned_tickers_applied:
+        owned_ticker_filtered_candidates = []
+        for item in positive_candidates:
+            ticker = str(item["position"].ticker or "").strip().upper()
+            if item["position"].is_owned and ticker not in selected_owned_ticker_set:
+                selected_owned_ticker_excluded_candidates.append(item)
+            else:
+                owned_ticker_filtered_candidates.append(item)
+        positive_candidates = owned_ticker_filtered_candidates
+
+    if not positive_candidates and (selected_sector_set or selected_owned_tickers_applied):
+        selected_sector_note = ""
+        if selected_sector_set:
+            selected_sector_note = (
+                "La optimizacion se ha limitado a estos sectores: "
+                + ", ".join(normalized_selected_sectors)
+                + "."
+            )
+        selected_owned_ticker_note = ""
+        if selected_owned_tickers_applied:
+            if normalized_selected_owned_tickers:
+                selected_owned_ticker_note = (
+                    "De las acciones compradas solo se han dejado activas estas: "
+                    + ", ".join(normalized_selected_owned_tickers)
+                    + "."
+                )
+            else:
+                selected_owned_ticker_note = "Has desactivado todas las acciones compradas para esta optimizacion."
         return {
             "available": False,
             "reason": (
-                "Con los sectores elegidos no quedan candidatas validas para construir la propuesta. "
-                "Prueba ampliando sectores o relajando otras restricciones."
+                "Con los filtros manuales actuales no quedan candidatas validas para construir la propuesta. "
+                "Prueba ampliando sectores, reactivando acciones compradas o relajando otras restricciones."
             ),
             "strategy_mode": strategy["mode"],
             "strategy_label": strategy["label"],
             "selected_sectors": normalized_selected_sectors,
-            "selected_sector_note": (
-                "La optimizacion se ha limitado a estos sectores: "
-                + ", ".join(normalized_selected_sectors)
-                + "."
-            ),
+            "selected_sector_note": selected_sector_note,
+            "selected_owned_tickers": normalized_selected_owned_tickers,
+            "selected_owned_tickers_applied": selected_owned_tickers_applied,
+            "selected_owned_ticker_note": selected_owned_ticker_note,
         }
 
     ranked_candidates = rank_optimizer_candidates(positive_candidates)
@@ -10781,8 +10853,8 @@ def build_equity_allocation_plan(
 
     if remaining_amount > ZERO:
         reserve_reason = (
-            "Queda caja en reserva porque el filtro de riesgo/rentabilidad solo deja pasar las ideas con retorno neto positivo, "
-            "riesgo asumible y suficiente calidad historica."
+            "Queda caja en reserva porque el filtro de riesgo/rentabilidad solo deja pasar las ideas con retorno robusto positivo, "
+            "riesgo asumible y costes razonables."
         )
         if max_total_positions > 0 and (company_cap_amount * Decimal(str(max_total_positions))) < total_investment:
             reserve_reason += (
@@ -10805,6 +10877,21 @@ def build_equity_allocation_plan(
             )
     else:
         selected_sector_note = ""
+    if selected_owned_tickers_applied:
+        if normalized_selected_owned_tickers:
+            selected_owned_ticker_note = (
+                "De las acciones compradas solo pueden entrar estas: "
+                + ", ".join(normalized_selected_owned_tickers)
+                + "."
+            )
+        else:
+            selected_owned_ticker_note = "Se han desactivado todas las acciones compradas para esta optimizacion."
+        if selected_owned_ticker_excluded_candidates:
+            selected_owned_ticker_note += (
+                f" {len(selected_owned_ticker_excluded_candidates)} candidata(s) compradas han quedado fuera por este filtro manual."
+            )
+    else:
+        selected_owned_ticker_note = ""
     if max_total_positions > 0:
         position_limit_note = f"Se aplica un maximo total de {max_total_positions} empresa(s) en la cartera propuesta."
         if position_cap_overflow_count:
@@ -10846,6 +10933,10 @@ def build_equity_allocation_plan(
         "company_cap_amount": company_cap_amount,
         "selected_sectors": normalized_selected_sectors,
         "selected_sector_note": selected_sector_note,
+        "selected_owned_tickers": normalized_selected_owned_tickers,
+        "selected_owned_tickers_applied": selected_owned_tickers_applied,
+        "selected_owned_ticker_note": selected_owned_ticker_note,
+        "owned_positions_available_count": owned_positions_available_count,
         "allocated_amount_total": allocated_amount_total,
         "cash_reserve_amount": remaining_amount,
         "projected_gain_total": projected_gain_total,
@@ -10875,6 +10966,7 @@ def build_equity_allocation_plan(
         "shock_adjusted_allocations_count": shock_adjusted_allocations_count,
         "sector_filtered_count": len(sector_excluded_candidates),
         "sector_filter_note": sector_limit_note,
+        "selected_owned_ticker_filtered_count": len(selected_owned_ticker_excluded_candidates),
         "ticket_filtered_count": ticket_filtered_count,
         "ticket_filter_reasons": ticket_filter_reasons,
         "ticket_filter_note": ticket_filter_note,
@@ -10884,7 +10976,7 @@ def build_equity_allocation_plan(
             f"Esta ejecucion usa la estrategia {strategy['label']}: "
             f"prioriza la lectura de {strategy['primary_horizon_label']} y deja {strategy['secondary_horizon_label']} como contraste secundario para reforzar o penalizar la jerarquia final. "
             "La jerarquia ya no depende solo del caso central: combina retorno esperado por escenarios, peor caso, dispersion entre escenarios, seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa y castigo automatico por shocks informativos. "
-            f"Ademas, la propuesta solo deja pasar valores con un minimo de seguridad ({int(OPTIMIZER_MIN_SAFETY_SCORE)}+) y fiabilidad ({int(OPTIMIZER_MIN_RELIABILITY_SCORE)}+), y con lectura accionable en la propia ficha. "
+            f"La seguridad ({int(OPTIMIZER_MIN_SAFETY_SCORE)} como referencia), la fiabilidad ({int(OPTIMIZER_MIN_RELIABILITY_SCORE)} como referencia) y la lectura de la ficha ya no expulsan por un corte fijo: penalizan el score de forma progresiva para que el optimizador siga priorizando rentabilidad, pero no ignore el riesgo. "
             "Las cifras monetarias del informe siguen expresadas a 12 meses para mantener comparables dividendos, costes, caja y peor escenario, aunque la jerarquia de seleccion pueda priorizar 5 anos. "
             "eficiencia real del ticket de compra y, si lo marcas, un maximo total de empresas y diversificacion maxima por sector. En la version robusta se "
             "analiza siempre todo el IBEX, no solo los valores que ya tienes en seguimiento."

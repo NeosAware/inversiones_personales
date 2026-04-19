@@ -117,6 +117,7 @@
         <span class="pill">{% if plan.max_total_positions %}Max total {{ plan.max_total_positions }} empresas{% else %}Sin tope total de empresas{% endif %}</span>
         <span class="pill">{% if plan.max_sector_positions %}Max {{ plan.max_sector_positions }} por sector{% else %}Sin limite sectorial{% endif %}</span>
         <span class="pill">{% if plan.selected_sectors %}Sectores {{ plan.selected_sectors|join:", " }}{% else %}Todos los sectores{% endif %}</span>
+        <span class="pill">{% if plan.selected_owned_tickers_applied %}{% if plan.selected_owned_tickers %}Compradas activas {{ plan.selected_owned_tickers|join:", " }}{% else %}Sin compradas activas{% endif %}{% else %}Todas las compradas activas{% endif %}</span>
         <span class="pill">{{ dashboard.ibex_universe_summary.analyzed_count }} valores IBEX analizados</span>
       </div>
     </section>
@@ -149,6 +150,7 @@
         {{ plan.methodology_note }}
         {% if run.restrictions_note %} Restricciones anotadas: <strong>{{ run.restrictions_note }}</strong>.{% endif %}
         {% if plan.selected_sector_note %} {{ plan.selected_sector_note }}{% endif %}
+        {% if plan.selected_owned_ticker_note %} {{ plan.selected_owned_ticker_note }}{% endif %}
         {% if plan.position_cap_note %} {{ plan.position_cap_note }}{% endif %}
         {% if plan.sector_filter_note %} {{ plan.sector_filter_note }}{% endif %}
         {% if plan.ticket_filter_note %} {{ plan.ticket_filter_note }}{% endif %}

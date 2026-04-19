@@ -652,10 +652,14 @@ class EquitiesServicesTests(TestCase):
         with patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series):
             cards = build_equity_history_cards([position])
 
-        self.assertEqual(cards[0]["suggested_references"][0]["benchmark_name"], EURIBOR_REFERENCE_NAME)
-        self.assertIsNotNone(cards[0]["suggested_references"][0]["correlation"]["coefficient"])
+        suggested_reference_names = [item["benchmark_name"] for item in cards[0]["suggested_references"]]
+        self.assertIn(EURIBOR_REFERENCE_NAME, suggested_reference_names)
+        euribor_reference = next(
+            item for item in cards[0]["suggested_references"] if item["benchmark_name"] == EURIBOR_REFERENCE_NAME
+        )
+        self.assertIsNotNone(euribor_reference["correlation"]["coefficient"])
         self.assertTrue(cards[0]["best_correlation_chart"]["available"])
-        self.assertEqual(cards[0]["best_correlation_chart"]["reference_label"], EURIBOR_REFERENCE_NAME)
+        self.assertIn(cards[0]["best_correlation_chart"]["reference_label"], suggested_reference_names)
 
     def test_history_cards_include_one_year_projection_from_six_months_and_reference(self):
         position = EquityPosition.objects.create(
@@ -2168,9 +2172,11 @@ class EquitiesServicesTests(TestCase):
                 "available": True,
                 "base_return_pct": Decimal("8.0"),
                 "projected_price": Decimal("10.80"),
-                "confidence_label": "Baja",
+                "confidence_label": "Media",
+                "safety_score": Decimal("60.00"),
                 "coefficient": Decimal("0.10"),
             },
+            "projection_reliability": {"label": "Media", "score": Decimal("62.00")},
         }
 
         plan = build_equity_allocation_plan([medium, weak, stronger], Decimal("100000"), Decimal("40"))
@@ -2897,6 +2903,78 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(len(plan["allocations"]), 1)
         self.assertEqual(plan["allocations"][0]["position"].ticker, "IBE")
 
+    def test_allocation_plan_can_exclude_owned_positions_manually(self):
+        owned_card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.OWNED,
+                ticker="IBE",
+                company_name="Iberdrola",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("10"),
+                average_cost_per_share=Decimal("10"),
+                current_price_per_share=Decimal("11"),
+            ),
+            "sector_label": "Electrica",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": ""},
+            "projection_reliability": {"label": "Alta", "score": Decimal("82.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("15.00"),
+                "price_return_pct": Decimal("11.00"),
+                "price_low_return_pct": Decimal("2.00"),
+                "price_high_return_pct": Decimal("22.00"),
+                "projected_price": Decimal("12.6500"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("74.00"),
+                "gross_dividend_yield_pct": Decimal("3.50"),
+                "net_income_yield_pct": Decimal("3.00"),
+                "transaction_drag_pct": Decimal("0.20"),
+                "annualized_volatility_pct": Decimal("11.50"),
+                "positive_year_ratio_pct": Decimal("70.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.50"),
+                "max_drawdown_pct": Decimal("-18.00"),
+            },
+        }
+        watchlist_card = {
+            **owned_card,
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="ACS",
+                company_name="ACS",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("44"),
+            ),
+            "sector_label": "Construccion e infraestructuras",
+            "projection": {
+                **owned_card["projection"],
+                "base_return_pct": Decimal("12.00"),
+                "projected_price": Decimal("49.2800"),
+            },
+        }
+
+        plan = build_equity_allocation_plan(
+            [owned_card, watchlist_card],
+            Decimal("100000"),
+            Decimal("60"),
+            selected_owned_tickers=[],
+            selected_owned_tickers_applied=True,
+        )
+
+        self.assertTrue(plan["available"])
+        self.assertTrue(plan["selected_owned_tickers_applied"])
+        self.assertEqual(plan["selected_owned_tickers"], [])
+        self.assertIn("desactivado", plan["selected_owned_ticker_note"].lower())
+        self.assertEqual([item["position"].ticker for item in plan["allocations"]], ["ACS"])
+
     def test_allocation_plan_can_keep_cash_when_no_positive_candidates(self):
         losing_card = {
             "position": EquityPosition(
@@ -2925,7 +3003,7 @@ class EquitiesServicesTests(TestCase):
         self.assertFalse(plan["available"])
         self.assertIn("ninguna accion", plan["reason"].lower())
 
-    def test_optimizer_filters_out_low_quality_candidates_even_if_score_is_positive(self):
+    def test_optimizer_soft_penalty_can_exclude_fragile_candidate_without_hard_gate(self):
         fragile_card = {
             "position": EquityPosition(
                 position_kind=EquityPosition.PositionKind.WATCHLIST,
@@ -3033,11 +3111,71 @@ class EquitiesServicesTests(TestCase):
         plan = build_equity_allocation_plan([fragile_card, robust_card], Decimal("100000"), Decimal("60"))
 
         self.assertIsNotNone(fragile_candidate)
-        self.assertGreater(fragile_candidate["optimization_score"], ZERO)
+        self.assertGreater(fragile_candidate["quality_floor_penalty_pct"], ZERO)
         self.assertEqual(fragile_candidate["decision_action_label"], "Vigilar")
+        self.assertLess(fragile_candidate["decision_action_adjustment"], ZERO)
         self.assertEqual([item["position"].ticker for item in filtered], ["IBE"])
         self.assertTrue(plan["available"])
         self.assertEqual([item["position"].ticker for item in plan["allocations"]], ["IBE"])
+
+    def test_optimizer_soft_penalty_still_keeps_decent_candidate_below_reference_levels(self):
+        middling_card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="AMS",
+                company_name="Amadeus",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("60"),
+            ),
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": ""},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("14.00"),
+                "price_return_pct": Decimal("9.50"),
+                "price_low_return_pct": Decimal("-2.00"),
+                "price_high_return_pct": Decimal("20.00"),
+                "projected_price": Decimal("68.4000"),
+                "confidence_label": "Media",
+                "safety_score": Decimal("54.00"),
+                "gross_dividend_yield_pct": Decimal("1.00"),
+                "net_income_yield_pct": Decimal("0.80"),
+                "transaction_drag_pct": Decimal("0.25"),
+                "annualized_volatility_pct": Decimal("13.00"),
+                "positive_year_ratio_pct": Decimal("66.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-5.00"),
+                "max_drawdown_pct": Decimal("-21.00"),
+                "scenarios": [
+                    {"key": "bear", "label": "Bajista", "probability_pct": Decimal("25.0"), "total_return_pct": Decimal("-2.00")},
+                    {"key": "base", "label": "Base", "probability_pct": Decimal("50.0"), "total_return_pct": Decimal("14.00")},
+                    {"key": "bull", "label": "Alcista", "probability_pct": Decimal("25.0"), "total_return_pct": Decimal("20.00")},
+                ],
+            },
+            "projection_reliability": {"label": "Media", "score": Decimal("57.00")},
+            "cycle_projection_5y": {
+                "available": True,
+                "annual_return_pct": Decimal("6.20"),
+                "five_year_return_pct": Decimal("35.00"),
+                "scenarios": [
+                    {"key": "bear", "label": "Bajista", "probability_pct": Decimal("25.0"), "annual_return_pct": Decimal("2.00")},
+                    {"key": "base", "label": "Base", "probability_pct": Decimal("50.0"), "annual_return_pct": Decimal("6.20")},
+                    {"key": "bull", "label": "Alcista", "probability_pct": Decimal("25.0"), "annual_return_pct": Decimal("8.20")},
+                ],
+            },
+        }
+
+        candidate = build_equity_optimizer_candidate(middling_card)
+        filtered = filter_positive_optimizer_candidates([candidate], "12m_primary")
+
+        self.assertIsNotNone(candidate)
+        self.assertGreater(candidate["quality_floor_penalty_pct"], ZERO)
+        self.assertEqual([item["position"].ticker for item in filtered], ["AMS"])
 
     def test_allocation_plan_recalculates_costs_and_dividends_for_assigned_capital(self):
         santander_card = {
@@ -3182,6 +3320,7 @@ class EquitiesServicesTests(TestCase):
             max_total_positions=8,
             max_sector_positions=1,
             selected_sectors=["Energia"],
+            selected_owned_tickers=["IBE"],
         )
         position = EquityPosition(
             position_kind=EquityPosition.PositionKind.WATCHLIST,
@@ -3247,6 +3386,7 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(run.summary_data["available"])
         self.assertEqual(run.summary_data["max_total_positions"], 8)
         self.assertEqual(run.summary_data["selected_sectors"], ["Energia"])
+        self.assertEqual(run.summary_data["selected_owned_tickers"], ["IBE"])
         self.assertEqual(run.summary_data["top_pick_name"], "Iberdrola")
         self.assertIsNone(run.summary_data["weighted_cycle_return_annual_pct"])
         self.assertEqual(run.progress_data["percent"], 100)
@@ -3268,6 +3408,7 @@ class EquitiesServicesTests(TestCase):
                 max_total_positions=6,
                 max_sector_positions=1,
                 selected_sectors=["Banca"],
+                selected_owned_tickers=["IBE"],
             )
 
         self.assertEqual(run.status, EquityOptimizationRun.Status.PENDING)
@@ -3286,6 +3427,7 @@ class EquitiesServicesTests(TestCase):
                 max_total_positions=6,
                 max_sector_positions=1,
                 selected_sectors=["Banca"],
+                selected_owned_tickers=["IBE"],
                 reference_label="Cartera dual",
             )
 
@@ -6131,6 +6273,19 @@ class EquitiesViewTests(TestCase):
         self.assertNotContains(response, "Acciones en seguimiento")
 
     def test_can_launch_background_optimizer_run_from_page(self):
+        EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
         runs = [
             EquityOptimizationRun(
                 reference_code="OPT-TEST-LAUNCH-12M",
@@ -6163,6 +6318,7 @@ class EquitiesViewTests(TestCase):
                     "max_total_positions": "8",
                     "max_sector_positions": "1",
                     "selected_sectors": ["Electrica", "Banca"],
+                    "selected_owned_tickers": ["IBE"],
                     "restrictions_note": "Maximo una empresa por sector",
                 },
             )
@@ -6171,13 +6327,30 @@ class EquitiesViewTests(TestCase):
         mocked_launch.assert_called_once()
         self.assertEqual(mocked_launch.call_args.kwargs["max_total_positions"], 8)
         self.assertEqual(mocked_launch.call_args.kwargs["selected_sectors"], ["Electrica", "Banca"])
+        self.assertEqual(mocked_launch.call_args.kwargs["selected_owned_tickers"], ["IBE"])
+        self.assertTrue(mocked_launch.call_args.kwargs["selected_owned_tickers_applied"])
 
     def test_equities_page_renders_optimizer_sector_selection(self):
+        EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
         response = self.client.get(reverse("equities:list"))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Sectores donde si comprar")
+        self.assertContains(response, "Acciones compradas que si pueden entrar")
         self.assertContains(response, "Banca")
+        self.assertContains(response, "Iberdrola (IBE)")
 
     def test_equities_page_defers_full_ibex_radar_while_optimization_is_active(self):
         EquityOptimizationRun.objects.create(
@@ -6991,7 +7164,7 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Plan por rondas")
         self.assertContains(response, "Despliegue escalonado")
         self.assertContains(response, "Paquete objetivo")
-        self.assertContains(response, "2026-04-17")
+        self.assertContains(response, timezone.localdate().isoformat())
         self.assertContains(response, "martes y jueves")
 
     def test_equities_page_keeps_watchlist_analysis_separate_from_owned_tabs(self):

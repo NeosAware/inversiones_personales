@@ -296,16 +296,28 @@ class EquityAllocationOptimizerForm(forms.Form):
         help_text="Si no marcas ninguno, la optimizacion puede elegir cualquier sector del IBEX.",
         widget=forms.CheckboxSelectMultiple,
     )
+    selected_owned_tickers = forms.MultipleChoiceField(
+        required=False,
+        choices=(),
+        label="Acciones compradas que si pueden entrar",
+        help_text=(
+            "Se marcan por defecto. Si desmarcas una accion comprada, la optimizacion no la elegira aunque salga bien puntuada."
+        ),
+        widget=forms.CheckboxSelectMultiple,
+    )
 
     def __init__(self, *args, **kwargs):
         default_total_investment = kwargs.pop("default_total_investment", Decimal("100000"))
         sector_choices = kwargs.pop("sector_choices", ())
+        owned_ticker_choices = kwargs.pop("owned_ticker_choices", ())
         super().__init__(*args, **kwargs)
         self.fields["total_investment"].initial = default_total_investment
         self.fields["max_company_pct"].initial = Decimal("20")
         self.fields["max_total_positions"].initial = 0
         self.fields["max_sector_positions"].initial = 0
         self.fields["selected_sectors"].choices = sector_choices
+        self.fields["selected_owned_tickers"].choices = owned_ticker_choices
+        self.fields["selected_owned_tickers"].initial = [value for value, _ in owned_ticker_choices]
         self.fields["total_investment"].widget.attrs.update(
             {
                 "placeholder": "Ejemplo: 100000",
@@ -341,6 +353,11 @@ class EquityAllocationOptimizerForm(forms.Form):
             str(sector or "").strip()
             for sector in cleaned_data.get("selected_sectors") or []
             if str(sector or "").strip()
+        ]
+        cleaned_data["selected_owned_tickers"] = [
+            str(ticker or "").strip().upper()
+            for ticker in cleaned_data.get("selected_owned_tickers") or []
+            if str(ticker or "").strip()
         ]
         return cleaned_data
 

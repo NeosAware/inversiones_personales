@@ -207,6 +207,8 @@ def scheduled_optimization_matches_policy(run: EquityOptimizationRun) -> bool:
         and int(run.max_total_positions or 0) == SCHEDULED_OPTIMIZATION_MAX_TOTAL_POSITIONS
         and int(run.max_sector_positions or 0) == SCHEDULED_OPTIMIZATION_MAX_SECTOR_POSITIONS
         and not list(run.selected_sectors or [])
+        and not bool(run.selected_owned_tickers_applied)
+        and not list(run.selected_owned_tickers or [])
     )
 
 
@@ -220,6 +222,8 @@ def purge_stale_scheduled_optimization_runs(*, as_of: date | None = None) -> int
         "max_total_positions",
         "max_sector_positions",
         "selected_sectors",
+        "selected_owned_tickers_applied",
+        "selected_owned_tickers",
         "progress_data",
         "summary_data",
     ):
@@ -794,6 +798,9 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "total_investment": float(plan.get("total_investment", 0) or 0),
         "max_total_positions": int(plan.get("max_total_positions", 0) or 0),
         "selected_sectors": list(plan.get("selected_sectors") or []),
+        "selected_owned_tickers": list(plan.get("selected_owned_tickers") or []),
+        "selected_owned_tickers_applied": bool(plan.get("selected_owned_tickers_applied")),
+        "owned_positions_available_count": int(plan.get("owned_positions_available_count", 0) or 0),
         "projected_gain_total": float(plan.get("projected_gain_total", 0) or 0),
         "weighted_return_pct": float(plan.get("weighted_return_pct", 0) or 0) if plan.get("weighted_return_pct") is not None else None,
         "weighted_low_return_pct": float(plan.get("weighted_low_return_pct", 0) or 0) if plan.get("weighted_low_return_pct") is not None else None,
@@ -909,6 +916,15 @@ def build_optimization_comparison_context(runs: list[EquityOptimizationRun]) -> 
                 "max_sector_positions": summary.get("max_sector_positions") or 0,
                 "selected_sectors": list(summary.get("selected_sectors") or run.selected_sectors or []),
                 "selected_sectors_label": ", ".join(summary.get("selected_sectors") or run.selected_sectors or []),
+                "selected_owned_tickers": list(summary.get("selected_owned_tickers") or run.selected_owned_tickers or []),
+                "selected_owned_tickers_label": ", ".join(summary.get("selected_owned_tickers") or run.selected_owned_tickers or []),
+                "selected_owned_tickers_applied": bool(
+                    summary.get("selected_owned_tickers_applied")
+                    or run.selected_owned_tickers_applied
+                ),
+                "owned_positions_available_count": int(
+                    summary.get("owned_positions_available_count", 0) or 0
+                ),
                 "strategy_label": summary.get("strategy_label") or (run.progress_data or {}).get("strategy_label", ""),
                 "allocations_count": summary.get("allocations_count", len(allocations)),
                 "constituents_label": constituents_label,
@@ -1473,6 +1489,8 @@ def process_equity_optimization_run(run_id: int) -> EquityOptimizationRun:
             run.max_total_positions,
             run.max_sector_positions,
             selected_sectors=run.selected_sectors,
+            selected_owned_tickers=run.selected_owned_tickers,
+            selected_owned_tickers_applied=run.selected_owned_tickers_applied,
             strategy_mode=strategy_mode,
         )
         preview_allocations = build_allocation_preview(plan)
@@ -1553,6 +1571,8 @@ def launch_equity_optimization_run(
     max_total_positions: int,
     max_sector_positions: int,
     selected_sectors: list[str],
+    selected_owned_tickers: list[str],
+    selected_owned_tickers_applied: bool = False,
     requested_by=None,
     reference_label: str = "",
     restrictions_note: str = "",
@@ -1573,6 +1593,8 @@ def launch_equity_optimization_run(
         max_total_positions=max_total_positions,
         max_sector_positions=max_sector_positions,
         selected_sectors=selected_sectors,
+        selected_owned_tickers_applied=selected_owned_tickers_applied,
+        selected_owned_tickers=selected_owned_tickers,
         restrictions_note=restrictions_note,
         progress_data={
             **build_optimizer_progress_payload(strategy["mode"], "Pendiente de analisis"),
@@ -1594,6 +1616,8 @@ def launch_equity_optimization_run_pair(
     max_total_positions: int,
     max_sector_positions: int,
     selected_sectors: list[str],
+    selected_owned_tickers: list[str],
+    selected_owned_tickers_applied: bool = False,
     requested_by=None,
     reference_label: str = "",
     restrictions_note: str = "",
@@ -1613,6 +1637,8 @@ def launch_equity_optimization_run_pair(
                 max_total_positions=max_total_positions,
                 max_sector_positions=max_sector_positions,
                 selected_sectors=selected_sectors,
+                selected_owned_tickers=selected_owned_tickers,
+                selected_owned_tickers_applied=selected_owned_tickers_applied,
                 requested_by=requested_by,
                 reference_label=reference_label,
                 restrictions_note=restrictions_note,
@@ -1663,6 +1689,8 @@ def launch_scheduled_equity_optimization_runs(
         max_total_positions=SCHEDULED_OPTIMIZATION_MAX_TOTAL_POSITIONS,
         max_sector_positions=SCHEDULED_OPTIMIZATION_MAX_SECTOR_POSITIONS,
         selected_sectors=[],
+        selected_owned_tickers_applied=False,
+        selected_owned_tickers=[],
         reference_label=f"Optimizacion programada {analysis_date.isoformat()}",
         restrictions_note=build_scheduled_optimization_note(analysis_date, weekdays_label),
         run_inline=run_inline,

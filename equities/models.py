@@ -399,6 +399,8 @@ class EquityOptimizationRun(models.Model):
     max_total_positions = models.PositiveIntegerField(default=0)
     max_sector_positions = models.PositiveIntegerField(default=0)
     selected_sectors = models.JSONField(default=list, blank=True)
+    selected_owned_tickers_applied = models.BooleanField(default=False)
+    selected_owned_tickers = models.JSONField(default=list, blank=True)
     restrictions_note = models.TextField(blank=True)
     progress_data = models.JSONField(default=dict, blank=True)
     summary_data = models.JSONField(default=dict, blank=True)

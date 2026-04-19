@@ -79,6 +79,26 @@ class EquityPeriodBoundsMixin:
 class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, TemplateView):
     template_name = "equities/equityposition_list.html"
 
+    def _build_optimizer_owned_ticker_choices(self, positions) -> list[tuple[str, str]]:
+        choices = []
+        seen_tickers = set()
+        sorted_positions = sorted(
+            (position for position in positions if position.is_owned),
+            key=lambda position: (
+                str(position.company_name or position.ticker or "").strip().upper(),
+                str(position.ticker or "").strip().upper(),
+            ),
+        )
+        for position in sorted_positions:
+            ticker = str(position.ticker or "").strip().upper()
+            if not ticker or ticker in seen_tickers:
+                continue
+            seen_tickers.add(ticker)
+            company_name = str(position.company_name or "").strip() or ticker
+            label = company_name if company_name.upper() == ticker else f"{company_name} ({ticker})"
+            choices.append((ticker, label))
+        return choices
+
     def _ensure_purchase_forecast_baselines(self, positions):
         owned_positions = [position for position in positions if position.is_owned and position.id]
         if not owned_positions:
@@ -97,7 +117,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             )
 
     def _optimizer_requested(self) -> bool:
-        return bool(self.request.GET.getlist("selected_sectors")) or any(
+        return bool(self.request.GET.getlist("selected_sectors")) or bool(self.request.GET.getlist("selected_owned_tickers")) or any(
             self.request.GET.get(key)
             for key in ("total_investment", "max_company_pct", "max_total_positions", "max_sector_positions")
         )
@@ -208,12 +228,15 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["position_form"] = kwargs.get("position_form", EquityPositionForm())
         context["document_form"] = kwargs.get("document_form", EquityDocumentImportForm())
         optimizer_sector_choices = get_equity_optimizer_sector_choices()
+        optimizer_owned_ticker_choices = self._build_optimizer_owned_ticker_choices(positions)
+        optimizer_owned_filter_applied = bool(optimizer_owned_ticker_choices)
         optimizer_default_total = dashboard["overview"]["current_value"] or dashboard["overview"]["invested_amount"] or Decimal("100000")
         optimizer_run_form = kwargs.get(
             "optimizer_run_form",
             EquityOptimizationRunForm(
                 default_total_investment=optimizer_default_total,
                 sector_choices=optimizer_sector_choices,
+                owned_ticker_choices=optimizer_owned_ticker_choices,
             ),
         )
         optimizer_form = kwargs.get(
@@ -222,6 +245,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 self.request.GET or None,
                 default_total_investment=optimizer_default_total,
                 sector_choices=optimizer_sector_choices,
+                owned_ticker_choices=optimizer_owned_ticker_choices,
             ),
         )
         optimizer_plan = None
@@ -233,6 +257,8 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 optimizer_form.cleaned_data["max_total_positions"],
                 optimizer_form.cleaned_data["max_sector_positions"],
                 selected_sectors=optimizer_form.cleaned_data["selected_sectors"],
+                selected_owned_tickers=optimizer_form.cleaned_data["selected_owned_tickers"],
+                selected_owned_tickers_applied=optimizer_owned_filter_applied,
             )
         round_plan_default_total = max(optimizer_default_total, Decimal("70000"))
         round_plan_form = kwargs.get(
@@ -562,6 +588,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             request.POST,
             default_total_investment=optimizer_default_total,
             sector_choices=get_equity_optimizer_sector_choices(),
+            owned_ticker_choices=self._build_optimizer_owned_ticker_choices(positions),
         )
         if not form.is_valid():
             context = self.get_context_data(optimizer_run_form=form)
@@ -573,6 +600,8 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             max_total_positions=form.cleaned_data["max_total_positions"],
             max_sector_positions=form.cleaned_data["max_sector_positions"],
             selected_sectors=form.cleaned_data["selected_sectors"],
+            selected_owned_tickers=form.cleaned_data["selected_owned_tickers"],
+            selected_owned_tickers_applied=bool(self._build_optimizer_owned_ticker_choices(positions)),
             requested_by=request.user if request.user.is_authenticated else None,
             reference_label=form.cleaned_data["reference_label"],
             restrictions_note=form.cleaned_data["restrictions_note"],
