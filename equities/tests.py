@@ -19,6 +19,7 @@ from portfolio.ownership import AssetOwnershipCategory
 
 from .broker_costs import estimate_broker_costs
 from .llm_analysis import build_card_llm_context, enrich_dashboard_with_ai_analysis
+from .management.commands.import_monica_equity_positions import MONICA_EQUITY_POSITIONS
 from .models import (
     EquityClosedPosition,
     EquityNightlyAnalysisRun,
@@ -5687,6 +5688,113 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(baseline.source_analysis_date, analysis_day)
         self.assertEqual(baseline.projected_return_pct_1y, Decimal("12.50"))
         self.assertEqual(baseline.projected_price_5y, Decimal("16.4712"))
+
+    def test_import_monica_equity_positions_creates_positions_with_today_cost_basis(self):
+        analysis_date = date(2026, 4, 19)
+
+        call_command("import_monica_equity_positions", "--as-of", analysis_date.isoformat(), "--broker", "Broker Monica")
+
+        positions = EquityPosition.objects.filter(
+            ownership_category=AssetOwnershipCategory.MONICA,
+            broker="Broker Monica",
+        ).order_by("ticker")
+
+        self.assertEqual(positions.count(), len(MONICA_EQUITY_POSITIONS))
+        self.assertTrue(
+            positions.filter(
+                ticker="SAB",
+                company_name="Banco de Sabadell",
+                quote_symbol="SAB.MC",
+                opened_on=analysis_date,
+                shares=Decimal("12552.0000"),
+                average_cost_per_share=Decimal("3.3650"),
+                current_price_per_share=Decimal("3.3650"),
+            ).exists()
+        )
+        self.assertTrue(
+            positions.filter(
+                ticker="REP",
+                quote_symbol="REP.MC",
+                opened_on=analysis_date,
+                average_cost_per_share=Decimal("19.7200"),
+                current_price_per_share=Decimal("19.7200"),
+            ).exists()
+        )
+        self.assertTrue(
+            positions.filter(
+                ticker="SAN",
+                quote_symbol="SAN.MC",
+                opened_on=analysis_date,
+                average_cost_per_share=Decimal("11.0420"),
+                current_price_per_share=Decimal("11.0420"),
+            ).exists()
+        )
+        self.assertTrue(
+            positions.filter(
+                ticker="ELE",
+                quote_symbol="ELE.MC",
+                opened_on=analysis_date,
+                average_cost_per_share=Decimal("36.8800"),
+                current_price_per_share=Decimal("36.8800"),
+            ).exists()
+        )
+        cuotas_cam = positions.get(ticker="CAM")
+        self.assertEqual(cuotas_cam.company_name, "Cuotas CAM")
+        self.assertEqual(cuotas_cam.opened_on, analysis_date)
+        self.assertEqual(cuotas_cam.average_cost_per_share, Decimal("0.0000"))
+        self.assertEqual(cuotas_cam.current_price_per_share, Decimal("0.0000"))
+        self.assertIn("ISIN: ES0114400007", cuotas_cam.notes)
+        self.assertEqual(
+            EquityPriceHistory.objects.filter(
+                position__broker="Broker Monica",
+                position__ownership_category=AssetOwnershipCategory.MONICA,
+            ).count(),
+            4,
+        )
+
+    def test_import_monica_equity_positions_updates_existing_rows_without_duplicates(self):
+        analysis_date = date(2026, 4, 19)
+        existing = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.MONICA,
+            broker="Broker Monica",
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Banco Santander antiguo",
+            trade_channel=EquityPosition.TradeChannel.APP,
+            opened_on=date(2025, 1, 1),
+            shares=Decimal("1.0000"),
+            average_cost_per_share=Decimal("1.0000"),
+            current_price_per_share=Decimal("1.0000"),
+            notes="Antigua",
+        )
+        EquityTicketSnapshot.objects.create(
+            position=existing,
+            snapshot_date=date(2026, 4, 18),
+            invested_amount=Decimal("1.00"),
+            current_value=Decimal("1.00"),
+        )
+
+        call_command("import_monica_equity_positions", "--as-of", analysis_date.isoformat(), "--broker", "Broker Monica")
+
+        self.assertEqual(
+            EquityPosition.objects.filter(
+                ownership_category=AssetOwnershipCategory.MONICA,
+                broker="Broker Monica",
+                ticker="SAN",
+            ).count(),
+            1,
+        )
+        existing.refresh_from_db()
+        self.assertEqual(existing.company_name, "Banco Santander")
+        self.assertEqual(existing.opened_on, analysis_date)
+        self.assertEqual(existing.shares, Decimal("2550.0000"))
+        self.assertEqual(existing.average_cost_per_share, Decimal("11.0420"))
+        self.assertEqual(existing.current_price_per_share, Decimal("11.0420"))
+        self.assertFalse(existing.ticket_snapshots.exists())
 
     def test_can_create_equity_position_by_only_typing_indra(self):
         response = self.client.post(
