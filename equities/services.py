@@ -2540,6 +2540,19 @@ def format_axis_value(value: Decimal | None) -> str:
     return f"{value:.2f}"
 
 
+def format_percentage_axis_value(value: Decimal | None) -> str:
+    if value is None:
+        return "-"
+    absolute = abs(value)
+    if absolute >= Decimal("1000"):
+        return f"{value:.0f}"
+    if absolute >= Decimal("100"):
+        return f"{value:.0f}"
+    if absolute >= Decimal("10"):
+        return f"{value:.1f}"
+    return f"{value:.2f}"
+
+
 def build_time_axis_markers(
     point_dates: list[date],
     width: int = 640,
@@ -4040,10 +4053,20 @@ def build_value_tracking_chart(
     actual_series: list[dict],
     expected_series: list[dict],
     benchmark_series: list[dict] | None = None,
+    value_suffix: str = "EUR",
+    axis_formatter=None,
     width: int = 640,
     height: int = 220,
     padding: int = 18,
 ) -> dict:
+    axis_formatter = axis_formatter or format_axis_value
+
+    def format_chart_value(value: Decimal | None) -> str:
+        formatted = axis_formatter(value)
+        if formatted == "-":
+            return formatted
+        return f"{formatted} {value_suffix}".strip()
+
     def normalize_series(points: list[dict]) -> list[dict]:
         grouped = {}
         for point in points:
@@ -4106,7 +4129,7 @@ def build_value_tracking_chart(
                 {
                     "x": f"{x:.1f}",
                     "y": f"{y:.1f}",
-                    "value_label": f"{format_axis_value(point['value'])} EUR",
+                    "value_label": format_chart_value(point["value"]),
                     "date_label": point["date"].isoformat(),
                     "key": f"{prefix}-{point['date'].isoformat()}",
                 }
@@ -4124,8 +4147,8 @@ def build_value_tracking_chart(
         "actual_points": actual_point_rows,
         "expected_points": expected_point_rows,
         "benchmark_points": benchmark_point_rows,
-        "min_label": f"{format_axis_value(series_min)} EUR",
-        "max_label": f"{format_axis_value(series_max)} EUR",
+        "min_label": format_chart_value(series_min),
+        "max_label": format_chart_value(series_max),
         "start_label": min_date.isoformat(),
         "latest_label": actual_points[-1]["date"].isoformat(),
         "projection_end_label": expected_points[-1]["date"].isoformat(),
@@ -4562,6 +4585,54 @@ def build_global_ticket_daily_change_pct(ticket_items: list[dict]) -> Decimal | 
         percentage_change(comparable_base + daily_change_value, comparable_base),
         "0.01",
     )
+
+
+def resolve_global_tracking_baseline_value_on_date(ticket_items: list[dict], point_date: date | None) -> Decimal:
+    if point_date is None:
+        return ZERO
+    return quantize_decimal(
+        sum(
+            (
+                getattr(item.get("baseline_snapshot"), "current_value", None) or ZERO
+            )
+            for item in ticket_items
+            if getattr(item.get("baseline_snapshot"), "snapshot_date", None) is not None
+            and item["baseline_snapshot"].snapshot_date <= point_date
+        ),
+        "0.01",
+    ) or ZERO
+
+
+def build_tracking_series_vs_dynamic_baseline(
+    series: list[dict],
+    ticket_items: list[dict],
+    *,
+    as_percentage: bool = False,
+) -> list[dict]:
+    transformed = []
+    for point in series:
+        point_date = point.get("date")
+        point_value = point.get("value")
+        if point_date is None or point_value is None:
+            continue
+        baseline_value = resolve_global_tracking_baseline_value_on_date(ticket_items, point_date)
+        if baseline_value <= ZERO:
+            continue
+        point_value_decimal = Decimal(str(point_value))
+        transformed_value = (
+            percentage_change(point_value_decimal, baseline_value)
+            if as_percentage
+            else quantize_decimal(point_value_decimal - baseline_value, "0.01")
+        )
+        if transformed_value is None:
+            continue
+        transformed.append(
+            {
+                "date": point_date,
+                "value": quantize_decimal(transformed_value, "0.01") or ZERO,
+            }
+        )
+    return transformed
 
 
 def add_calendar_years(value: date | None, years: int) -> date | None:
@@ -5240,10 +5311,65 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         tracked_days,
     )
     daily_change_pct = build_global_ticket_daily_change_pct(ticket_items)
+    net_series_12m = build_tracking_series_vs_dynamic_baseline(actual_series, ticket_items)
+    net_expected_series_12m = build_tracking_series_vs_dynamic_baseline(expected_series, ticket_items)
+    net_series_5y = build_tracking_series_vs_dynamic_baseline(actual_series, ticket_items)
+    net_expected_series_5y = build_tracking_series_vs_dynamic_baseline(expected_series_5y, ticket_items)
+    return_series_12m = build_tracking_series_vs_dynamic_baseline(actual_series, ticket_items, as_percentage=True)
+    return_expected_series_12m = build_tracking_series_vs_dynamic_baseline(expected_series, ticket_items, as_percentage=True)
+    return_benchmark_series = build_tracking_series_vs_dynamic_baseline(
+        benchmark.get("series", []),
+        ticket_items,
+        as_percentage=True,
+    )
+    return_series_5y = build_tracking_series_vs_dynamic_baseline(actual_series, ticket_items, as_percentage=True)
+    return_expected_series_5y = build_tracking_series_vs_dynamic_baseline(
+        expected_series_5y,
+        ticket_items,
+        as_percentage=True,
+    )
+    net_chart_12m = build_value_tracking_chart(
+        net_series_12m,
+        net_expected_series_12m,
+    )
+    net_chart_5y = build_value_tracking_chart(
+        net_series_5y,
+        net_expected_series_5y,
+    )
+    return_chart_12m = build_value_tracking_chart(
+        return_series_12m,
+        return_expected_series_12m,
+        benchmark_series=return_benchmark_series,
+        value_suffix="%",
+        axis_formatter=format_percentage_axis_value,
+    )
+    return_chart_5y = build_value_tracking_chart(
+        return_series_5y,
+        return_expected_series_5y,
+        benchmark_series=return_benchmark_series,
+        value_suffix="%",
+        axis_formatter=format_percentage_axis_value,
+    )
+    expected_net_value_12m = (
+        quantize_decimal((expected_total_value_12m or ZERO) - baseline_value, "0.01")
+        if expected_total_value_12m is not None
+        else None
+    )
+    expected_net_value_5y = (
+        quantize_decimal((expected_total_value_5y or ZERO) - baseline_value, "0.01")
+        if expected_total_value_5y is not None
+        else None
+    )
+    expected_return_pct_12m = percentage_change(expected_total_value_12m, baseline_value)
+    expected_return_pct_5y = percentage_change(expected_total_value_5y, baseline_value)
     return {
         "available": True,
         "chart": chart,
         "chart_5y": chart_5y,
+        "net_chart_12m": net_chart_12m,
+        "net_chart_5y": net_chart_5y,
+        "return_chart_12m": return_chart_12m,
+        "return_chart_5y": return_chart_5y,
         "baseline_value": baseline_value,
         "latest_value": latest_actual,
         "expected_today_value": current_expected_value,
@@ -5251,6 +5377,10 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         "expected_market_value_12m": expected_series[-1]["value"] if expected_series else baseline_value,
         "expected_total_value_12m": quantize_decimal(expected_total_value_12m, "0.01") or ZERO,
         "expected_total_value_5y": quantize_decimal(expected_total_value_5y, "0.01") or ZERO,
+        "expected_net_value_12m": expected_net_value_12m,
+        "expected_net_value_5y": expected_net_value_5y,
+        "expected_return_pct_12m": quantize_decimal(expected_return_pct_12m, "0.01"),
+        "expected_return_pct_5y": quantize_decimal(expected_return_pct_5y, "0.01"),
         "actual_change_pct": actual_change_pct,
         "expected_change_pct": percentage_change(current_expected_value, baseline_value)
         if current_expected_value is not None
