@@ -17,6 +17,8 @@ from .services import (
     build_bank_liquidity_context,
     build_overview_metrics,
     build_portfolio_dashboard,
+    build_snapshot_context,
+    build_svg_polyline,
     build_spending_alerts,
     capture_portfolio_snapshot,
 )
@@ -194,6 +196,40 @@ class PortfolioServicesTests(TestCase):
         dashboard = build_portfolio_dashboard()
 
         self.assertEqual(dashboard["summary"]["current_value"], Decimal("1500.00"))
+
+    def test_build_snapshot_context_uses_comparable_return_curve_and_keeps_full_history(self):
+        for day, invested, current, total_return_pct in (
+            (date(2026, 4, 1), Decimal("100000.00"), Decimal("101000.00"), Decimal("1.00")),
+            (date(2026, 4, 2), Decimal("100000.00"), Decimal("101500.00"), Decimal("1.50")),
+            (date(2026, 4, 3), Decimal("135000.00"), Decimal("136500.00"), Decimal("1.11")),
+            (date(2026, 4, 4), Decimal("135000.00"), Decimal("136800.00"), Decimal("1.33")),
+            (date(2026, 4, 5), Decimal("135000.00"), Decimal("137025.00"), Decimal("1.50")),
+            (date(2026, 4, 6), Decimal("135000.00"), Decimal("137295.00"), Decimal("1.70")),
+            (date(2026, 4, 7), Decimal("135000.00"), Decimal("137430.00"), Decimal("1.80")),
+            (date(2026, 4, 8), Decimal("135000.00"), Decimal("137565.00"), Decimal("1.90")),
+            (date(2026, 4, 9), Decimal("135000.00"), Decimal("137700.00"), Decimal("2.00")),
+            (date(2026, 4, 10), Decimal("135000.00"), Decimal("137835.00"), Decimal("2.10")),
+            (date(2026, 4, 11), Decimal("135000.00"), Decimal("137970.00"), Decimal("2.20")),
+        ):
+            PortfolioSnapshot.objects.create(
+                snapshot_date=day,
+                invested_amount=invested,
+                current_value=current,
+                annual_income=Decimal("0.00"),
+                total_return_eur=current - invested,
+                total_return_pct=total_return_pct,
+            )
+
+        context = build_snapshot_context()
+
+        self.assertEqual(len(context["snapshots"]), 11)
+        self.assertEqual(context["snapshots"][0].snapshot_date, date(2026, 4, 11))
+        self.assertEqual(context["snapshots"][-1].snapshot_date, date(2026, 4, 1))
+        self.assertEqual(
+            context["snapshot_line"],
+            build_svg_polyline([Decimal("1.00"), Decimal("1.50"), Decimal("1.11"), Decimal("1.33"), Decimal("1.50"), Decimal("1.70"), Decimal("1.80"), Decimal("1.90"), Decimal("2.00"), Decimal("2.10"), Decimal("2.20")]),
+        )
+        self.assertEqual(context["comparable_change_pp"], Decimal("0.10"))
 
     def test_build_spending_alerts_flags_expense_spike(self):
         HouseholdAlertSettings.objects.update_or_create(
@@ -480,3 +516,28 @@ class PortfolioDashboardViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Renta anual neta")
         self.assertContains(response, "intereses netos bancarios")
+
+    def test_dashboard_uses_scrollable_history_table_and_comparable_curve_copy(self):
+        PortfolioSnapshot.objects.create(
+            snapshot_date=date(2026, 4, 18),
+            invested_amount=Decimal("100000.00"),
+            current_value=Decimal("100800.00"),
+            annual_income=Decimal("0.00"),
+            total_return_eur=Decimal("800.00"),
+            total_return_pct=Decimal("0.80"),
+        )
+        PortfolioSnapshot.objects.create(
+            snapshot_date=date(2026, 4, 19),
+            invested_amount=Decimal("135000.00"),
+            current_value=Decimal("136080.00"),
+            annual_income=Decimal("0.00"),
+            total_return_eur=Decimal("1080.00"),
+            total_return_pct=Decimal("0.80"),
+        )
+
+        response = self.client.get(reverse("portfolio:dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "La curva usa la rentabilidad total historica")
+        self.assertContains(response, "Cambio comparable diario")
+        self.assertContains(response, "portfolio-history-table-scroll")

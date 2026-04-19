@@ -67,6 +67,22 @@
     .portfolio-table-card{
       padding-top:18px;
     }
+    .portfolio-history-table-scroll{
+      max-height:332px;
+      overflow:auto;
+      border:1px solid #e4ecf2;
+      border-radius:18px;
+      background:linear-gradient(180deg, #ffffff 0%, #f7fafc 100%);
+    }
+    .portfolio-history-table-scroll table{
+      margin:0;
+    }
+    .portfolio-history-table-scroll thead th{
+      position:sticky;
+      top:0;
+      z-index:1;
+      background:#f7fafc;
+    }
     .portfolio-chart{
       background:#f7fafc;
       border:1px solid var(--line);
@@ -353,6 +369,7 @@
   <p class="section-title" style="margin-top:28px;">Valor historico de la cartera</p>
   <div class="portfolio-split">
     <section class="card portfolio-panel">
+      <div class="metric-sub" style="margin-bottom:14px;">La curva usa la rentabilidad total historica para evitar saltos artificiales cuando entran ingresos extraordinarios, cobros puntuales o nuevas aportaciones.</div>
       {% if snapshot_line %}
         <svg viewBox="0 0 720 220" width="100%" height="220" class="portfolio-chart">
           <line x1="18" y1="202" x2="702" y2="202" stroke="#d3e1ea" stroke-width="1" />
@@ -361,35 +378,39 @@
         </svg>
         <div class="meta">
           {% if latest_snapshot %}<span class="pill">Ultimo valor {{ latest_snapshot.current_value|floatformat:2 }} EUR</span>{% endif %}
-          {% if current_change_pct is not None %}<span class="pill">Variacion diaria {{ current_change_pct|floatformat:2 }} %</span>{% endif %}
+          {% if latest_snapshot %}<span class="pill">Rentabilidad total {{ latest_snapshot.total_return_pct|floatformat:2 }} %</span>{% endif %}
+          {% if comparable_change_pp is not None %}<span class="pill">Cambio comparable diario {{ comparable_change_pp|floatformat:2 }} p.p.</span>{% endif %}
         </div>
       {% else %}
         <div class="metric-sub">Guarda varias fotos para empezar a ver el historico de inversion del hogar.</div>
       {% endif %}
     </section>
     <section class="card table-card portfolio-table-card">
-      <table>
-        <thead>
-          <tr>
-            <th>Fecha</th>
-            <th>Invertido</th>
-            <th>Valor actual</th>
-            <th>Rentabilidad total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for snapshot in snapshots %}
+      <div class="metric-sub" style="margin-bottom:12px;">Se muestran todas las fotos guardadas en una tabla con altura fija para poder recorrer el historico sin alargar la pantalla.</div>
+      <div class="portfolio-history-table-scroll">
+        <table>
+          <thead>
             <tr>
-              <td>{{ snapshot.snapshot_date|date:"Y-m-d" }}</td>
-              <td>{{ snapshot.invested_amount|floatformat:2 }}</td>
-              <td>{{ snapshot.current_value|floatformat:2 }}</td>
-              <td>{{ snapshot.total_return_pct|floatformat:2 }} %</td>
+              <th>Fecha</th>
+              <th>Invertido</th>
+              <th>Valor actual</th>
+              <th>Rentabilidad total</th>
             </tr>
-          {% empty %}
-            <tr><td colspan="4" class="muted">Todavia no hay fotos de cartera.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {% for snapshot in snapshots %}
+              <tr>
+                <td>{{ snapshot.snapshot_date|date:"Y-m-d" }}</td>
+                <td>{{ snapshot.invested_amount|floatformat:2 }}</td>
+                <td>{{ snapshot.current_value|floatformat:2 }}</td>
+                <td>{{ snapshot.total_return_pct|floatformat:2 }} %</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="4" class="muted">Todavia no hay fotos de cartera.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </section>
   </div>
 

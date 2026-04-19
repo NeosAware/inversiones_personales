@@ -460,20 +460,20 @@ def ensure_daily_snapshot():
 
 def build_snapshot_context():
     snapshots = list(PortfolioSnapshot.objects.order_by("snapshot_date"))
-    chart_values = [snapshot.current_value for snapshot in snapshots]
+    chart_values = [snapshot.total_return_pct for snapshot in snapshots]
     chart_line = build_svg_polyline(chart_values)
     latest_snapshot = snapshots[-1] if snapshots else None
     previous_snapshot = snapshots[-2] if len(snapshots) >= 2 else None
-    current_change_pct = None
-    if latest_snapshot and previous_snapshot and previous_snapshot.current_value:
-        current_change_pct = ((latest_snapshot.current_value / previous_snapshot.current_value) - 1) * Decimal("100")
+    comparable_change_pp = None
+    if latest_snapshot and previous_snapshot:
+        comparable_change_pp = latest_snapshot.total_return_pct - previous_snapshot.total_return_pct
 
     return {
-        "snapshots": list(reversed(snapshots[-10:])),
+        "snapshots": list(reversed(snapshots)),
         "snapshot_count": len(snapshots),
         "snapshot_line": chart_line,
         "latest_snapshot": latest_snapshot,
-        "current_change_pct": current_change_pct,
+        "comparable_change_pp": comparable_change_pp,
     }
 
 
