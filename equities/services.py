@@ -1238,6 +1238,170 @@ def build_reference_guide_row(playbook: dict, card: dict | None = None, company:
     }
 
 
+def find_workbook_company_for_position(position: EquityPosition) -> dict | None:
+    workbook_snapshot = load_ibex_reference_workbook_snapshot()
+    if not workbook_snapshot.get("available"):
+        return None
+    companies_by_key = workbook_snapshot.get("companies_by_key") or {}
+    lookup_keys = build_security_lookup_keys(
+        ticker=position.ticker,
+        company_name=position.company_name,
+        quote_symbol=position.quote_symbol,
+    )
+    for lookup_key in lookup_keys:
+        company = companies_by_key.get(lookup_key)
+        if company:
+            return company
+    return None
+
+
+def resolve_per_valuation_thresholds(sector_label: str) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    normalized_sector = normalize_company_lookup(sector_label)
+    if any(keyword in normalized_sector for keyword in ("BANCA", "SEGUROS")):
+        return Decimal("7.00"), Decimal("10.00"), Decimal("13.00"), Decimal("16.00")
+    if any(keyword in normalized_sector for keyword in ("ELECTRICA", "REDES", "INFRAESTRUCTURAS", "CONCESIONES", "TELECOMUNICACIONES", "GAS")):
+        return Decimal("10.00"), Decimal("15.00"), Decimal("20.00"), Decimal("26.00")
+    if any(keyword in normalized_sector for keyword in ("SOLAR", "RENOVABLE", "TECNOLOGIA", "VIAJES", "DEFENSA", "SALUD")):
+        return Decimal("12.00"), Decimal("18.00"), Decimal("26.00"), Decimal("38.00")
+    if any(keyword in normalized_sector for keyword in ("CONSUMO", "INMOBILIARIO")):
+        return Decimal("10.00"), Decimal("16.00"), Decimal("23.00"), Decimal("32.00")
+    return Decimal("8.00"), Decimal("13.00"), Decimal("20.00"), Decimal("28.00")
+
+
+def build_equity_per_valuation(
+    position: EquityPosition,
+    fundamentals: dict | None = None,
+    *,
+    sector_label: str = "",
+) -> dict:
+    fundamentals = fundamentals or {}
+    workbook_company = find_workbook_company_for_position(position)
+    workbook_per = workbook_company.get("per_2025") if workbook_company else None
+    derived_per = fundamentals.get("derived_per")
+    latest_net_income_value = fundamentals.get("latest_net_income_value")
+
+    per_value = workbook_per if workbook_per is not None else derived_per
+    source_label = ""
+    source_short_label = ""
+    source_kind = ""
+    if workbook_per is not None:
+        source_label = "PER 2025e de la guia IBEX"
+        source_short_label = "2025e"
+        source_kind = "workbook"
+    elif derived_per is not None:
+        source_label = "PER derivado de capitalizacion y beneficio neto"
+        source_short_label = "actual"
+        source_kind = "fundamentals"
+
+    lower_value, fair_value, demanding_value, stretched_value = resolve_per_valuation_thresholds(sector_label)
+    if per_value is None:
+        if latest_net_income_value is not None and latest_net_income_value <= ZERO:
+            return {
+                "available": True,
+                "per_value": None,
+                "source_label": "Sin PER util por beneficio neto negativo",
+                "source_short_label": "sin PER",
+                "source_kind": "negative_earnings",
+                "label": "Sin PER util",
+                "tone": "warn",
+                "score": Decimal("-4.00"),
+                "note": "El beneficio neto es negativo o nulo, asi que el PER no sirve para valorar bien esta accion ahora mismo.",
+            }
+        return {
+            "available": False,
+            "per_value": None,
+            "source_label": "",
+            "source_short_label": "",
+            "source_kind": "",
+            "label": "Sin PER",
+            "tone": "neutral",
+            "score": ZERO,
+            "note": "No hay un PER fiable disponible para usarlo como filtro de valoracion.",
+        }
+
+    if per_value <= ZERO:
+        label = "Sin PER util"
+        tone = "warn"
+        score = Decimal("-4.00")
+        note = "El PER no es util porque el beneficio es demasiado debil o no comparable."
+    elif per_value <= lower_value:
+        label = "Barata"
+        tone = "good"
+        score = Decimal("6.00")
+        note = "El PER se mueve en una zona baja para su sector y da apoyo a la valoracion."
+    elif per_value <= fair_value:
+        label = "Ajustada"
+        tone = "good"
+        score = Decimal("3.00")
+        note = "El PER sigue razonable para su sector y no frena la tesis."
+    elif per_value <= demanding_value:
+        label = "Razonable"
+        tone = "neutral"
+        score = ZERO
+        note = "El PER queda en una zona intermedia y no cambia mucho la lectura."
+    elif per_value <= stretched_value:
+        label = "Exigente"
+        tone = "warn"
+        score = Decimal("-4.00")
+        note = "El PER ya exige bastante crecimiento y enfria parte de la valoracion."
+    else:
+        label = "Muy exigente"
+        tone = "warn"
+        score = Decimal("-7.00")
+        note = "El PER esta muy estirado para su sector y resta margen de seguridad."
+
+    if source_kind == "fundamentals":
+        score = quantize_decimal(score * Decimal("0.85")) or ZERO
+        note += " Esta lectura sale del ultimo beneficio neto disponible, no de una estimacion 2025e."
+
+    return {
+        "available": True,
+        "per_value": quantize_decimal(per_value, "0.01"),
+        "source_label": source_label,
+        "source_short_label": source_short_label,
+        "source_kind": source_kind,
+        "label": label,
+        "tone": tone,
+        "score": quantize_decimal(score),
+        "note": note,
+        "sector_thresholds": {
+            "cheap_limit": lower_value,
+            "fair_limit": fair_value,
+            "demanding_limit": demanding_value,
+            "stretched_limit": stretched_value,
+        },
+    }
+
+
+def apply_per_valuation_overlay(projection: dict, valuation: dict | None = None) -> dict:
+    valuation = valuation or {}
+    if not projection.get("available"):
+        return projection
+
+    valuation_score = valuation.get("score") or ZERO
+    decision_score = projection.get("decision_score")
+    if decision_score is not None:
+        decision_score = quantize_decimal(decision_score + (valuation_score * Decimal("1.15")))
+    explanation = str(projection.get("explanation") or "").strip()
+    if valuation.get("available"):
+        per_value = valuation.get("per_value")
+        per_label = f"{per_value:.1f}" if per_value is not None else "sin PER"
+        valuation_note = valuation.get("note") or ""
+        if explanation:
+            explanation += " "
+        explanation += f"En valoracion, el PER {per_label} deja la accion {str(valuation.get('label') or '').lower()}. {valuation_note}".strip()
+    return {
+        **projection,
+        "decision_score": decision_score,
+        "valuation_score": quantize_decimal(valuation_score),
+        "valuation_label": valuation.get("label") or "Sin PER",
+        "valuation_tone": valuation.get("tone") or "neutral",
+        "per_value": valuation.get("per_value"),
+        "per_source_label": valuation.get("source_label") or "",
+        "explanation": explanation,
+    }
+
+
 def build_equity_reference_guide(history_cards: list[dict]) -> dict:
     workbook_snapshot = load_ibex_reference_workbook_snapshot()
     rows = []
@@ -5703,6 +5867,7 @@ def build_equity_fundamentals_summary(position: EquityPosition, force_live_fetch
             "available": False,
             "note": "La carga de fundamentales en vivo esta desactivada.",
             "net_income_rows": [],
+            "derived_per": None,
         }
 
     if not position.quote_symbol:
@@ -5710,6 +5875,7 @@ def build_equity_fundamentals_summary(position: EquityPosition, force_live_fetch
             "available": False,
             "note": "No hay simbolo de cotizacion para buscar los fundamentales.",
             "net_income_rows": [],
+            "derived_per": None,
         }
 
     try:
@@ -5719,6 +5885,7 @@ def build_equity_fundamentals_summary(position: EquityPosition, force_live_fetch
             "available": False,
             "note": f"No se han podido cargar los fundamentales recientes: {exc}",
             "net_income_rows": [],
+            "derived_per": None,
         }
 
     net_income_rows = list(snapshot.get("net_income_rows", []))
@@ -5727,6 +5894,7 @@ def build_equity_fundamentals_summary(position: EquityPosition, force_live_fetch
             "available": False,
             "note": "La fuente externa no ha devuelto beneficio neto ni capitalizacion reciente.",
             "net_income_rows": [],
+            "derived_per": None,
         }
 
     currency_code = snapshot.get("currency_code") or ""
@@ -5747,6 +5915,11 @@ def build_equity_fundamentals_summary(position: EquityPosition, force_live_fetch
 
     market_cap = snapshot.get("market_cap")
     market_cap_as_of_date = snapshot.get("market_cap_as_of_date")
+    latest_net_income_row = max(net_income_rows, key=lambda item: item["as_of_date"]) if net_income_rows else None
+    latest_net_income_value = latest_net_income_row.get("value") if latest_net_income_row else None
+    derived_per = None
+    if market_cap is not None and latest_net_income_value not in {None, ZERO} and latest_net_income_value > ZERO:
+        derived_per = quantize_decimal(market_cap / latest_net_income_value, "0.01")
     return {
         "available": True,
         "currency_code": currency_code,
@@ -5758,6 +5931,10 @@ def build_equity_fundamentals_summary(position: EquityPosition, force_live_fetch
         "market_cap_label": format_compact_currency_value(market_cap, currency_code),
         "market_cap_as_of_date": market_cap_as_of_date,
         "market_cap_date_label": market_cap_as_of_date.isoformat() if market_cap_as_of_date else "",
+        "latest_net_income_value": latest_net_income_value,
+        "latest_net_income_as_of_date": latest_net_income_row.get("as_of_date") if latest_net_income_row else None,
+        "derived_per": derived_per,
+        "derived_per_label": f"{derived_per:.1f}" if derived_per is not None else "",
         "note": "Beneficio neto anual y capitalizacion segun la serie fundamental mas reciente disponible.",
     }
 
@@ -7641,6 +7818,7 @@ def build_trade_alert(
     relative_trend: dict,
     six_month_snapshot: dict,
     one_year_snapshot: dict,
+    valuation: dict | None = None,
 ) -> dict:
     base_payload = {
         "label": "Vigilar",
@@ -7662,6 +7840,7 @@ def build_trade_alert(
     reliability_score = reliability.get("score") or Decimal("40.00")
     safety_score = projection.get("safety_score") or Decimal("55.00")
     projected_return_pct = projection.get("base_return_pct") or ZERO
+    valuation_score = (valuation or {}).get("score") or ZERO
     one_year_alpha_pct = one_year_snapshot.get("alpha_pct") if one_year_snapshot.get("available") else None
     six_month_alpha_pct = six_month_snapshot.get("alpha_pct") if six_month_snapshot.get("available") else None
     trade_score = ZERO
@@ -7685,6 +7864,7 @@ def build_trade_alert(
 
     trade_score += clamp_decimal((projected_return_pct - Decimal("4.00")) * Decimal("0.08"), Decimal("-1.50"), Decimal("1.50"))
     trade_score += clamp_decimal((safety_score - Decimal("55.00")) * Decimal("0.03"), Decimal("-0.75"), Decimal("0.75"))
+    trade_score += clamp_decimal(valuation_score * Decimal("0.22"), Decimal("-1.25"), Decimal("1.25"))
 
     if reliability_score < Decimal("55.00"):
         trade_score *= Decimal("0.78")
@@ -7729,6 +7909,10 @@ def build_trade_alert(
             f"La accion encadena {positive_streak} {periods_label} superando su referencia ajustada por coeficiente. "
             f"La pendiente relativa es positiva y el retorno neto 12M sigue apoyando compras."
         )
+        if valuation_score <= Decimal("-4.00"):
+            note += " Aun asi, el PER sigue exigente y frena parte del entusiasmo."
+        elif valuation_score >= Decimal("3.00"):
+            note += " Ademas, el PER acompana y da apoyo extra a la valoracion."
         if position.is_owned:
             note += " Si ya esta en cartera, la lectura es compatible con mantener o ampliar."
         return {
@@ -7746,6 +7930,8 @@ def build_trade_alert(
             f"La accion encadena {negative_streak} {periods_label} perdiendo fuerza frente a su referencia ajustada por coeficiente. "
             f"La pendiente relativa es negativa y la proyeccion neta se deteriora."
         )
+        if valuation_score >= Decimal("3.00"):
+            note += " El PER ayuda un poco, pero no compensa el deterioro operativo."
         if position.is_owned:
             note += " Conviene revisar venta total o parcial."
         return {
@@ -8075,15 +8261,23 @@ def build_decision_action_label(
     projected_return_pct: Decimal | None,
     safety_score: Decimal | None,
     reliability_score: Decimal | None,
+    valuation_score: Decimal | None = None,
 ) -> str:
     projected_return_pct = projected_return_pct or ZERO
     safety_score = safety_score or ZERO
     reliability_score = reliability_score or ZERO
+    valuation_score = valuation_score or ZERO
     if projected_return_pct >= Decimal("10.00") and safety_score >= Decimal("65.00") and reliability_score >= Decimal("70.00"):
+        if valuation_score <= Decimal("-6.00"):
+            return "Mantener" if position.is_owned else "Seguir"
         return "Priorizar"
     if projected_return_pct >= Decimal("4.00") and safety_score >= Decimal("55.00"):
+        if valuation_score <= Decimal("-6.00") and projected_return_pct < Decimal("8.00"):
+            return "Mantener" if position.is_owned else "Vigilar"
         return "Mantener" if position.is_owned else "Seguir"
     if projected_return_pct >= ZERO:
+        if valuation_score >= Decimal("5.00") and safety_score >= Decimal("52.00") and reliability_score >= Decimal("58.00"):
+            return "Mantener" if position.is_owned else "Seguir"
         return "Vigilar"
     return "Reducir riesgo" if position.is_owned else "Esperar"
 
@@ -8183,6 +8377,7 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
         projected_return_pct = projection.get("base_return_pct")
         trade_alert = card.get("trade_alert", {})
         coefficient_alert = card.get("coefficient_alert", {})
+        valuation = card.get("valuation") or {}
         cycle_projection = card.get("cycle_projection_5y") or {}
         cycle_return_profile = build_cycle_projection_return_profile(
             position.current_price_per_share,
@@ -8216,6 +8411,12 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
                 "benefit_risk_ratio": projection.get("benefit_risk_ratio"),
                 "cycle_phase": projection.get("cycle_phase"),
                 "decision_score": projection.get("decision_score"),
+                "valuation_label": valuation.get("label") or "Sin PER",
+                "valuation_tone": valuation.get("tone") or "neutral",
+                "valuation_note": valuation.get("note") or "",
+                "valuation_score": valuation.get("score"),
+                "per_value": valuation.get("per_value"),
+                "per_source_label": valuation.get("source_short_label") or valuation.get("source_label") or "",
                 "trade_alert_label": trade_alert.get("label", "Vigilar"),
                 "trade_alert_tone": trade_alert.get("tone", "watch"),
                 "trade_alert_note": trade_alert.get("note", ""),
@@ -8229,6 +8430,7 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
                     projected_return_pct,
                     projection.get("safety_score"),
                     reliability.get("score"),
+                    valuation.get("score"),
                 ),
             }
         )
@@ -8448,7 +8650,13 @@ def build_equity_history_card(
             "available": False,
             "note": "La lectura fundamental se ha omitido en esta vista para priorizar velocidad.",
             "net_income_rows": [],
+            "derived_per": None,
         }
+    )
+    valuation = build_equity_per_valuation(
+        position,
+        fundamentals,
+        sector_label=resolved_sector_label,
     )
 
     if not history:
@@ -8479,6 +8687,7 @@ def build_equity_history_card(
                 "note": "Sin historico suficiente para leer el coeficiente de referencia.",
                 "trigger_label": "Sin historico suficiente",
             },
+            "valuation": valuation,
             "fundamentals": fundamentals,
             "reference_playbook": {"available": False, "candidates": []},
             "suggested_references": [],
@@ -8526,6 +8735,12 @@ def build_equity_history_card(
     )
     cycle_metrics = build_cycle_metrics(history)
     projection = build_one_year_projection(history, position, correlation, six_month_snapshot, cycle_metrics=cycle_metrics)
+    valuation = build_equity_per_valuation(
+        position,
+        fundamentals,
+        sector_label=resolved_sector_label,
+    )
+    projection = apply_per_valuation_overlay(projection, valuation)
     cycle_projection_5y = build_five_year_cycle_projection(
         history,
         position,
@@ -8558,6 +8773,7 @@ def build_equity_history_card(
         relative_trend,
         six_month_snapshot,
         one_year_snapshot,
+        valuation=valuation,
     )
     analysis_value_amount = projection.get("analysis_value_amount") or ZERO
     annual_cost_used = projection.get("annual_cost_used", position.recurring_cost_used) or ZERO
@@ -8693,6 +8909,7 @@ def build_equity_history_card(
         "relative_trend": relative_trend,
         "coefficient_alert": coefficient_alert,
         "trade_alert": trade_alert,
+        "valuation": valuation,
         "fundamentals": fundamentals,
         "suggested_references": suggested_references,
         "historical_chart": historical_chart,
@@ -9747,6 +9964,7 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         projection.get("base_return_pct"),
         safety_score,
         reliability_score,
+        (card.get("valuation") or {}).get("score"),
     )
     quality_adjustments = build_optimizer_quality_adjustments(
         safety_score,

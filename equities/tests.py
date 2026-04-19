@@ -868,6 +868,75 @@ class EquitiesServicesTests(TestCase):
         )
         self.assertEqual(row["cycle_yearly_margins"][0]["margin_pct"], row["projected_return_pct"])
 
+    def test_history_cards_and_decision_rows_include_per_valuation(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Banco Santander",
+            shares=Decimal("25"),
+            average_cost_per_share=Decimal("4.5000"),
+            current_price_per_share=Decimal("4.5000"),
+        )
+        populate_position_history(position, growth=Decimal("1.0120"), benchmark_growth=Decimal("1.0060"), months=60)
+        benchmark_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+        workbook_snapshot = {
+            "available": True,
+            "companies": [
+                {
+                    "ticker": "SAN",
+                    "company_name": "Banco Santander",
+                    "sector": "Banca",
+                    "per_2025": Decimal("8.00"),
+                }
+            ],
+            "companies_by_key": {
+                "SAN": {
+                    "ticker": "SAN",
+                    "company_name": "Banco Santander",
+                    "sector": "Banca",
+                    "per_2025": Decimal("8.00"),
+                },
+                "BANCO SANTANDER": {
+                    "ticker": "SAN",
+                    "company_name": "Banco Santander",
+                    "sector": "Banca",
+                    "per_2025": Decimal("8.00"),
+                },
+                "SAN MC": {
+                    "ticker": "SAN",
+                    "company_name": "Banco Santander",
+                    "sector": "Banca",
+                    "per_2025": Decimal("8.00"),
+                },
+            },
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+        with (
+            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=workbook_snapshot),
+            patch("equities.services.should_fetch_equity_fundamentals", return_value=False),
+            patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series),
+        ):
+            card = build_equity_history_cards([position])[0]
+            row = build_equity_decision_rows([card])[0]
+
+        self.assertEqual(card["valuation"]["per_value"], Decimal("8.00"))
+        self.assertEqual(card["valuation"]["label"], "Ajustada")
+        self.assertEqual(card["projection"]["per_value"], Decimal("8.00"))
+        self.assertEqual(row["per_value"], Decimal("8.00"))
+        self.assertEqual(row["valuation_label"], "Ajustada")
+
     def test_capture_purchase_forecast_baseline_uses_latest_nightly_snapshot_before_purchase(self):
         position = EquityPosition.objects.create(
             broker="Interactive Brokers",
@@ -7010,6 +7079,76 @@ class EquitiesViewTests(TestCase):
         self.assertLess(page.index('id="equity-portfolio-summary"'), page.index('id="equity-decision"'))
         self.assertLess(page.index('id="equity-decision"'), page.index('id="equity-ibex"'))
         self.assertEqual(EquityTicketSnapshot.objects.count(), 2)
+
+    def test_equities_page_shows_per_in_main_decision_table(self):
+        position = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Banco Santander",
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("4.5000"),
+            current_price_per_share=Decimal("4.9000"),
+        )
+        populate_position_history(position, growth=Decimal("1.0120"), benchmark_growth=Decimal("1.0060"), months=60)
+        benchmark_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+        workbook_snapshot = {
+            "available": True,
+            "companies": [
+                {
+                    "ticker": "SAN",
+                    "company_name": "Banco Santander",
+                    "sector": "Banca",
+                    "per_2025": Decimal("8.00"),
+                }
+            ],
+            "companies_by_key": {
+                "SAN": {
+                    "ticker": "SAN",
+                    "company_name": "Banco Santander",
+                    "sector": "Banca",
+                    "per_2025": Decimal("8.00"),
+                },
+                "BANCO SANTANDER": {
+                    "ticker": "SAN",
+                    "company_name": "Banco Santander",
+                    "sector": "Banca",
+                    "per_2025": Decimal("8.00"),
+                },
+                "SAN MC": {
+                    "ticker": "SAN",
+                    "company_name": "Banco Santander",
+                    "sector": "Banca",
+                    "per_2025": Decimal("8.00"),
+                },
+            },
+            "indicators_by_name": {},
+            "indicators_by_key": {},
+            "indicator_name_by_short": {},
+            "sector_map": {},
+        }
+
+        with (
+            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=workbook_snapshot),
+            patch("equities.services.should_fetch_equity_fundamentals", return_value=False),
+            patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series),
+            patch("equities.views.build_equity_investment_journey_context", return_value={"available": False}),
+        ):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-tooltip="Relacion entre precio y beneficio. Cuanto mas alto es, mas crecimiento exige la accion para justificar su precio."', html=False)
+        self.assertContains(response, "Banco Santander")
+        self.assertContains(response, "Ajustada")
+        self.assertContains(response, "8.0")
 
     def test_equities_page_backfills_missing_ticket_snapshots_for_new_owned_positions(self):
         iberdrola = EquityPosition.objects.create(
