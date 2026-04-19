@@ -150,7 +150,7 @@
       <section class="card portfolio-owner-card">
         <div class="metric-label">{{ owner.ownership_label }}</div>
         <div class="metric-value">{{ owner.current_value|floatformat:2 }} EUR</div>
-        <div class="metric-sub">Renta anual {{ owner.annual_income|floatformat:2 }} EUR</div>
+        <div class="metric-sub" title="Suma anual estimada de intereses netos, dividendos netos, renta neta inmobiliaria y la renta anual atribuida al Grupo Neos.">Renta anual neta {{ owner.annual_income|floatformat:2 }} EUR</div>
         <div class="meta">
           <span class="pill">Grupo Neos {{ owner.business_current_value|floatformat:0 }} EUR</span>
           <span class="pill">Banca {{ owner.banking_current_value|floatformat:0 }} EUR</span>
@@ -172,7 +172,7 @@
           <th>Liquidez</th>
           <th>Acciones</th>
           <th>Inmuebles</th>
-          <th>Renta anual</th>
+          <th title="Suma anual estimada de intereses netos, dividendos netos, renta neta inmobiliaria y la renta anual atribuida al Grupo Neos.">Renta anual neta</th>
         </tr>
       </thead>
       <tbody>
@@ -190,6 +190,10 @@
         {% endfor %}
       </tbody>
     </table>
+    <div class="metric-sub" style="margin-top:10px;">
+      La columna Renta anual neta suma lo que ese titular genera al ano de forma estimada:
+      intereses netos bancarios, dividendos netos, renta neta inmobiliaria y la renta anual atribuida a Grupo Neos.
+    </div>
   </section>
 
   <p class="section-title" style="margin-top:28px;">Mapa del conglomerado Neos</p>
@@ -446,7 +450,7 @@
               <td>{{ section.current_value|floatformat:2 }} EUR</td>
             </tr>
             <tr>
-              <th>Renta anual</th>
+              <th title="Renta anual neta estimada del bloque o posicion.">Renta anual neta</th>
               <td>{{ section.annual_income|floatformat:2 }} EUR</td>
             </tr>
             <tr>
@@ -470,7 +474,7 @@
           <th>Tipo</th>
           <th>Invertido</th>
           <th>Valor actual</th>
-          <th>Renta anual</th>
+          <th title="Renta anual neta estimada de cada posicion.">Renta anual neta</th>
           <th>Rentabilidad EUR</th>
           <th>Rentabilidad %</th>
         </tr>

@@ -8019,14 +8019,19 @@ class EquitiesViewTests(TestCase):
             "company_name": acs["company_name"],
             "quote_symbol": acs["quote_symbol"],
             "sector": acs["sector_label"],
+            "per_2025": Decimal("11.50"),
             "dividend_yield": Decimal("3.10"),
             "catalog_profile": acs,
         }
-        empty_workbook = {
-            "available": False,
+        workbook_snapshot = {
+            "available": True,
             "path": "",
-            "companies": [],
-            "companies_by_key": {},
+            "companies": [company],
+            "companies_by_key": {
+                acs["ticker"]: company,
+                acs["company_name"].upper(): company,
+                acs["quote_symbol"].upper().replace(".", " "): company,
+            },
             "indicators_by_name": {},
             "indicators_by_key": {},
             "indicator_name_by_short": {},
@@ -8065,14 +8070,19 @@ class EquitiesViewTests(TestCase):
             "company_name": acs["company_name"],
             "quote_symbol": acs["quote_symbol"],
             "sector": acs["sector_label"],
+            "per_2025": Decimal("11.50"),
             "dividend_yield": Decimal("3.10"),
             "catalog_profile": acs,
         }
-        empty_workbook = {
-            "available": False,
+        workbook_snapshot = {
+            "available": True,
             "path": "",
-            "companies": [],
-            "companies_by_key": {},
+            "companies": [company],
+            "companies_by_key": {
+                acs["ticker"]: company,
+                acs["company_name"].upper(): company,
+                acs["quote_symbol"].upper().replace(".", " "): company,
+            },
             "indicators_by_name": {},
             "indicators_by_key": {},
             "indicator_name_by_short": {},
@@ -8092,14 +8102,17 @@ class EquitiesViewTests(TestCase):
             )
 
         with (
-            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=empty_workbook),
+            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=workbook_snapshot),
             patch("equities.services.build_ibex_universe_companies", return_value=[company]),
+            patch("equities.services.should_fetch_equity_fundamentals", return_value=False),
             patch("equities.services.fetch_market_series", side_effect=fake_market_series),
             patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series),
         ):
             response = self.client.get(reverse("equities:list"))
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Relacion entre precio y beneficio")
+        self.assertContains(response, "Valoracion")
         self.assertContains(response, "Pred. 5 AÑOS")
         self.assertContains(response, "Márgenes por AÑO")
         self.assertContains(response, "AÑO 1")

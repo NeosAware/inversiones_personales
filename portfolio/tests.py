@@ -466,3 +466,17 @@ class UserManagementTests(TestCase):
         self.admin.refresh_from_db()
         self.assertTrue(self.admin.is_staff)
         self.assertTrue(self.admin.is_superuser)
+
+
+class PortfolioDashboardViewTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="portfolio_view", password="secret123")
+        self.client.force_login(self.user)
+
+    def test_dashboard_explains_net_annual_income_column(self):
+        response = self.client.get(reverse("portfolio:dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Renta anual neta")
+        self.assertContains(response, "intereses netos bancarios")
