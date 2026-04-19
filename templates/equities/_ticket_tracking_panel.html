@@ -41,7 +41,7 @@
     <div class="equity-box">
       <span>Rentabilidad anualizada</span>
       <strong class="{% if ticket_tracking.global.annualized_return_pct is not None and ticket_tracking.global.annualized_return_pct >= 0 %}good{% elif ticket_tracking.global.annualized_return_pct is not None %}warn{% endif %}">{% if ticket_tracking.global.annualized_return_pct is not None %}{{ ticket_tracking.global.annualized_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong>
-      <small>Media anual equivalente ponderada por capital con los {{ ticket_tracking.global.tracked_days }} dias ya visibles.</small>
+      <small>Equivalente anual del acumulado global visible durante los {{ ticket_tracking.global.tracked_days }} dias seguidos.</small>
     </div>
   </div>
   {% if ticket_tracking.global.chart.available %}

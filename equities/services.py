@@ -4535,6 +4535,35 @@ def build_aggregated_ticket_actual_series(ticket_items: list[dict]) -> list[dict
     return build_aggregated_ticket_series(ticket_items, "actual_series")
 
 
+def build_global_ticket_daily_change_pct(ticket_items: list[dict]) -> Decimal | None:
+    comparable_base = ZERO
+    daily_change_value = ZERO
+    has_comparable_history = False
+    for item in ticket_items:
+        actual_series = item.get("actual_series", [])
+        latest_snapshot = item.get("latest_snapshot")
+        if latest_snapshot is None:
+            continue
+        latest_value = getattr(latest_snapshot, "current_value", None) or ZERO
+        previous_value = None
+        if len(actual_series) >= 2:
+            previous_value = actual_series[-2].get("value")
+        if previous_value is not None:
+            previous_value = Decimal(str(previous_value))
+            comparable_base += previous_value
+            daily_change_value += latest_value - previous_value
+            has_comparable_history = True
+        else:
+            comparable_base += latest_value
+
+    if not has_comparable_history or comparable_base <= ZERO:
+        return None
+    return quantize_decimal(
+        percentage_change(comparable_base + daily_change_value, comparable_base),
+        "0.01",
+    )
+
+
 def add_calendar_years(value: date | None, years: int) -> date | None:
     if value is None:
         return None
@@ -5184,7 +5213,6 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         for item in ticket_items
     )
     expected_total_value_5y = sum((item.get("expected_total_value_5y") or ZERO) for item in ticket_items)
-    previous_actual = actual_series[-2]["value"] if len(actual_series) >= 2 else None
     gap_value = (
         quantize_decimal(latest_actual - current_expected_value, "0.01")
         if current_expected_value is not None
@@ -5207,26 +5235,11 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         baseline_value + (net_gain_value or ZERO),
         baseline_value,
     )
-    annualized_weight = ZERO
-    annualized_weighted_sum = ZERO
-    for item in ticket_items:
-        item_baseline_value = getattr(item.get("baseline_snapshot"), "current_value", None)
-        if item_baseline_value in {None, ZERO}:
-            continue
-        comparable_returns = build_comparable_return_metrics(
-            item.get("actual_change_pct"),
-            item.get("days_tracked") or 0,
-        )
-        annualized_return = comparable_returns.get("annual_equivalent_return_pct")
-        if annualized_return is None:
-            continue
-        annualized_weight += item_baseline_value
-        annualized_weighted_sum += item_baseline_value * annualized_return
-    annualized_return_pct = (
-        quantize_decimal(annualized_weighted_sum / annualized_weight, "0.01")
-        if annualized_weight > ZERO
-        else None
+    comparable_returns = build_comparable_return_metrics(
+        actual_change_pct,
+        tracked_days,
     )
+    daily_change_pct = build_global_ticket_daily_change_pct(ticket_items)
     return {
         "available": True,
         "chart": chart,
@@ -5245,12 +5258,12 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         "net_gain_value": net_gain_value,
         "net_gain_tone": "good" if net_gain_value is not None and net_gain_value >= ZERO else "warn",
         "invested_return_pct": quantize_decimal(actual_change_pct, "0.01"),
-        "annualized_return_pct": annualized_return_pct,
+        "annualized_return_pct": quantize_decimal(comparable_returns.get("annual_equivalent_return_pct"), "0.01"),
         "benchmark": benchmark,
         "gap_value": gap_value,
         "gap_pct": percentage_change(latest_actual, current_expected_value) if current_expected_value is not None else None,
         "gap_tone": "good" if gap_value is not None and gap_value >= ZERO else "warn",
-        "daily_change_pct": percentage_change(latest_actual, previous_actual) if previous_actual else None,
+        "daily_change_pct": daily_change_pct,
         "tracked_days": tracked_days,
     }
 

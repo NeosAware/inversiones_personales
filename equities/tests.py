@@ -1699,7 +1699,8 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(tracking["global"]["chart_5y"]["x_markers"])
         self.assertEqual(tracking["global"]["net_gain_value"], Decimal("16.00"))
         self.assertEqual(tracking["global"]["invested_return_pct"], Decimal("2.91"))
-        self.assertEqual(tracking["global"]["annualized_return_pct"], Decimal("7496647.05"))
+        self.assertEqual(tracking["global"]["annualized_return_pct"], Decimal("3512395.03"))
+        self.assertEqual(tracking["global"]["daily_change_pct"], Decimal("2.91"))
 
     def test_ticket_tracking_global_chart_keeps_first_real_portfolio_date_when_positions_enter_later(self):
         def create_position(ticker, company_name, start_price):
@@ -1771,6 +1772,7 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(tracking["global"]["chart"]["start_label"], "2026-04-12")
         self.assertEqual(tracking["global"]["baseline_value"], Decimal("616.00"))
         self.assertEqual(tracking["global"]["net_gain_value"], Decimal("0.00"))
+        self.assertEqual(tracking["global"]["daily_change_pct"], Decimal("0.00"))
 
     def test_ticket_tracking_keeps_each_ticket_return_from_its_first_snapshot(self):
         def create_position(ticker, company_name, start_price):
@@ -1845,6 +1847,7 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(tracking["global"]["latest_value"], Decimal("648.00"))
         self.assertEqual(tracking["global"]["net_gain_value"], Decimal("12.00"))
         self.assertEqual(tracking["global"]["invested_return_pct"], Decimal("1.89"))
+        self.assertEqual(tracking["global"]["daily_change_pct"], Decimal("1.89"))
 
     def test_build_owned_cycle_trade_timing_plan_detects_monthly_trend_turns(self):
         position = EquityPosition(
