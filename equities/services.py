@@ -4417,6 +4417,124 @@ def build_tracking_benchmark_context(
     }
 
 
+def build_aggregated_tracking_benchmark_context(ticket_items: list[dict]) -> dict:
+    if not ticket_items:
+        return {
+            "available": False,
+            "label": DEFAULT_BENCHMARK_NAME,
+            "series": [],
+            "latest_value": None,
+            "actual_change_pct": None,
+        }
+
+    try:
+        benchmark_series = fetch_reference_series_for_choice(
+            EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol=DEFAULT_BENCHMARK_SYMBOL,
+            benchmark_name=DEFAULT_BENCHMARK_NAME,
+        )
+    except Exception:
+        benchmark_series = None
+
+    if benchmark_series is None:
+        return {
+            "available": False,
+            "label": DEFAULT_BENCHMARK_NAME,
+            "series": [],
+            "latest_value": None,
+            "actual_change_pct": None,
+        }
+
+    baseline_total = ZERO
+    benchmark_items = []
+    for item in ticket_items:
+        baseline = item.get("baseline_snapshot")
+        baseline_value = getattr(baseline, "current_value", None)
+        if baseline_value in {None, ZERO}:
+            continue
+        baseline_total += baseline_value
+        tracking_dates = [point["date"] for point in item.get("actual_series", []) if point.get("date") is not None]
+        normalized_series = build_normalized_reference_tracking_series(
+            benchmark_series.points,
+            tracking_dates,
+            baseline_value,
+        )
+        benchmark_items.append(
+            {
+                "baseline_snapshot": baseline,
+                "benchmark_series": normalized_series,
+            }
+        )
+
+    series = build_aggregated_ticket_series(benchmark_items, "benchmark_series")
+    if not series:
+        return {
+            "available": False,
+            "label": benchmark_series.name or DEFAULT_BENCHMARK_NAME,
+            "series": [],
+            "latest_value": None,
+            "actual_change_pct": None,
+        }
+    latest_value = series[-1]["value"] if series else None
+    return {
+        "available": bool(series),
+        "label": benchmark_series.name or DEFAULT_BENCHMARK_NAME,
+        "series": series,
+        "latest_value": latest_value,
+        "actual_change_pct": percentage_change(latest_value, baseline_total) if baseline_total else None,
+    }
+
+
+def build_aggregated_ticket_series(ticket_items: list[dict], series_key: str) -> list[dict]:
+    all_dates = sorted(
+        {
+            point["date"]
+            for item in ticket_items
+            for point in item.get(series_key, [])
+            if point.get("date") is not None
+        }
+    )
+    if not all_dates:
+        return []
+
+    aggregated = []
+    for point_date in all_dates:
+        total_value = ZERO
+        has_value = False
+        for item in ticket_items:
+            baseline = item.get("baseline_snapshot")
+            baseline_date = getattr(baseline, "snapshot_date", None)
+            if baseline_date is not None and point_date < baseline_date:
+                continue
+            latest_known_value = None
+            for point in item.get(series_key, []):
+                date_value = point.get("date")
+                if date_value is None:
+                    continue
+                if date_value > point_date:
+                    break
+                point_value = point.get("value")
+                if point_value is None:
+                    continue
+                latest_known_value = Decimal(str(point_value))
+            if latest_known_value is None:
+                continue
+            total_value += latest_known_value
+            has_value = True
+        if has_value:
+            aggregated.append(
+                {
+                    "date": point_date,
+                    "value": quantize_decimal(total_value, "0.01") or ZERO,
+                }
+            )
+    return aggregated
+
+
+def build_aggregated_ticket_actual_series(ticket_items: list[dict]) -> list[dict]:
+    return build_aggregated_ticket_series(ticket_items, "actual_series")
+
+
 def add_calendar_years(value: date | None, years: int) -> date | None:
     if value is None:
         return None
@@ -5029,78 +5147,27 @@ def build_equity_ticket_tracking_item(
 
 
 def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
-    actual_map: dict[date, Decimal] = defaultdict(lambda: ZERO)
-    tracked_dates: set[date] = set()
-    expected_map_5y: dict[date, Decimal] = defaultdict(lambda: ZERO)
-    for item in ticket_items:
-        for point in item.get("shared_actual_series", []):
-            actual_map[point["date"]] += point["value"]
-            tracked_dates.add(point["date"])
-        for point in item.get("shared_expected_series_5y", []):
-            point_date = point.get("date")
-            point_value = point.get("value")
-            if point_date is None or point_value is None:
-                continue
-            expected_map_5y[point_date] += point_value
-
-    if not actual_map:
+    actual_series = build_aggregated_ticket_actual_series(ticket_items)
+    if not actual_series:
         return {"available": False}
 
-    expected_dates: set[date] = set(tracked_dates)
-    descriptors = []
-    for item in ticket_items:
-        baseline = item["shared_baseline_snapshot"]
-        expected_target = item.get("shared_expected_market_value_12m") or baseline.current_value
-        descriptors.append(
-            {
-                "start_date": baseline.snapshot_date,
-                "start_value": baseline.current_value,
-                "target_value": expected_target,
-            }
-        )
-        expected_dates.add(baseline.snapshot_date + timedelta(days=TRACKING_HORIZON_DAYS))
-        for days in TRACKING_FORECAST_MARKERS:
-            expected_dates.add(baseline.snapshot_date + timedelta(days=days))
-
-    actual_series = [
-        {"date": point_date, "value": quantize_decimal(actual_map[point_date], "0.01") or ZERO}
-        for point_date in sorted(actual_map)
-    ]
-    expected_series = []
-    for point_date in sorted(expected_dates):
-        expected_total = ZERO
-        for descriptor in descriptors:
-            if point_date < descriptor["start_date"]:
-                continue
-            expected_value = project_expected_value_on_date(
-                descriptor["start_value"],
-                descriptor["target_value"],
-                descriptor["start_date"],
-                point_date,
+    expected_series = build_aggregated_ticket_series(ticket_items, "expected_series")
+    expected_series_5y = build_aggregated_ticket_series(ticket_items, "expected_series_5y")
+    baseline_value = quantize_decimal(
+        sum(
+            (
+                getattr(item.get("baseline_snapshot"), "current_value", None) or ZERO
             )
-            if expected_value is not None:
-                expected_total += expected_value
-        expected_series.append(
-            {
-                "date": point_date,
-                "value": quantize_decimal(expected_total, "0.01") or ZERO,
-            }
-        )
-
-    baseline_value = actual_series[0]["value"]
-    benchmark = build_tracking_benchmark_context(
-        [point["date"] for point in actual_series],
-        baseline_value,
-    )
+            for item in ticket_items
+        ),
+        "0.01",
+    ) or ZERO
+    benchmark = build_aggregated_tracking_benchmark_context(ticket_items)
     chart = build_value_tracking_chart(
         actual_series,
         expected_series,
         benchmark_series=benchmark["series"],
     )
-    expected_series_5y = [
-        {"date": point_date, "value": quantize_decimal(expected_map_5y[point_date], "0.01") or ZERO}
-        for point_date in sorted(expected_map_5y)
-    ]
     chart_5y = build_value_tracking_chart(actual_series, expected_series_5y) if expected_series_5y else {"available": False}
     latest_actual = actual_series[-1]["value"]
     latest_date = actual_series[-1]["date"]
@@ -5113,10 +5180,10 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         None,
     )
     expected_total_value_12m = sum(
-        (item.get("shared_expected_total_value_12m") or item.get("shared_expected_market_value_12m") or ZERO)
+        (item.get("expected_total_value_12m") or item.get("expected_market_value_12m") or ZERO)
         for item in ticket_items
     )
-    expected_total_value_5y = sum((item.get("shared_expected_total_value_5y") or ZERO) for item in ticket_items)
+    expected_total_value_5y = sum((item.get("expected_total_value_5y") or ZERO) for item in ticket_items)
     previous_actual = actual_series[-2]["value"] if len(actual_series) >= 2 else None
     gap_value = (
         quantize_decimal(latest_actual - current_expected_value, "0.01")
@@ -5124,11 +5191,41 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         else None
     )
     tracked_days = max((latest_date - actual_series[0]["date"]).days, 0)
-    net_gain_value = quantize_decimal(latest_actual - baseline_value, "0.01")
-    actual_change_pct = percentage_change(latest_actual, baseline_value)
-    comparable_returns = build_comparable_return_metrics(
-        actual_change_pct,
-        tracked_days,
+    net_gain_value = quantize_decimal(
+        sum(
+            (
+                getattr(item.get("latest_snapshot"), "current_value", None) or ZERO
+            )
+            - (
+                getattr(item.get("baseline_snapshot"), "current_value", None) or ZERO
+            )
+            for item in ticket_items
+        ),
+        "0.01",
+    )
+    actual_change_pct = percentage_change(
+        baseline_value + (net_gain_value or ZERO),
+        baseline_value,
+    )
+    annualized_weight = ZERO
+    annualized_weighted_sum = ZERO
+    for item in ticket_items:
+        item_baseline_value = getattr(item.get("baseline_snapshot"), "current_value", None)
+        if item_baseline_value in {None, ZERO}:
+            continue
+        comparable_returns = build_comparable_return_metrics(
+            item.get("actual_change_pct"),
+            item.get("days_tracked") or 0,
+        )
+        annualized_return = comparable_returns.get("annual_equivalent_return_pct")
+        if annualized_return is None:
+            continue
+        annualized_weight += item_baseline_value
+        annualized_weighted_sum += item_baseline_value * annualized_return
+    annualized_return_pct = (
+        quantize_decimal(annualized_weighted_sum / annualized_weight, "0.01")
+        if annualized_weight > ZERO
+        else None
     )
     return {
         "available": True,
@@ -5148,7 +5245,7 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         "net_gain_value": net_gain_value,
         "net_gain_tone": "good" if net_gain_value is not None and net_gain_value >= ZERO else "warn",
         "invested_return_pct": quantize_decimal(actual_change_pct, "0.01"),
-        "annualized_return_pct": quantize_decimal(comparable_returns.get("annual_equivalent_return_pct"), "0.01"),
+        "annualized_return_pct": annualized_return_pct,
         "benchmark": benchmark,
         "gap_value": gap_value,
         "gap_pct": percentage_change(latest_actual, current_expected_value) if current_expected_value is not None else None,
@@ -5208,11 +5305,19 @@ def build_equity_ticket_tracking_context(
             item["position"].company_name,
         )
     )
+    earliest_baseline_date = min(
+        (
+            item["baseline_snapshot"].snapshot_date
+            for item in ticket_items
+            if item.get("baseline_snapshot") is not None
+        ),
+        default=None,
+    )
     snapshot_days = sorted(
         {
             point["date"]
             for item in ticket_items
-            for point in item.get("shared_actual_series", [])
+            for point in item.get("actual_series", [])
         }
     )
     return {
@@ -5220,7 +5325,8 @@ def build_equity_ticket_tracking_context(
         "tickets": ticket_items,
         "tracked_ticket_count": len(ticket_items),
         "snapshot_days_count": len(snapshot_days),
-        "anchor_date": tracking_anchor_date,
+        "anchor_date": earliest_baseline_date,
+        "shared_anchor_date": tracking_anchor_date,
         "global": build_global_equity_ticket_tracking_item(ticket_items) if ticket_items else {"available": False},
     }
 

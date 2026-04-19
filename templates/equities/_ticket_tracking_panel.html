@@ -3,15 +3,15 @@
     <div>
       <p class="section-title">Seguimiento{% if ticket_tracking.anchor_date %} desde {{ ticket_tracking.anchor_date|date:"Y-m-d" }}{% endif %}</p>
       <h2>Valor diario real frente al escenario esperado y el IBEX</h2>
-      <p>La base comun arranca en la primera fecha compartida por la cartera activa para que Iberdrola, Enagas, Sacyr y el resto comparen desde el mismo punto.</p>
+      <p>La cartera agrega cada accion desde su fecha real de compra o desde la primera foto disponible tras subirla a la web. Asi no se pone a cero cuando entra un valor nuevo.</p>
     </div>
     <span class="pill">{{ ticket_tracking.tracked_ticket_count }} tickets | {{ ticket_tracking.snapshot_days_count }} dias visibles</span>
   </div>
   <div class="equity-grid-4">
     <div class="equity-box">
-      <span>Cartera base</span>
+      <span>Cartera base acumulada</span>
       <strong>{{ ticket_tracking.global.baseline_value|floatformat:0 }} EUR</strong>
-      <small>Foto inicial del seguimiento comun.</small>
+      <small>Suma de la base inicial de cada posicion activa.</small>
     </div>
     <div class="equity-box">
       <span>Valor actual</span>
@@ -21,7 +21,7 @@
     <div class="equity-box">
       <span>Esperado hoy</span>
       <strong>{% if ticket_tracking.global.expected_today_value is not None %}{{ ticket_tracking.global.expected_today_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-      <small>Escenario de mercado desde la base comun.</small>
+      <small>Escenario agregado respetando la fecha real de arranque de cada accion.</small>
     </div>
     <div class="equity-box">
       <span>Gap vs esperado</span>
@@ -31,17 +31,17 @@
     <div class="equity-box">
       <span>Beneficio neto</span>
       <strong class="{% if ticket_tracking.global.net_gain_tone == 'good' %}good{% else %}warn{% endif %}">{% if ticket_tracking.global.net_gain_value is not None %}{{ ticket_tracking.global.net_gain_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-      <small>Frente a la cartera base del seguimiento.</small>
+      <small>Ganancia o perdida total frente a la base individual de cada posicion.</small>
     </div>
     <div class="equity-box">
       <span>Rentabilidad sobre base</span>
       <strong class="{% if ticket_tracking.global.invested_return_pct is not None and ticket_tracking.global.invested_return_pct >= 0 %}good{% elif ticket_tracking.global.invested_return_pct is not None %}warn{% endif %}">{% if ticket_tracking.global.invested_return_pct is not None %}{{ ticket_tracking.global.invested_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong>
-      <small>Porcentaje obtenido sobre el capital base visible.</small>
+      <small>Rentabilidad acumulada sobre la suma de las bases individuales.</small>
     </div>
     <div class="equity-box">
       <span>Rentabilidad anualizada</span>
       <strong class="{% if ticket_tracking.global.annualized_return_pct is not None and ticket_tracking.global.annualized_return_pct >= 0 %}good{% elif ticket_tracking.global.annualized_return_pct is not None %}warn{% endif %}">{% if ticket_tracking.global.annualized_return_pct is not None %}{{ ticket_tracking.global.annualized_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong>
-      <small>Equivalente anual de los {{ ticket_tracking.global.tracked_days }} dias visibles.</small>
+      <small>Media anual equivalente ponderada por capital con los {{ ticket_tracking.global.tracked_days }} dias ya visibles.</small>
     </div>
   </div>
   {% if ticket_tracking.global.chart.available %}

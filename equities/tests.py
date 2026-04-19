@@ -1699,9 +1699,9 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(tracking["global"]["chart_5y"]["x_markers"])
         self.assertEqual(tracking["global"]["net_gain_value"], Decimal("16.00"))
         self.assertEqual(tracking["global"]["invested_return_pct"], Decimal("2.91"))
-        self.assertEqual(tracking["global"]["annualized_return_pct"], Decimal("3512395.03"))
+        self.assertEqual(tracking["global"]["annualized_return_pct"], Decimal("7496647.05"))
 
-    def test_ticket_tracking_uses_first_common_snapshot_date_as_shared_base(self):
+    def test_ticket_tracking_global_chart_keeps_first_real_portfolio_date_when_positions_enter_later(self):
         def create_position(ticker, company_name, start_price):
             position = EquityPosition.objects.create(
                 broker="Interactive Brokers",
@@ -1759,15 +1759,18 @@ class EquitiesServicesTests(TestCase):
         with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
             tracking = build_equity_ticket_tracking_context(second_cards)
 
-        self.assertEqual(tracking["anchor_date"], date(2026, 4, 13))
-        self.assertEqual(tracking["snapshot_days_count"], 1)
+        self.assertEqual(tracking["anchor_date"], date(2026, 4, 12))
+        self.assertEqual(tracking["shared_anchor_date"], date(2026, 4, 13))
+        self.assertEqual(tracking["snapshot_days_count"], 2)
         self.assertEqual(tracking["tracked_ticket_count"], 3)
         self.assertTrue(all(item["shared_baseline_snapshot"].snapshot_date == date(2026, 4, 13) for item in tracking["tickets"]))
         baselines_by_ticker = {item["position"].ticker: item["baseline_snapshot"].snapshot_date for item in tracking["tickets"]}
         self.assertEqual(baselines_by_ticker["IBE"], date(2026, 4, 12))
         self.assertEqual(baselines_by_ticker["ENG"], date(2026, 4, 12))
         self.assertEqual(baselines_by_ticker["SCYR"], date(2026, 4, 13))
-        self.assertEqual(tracking["global"]["chart"]["start_label"], "2026-04-13")
+        self.assertEqual(tracking["global"]["chart"]["start_label"], "2026-04-12")
+        self.assertEqual(tracking["global"]["baseline_value"], Decimal("616.00"))
+        self.assertEqual(tracking["global"]["net_gain_value"], Decimal("0.00"))
 
     def test_ticket_tracking_keeps_each_ticket_return_from_its_first_snapshot(self):
         def create_position(ticker, company_name, start_price):
@@ -1838,6 +1841,10 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(tickets_by_ticker["IBE"]["shared_baseline_snapshot"].snapshot_date, date(2026, 4, 13))
         self.assertEqual(tickets_by_ticker["IBE"]["actual_change_pct"], Decimal("5.00"))
         self.assertEqual(tickets_by_ticker["SCYR"]["actual_change_pct"], Decimal("0.00"))
+        self.assertEqual(tracking["global"]["baseline_value"], Decimal("636.00"))
+        self.assertEqual(tracking["global"]["latest_value"], Decimal("648.00"))
+        self.assertEqual(tracking["global"]["net_gain_value"], Decimal("12.00"))
+        self.assertEqual(tracking["global"]["invested_return_pct"], Decimal("1.89"))
 
     def test_build_owned_cycle_trade_timing_plan_detects_monthly_trend_turns(self):
         position = EquityPosition(
