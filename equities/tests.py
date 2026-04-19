@@ -7457,6 +7457,7 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Banco Santander")
         self.assertContains(response, "Ajustada")
         self.assertContains(response, "8.0")
+        self.assertContains(response, 'class="good">8,0</strong>', html=False)
 
     def test_equities_page_backfills_missing_ticket_snapshots_for_new_owned_positions(self):
         iberdrola = EquityPosition.objects.create(
@@ -8064,24 +8065,24 @@ class EquitiesViewTests(TestCase):
 
     @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_IBEX_UNIVERSE_LIMIT=1)
     def test_ibex_table_shows_five_year_projection_columns(self):
-        acs = find_equity_company_profile("ACS")
+        santander = find_equity_company_profile("Banco Santander")
         company = {
-            "ticker": acs["ticker"],
-            "company_name": acs["company_name"],
-            "quote_symbol": acs["quote_symbol"],
-            "sector": acs["sector_label"],
+            "ticker": santander["ticker"],
+            "company_name": santander["company_name"],
+            "quote_symbol": santander["quote_symbol"],
+            "sector": "Banca",
             "per_2025": Decimal("11.50"),
             "dividend_yield": Decimal("3.10"),
-            "catalog_profile": acs,
+            "catalog_profile": santander,
         }
         workbook_snapshot = {
             "available": True,
             "path": "",
             "companies": [company],
             "companies_by_key": {
-                acs["ticker"]: company,
-                acs["company_name"].upper(): company,
-                acs["quote_symbol"].upper().replace(".", " "): company,
+                santander["ticker"]: company,
+                santander["company_name"].upper(): company,
+                santander["quote_symbol"].upper().replace(".", " "): company,
             },
             "indicators_by_name": {},
             "indicators_by_key": {},
@@ -8117,6 +8118,8 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Márgenes por AÑO")
         self.assertContains(response, "AÑO 1")
         self.assertContains(response, "AÑO 5")
+        self.assertContains(response, "Razonable")
+        self.assertContains(response, 'class="neutral">11,5</strong>', html=False)
 
     @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_IBEX_UNIVERSE_LIMIT=1)
     def test_ibex_table_shows_buy_and_sell_recommendation_dates(self):
