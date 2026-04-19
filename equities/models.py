@@ -284,6 +284,7 @@ class EquityPurchaseForecastBaseline(models.Model):
     projected_price_3y = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
     projected_price_4y = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
     projected_price_5y = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    projected_path_5y = models.JSONField(default=list, blank=True)
     projected_return_pct_1y = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     projected_return_pct_2y = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     projected_return_pct_3y = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)

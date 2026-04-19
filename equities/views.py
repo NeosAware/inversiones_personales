@@ -467,6 +467,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             purchase_baseline = capture_purchase_forecast_baseline(
                 position,
                 baseline_date=position.opened_on or timezone.localdate(),
+                overwrite=created,
             )
 
         if created:

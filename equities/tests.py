@@ -1014,6 +1014,9 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(baseline.projected_return_pct_1y, Decimal("12.50"))
         self.assertEqual(baseline.projected_price_2y, Decimal("12.3750"))
         self.assertEqual(baseline.projected_return_pct_2y, Decimal("23.75"))
+        self.assertEqual(len(baseline.projected_path_5y), 5)
+        self.assertEqual(baseline.projected_path_5y[0]["label"], "1A")
+        self.assertEqual(baseline.projected_path_5y[-1]["projected_price"], "16.4712")
 
     def test_capture_purchase_forecast_baseline_falls_back_to_first_available_run_after_purchase(self):
         position = EquityPosition.objects.create(
@@ -1086,6 +1089,97 @@ class EquitiesServicesTests(TestCase):
         self.assertIsNotNone(baseline)
         self.assertEqual(baseline.source_analysis_date, date(2026, 4, 17))
         self.assertEqual(baseline.baseline_date, date(2026, 4, 17))
+
+    def test_capture_purchase_forecast_baseline_preserves_existing_snapshot_unless_overwritten(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola, S.A.",
+            opened_on=date(2026, 4, 15),
+            shares=Decimal("20"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.4000"),
+        )
+        first_run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2026, 4, 17),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            started_at=timezone.now(),
+            completed_at=timezone.now(),
+        )
+        second_run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2026, 4, 18),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            started_at=timezone.now(),
+            completed_at=timezone.now(),
+        )
+        for run, price_1y, price_5y in (
+            (first_run, Decimal("11.2500"), Decimal("16.4712")),
+            (second_run, Decimal("13.5000"), Decimal("25.9000")),
+        ):
+            cached_position = EquityPosition(
+                broker="Interactive Brokers",
+                ticker="IBE",
+                quote_symbol="IBE.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="Iberdrola, S.A.",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("10.0000"),
+                current_price_per_share=Decimal("10.0000"),
+            )
+            card = {
+                "position": cached_position,
+                "reference_label": "IBEX 35",
+                "projection": {
+                    "available": True,
+                    "projected_price": price_1y,
+                    "base_return_pct": Decimal("12.50"),
+                    "safety_score": Decimal("68.00"),
+                },
+                "projection_reliability": {"label": "Alta", "score": Decimal("79.00")},
+                "trade_alert": {"label": "Comprar"},
+                "cycle_projection_5y": {
+                    "available": True,
+                    "path": [
+                        {"label": "1A", "projected_price": price_1y},
+                        {"label": "5A", "projected_price": price_5y},
+                    ],
+                },
+            }
+            EquityNightlyAnalysisSnapshot.objects.create(
+                run=run,
+                analysis_date=run.analysis_date,
+                scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
+                analysis_key=f"ibex:IBE:{run.analysis_date.isoformat()}",
+                ticker="IBE",
+                quote_symbol="IBE.MC",
+                company_name="Iberdrola, S.A.",
+                status_key="ibex",
+                sector_label="Utilities",
+                agent_provider="core",
+                analysis_payload=serialize_cached_value(card),
+            )
+
+        baseline = capture_purchase_forecast_baseline(position)
+        self.assertEqual(baseline.source_analysis_date, date(2026, 4, 17))
+        self.assertEqual(baseline.projected_price_5y, Decimal("16.4712"))
+
+        preserved = capture_purchase_forecast_baseline(position)
+        self.assertEqual(preserved.id, baseline.id)
+        self.assertEqual(preserved.source_analysis_date, date(2026, 4, 17))
+        self.assertEqual(preserved.projected_price_5y, Decimal("16.4712"))
+
+        overwritten = capture_purchase_forecast_baseline(
+            position,
+            baseline_date=date(2026, 4, 18),
+            overwrite=True,
+        )
+        self.assertEqual(overwritten.id, baseline.id)
+        self.assertEqual(overwritten.source_analysis_date, date(2026, 4, 18))
+        self.assertEqual(overwritten.projected_price_5y, Decimal("25.9000"))
 
     def test_build_ibex_recommendation_date_map_tracks_last_buy_and_sell_starts(self):
         for analysis_day, label in (
@@ -1786,6 +1880,101 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(tracking["global"]["baseline_value"], Decimal("616.00"))
         self.assertEqual(tracking["global"]["net_gain_value"], Decimal("0.00"))
         self.assertEqual(tracking["global"]["daily_change_pct"], Decimal("0.00"))
+
+    def test_ticket_tracking_5y_uses_purchase_baseline_path_instead_of_live_recalculation(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.3000"),
+            annual_dividend_income=Decimal("20.00"),
+        )
+        stock_series = build_compound_market_series(
+            "IBE.MC",
+            "Iberdrola",
+            growth=Decimal("1.0180"),
+            start_price=Decimal("10.0000"),
+        )
+        reference_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+        for stock_point, reference_point in zip(stock_series.points, reference_series.points):
+            position.price_history.create(
+                price_date=stock_point["date"],
+                open_price=stock_point["open"],
+                high_price=stock_point["high"],
+                low_price=stock_point["low"],
+                close_price=stock_point["close"],
+                benchmark_close=reference_point["close"],
+            )
+
+        capture_equity_ticket_snapshots(
+            [
+                {
+                    "position": position,
+                    "projection": {"projected_price": Decimal("11.0000"), "base_return_pct": Decimal("10.00")},
+                    "cycle_projection_5y": {"available": True, "path": [{"label": "5A", "projected_price": Decimal("60.0000")}]},
+                }
+            ],
+            snapshot_date=date(2026, 4, 17),
+        )
+        EquityPurchaseForecastBaseline.objects.create(
+            position=position,
+            source_analysis_date=date(2026, 4, 17),
+            baseline_date=date(2026, 4, 17),
+            analysis_scope="ibex",
+            analysis_key="ibex:IBE",
+            baseline_price=Decimal("10.3000"),
+            projected_price_1y=Decimal("11.5000"),
+            projected_price_5y=Decimal("20.0000"),
+            projected_return_pct_1y=Decimal("11.65"),
+            projected_return_pct_5y=Decimal("94.17"),
+            projected_path_5y=[
+                {"label": "6M", "projected_price": "9.8000", "projected_date": "2026-10-17"},
+                {"label": "1A", "projected_price": "11.5000", "projected_date": "2027-04-17"},
+                {"label": "2A", "projected_price": "13.0000", "projected_date": "2028-04-17"},
+                {"label": "3A", "projected_price": "15.5000", "projected_date": "2029-04-17"},
+                {"label": "4A", "projected_price": "17.0000", "projected_date": "2030-04-17"},
+                {"label": "5A", "projected_price": "20.0000", "projected_date": "2031-04-17"},
+            ],
+        )
+        benchmark_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+        with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
+            tracking = build_equity_ticket_tracking_context(
+                [
+                    {
+                        "position": position,
+                        "reference_label": "IBEX 35",
+                        "projection": {"projected_price": Decimal("12.0000"), "base_return_pct": Decimal("16.50")},
+                        "cycle_projection_5y": {
+                            "available": True,
+                            "path": [
+                                {"label": "1A", "projected_price": Decimal("25.0000")},
+                                {"label": "5A", "projected_price": Decimal("60.0000")},
+                            ],
+                        },
+                    }
+                ]
+            )
+
+        ticket = tracking["tickets"][0]
+        self.assertEqual(ticket["expected_total_value_5y"], Decimal("400.00"))
+        self.assertEqual(ticket["expected_series_5y"][1]["value"], Decimal("196.00"))
+        self.assertEqual(ticket["expected_series_5y"][-1]["value"], Decimal("400.00"))
 
     def test_ticket_tracking_keeps_each_ticket_return_from_its_first_snapshot(self):
         def create_position(ticker, company_name, start_price):
@@ -5951,6 +6140,22 @@ class EquitiesViewTests(TestCase):
             invested_amount=Decimal("1.00"),
             current_value=Decimal("1.00"),
         )
+        EquityPurchaseForecastBaseline.objects.create(
+            position=existing,
+            source_analysis_date=date(2026, 4, 18),
+            baseline_date=date(2026, 4, 18),
+            analysis_scope="ibex",
+            analysis_key="ibex:SAN",
+            baseline_price=Decimal("1.0000"),
+            projected_price_1y=Decimal("1.1000"),
+            projected_price_5y=Decimal("1.5000"),
+            projected_return_pct_1y=Decimal("10.00"),
+            projected_return_pct_5y=Decimal("50.00"),
+            projected_path_5y=[
+                {"label": "1A", "projected_price": "1.1000", "projected_date": "2027-04-18"},
+                {"label": "5A", "projected_price": "1.5000", "projected_date": "2031-04-18"},
+            ],
+        )
 
         call_command("import_monica_equity_positions", "--as-of", analysis_date.isoformat(), "--broker", "Broker Monica")
 
@@ -5968,8 +6173,12 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(existing.shares, Decimal("2550.0000"))
         self.assertEqual(existing.average_cost_per_share, Decimal("11.0420"))
         self.assertEqual(existing.current_price_per_share, Decimal("11.0420"))
-        self.assertEqual(existing.ticket_snapshots.count(), 1)
+        self.assertEqual(existing.ticket_snapshots.count(), 2)
+        self.assertTrue(existing.ticket_snapshots.filter(snapshot_date=date(2026, 4, 18)).exists())
         self.assertTrue(existing.ticket_snapshots.filter(snapshot_date=analysis_date).exists())
+        baseline = EquityPurchaseForecastBaseline.objects.get(position=existing)
+        self.assertEqual(baseline.source_analysis_date, date(2026, 4, 18))
+        self.assertEqual(baseline.projected_price_5y, Decimal("1.5000"))
 
     def test_can_create_equity_position_by_only_typing_indra(self):
         response = self.client.post(

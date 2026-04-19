@@ -4283,6 +4283,30 @@ def build_ticket_expected_series_5y(
 
     baseline_current_value = quantize_decimal(baseline_snapshot.current_value, "0.01") or ZERO
     if purchase_baseline:
+        for step in purchase_baseline.projected_path_5y or []:
+            label = str(step.get("label") or "").strip()
+            raw_projected_price = step.get("projected_price")
+            try:
+                projected_price = Decimal(str(raw_projected_price)) if raw_projected_price not in {None, ""} else None
+            except Exception:
+                projected_price = None
+            raw_projected_date = str(step.get("projected_date") or "").strip()
+            projected_date = None
+            if raw_projected_date:
+                try:
+                    projected_date = date.fromisoformat(raw_projected_date)
+                except ValueError:
+                    projected_date = None
+            months = parse_projection_label_months(label)
+            if projected_price is None:
+                continue
+            projected_value = quantize_decimal(position.shares * projected_price, "0.01")
+            if projected_date and projected_date > baseline_snapshot.snapshot_date:
+                anchors.append({"date": projected_date, "value": projected_value})
+            else:
+                add_anchor(months, projected_value)
+
+    if purchase_baseline and not anchors:
         for year in TRACKING_FIVE_YEAR_MARKERS:
             projected_price = getattr(purchase_baseline, f"projected_price_{year}y", None)
             projected_return_pct = getattr(purchase_baseline, f"projected_return_pct_{year}y", None)

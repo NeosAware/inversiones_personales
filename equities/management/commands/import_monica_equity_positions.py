@@ -146,9 +146,6 @@ class Command(BaseCommand):
             else:
                 updated_count += 1
 
-            position.ticket_snapshots.all().delete()
-            EquityPurchaseForecastBaseline.objects.filter(position=position).delete()
-
             if market_price > 0:
                 EquityPriceHistory.objects.update_or_create(
                     position=position,
@@ -161,7 +158,11 @@ class Command(BaseCommand):
                     },
                 )
 
-            baseline = capture_purchase_forecast_baseline(position, baseline_date=as_of)
+            baseline = capture_purchase_forecast_baseline(
+                position,
+                baseline_date=as_of,
+                overwrite=created,
+            )
             if baseline is not None:
                 baseline_count += 1
             projected_price_12m = baseline.projected_price_1y if baseline is not None else None

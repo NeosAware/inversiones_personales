@@ -671,6 +671,19 @@ def build_purchase_forecast_baseline_defaults(
         "reliability_label": str(reliability.get("label") or ""),
         "safety_score": quantize_decimal(projection.get("safety_score")),
         "baseline_price": quantize_decimal(baseline_price, "0.0001"),
+        "projected_path_5y": [
+            {
+                "label": str(step.get("label") or ""),
+                "projected_price": str(quantize_decimal(step.get("projected_price"), "0.0001") or ""),
+                "projected_date": (
+                    step.get("projected_date").isoformat()
+                    if isinstance(step.get("projected_date"), date)
+                    else str(step.get("projected_date") or "")
+                ),
+            }
+            for step in (cycle_projection.get("path") or [])
+            if quantize_decimal(step.get("projected_price"), "0.0001") is not None
+        ],
     }
 
     for year_number in range(1, 6):
@@ -685,9 +698,14 @@ def capture_purchase_forecast_baseline(
     position: EquityPosition,
     *,
     baseline_date: date | None = None,
+    overwrite: bool = False,
 ) -> EquityPurchaseForecastBaseline | None:
     if not position.is_owned:
         return None
+
+    existing_baseline = EquityPurchaseForecastBaseline.objects.filter(position=position).first()
+    if existing_baseline is not None and not overwrite:
+        return existing_baseline
 
     baseline_date = baseline_date or position.opened_on or timezone.localdate()
     run, snapshot, card = load_purchase_baseline_source_card(position, baseline_date=baseline_date)
