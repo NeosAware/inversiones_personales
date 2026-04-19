@@ -4917,27 +4917,43 @@ def build_equity_ticket_tracking_item(
     purchase_baseline: EquityPurchaseForecastBaseline | None = None,
     optimizer_cards: list[dict] | None = None,
 ) -> dict | None:
-    relevant_snapshots = filter_ticket_tracking_snapshots(snapshots, tracking_anchor_date)
-    if not relevant_snapshots:
+    if not snapshots:
         return None
 
+    relevant_snapshots = filter_ticket_tracking_snapshots(snapshots, tracking_anchor_date)
+    if not relevant_snapshots:
+        relevant_snapshots = snapshots
+
     position = card["position"]
-    baseline = relevant_snapshots[0]
-    latest = relevant_snapshots[-1]
-    previous = relevant_snapshots[-2] if len(relevant_snapshots) >= 2 else None
+    baseline = snapshots[0]
+    latest = snapshots[-1]
+    previous = snapshots[-2] if len(snapshots) >= 2 else None
     expected_market_value_12m = baseline.projected_market_value_12m or baseline.current_value
     expected_total_value_12m = baseline.projected_total_value_12m or expected_market_value_12m
-    actual_series = [{"date": snapshot.snapshot_date, "value": snapshot.current_value} for snapshot in relevant_snapshots]
+    actual_series = [{"date": snapshot.snapshot_date, "value": snapshot.current_value} for snapshot in snapshots]
     expected_series, current_expected_value, projected_end_date = build_ticket_expected_series(
-        relevant_snapshots,
+        snapshots,
         expected_market_value_12m,
     )
     expected_series_5y, current_expected_value_5y, projected_end_date_5y, expected_total_value_5y = build_ticket_expected_series_5y(
         card,
-        relevant_snapshots,
+        snapshots,
         purchase_baseline=purchase_baseline,
     )
     chart = build_value_tracking_chart(actual_series, expected_series)
+    shared_baseline = relevant_snapshots[0]
+    shared_expected_market_value_12m = shared_baseline.projected_market_value_12m or shared_baseline.current_value
+    shared_expected_total_value_12m = shared_baseline.projected_total_value_12m or shared_expected_market_value_12m
+    shared_actual_series = [{"date": snapshot.snapshot_date, "value": snapshot.current_value} for snapshot in relevant_snapshots]
+    shared_expected_series, shared_current_expected_value, shared_projection_end_date = build_ticket_expected_series(
+        relevant_snapshots,
+        shared_expected_market_value_12m,
+    )
+    shared_expected_series_5y, shared_current_expected_value_5y, shared_projection_end_date_5y, shared_expected_total_value_5y = build_ticket_expected_series_5y(
+        card,
+        relevant_snapshots,
+        purchase_baseline=purchase_baseline,
+    )
     gap_value = (
         quantize_decimal(latest.current_value - current_expected_value, "0.01")
         if current_expected_value is not None
@@ -4973,8 +4989,10 @@ def build_equity_ticket_tracking_item(
         "position": position,
         "card": card,
         "baseline_snapshot": baseline,
+        "shared_baseline_snapshot": shared_baseline,
         "latest_snapshot": latest,
-        "snapshot_count": len(relevant_snapshots),
+        "snapshot_count": len(snapshots),
+        "shared_snapshot_count": len(relevant_snapshots),
         "days_tracked": max((latest.snapshot_date - baseline.snapshot_date).days, 0),
         "actual_series": actual_series,
         "expected_series": expected_series,
@@ -4986,6 +5004,16 @@ def build_equity_ticket_tracking_item(
         "current_expected_value_5y": current_expected_value_5y,
         "expected_total_value_5y": expected_total_value_5y,
         "projection_end_date_5y": projected_end_date_5y,
+        "shared_actual_series": shared_actual_series,
+        "shared_expected_series": shared_expected_series,
+        "shared_current_expected_value": shared_current_expected_value,
+        "shared_expected_market_value_12m": shared_expected_market_value_12m,
+        "shared_expected_total_value_12m": shared_expected_total_value_12m,
+        "shared_projection_end_date": shared_projection_end_date,
+        "shared_expected_series_5y": shared_expected_series_5y,
+        "shared_current_expected_value_5y": shared_current_expected_value_5y,
+        "shared_expected_total_value_5y": shared_expected_total_value_5y,
+        "shared_projection_end_date_5y": shared_projection_end_date_5y,
         "actual_change_pct": percentage_change(latest.current_value, baseline.current_value),
         "expected_change_pct": percentage_change(current_expected_value, baseline.current_value)
         if current_expected_value is not None
@@ -5005,10 +5033,10 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
     tracked_dates: set[date] = set()
     expected_map_5y: dict[date, Decimal] = defaultdict(lambda: ZERO)
     for item in ticket_items:
-        for point in item["actual_series"]:
+        for point in item.get("shared_actual_series", []):
             actual_map[point["date"]] += point["value"]
             tracked_dates.add(point["date"])
-        for point in item.get("expected_series_5y", []):
+        for point in item.get("shared_expected_series_5y", []):
             point_date = point.get("date")
             point_value = point.get("value")
             if point_date is None or point_value is None:
@@ -5021,8 +5049,8 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
     expected_dates: set[date] = set(tracked_dates)
     descriptors = []
     for item in ticket_items:
-        baseline = item["baseline_snapshot"]
-        expected_target = item["expected_market_value_12m"] or baseline.current_value
+        baseline = item["shared_baseline_snapshot"]
+        expected_target = item.get("shared_expected_market_value_12m") or baseline.current_value
         descriptors.append(
             {
                 "start_date": baseline.snapshot_date,
@@ -5085,10 +5113,10 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         None,
     )
     expected_total_value_12m = sum(
-        (item["expected_total_value_12m"] or item["expected_market_value_12m"] or ZERO)
+        (item.get("shared_expected_total_value_12m") or item.get("shared_expected_market_value_12m") or ZERO)
         for item in ticket_items
     )
-    expected_total_value_5y = sum((item.get("expected_total_value_5y") or ZERO) for item in ticket_items)
+    expected_total_value_5y = sum((item.get("shared_expected_total_value_5y") or ZERO) for item in ticket_items)
     previous_actual = actual_series[-2]["value"] if len(actual_series) >= 2 else None
     gap_value = (
         quantize_decimal(latest_actual - current_expected_value, "0.01")
@@ -5184,7 +5212,7 @@ def build_equity_ticket_tracking_context(
         {
             point["date"]
             for item in ticket_items
-            for point in item.get("actual_series", [])
+            for point in item.get("shared_actual_series", [])
         }
     )
     return {
