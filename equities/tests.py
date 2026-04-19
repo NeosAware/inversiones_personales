@@ -5751,6 +5751,14 @@ class EquitiesViewTests(TestCase):
             ).count(),
             4,
         )
+        self.assertEqual(
+            EquityTicketSnapshot.objects.filter(
+                position__broker="Broker Monica",
+                position__ownership_category=AssetOwnershipCategory.MONICA,
+                snapshot_date=analysis_date,
+            ).count(),
+            len(MONICA_EQUITY_POSITIONS),
+        )
 
     def test_import_monica_equity_positions_updates_existing_rows_without_duplicates(self):
         analysis_date = date(2026, 4, 19)
@@ -5794,7 +5802,8 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(existing.shares, Decimal("2550.0000"))
         self.assertEqual(existing.average_cost_per_share, Decimal("11.0420"))
         self.assertEqual(existing.current_price_per_share, Decimal("11.0420"))
-        self.assertFalse(existing.ticket_snapshots.exists())
+        self.assertEqual(existing.ticket_snapshots.count(), 1)
+        self.assertTrue(existing.ticket_snapshots.filter(snapshot_date=analysis_date).exists())
 
     def test_can_create_equity_position_by_only_typing_indra(self):
         response = self.client.post(
@@ -7001,6 +7010,81 @@ class EquitiesViewTests(TestCase):
         self.assertLess(page.index('id="equity-portfolio-summary"'), page.index('id="equity-decision"'))
         self.assertLess(page.index('id="equity-decision"'), page.index('id="equity-ibex"'))
         self.assertEqual(EquityTicketSnapshot.objects.count(), 2)
+
+    def test_equities_page_backfills_missing_ticket_snapshots_for_new_owned_positions(self):
+        iberdrola = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2024, 1, 10),
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        santander = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.MONICA,
+            broker="Cartera Monica",
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Banco Santander",
+            opened_on=date(2026, 4, 19),
+            shares=Decimal("2550.0000"),
+            average_cost_per_share=Decimal("11.0420"),
+            current_price_per_share=Decimal("11.0420"),
+        )
+        populate_position_history(iberdrola)
+        populate_position_history(santander)
+
+        benchmark_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+        with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
+            iberdrola_card = build_equity_history_cards([iberdrola])[0]
+        capture_equity_ticket_snapshots([iberdrola_card], snapshot_date=date(2026, 4, 18))
+
+        nightly_status = {
+            "available": True,
+            "status_key": "completed",
+            "status_badge": "OK",
+            "completed_at_label": "2026-04-19 08:00",
+            "agent_label": "Analista nocturno",
+            "cache_available": False,
+            "status_note": "",
+            "error_message": "",
+            "llm": {
+                "enabled": False,
+                "reason": "",
+                "completed_count": 0,
+                "total_count": 0,
+                "estimated_cost_usd": "0",
+                "refresh_performed": False,
+                "refresh_failed_count": 0,
+                "pending_count": 0,
+                "skipped_budget_count": 0,
+            },
+        }
+        with (
+            patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series),
+            patch("equities.views.build_equity_investment_journey_context", return_value={"available": False}),
+            patch("equities.views.build_nightly_analysis_status", return_value=nightly_status),
+        ):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Banco Santander")
+        self.assertEqual(
+            EquityTicketSnapshot.objects.filter(position=santander, snapshot_date=timezone.localdate()).count(),
+            1,
+        )
 
     def test_equities_page_tracking_shows_recommended_sale_and_reentry(self):
         position = EquityPosition.objects.create(

@@ -55,6 +55,7 @@ from .services import (
     build_equity_ticket_tracking_context,
     build_ibex_universe_card,
     archive_equity_position_sale,
+    capture_missing_equity_ticket_snapshots,
     capture_equity_ticket_snapshots,
     find_ibex_universe_company,
     EquityDocumentImportError,
@@ -295,9 +296,13 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["today"] = timezone.localdate()
         for row in context["scheduled_optimization_persistence"].get("rows", []):
             row["detail_url"] = reverse("equities:ibex_detail", kwargs={"ticker": row["ticker"]})
+        self._ensure_purchase_forecast_baselines(positions)
+        capture_missing_equity_ticket_snapshots(
+            dashboard["owned_history_cards"],
+            snapshot_date=timezone.localdate(),
+        )
         if not context["nightly_analysis"]["available"]:
             capture_equity_ticket_snapshots(dashboard["owned_history_cards"])
-        self._ensure_purchase_forecast_baselines(positions)
         context["ticket_tracking"] = build_equity_ticket_tracking_context(
             dashboard["owned_history_cards"],
             optimizer_cards=dashboard["optimizer_cards"],

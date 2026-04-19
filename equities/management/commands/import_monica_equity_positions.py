@@ -7,9 +7,9 @@ from django.utils.dateparse import parse_date
 
 from portfolio.ownership import AssetOwnershipCategory
 
-from equities.models import EquityPosition, EquityPriceHistory, EquityPurchaseForecastBaseline
+from equities.models import EquityPosition, EquityPriceHistory, EquityPurchaseForecastBaseline, EquityTicketSnapshot
 from equities.nightly_analysis import capture_purchase_forecast_baseline
-from equities.services import apply_equity_company_defaults
+from equities.services import apply_equity_company_defaults, quantize_decimal
 
 
 MONICA_EQUITY_POSITIONS = (
@@ -164,6 +164,31 @@ class Command(BaseCommand):
             baseline = capture_purchase_forecast_baseline(position, baseline_date=as_of)
             if baseline is not None:
                 baseline_count += 1
+            projected_price_12m = baseline.projected_price_1y if baseline is not None else None
+            projected_market_value_12m = (
+                quantize_decimal(position.shares * projected_price_12m, "0.01")
+                if projected_price_12m is not None
+                else None
+            )
+            projected_total_value_12m = (
+                quantize_decimal(
+                    position.current_value * (Decimal("1") + ((baseline.projected_return_pct_1y or Decimal("0")) / Decimal("100"))),
+                    "0.01",
+                )
+                if baseline is not None and baseline.projected_return_pct_1y is not None
+                else projected_market_value_12m
+            )
+            EquityTicketSnapshot.objects.update_or_create(
+                position=position,
+                snapshot_date=as_of,
+                defaults={
+                    "invested_amount": quantize_decimal(position.invested_amount, "0.01") or Decimal("0.00"),
+                    "current_value": quantize_decimal(position.current_value, "0.01") or Decimal("0.00"),
+                    "projected_market_value_12m": projected_market_value_12m,
+                    "projected_total_value_12m": projected_total_value_12m,
+                    "projected_price_12m": projected_price_12m,
+                },
+            )
 
             self.stdout.write(
                 f"{'Creada' if created else 'Actualizada'} {position.ticker} · {position.company_name} · "

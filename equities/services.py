@@ -3824,6 +3824,33 @@ def capture_equity_ticket_snapshots(history_cards: list[dict], snapshot_date: da
     return snapshots
 
 
+def capture_missing_equity_ticket_snapshots(
+    history_cards: list[dict],
+    snapshot_date: date | None = None,
+) -> list[EquityTicketSnapshot]:
+    owned_cards = [
+        card
+        for card in history_cards
+        if card["position"].is_owned and card["position"].id
+    ]
+    if not owned_cards:
+        return []
+
+    owned_position_ids = [card["position"].id for card in owned_cards]
+    existing_position_ids = set(
+        EquityTicketSnapshot.objects.filter(position_id__in=owned_position_ids)
+        .values_list("position_id", flat=True)
+        .distinct()
+    )
+    has_missing_cards = any(
+        card["position"].id not in existing_position_ids
+        for card in owned_cards
+    )
+    if not has_missing_cards:
+        return []
+    return capture_equity_ticket_snapshots(owned_cards, snapshot_date=snapshot_date)
+
+
 def project_expected_value_on_date(
     start_value: Decimal | None,
     target_value: Decimal | None,
