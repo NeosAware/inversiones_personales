@@ -1698,6 +1698,12 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(tracking["snapshot_days_count"], 2)
         self.assertEqual(len(tracking["tickets"]), 2)
         self.assertTrue(all(item["chart"]["available"] for item in tracking["tickets"]))
+        self.assertTrue(
+            all(len(item["expected_series_dense"]) > len(item["expected_series"]) for item in tracking["tickets"])
+        )
+        self.assertTrue(
+            all(len(item["expected_series_5y_dense"]) > len(item["expected_series_5y"]) for item in tracking["tickets"])
+        )
         self.assertIsNotNone(tracking["global"]["expected_today_value"])
         self.assertIsNotNone(tracking["global"]["expected_total_value_5y"])
         self.assertIsNotNone(tracking["global"]["expected_net_value_12m"])

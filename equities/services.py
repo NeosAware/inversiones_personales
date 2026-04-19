@@ -4326,6 +4326,52 @@ def build_ticket_expected_series_5y(
     return series, latest_expected_value, projected_end_date, expected_total_value_5y
 
 
+def densify_projected_tracking_series(series: list[dict]) -> list[dict]:
+    normalized_rows = {}
+    for point in series or []:
+        point_date = point.get("date")
+        point_value = point.get("value")
+        if point_date is None or point_value is None:
+            continue
+        normalized_rows[point_date] = quantize_decimal(Decimal(str(point_value)), "0.01") or ZERO
+
+    normalized_series = [
+        {"date": point_date, "value": normalized_rows[point_date]}
+        for point_date in sorted(normalized_rows)
+    ]
+    if len(normalized_series) < 2:
+        return normalized_series
+
+    dense_series = [normalized_series[0]]
+    for previous_point, next_point in zip(normalized_series, normalized_series[1:]):
+        previous_date = previous_point["date"]
+        next_date = next_point["date"]
+        previous_value = previous_point["value"]
+        next_value = next_point["value"]
+        if next_date <= previous_date:
+            continue
+        segment_days = max((next_date - previous_date).days, 1)
+        for day_offset in range(1, segment_days):
+            point_date = previous_date + timedelta(days=day_offset)
+            interpolated_value = project_expected_value_on_date(
+                previous_value,
+                next_value,
+                previous_date,
+                point_date,
+                horizon_days=segment_days,
+            )
+            if interpolated_value is None:
+                continue
+            dense_series.append(
+                {
+                    "date": point_date,
+                    "value": quantize_decimal(interpolated_value, "0.01") or ZERO,
+                }
+            )
+        dense_series.append(next_point)
+    return dense_series
+
+
 def filter_ticket_tracking_snapshots(
     snapshots: list[EquityTicketSnapshot],
     tracking_anchor_date: date | None = None,
@@ -4509,40 +4555,50 @@ def build_aggregated_tracking_benchmark_context(ticket_items: list[dict]) -> dic
 
 
 def build_aggregated_ticket_series(ticket_items: list[dict], series_key: str) -> list[dict]:
-    all_dates = sorted(
-        {
-            point["date"]
-            for item in ticket_items
-            for point in item.get(series_key, [])
-            if point.get("date") is not None
-        }
-    )
-    if not all_dates:
+    prepared_items = []
+    all_dates = set()
+    for item in ticket_items:
+        normalized_series = {}
+        for point in item.get(series_key, []):
+            point_date = point.get("date")
+            point_value = point.get("value")
+            if point_date is None or point_value is None:
+                continue
+            normalized_series[point_date] = Decimal(str(point_value))
+        if not normalized_series:
+            continue
+        sorted_series = sorted(normalized_series.items())
+        all_dates.update(point_date for point_date, _ in sorted_series)
+        prepared_items.append(
+            {
+                "baseline_date": getattr(item.get("baseline_snapshot"), "snapshot_date", None),
+                "series": sorted_series,
+                "cursor": 0,
+                "current_value": None,
+            }
+        )
+
+    if not all_dates or not prepared_items:
         return []
 
     aggregated = []
-    for point_date in all_dates:
+    for point_date in sorted(all_dates):
         total_value = ZERO
         has_value = False
-        for item in ticket_items:
-            baseline = item.get("baseline_snapshot")
-            baseline_date = getattr(baseline, "snapshot_date", None)
+        for prepared in prepared_items:
+            baseline_date = prepared["baseline_date"]
             if baseline_date is not None and point_date < baseline_date:
                 continue
-            latest_known_value = None
-            for point in item.get(series_key, []):
-                date_value = point.get("date")
-                if date_value is None:
-                    continue
-                if date_value > point_date:
-                    break
-                point_value = point.get("value")
-                if point_value is None:
-                    continue
-                latest_known_value = Decimal(str(point_value))
-            if latest_known_value is None:
+            series = prepared["series"]
+            cursor = prepared["cursor"]
+            while cursor < len(series) and series[cursor][0] <= point_date:
+                prepared["current_value"] = series[cursor][1]
+                cursor += 1
+            prepared["cursor"] = cursor
+            current_value = prepared["current_value"]
+            if current_value is None:
                 continue
-            total_value += latest_known_value
+            total_value += current_value
             has_value = True
         if has_value:
             aggregated.append(
@@ -5158,6 +5214,8 @@ def build_equity_ticket_tracking_item(
         snapshots,
         purchase_baseline=purchase_baseline,
     )
+    dense_expected_series = densify_projected_tracking_series(expected_series)
+    dense_expected_series_5y = densify_projected_tracking_series(expected_series_5y)
     chart = build_value_tracking_chart(actual_series, expected_series)
     shared_baseline = relevant_snapshots[0]
     shared_expected_market_value_12m = shared_baseline.projected_market_value_12m or shared_baseline.current_value
@@ -5172,6 +5230,8 @@ def build_equity_ticket_tracking_item(
         relevant_snapshots,
         purchase_baseline=purchase_baseline,
     )
+    shared_dense_expected_series = densify_projected_tracking_series(shared_expected_series)
+    shared_dense_expected_series_5y = densify_projected_tracking_series(shared_expected_series_5y)
     gap_value = (
         quantize_decimal(latest.current_value - current_expected_value, "0.01")
         if current_expected_value is not None
@@ -5214,21 +5274,25 @@ def build_equity_ticket_tracking_item(
         "days_tracked": max((latest.snapshot_date - baseline.snapshot_date).days, 0),
         "actual_series": actual_series,
         "expected_series": expected_series,
+        "expected_series_dense": dense_expected_series,
         "chart": chart,
         "current_expected_value": current_expected_value,
         "expected_market_value_12m": expected_market_value_12m,
         "expected_total_value_12m": expected_total_value_12m,
         "expected_series_5y": expected_series_5y,
+        "expected_series_5y_dense": dense_expected_series_5y,
         "current_expected_value_5y": current_expected_value_5y,
         "expected_total_value_5y": expected_total_value_5y,
         "projection_end_date_5y": projected_end_date_5y,
         "shared_actual_series": shared_actual_series,
         "shared_expected_series": shared_expected_series,
+        "shared_expected_series_dense": shared_dense_expected_series,
         "shared_current_expected_value": shared_current_expected_value,
         "shared_expected_market_value_12m": shared_expected_market_value_12m,
         "shared_expected_total_value_12m": shared_expected_total_value_12m,
         "shared_projection_end_date": shared_projection_end_date,
         "shared_expected_series_5y": shared_expected_series_5y,
+        "shared_expected_series_5y_dense": shared_dense_expected_series_5y,
         "shared_current_expected_value_5y": shared_current_expected_value_5y,
         "shared_expected_total_value_5y": shared_expected_total_value_5y,
         "shared_projection_end_date_5y": shared_projection_end_date_5y,
@@ -5251,8 +5315,8 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
     if not actual_series:
         return {"available": False}
 
-    expected_series = build_aggregated_ticket_series(ticket_items, "expected_series")
-    expected_series_5y = build_aggregated_ticket_series(ticket_items, "expected_series_5y")
+    expected_series = build_aggregated_ticket_series(ticket_items, "expected_series_dense")
+    expected_series_5y = build_aggregated_ticket_series(ticket_items, "expected_series_5y_dense")
     baseline_value = quantize_decimal(
         sum(
             (
