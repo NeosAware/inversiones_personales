@@ -70,6 +70,7 @@ from .services import (
     clear_market_data_caches,
     capture_equity_ticket_snapshots,
     fetch_market_series,
+    filter_positive_optimizer_candidates,
     find_equity_company_profile,
     load_ibex_reference_workbook_snapshot,
     sync_equity_market_data,
@@ -2923,6 +2924,120 @@ class EquitiesServicesTests(TestCase):
 
         self.assertFalse(plan["available"])
         self.assertIn("ninguna accion", plan["reason"].lower())
+
+    def test_optimizer_filters_out_low_quality_candidates_even_if_score_is_positive(self):
+        fragile_card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="SLR",
+                company_name="Solaria",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("8"),
+            ),
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Vigilar", "tone": "watch", "note": ""},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("21.00"),
+                "price_return_pct": Decimal("18.00"),
+                "price_low_return_pct": Decimal("-10.00"),
+                "price_high_return_pct": Decimal("34.00"),
+                "projected_price": Decimal("9.6800"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("18.00"),
+                "gross_dividend_yield_pct": Decimal("0.00"),
+                "net_income_yield_pct": Decimal("0.00"),
+                "transaction_drag_pct": Decimal("0.20"),
+                "annualized_volatility_pct": Decimal("12.00"),
+                "positive_year_ratio_pct": Decimal("66.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Transicion",
+                "current_drawdown_pct": Decimal("-4.00"),
+                "max_drawdown_pct": Decimal("-18.00"),
+                "scenarios": [
+                    {"key": "bear", "label": "Bajista", "probability_pct": Decimal("25.0"), "total_return_pct": Decimal("-10.00")},
+                    {"key": "base", "label": "Base", "probability_pct": Decimal("45.0"), "total_return_pct": Decimal("21.00")},
+                    {"key": "bull", "label": "Alcista", "probability_pct": Decimal("30.0"), "total_return_pct": Decimal("34.00")},
+                ],
+            },
+            "projection_reliability": {"label": "Baja", "score": Decimal("42.00")},
+            "cycle_projection_5y": {
+                "available": True,
+                "annual_return_pct": Decimal("8.50"),
+                "five_year_return_pct": Decimal("50.00"),
+                "scenarios": [
+                    {"key": "bear", "label": "Bajista", "probability_pct": Decimal("25.0"), "annual_return_pct": Decimal("1.00")},
+                    {"key": "base", "label": "Base", "probability_pct": Decimal("45.0"), "annual_return_pct": Decimal("8.50")},
+                    {"key": "bull", "label": "Alcista", "probability_pct": Decimal("30.0"), "annual_return_pct": Decimal("13.00")},
+                ],
+            },
+        }
+        robust_card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                ticker="IBE",
+                company_name="Iberdrola",
+                reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+                benchmark_name="IBEX 35",
+                benchmark_symbol="^IBEX",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("14"),
+            ),
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": ""},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("14.00"),
+                "price_return_pct": Decimal("11.50"),
+                "price_low_return_pct": Decimal("2.00"),
+                "price_high_return_pct": Decimal("20.00"),
+                "projected_price": Decimal("15.6100"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("76.00"),
+                "gross_dividend_yield_pct": Decimal("3.40"),
+                "net_income_yield_pct": Decimal("2.60"),
+                "transaction_drag_pct": Decimal("0.20"),
+                "annualized_volatility_pct": Decimal("11.00"),
+                "positive_year_ratio_pct": Decimal("72.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.00"),
+                "max_drawdown_pct": Decimal("-16.00"),
+                "scenarios": [
+                    {"key": "bear", "label": "Bajista", "probability_pct": Decimal("24.0"), "total_return_pct": Decimal("2.00")},
+                    {"key": "base", "label": "Base", "probability_pct": Decimal("52.0"), "total_return_pct": Decimal("14.00")},
+                    {"key": "bull", "label": "Alcista", "probability_pct": Decimal("24.0"), "total_return_pct": Decimal("20.00")},
+                ],
+            },
+            "projection_reliability": {"label": "Alta", "score": Decimal("82.00")},
+            "cycle_projection_5y": {
+                "available": True,
+                "annual_return_pct": Decimal("6.20"),
+                "five_year_return_pct": Decimal("35.00"),
+                "scenarios": [
+                    {"key": "bear", "label": "Bajista", "probability_pct": Decimal("24.0"), "annual_return_pct": Decimal("4.50")},
+                    {"key": "base", "label": "Base", "probability_pct": Decimal("52.0"), "annual_return_pct": Decimal("6.20")},
+                    {"key": "bull", "label": "Alcista", "probability_pct": Decimal("24.0"), "annual_return_pct": Decimal("7.60")},
+                ],
+            },
+        }
+
+        fragile_candidate = build_equity_optimizer_candidate(fragile_card)
+        robust_candidate = build_equity_optimizer_candidate(robust_card)
+        filtered = filter_positive_optimizer_candidates([fragile_candidate, robust_candidate], "12m_primary")
+        plan = build_equity_allocation_plan([fragile_card, robust_card], Decimal("100000"), Decimal("60"))
+
+        self.assertIsNotNone(fragile_candidate)
+        self.assertGreater(fragile_candidate["optimization_score"], ZERO)
+        self.assertEqual(fragile_candidate["decision_action_label"], "Vigilar")
+        self.assertEqual([item["position"].ticker for item in filtered], ["IBE"])
+        self.assertTrue(plan["available"])
+        self.assertEqual([item["position"].ticker for item in plan["allocations"]], ["IBE"])
 
     def test_allocation_plan_recalculates_costs_and_dividends_for_assigned_capital(self):
         santander_card = {

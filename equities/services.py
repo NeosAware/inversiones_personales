@@ -9510,6 +9510,9 @@ OPTIMIZER_STRATEGIES = {
         "secondary_weight": Decimal("0.35"),
     },
 }
+OPTIMIZER_MIN_SAFETY_SCORE = Decimal("55.00")
+OPTIMIZER_MIN_RELIABILITY_SCORE = Decimal("58.00")
+OPTIMIZER_ALLOWED_ACTION_LABELS = {"Priorizar", "Seguir", "Mantener"}
 
 
 def get_optimizer_strategy_config(strategy_mode: str | None = None) -> dict:
@@ -9519,6 +9522,31 @@ def get_optimizer_strategy_config(strategy_mode: str | None = None) -> dict:
         normalized_mode = OPTIMIZER_STRATEGY_12M_PRIMARY
         strategy = OPTIMIZER_STRATEGIES[normalized_mode]
     return {"mode": normalized_mode, **strategy}
+
+
+def optimizer_candidate_passes_quality_gate(candidate: dict, strategy_mode: str) -> bool:
+    safety_score = candidate.get("safety_score") or ZERO
+    reliability_score = candidate.get("reliability_score") or ZERO
+    decision_action_label = str(candidate.get("decision_action_label") or "").strip()
+    strategy = get_optimizer_strategy_config(strategy_mode)
+
+    if safety_score < OPTIMIZER_MIN_SAFETY_SCORE:
+        return False
+    if reliability_score < OPTIMIZER_MIN_RELIABILITY_SCORE:
+        return False
+    if decision_action_label not in OPTIMIZER_ALLOWED_ACTION_LABELS:
+        return False
+
+    if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY:
+        cycle_expected_return_pct = candidate.get("cycle_expected_annual_return_pct")
+        if cycle_expected_return_pct is None:
+            cycle_expected_return_pct = candidate.get("cycle_return_annual_pct")
+        return (cycle_expected_return_pct or ZERO) > ZERO
+
+    expected_return_pct = candidate.get("scenario_expected_return_pct")
+    if expected_return_pct is None:
+        expected_return_pct = candidate.get("base_return_pct")
+    return (expected_return_pct or ZERO) > ZERO and (candidate.get("base_return_pct") or ZERO) > ZERO
 
 
 def build_optimizer_scenario_summary(
@@ -9666,6 +9694,12 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
     external_signal = card.get("external_signal") or {}
     external_signal_score = Decimal(str(external_signal.get("score", "0") or "0"))
     external_signal_label = external_signal.get("label") or "Sin prensa reciente"
+    decision_action_label = build_decision_action_label(
+        card["position"],
+        projection.get("base_return_pct"),
+        safety_score,
+        reliability_score,
+    )
     trade_signal_adjustment = {
         "Comprar": Decimal("1.75"),
         "Vigilar": ZERO,
@@ -9866,6 +9900,7 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         "trade_alert_label": trade_alert_label,
         "trade_alert_tone": trade_alert.get("tone", "watch"),
         "trade_alert_note": trade_alert.get("note", ""),
+        "decision_action_label": decision_action_label,
         "trade_signal_adjustment": trade_signal_adjustment,
         "external_signal_label": external_signal_label,
         "external_signal_score": external_signal_score,
@@ -9892,6 +9927,7 @@ def filter_positive_optimizer_candidates(
             if item["optimization_score"] > ZERO
             and item.get("robust_cycle_support_score", item["cycle_support_score"]) > ZERO
             and item["trade_alert_label"] != "Vender"
+            and optimizer_candidate_passes_quality_gate(item, strategy["mode"])
         ]
     return [
         item
@@ -9899,6 +9935,7 @@ def filter_positive_optimizer_candidates(
         if item["optimization_score"] > ZERO
         and item.get("robust_return_signal_pct", item["base_return_pct"]) > ZERO
         and item["trade_alert_label"] != "Vender"
+        and optimizer_candidate_passes_quality_gate(item, strategy["mode"])
     ]
 
 
@@ -10847,6 +10884,7 @@ def build_equity_allocation_plan(
             f"Esta ejecucion usa la estrategia {strategy['label']}: "
             f"prioriza la lectura de {strategy['primary_horizon_label']} y deja {strategy['secondary_horizon_label']} como contraste secundario para reforzar o penalizar la jerarquia final. "
             "La jerarquia ya no depende solo del caso central: combina retorno esperado por escenarios, peor caso, dispersion entre escenarios, seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa y castigo automatico por shocks informativos. "
+            f"Ademas, la propuesta solo deja pasar valores con un minimo de seguridad ({int(OPTIMIZER_MIN_SAFETY_SCORE)}+) y fiabilidad ({int(OPTIMIZER_MIN_RELIABILITY_SCORE)}+), y con lectura accionable en la propia ficha. "
             "Las cifras monetarias del informe siguen expresadas a 12 meses para mantener comparables dividendos, costes, caja y peor escenario, aunque la jerarquia de seleccion pueda priorizar 5 anos. "
             "eficiencia real del ticket de compra y, si lo marcas, un maximo total de empresas y diversificacion maxima por sector. En la version robusta se "
             "analiza siempre todo el IBEX, no solo los valores que ya tienes en seguimiento."
