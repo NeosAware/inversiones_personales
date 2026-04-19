@@ -247,6 +247,7 @@ class BankMovement(models.Model):
 
 class BankInvestmentPosition(models.Model):
     class ProductType(models.TextChoices):
+        INVESTMENT_FUND = "investment_fund", "Fondo de inversion"
         SAVINGS_PLAN = "savings_plan", "Plan de ahorro"
         LIFE_SAVINGS = "life_savings", "Ahorro vida"
         BROKERED_EQUITY = "brokered_equity", "Acciones en custodia"

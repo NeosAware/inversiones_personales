@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.test.utils import override_settings
@@ -16,6 +17,7 @@ from django.urls import reverse
 from config.storage import ENCRYPTION_MARKER
 from portfolio.ownership import AssetOwnershipCategory
 
+from .management.commands.import_monica_bank_positions import MONICA_BANK_INVESTMENT_POSITIONS
 from .models import (
     BankBalance,
     BankInvestmentPosition,
@@ -885,6 +887,27 @@ class BankingServicesTests(TestCase):
         )
         self.assertEqual(position.invested_amount, Decimal("5045.51"))
 
+    def test_import_monica_bank_positions_creates_investment_funds_with_cost_basis(self):
+        call_command("import_monica_bank_positions")
+
+        positions = BankInvestmentPosition.objects.filter(
+            ownership_category=AssetOwnershipCategory.MONICA,
+            institution="Ibercaja",
+        ).order_by("product_name")
+
+        self.assertEqual(positions.count(), len(MONICA_BANK_INVESTMENT_POSITIONS))
+        first_position = positions.first()
+        self.assertIsNotNone(first_position)
+        self.assertEqual(first_position.product_type, BankInvestmentPosition.ProductType.INVESTMENT_FUND)
+        self.assertEqual(first_position.price_date, date(2026, 4, 16))
+        self.assertIn("ISIN:", first_position.notes)
+        self.assertIn("Referencia cartera Ibercaja: 4414450943", first_position.notes)
+
+        sabadell_like = positions.get(product_name="Ibercaja Renta Fija 2027, FI Clase A")
+        self.assertEqual(sabadell_like.current_value, Decimal("76536.83"))
+        self.assertEqual(sabadell_like.invested_amount_override, Decimal("73978.94"))
+        self.assertEqual(sabadell_like.units, Decimal("11739.7653"))
+
     def test_parse_statement_file_from_html_xls_export(self):
         html = """
 <html>
@@ -1494,6 +1517,28 @@ class BankingViewTests(TestCase):
         self.assertNotContains(response, "Borrar todas las importaciones")
         self.assertNotContains(response, "Open Banking")
         self.assertNotContains(response, "GoCardless")
+
+    def test_bank_page_shows_monica_investment_funds_with_owner_and_value_date(self):
+        BankInvestmentPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.MONICA,
+            institution="Ibercaja",
+            product_name="Ibercaja Renta Fija 2027, FI Clase A",
+            product_type=BankInvestmentPosition.ProductType.INVESTMENT_FUND,
+            invested_amount_override=Decimal("73978.94"),
+            current_value=Decimal("76536.83"),
+            units=Decimal("11739.7653"),
+            price_date=date(2026, 4, 16),
+            annual_income=Decimal("0.00"),
+        )
+
+        response = self.client.get(reverse("banking:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Productos bancarios de inversion")
+        self.assertContains(response, "Monica")
+        self.assertContains(response, "Fondo de inversion")
+        self.assertContains(response, "2026-04-16")
+        self.assertRegex(response.content.decode("utf-8"), r"76(?:[\.,]?536)[\.,]83")
 
     def test_local_robot_import_endpoint_imports_statement_with_login(self):
         document = SimpleUploadedFile(
