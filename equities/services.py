@@ -4060,6 +4060,7 @@ def build_value_tracking_chart(
     padding: int = 18,
 ) -> dict:
     axis_formatter = axis_formatter or format_axis_value
+    min_marker_distance = 10.0
 
     def format_chart_value(value: Decimal | None) -> str:
         formatted = axis_formatter(value)
@@ -4087,6 +4088,7 @@ def build_value_tracking_chart(
             "expected_line": "",
             "benchmark_line": "",
             "actual_points": [],
+            "actual_display_points": [],
             "expected_points": [],
             "benchmark_points": [],
             "min_label": "-",
@@ -4131,20 +4133,71 @@ def build_value_tracking_chart(
                     "y": f"{y:.1f}",
                     "value_label": format_chart_value(point["value"]),
                     "date_label": point["date"].isoformat(),
+                    "tooltip": f"{point['date'].isoformat()} | {format_chart_value(point['value'])}",
                     "key": f"{prefix}-{point['date'].isoformat()}",
                 }
             )
         return " ".join(line_points) if len(line_points) >= 2 else "", point_rows
 
+    def build_display_points(point_rows: list[dict]) -> list[dict]:
+        if len(point_rows) <= 2:
+            return [
+                {
+                    **point,
+                    "cluster_size": 1,
+                    "is_latest": point["key"] == point_rows[-1]["key"],
+                    "radius": "4.5" if point["key"] == point_rows[-1]["key"] else "4.0",
+                }
+                for point in point_rows
+            ]
+
+        def distance(left: dict, right: dict) -> float:
+            delta_x = float(left["x"]) - float(right["x"])
+            delta_y = float(left["y"]) - float(right["y"])
+            return (delta_x**2 + delta_y**2) ** 0.5
+
+        clusters: list[list[dict]] = []
+        current_cluster = [point_rows[0]]
+        for point in point_rows[1:]:
+            if distance(point, current_cluster[-1]) < min_marker_distance:
+                current_cluster.append(point)
+            else:
+                clusters.append(current_cluster)
+                current_cluster = [point]
+        clusters.append(current_cluster)
+
+        latest_key = point_rows[-1]["key"]
+        display_points = []
+        for cluster in clusters:
+            representative = dict(cluster[-1])
+            representative["cluster_size"] = len(cluster)
+            representative["is_latest"] = representative["key"] == latest_key
+            representative["radius"] = "5.5" if representative["is_latest"] else "4.2"
+            if len(cluster) > 1:
+                start_label = cluster[0]["date_label"]
+                end_label = cluster[-1]["date_label"]
+                if start_label == end_label:
+                    representative["tooltip"] = (
+                        f"{end_label} | {len(cluster)} lecturas | ultimo {cluster[-1]['value_label']}"
+                    )
+                else:
+                    representative["tooltip"] = (
+                        f"{start_label} a {end_label} | {len(cluster)} lecturas | ultimo {cluster[-1]['value_label']}"
+                    )
+            display_points.append(representative)
+        return display_points
+
     actual_line, actual_point_rows = build_series(actual_points, "actual")
     expected_line, expected_point_rows = build_series(expected_points, "expected")
     benchmark_line, benchmark_point_rows = build_series(benchmark_points, "benchmark")
+    actual_display_points = build_display_points(actual_point_rows)
     return {
         "available": True,
         "actual_line": actual_line,
         "expected_line": expected_line,
         "benchmark_line": benchmark_line,
         "actual_points": actual_point_rows,
+        "actual_display_points": actual_display_points,
         "expected_points": expected_point_rows,
         "benchmark_points": benchmark_point_rows,
         "min_label": format_chart_value(series_min),

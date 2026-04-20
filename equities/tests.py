@@ -64,6 +64,7 @@ from .services import (
     build_equity_sale_preview,
     build_equity_ticket_tracking_context,
     build_equity_ticket_tracking_item,
+    build_value_tracking_chart,
     build_equity_optimizer_candidate,
     build_owned_cycle_trade_timing_plan,
     archive_equity_position_sale,
@@ -1809,6 +1810,30 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(tracking["global"]["invested_return_pct"], Decimal("2.91"))
         self.assertEqual(tracking["global"]["annualized_return_pct"], Decimal("3512395.03"))
         self.assertEqual(tracking["global"]["daily_change_pct"], Decimal("2.91"))
+
+    def test_build_value_tracking_chart_reduces_overlapping_actual_markers(self):
+        chart = build_value_tracking_chart(
+            actual_series=[
+                {"date": date(2026, 4, 20), "value": Decimal("-1.40")},
+                {"date": date(2026, 4, 21), "value": Decimal("-0.60")},
+                {"date": date(2026, 4, 22), "value": Decimal("0.20")},
+                {"date": date(2026, 4, 23), "value": Decimal("0.90")},
+                {"date": date(2026, 4, 24), "value": Decimal("1.40")},
+            ],
+            expected_series=[
+                {"date": date(2026, 4, 20), "value": Decimal("-1.40")},
+                {"date": date(2027, 4, 19), "value": Decimal("30.30")},
+            ],
+            value_suffix="%",
+            axis_formatter=lambda value: f"{Decimal(str(value)).quantize(Decimal('0.1'))}",
+        )
+
+        self.assertTrue(chart["available"])
+        self.assertEqual(len(chart["actual_points"]), 5)
+        self.assertLess(len(chart["actual_display_points"]), len(chart["actual_points"]))
+        self.assertEqual(chart["actual_display_points"][-1]["date_label"], "2026-04-24")
+        self.assertTrue(chart["actual_display_points"][-1]["is_latest"])
+        self.assertIn("lecturas", chart["actual_display_points"][-1]["tooltip"])
 
     def test_ticket_tracking_global_chart_keeps_first_real_portfolio_date_when_positions_enter_later(self):
         def create_position(ticker, company_name, start_price):
