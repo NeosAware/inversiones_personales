@@ -471,8 +471,26 @@
       <div class="equity-mini-stat">
         <span>Precio objetivo</span>
         <strong>{% if card.projection.projected_price is not None %}{{ card.projection.projected_price|floatformat:4 }}{% else %}-{% endif %}</strong>
-        <small>Rango {% if card.projection.low_return_pct is not None and card.projection.high_return_pct is not None %}{{ card.projection.low_return_pct|floatformat:1 }} / {{ card.projection.high_return_pct|floatformat:1 }} %{% else %}-{% endif %}</small>
+        <small>
+          {% if card.projection.price_return_pct is not None %}Vs actual {{ card.projection.price_return_pct|floatformat:1 }} % | {% endif %}
+          Rango {% if card.projection.low_return_pct is not None and card.projection.high_return_pct is not None %}{{ card.projection.low_return_pct|floatformat:1 }} / {{ card.projection.high_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+        </small>
       </div>
+      {% if card.position.is_owned %}
+        <div class="equity-mini-stat">
+          <span>Precio compra</span>
+          <strong>{{ card.position.average_cost_per_share|floatformat:4 }}</strong>
+          <small>{% if card.position.opened_on %}Compra {{ card.position.opened_on|date:"Y-m-d" }}{% else %}Precio medio por accion{% endif %}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Precio actual</span>
+          <strong>{{ card.position.current_price_per_share|floatformat:4 }}</strong>
+          <small>
+            {% if card.position.latest_price_date %}Cotizacion {{ card.position.latest_price_date|date:"Y-m-d" }}{% else %}Ultimo precio guardado{% endif %}
+            {% if card.projection.projected_price is not None %} | objetivo {{ card.projection.projected_price|floatformat:4 }}{% endif %}
+          </small>
+        </div>
+      {% endif %}
       <div class="equity-mini-stat">
         <span>Alerta</span>
         <strong class="{% if card.trade_alert.tone == 'buy' %}good{% elif card.trade_alert.tone == 'sell' %}warn{% endif %}">{{ card.trade_alert.label }}</strong>
