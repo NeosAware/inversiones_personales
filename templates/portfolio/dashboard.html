@@ -57,6 +57,9 @@
       gap:18px;
       grid-template-columns:repeat(3, minmax(0,1fr));
     }
+    .portfolio-holding-grid{
+      grid-template-columns:repeat(3, minmax(0,1fr));
+    }
     .portfolio-owner-card{
       padding:22px;
     }
@@ -93,11 +96,23 @@
       display:grid;
       gap:18px;
     }
+    @media (max-width: 1600px){
+      .portfolio-hero,
+      .portfolio-split{
+        grid-template-columns:1fr;
+      }
+      .portfolio-kpi-grid,
+      .portfolio-owner-grid,
+      .portfolio-holding-grid{
+        grid-template-columns:repeat(2, minmax(0,1fr));
+      }
+    }
     @media (max-width: 1180px){
       .portfolio-hero,
       .portfolio-split,
       .portfolio-owner-grid,
-      .portfolio-kpi-grid{
+      .portfolio-kpi-grid,
+      .portfolio-holding-grid{
         grid-template-columns:1fr;
       }
     }
@@ -217,7 +232,7 @@
   <div class="portfolio-split">
     <section class="card portfolio-panel">
       <h2 style="margin-top:0;">Holding familiar</h2>
-      <div class="portfolio-kpi-grid" style="grid-template-columns:repeat(3, minmax(0,1fr));">
+      <div class="portfolio-kpi-grid portfolio-holding-grid">
         <section class="portfolio-kpi">
           <div class="metric-label">Valor consolidado</div>
           <div class="metric-value">{{ neos_group_context.consolidated_current_value|floatformat:2 }} EUR</div>

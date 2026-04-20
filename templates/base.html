@@ -439,6 +439,14 @@
     .message.warning{ border-color:rgba(196,58,49,.22); background:rgba(196,58,49,.08); }
     .message.error{ border-color:rgba(163,31,31,.22); background:rgba(163,31,31,.08); }
     .message.info{ border-color:rgba(15,95,136,.22); background:rgba(15,95,136,.08); }
+    @media (max-width: 1600px){
+      .grid.cols-3, .grid.cols-4{ grid-template-columns:repeat(2, minmax(0,1fr)); }
+      .soft-grid.cols-4{ grid-template-columns:repeat(2, minmax(0,1fr)); }
+      .split, .topbar{ grid-template-columns:1fr; }
+      .top-aside{ justify-items:start; }
+      .top-user{ text-align:left; }
+      .top-actions{ justify-content:flex-start; }
+    }
     @media (max-width: 980px){
       .grid.cols-3, .grid.cols-2, .grid.cols-4, .split{ grid-template-columns:1fr; }
       .soft-grid, .soft-grid.cols-4{ grid-template-columns:1fr; }
