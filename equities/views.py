@@ -55,7 +55,6 @@ from .services import (
     build_equity_ticket_tracking_context,
     build_ibex_universe_card,
     archive_equity_position_sale,
-    capture_missing_equity_ticket_snapshots,
     capture_equity_ticket_snapshots,
     find_ibex_universe_company,
     EquityDocumentImportError,
@@ -79,6 +78,16 @@ class EquityPeriodBoundsMixin:
 
 class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, TemplateView):
     template_name = "equities/equityposition_list.html"
+
+    def _market_sync_candidates(self, *, owned_only: bool = False) -> list[EquityPosition]:
+        positions = []
+        for position in EquityPosition.objects.all():
+            if not str(position.quote_symbol or "").strip():
+                continue
+            if owned_only and not position.is_owned:
+                continue
+            positions.append(position)
+        return positions
 
     def _build_optimizer_owned_ticker_choices(self, positions) -> list[tuple[str, str]]:
         choices = []
@@ -124,7 +133,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         )
 
     def _auto_sync_market_data(self, active_run_exists: bool = False):
-        positions = list(EquityPosition.objects.all())
+        positions = self._market_sync_candidates(owned_only=True)
         if (
             not positions
             or not getattr(settings, "EQUITIES_AUTO_SYNC_ON_VIEW", True)
@@ -297,12 +306,10 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         for row in context["scheduled_optimization_persistence"].get("rows", []):
             row["detail_url"] = reverse("equities:ibex_detail", kwargs={"ticker": row["ticker"]})
         self._ensure_purchase_forecast_baselines(positions)
-        capture_missing_equity_ticket_snapshots(
+        capture_equity_ticket_snapshots(
             dashboard["owned_history_cards"],
             snapshot_date=timezone.localdate(),
         )
-        if not context["nightly_analysis"]["available"]:
-            capture_equity_ticket_snapshots(dashboard["owned_history_cards"])
         context["ticket_tracking"] = build_equity_ticket_tracking_context(
             dashboard["owned_history_cards"],
             optimizer_cards=dashboard["optimizer_cards"],
@@ -328,7 +335,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         return self._save_position(request)
 
     def _sync_market_data(self, request):
-        positions = list(EquityPosition.objects.all())
+        positions = self._market_sync_candidates()
         results = sync_all_equities_market_data(positions)
         updated = sum(1 for _, error in results if error is None)
         failed = [f"{position.ticker}: {error}" for position, error in results if error]

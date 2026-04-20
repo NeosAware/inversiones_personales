@@ -24,14 +24,24 @@
       </div>
       <div class="equity-grid-4">
         <div class="equity-mini-stat">
-          <span>Base</span>
+          <span>Base total</span>
           <strong>{{ tracking_ticket.baseline_snapshot.current_value|floatformat:0 }} EUR</strong>
           <small>{{ tracking_ticket.baseline_snapshot.snapshot_date|date:"Y-m-d" }}</small>
         </div>
         <div class="equity-mini-stat">
-          <span>Valor actual</span>
+          <span>Valor actual total</span>
           <strong>{{ tracking_ticket.latest_snapshot.current_value|floatformat:0 }} EUR</strong>
           <small>{% if tracking_ticket.daily_change_pct is not None %}Cambio diario {{ tracking_ticket.daily_change_pct|floatformat:2 }} %{% else %}Esperando nuevo cierre{% endif %}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Base por accion</span>
+          <strong>{% if tracking_ticket.initial_unit_price is not None %}{{ tracking_ticket.initial_unit_price|floatformat:4 }} EUR{% else %}-{% endif %}</strong>
+          <small>{{ tracking_ticket.initial_unit_price_note }}{% if tracking_ticket.initial_unit_price_date %} {{ tracking_ticket.initial_unit_price_date|date:"Y-m-d" }}{% endif %}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Precio por accion</span>
+          <strong>{% if tracking_ticket.current_unit_price is not None %}{{ tracking_ticket.current_unit_price|floatformat:4 }} EUR{% else %}-{% endif %}</strong>
+          <small>{{ tracking_ticket.current_unit_price_note }}{% if tracking_ticket.current_unit_price_date %} {{ tracking_ticket.current_unit_price_date|date:"Y-m-d" }}{% endif %}</small>
         </div>
         <div class="equity-mini-stat">
           <span>Esperado hoy</span>

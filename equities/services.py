@@ -5208,6 +5208,58 @@ def build_purchase_trade_rotation_guidance(
     }
 
 
+def resolve_tracking_snapshot_unit_price(
+    snapshot: EquityTicketSnapshot | None,
+    shares: Decimal | None,
+) -> Decimal | None:
+    if snapshot is None or shares in {None, ZERO}:
+        return None
+    try:
+        current_value = Decimal(str(snapshot.current_value))
+        shares_value = Decimal(str(shares))
+    except Exception:
+        return None
+    if shares_value == ZERO:
+        return None
+    return quantize_decimal(current_value / shares_value, "0.0001")
+
+
+def build_tracking_ticket_unit_price_context(
+    position: EquityPosition,
+    baseline_snapshot: EquityTicketSnapshot,
+    latest_snapshot: EquityTicketSnapshot,
+    purchase_baseline: EquityPurchaseForecastBaseline | None = None,
+) -> dict:
+    initial_unit_price = quantize_decimal(getattr(purchase_baseline, "baseline_price", None), "0.0001")
+    initial_unit_price_date = getattr(purchase_baseline, "baseline_date", None)
+    initial_unit_price_note = "Compra o alta web"
+    if initial_unit_price is None:
+        initial_unit_price = resolve_tracking_snapshot_unit_price(baseline_snapshot, position.shares)
+        initial_unit_price_date = getattr(baseline_snapshot, "snapshot_date", None)
+        initial_unit_price_note = "Primera foto guardada"
+    if initial_unit_price is None:
+        initial_unit_price = quantize_decimal(getattr(position, "average_cost_per_share", None), "0.0001")
+        initial_unit_price_date = getattr(position, "opened_on", None) or initial_unit_price_date
+        initial_unit_price_note = "Precio medio de compra"
+
+    current_unit_price = quantize_decimal(getattr(position, "current_price_per_share", None), "0.0001")
+    current_unit_price_date = getattr(position, "latest_price_date", None)
+    current_unit_price_note = "Cotizacion mas reciente"
+    if current_unit_price is None:
+        current_unit_price = resolve_tracking_snapshot_unit_price(latest_snapshot, position.shares)
+        current_unit_price_date = getattr(latest_snapshot, "snapshot_date", None)
+        current_unit_price_note = "Ultima foto guardada"
+
+    return {
+        "initial_unit_price": initial_unit_price,
+        "initial_unit_price_date": initial_unit_price_date,
+        "initial_unit_price_note": initial_unit_price_note,
+        "current_unit_price": current_unit_price,
+        "current_unit_price_date": current_unit_price_date,
+        "current_unit_price_note": current_unit_price_note,
+    }
+
+
 def build_equity_ticket_tracking_item(
     card: dict,
     snapshots: list[EquityTicketSnapshot],
@@ -5225,6 +5277,12 @@ def build_equity_ticket_tracking_item(
     position = card["position"]
     baseline = snapshots[0]
     latest = snapshots[-1]
+    unit_price_context = build_tracking_ticket_unit_price_context(
+        position,
+        baseline,
+        latest,
+        purchase_baseline=purchase_baseline,
+    )
     previous = snapshots[-2] if len(snapshots) >= 2 else None
     expected_market_value_12m = baseline.projected_market_value_12m or baseline.current_value
     expected_total_value_12m = baseline.projected_total_value_12m or expected_market_value_12m
@@ -5331,6 +5389,7 @@ def build_equity_ticket_tracking_item(
         "projection_end_date": projected_end_date,
         "trade_plan": trade_plan,
         "rotation_plan": rotation_plan,
+        **unit_price_context,
     }
 
 

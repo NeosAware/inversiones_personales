@@ -63,6 +63,7 @@ from .services import (
     build_equity_round_investment_plan,
     build_equity_sale_preview,
     build_equity_ticket_tracking_context,
+    build_equity_ticket_tracking_item,
     build_equity_optimizer_candidate,
     build_owned_cycle_trade_timing_plan,
     archive_equity_position_sale,
@@ -1975,6 +1976,68 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(ticket["expected_total_value_5y"], Decimal("400.00"))
         self.assertEqual(ticket["expected_series_5y"][1]["value"], Decimal("196.00"))
         self.assertEqual(ticket["expected_series_5y"][-1]["value"], Decimal("400.00"))
+
+    def test_ticket_tracking_exposes_initial_and_current_unit_prices(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2026, 4, 16),
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.3000"),
+            latest_price_date=date(2026, 4, 17),
+            annual_dividend_income=Decimal("20.00"),
+        )
+        EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 4, 16),
+            invested_amount=Decimal("200.00"),
+            current_value=Decimal("200.00"),
+            projected_market_value_12m=Decimal("224.00"),
+            projected_total_value_12m=Decimal("224.00"),
+            projected_price_12m=Decimal("11.2000"),
+        )
+        EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 4, 17),
+            invested_amount=Decimal("200.00"),
+            current_value=Decimal("246.00"),
+            projected_market_value_12m=Decimal("224.00"),
+            projected_total_value_12m=Decimal("224.00"),
+            projected_price_12m=Decimal("11.2000"),
+        )
+        EquityPurchaseForecastBaseline.objects.create(
+            position=position,
+            source_analysis_date=date(2026, 4, 16),
+            baseline_date=date(2026, 4, 16),
+            reference_label="IBEX 35",
+            baseline_price=Decimal("10.0000"),
+            projected_price_1y=Decimal("11.2000"),
+            projected_return_pct_1y=Decimal("12.00"),
+        )
+        ticket = build_equity_ticket_tracking_item(
+            {
+                "position": position,
+                "reference_label": "IBEX 35",
+                "trade_alert": {"label": "Comprar"},
+                "projection": {"projected_price": Decimal("11.2000"), "base_return_pct": Decimal("12.00")},
+                "cycle_projection_5y": {"available": False, "path": []},
+            },
+            list(position.ticket_snapshots.order_by("snapshot_date")),
+            purchase_baseline=position.purchase_forecast_baseline,
+        )
+
+        self.assertEqual(ticket["initial_unit_price"], Decimal("10.0000"))
+        self.assertEqual(ticket["initial_unit_price_date"], date(2026, 4, 16))
+        self.assertEqual(ticket["initial_unit_price_note"], "Compra o alta web")
+        self.assertEqual(ticket["current_unit_price"], Decimal("12.3000"))
+        self.assertEqual(ticket["current_unit_price_date"], date(2026, 4, 17))
+        self.assertEqual(ticket["current_unit_price_note"], "Cotizacion mas reciente")
 
     def test_ticket_tracking_keeps_each_ticket_return_from_its_first_snapshot(self):
         def create_position(ticker, company_name, start_price):
@@ -6625,6 +6688,54 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         mocked_sync.assert_not_called()
 
+    @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=True)
+    def test_auto_sync_on_page_load_only_targets_owned_positions_with_quote_symbol(self):
+        owned = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="ENG",
+            quote_symbol="",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Enagas",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Seguimiento",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            shares=Decimal("0.0000"),
+            average_cost_per_share=Decimal("0.0000"),
+            current_price_per_share=Decimal("0.0000"),
+        )
+
+        with patch("equities.views.sync_all_equities_market_data", return_value=[(owned, None)]) as mocked_sync:
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        mocked_sync.assert_called_once()
+        synced_positions = mocked_sync.call_args.args[0]
+        self.assertEqual([position.id for position in synced_positions], [owned.id])
+
     @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=False, EQUITIES_IBEX_UNIVERSE_LIMIT=3)
     def test_optimizer_request_forces_full_ibex_analysis_even_if_page_limit_is_disabled(self):
         EquityPosition.objects.create(
@@ -7387,6 +7498,52 @@ class EquitiesViewTests(TestCase):
         self.assertLess(page.index('id="equity-portfolio-summary"'), page.index('id="equity-decision"'))
         self.assertLess(page.index('id="equity-decision"'), page.index('id="equity-ibex"'))
         self.assertEqual(EquityTicketSnapshot.objects.count(), 2)
+        self.assertContains(response, "Base por accion")
+        self.assertContains(response, "Precio por accion")
+
+    def test_equities_page_refreshes_today_snapshot_even_with_nightly_status_available(self):
+        position = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position, months=60)
+        EquityNightlyAnalysisRun.objects.create(
+            analysis_date=timezone.localdate(),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            started_at=timezone.now(),
+            completed_at=timezone.now(),
+        )
+        benchmark_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+
+        with (
+            patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series),
+            patch("equities.views.capture_equity_ticket_snapshots", wraps=capture_equity_ticket_snapshots) as mocked_capture,
+        ):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        mocked_capture.assert_called_once()
+        position.refresh_from_db()
+        today_snapshot = EquityTicketSnapshot.objects.get(
+            position=position,
+            snapshot_date=timezone.localdate(),
+        )
+        self.assertEqual(today_snapshot.current_value, position.current_value.quantize(Decimal("0.01")))
 
     def test_equities_page_shows_per_in_main_decision_table(self):
         position = EquityPosition.objects.create(
