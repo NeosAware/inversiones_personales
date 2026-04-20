@@ -28,6 +28,8 @@
     body{
       margin:0;
       font-family:"Segoe UI Variable Text","Segoe UI","Aptos",Tahoma,Geneva,Verdana,sans-serif;
+      font-size:18px;
+      line-height:1.6;
       color:var(--ink);
       background:
         radial-gradient(circle at top left, rgba(165,111,79,.11), transparent 22%),
@@ -70,7 +72,7 @@
       color:var(--muted);
       max-width:980px;
       line-height:1.55;
-      font-size:clamp(15px, 1.05vw, 19px);
+      font-size:clamp(16px, 1.1vw, 20px);
     }
     .top-aside{
       display:grid;
@@ -104,7 +106,7 @@
     }
     .top-user{
       text-align:right;
-      font-size:12px;
+      font-size:13px;
       color:var(--muted);
       letter-spacing:.04em;
       text-transform:uppercase;
@@ -136,7 +138,7 @@
       align-content:center;
     }
     .topbar-family-eyebrow{
-      font-size:11px;
+      font-size:12px;
       letter-spacing:.18em;
       text-transform:uppercase;
       font-weight:800;
@@ -145,14 +147,14 @@
     .topbar-family-title{
       margin:0;
       font-family:"Iowan Old Style", Georgia, serif;
-      font-size:22px;
+      font-size:24px;
       line-height:1.05;
       letter-spacing:-.02em;
       color:var(--ink);
     }
     .topbar-family-copy{
       margin:0;
-      font-size:13px;
+      font-size:14px;
       line-height:1.5;
       color:var(--muted);
     }
@@ -168,7 +170,7 @@
       border-radius:999px;
       background:rgba(255,255,255,.86);
       border:1px solid rgba(27,92,121,.12);
-      font-size:11px;
+      font-size:12px;
       font-weight:800;
       letter-spacing:.05em;
       text-transform:uppercase;
@@ -203,7 +205,7 @@
     }
     .section-title{
       margin:0 0 14px;
-      font-size:12px;
+      font-size:14px;
       letter-spacing:.18em;
       text-transform:uppercase;
       color:#6a8192;
@@ -230,24 +232,26 @@
       box-shadow:none;
     }
     .card h2, .card h3{ margin:0 0 10px; letter-spacing:-.02em; }
-    .metric-label{ font-size:13px; color:var(--muted); margin-bottom:8px; line-height:1.45; }
+    .card h2{ font-size:clamp(30px, 2.25vw, 40px); }
+    .card h3{ font-size:clamp(24px, 1.75vw, 30px); }
+    .metric-label{ font-size:15px; color:var(--muted); margin-bottom:9px; line-height:1.45; }
     .metric-value{
-      font-size:clamp(28px, 2.2vw, 42px);
+      font-size:clamp(38px, 2.75vw, 60px);
       font-weight:800;
       line-height:1.08;
       letter-spacing:-.03em;
       font-variant-numeric:tabular-nums;
     }
-    .metric-sub{ font-size:13px; color:var(--muted); margin-top:8px; line-height:1.55; }
+    .metric-sub{ font-size:15px; color:var(--muted); margin-top:8px; line-height:1.55; }
     .table-card{ overflow:auto; }
     table{
       width:100%;
       border-collapse:separate;
       border-spacing:0;
-      font-size:14px;
+      font-size:16px;
     }
     th, td{
-      padding:14px 12px;
+      padding:16px 14px;
       border-bottom:1px solid #e8eef3;
       text-align:left;
       font-variant-numeric:tabular-nums;
@@ -255,7 +259,7 @@
     th{
       color:#62788a;
       background:#f7fafc;
-      font-size:12px;
+      font-size:14px;
       text-transform:uppercase;
       letter-spacing:.1em;
       font-weight:800;
@@ -265,9 +269,9 @@
     tbody tr:hover td{ background:rgba(22,94,137,.025); }
     .pill{
       display:inline-flex; align-items:center; gap:8px;
-      padding:7px 11px;
+      padding:9px 14px;
       border-radius:999px;
-      font-size:12px;
+      font-size:14px;
       border:1px solid var(--line);
       color:var(--ink-soft);
       background:var(--surface-soft);
@@ -302,7 +306,7 @@
     }
     .soft-title{
       margin:0 0 8px;
-      font-size:16px;
+      font-size:17px;
       font-weight:700;
       color:var(--ink-soft);
     }
@@ -323,7 +327,7 @@
       background:#ffffff;
       color:var(--ink-soft);
       font:inherit;
-      font-size:12px;
+      font-size:13px;
       font-weight:700;
       cursor:pointer;
       white-space:nowrap;
@@ -341,7 +345,7 @@
       border-radius:999px;
       background:linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
       color:#fff;
-      font-size:13px;
+      font-size:14px;
       font-weight:800;
       margin-bottom:10px;
     }
@@ -361,7 +365,7 @@
       border-radius:16px;
       background:#f4f8fb;
       color:var(--ink-soft);
-      font:13px/1.5 "Consolas", "Courier New", monospace;
+      font:14px/1.5 "Consolas", "Courier New", monospace;
     }
     code{
       font-family:"Consolas", "Courier New", monospace;
@@ -376,7 +380,7 @@
       font-size:.95em;
     }
     form label{
-      display:block; font-size:13px; color:var(--muted); margin-bottom:6px;
+      display:block; font-size:14px; color:var(--muted); margin-bottom:6px;
     }
     input[type="text"], input[type="password"], input[type="email"], input[type="file"], input[type="number"], textarea, select{
       width:100%;
@@ -420,7 +424,7 @@
       color:#fff;
     }
     .button.small{
-      padding:8px 12px; border-radius:10px; font-size:12px;
+      padding:8px 12px; border-radius:10px; font-size:13px;
     }
     .messages{
       display:flex; flex-direction:column; gap:10px; margin-bottom:18px;
