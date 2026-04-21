@@ -5016,6 +5016,189 @@ def build_tracking_rebased_comparison_series(
     }
 
 
+def resolve_tracking_trade_plan_projected_sale_price(
+    position: EquityPosition,
+    trade_plan: dict,
+) -> Decimal | None:
+    sale_month_number = trade_plan.get("sale_month_number")
+    for row in trade_plan.get("monthly_rows") or []:
+        if row.get("month_number") != sale_month_number:
+            continue
+        projected_price = row.get("projected_price")
+        if projected_price not in {None, ZERO}:
+            return quantize_decimal(Decimal(str(projected_price)), "0.0001")
+
+    current_price = quantize_decimal(getattr(position, "current_price_per_share", None), "0.0001")
+    if current_price in {None, ZERO}:
+        return None
+
+    pre_sale_return_pct = trade_plan.get("pre_sale_return_pct")
+    if pre_sale_return_pct is None:
+        return current_price
+    return quantize_decimal(
+        current_price * (Decimal("1") + (Decimal(str(pre_sale_return_pct)) / ONE_HUNDRED)),
+        "0.0001",
+    )
+
+
+def build_tracking_sale_timeline_context(
+    ticket_items: list[dict],
+    *,
+    horizon_months: int = 24,
+) -> dict:
+    if not ticket_items:
+        return {"available": False}
+
+    latest_snapshot_dates = [
+        getattr(item.get("latest_snapshot"), "snapshot_date", None)
+        for item in ticket_items
+        if item.get("latest_snapshot") is not None
+    ]
+    reference_date = max((point_date for point_date in latest_snapshot_dates if point_date is not None), default=None)
+    if reference_date is None:
+        reference_date = django_timezone.localdate()
+    horizon_end = add_calendar_months(reference_date, horizon_months) or reference_date
+    total_days = max((horizon_end - reference_date).days, 1)
+
+    def clamp_pct(value: float) -> str:
+        return f"{max(0.0, min(value, 100.0)):.2f}"
+
+    markers = []
+    for month_offset in range(0, horizon_months + 1, 3):
+        marker_date = add_calendar_months(reference_date, month_offset)
+        if marker_date is None:
+            continue
+        marker_days = max((marker_date - reference_date).days, 0)
+        marker_left_pct = (marker_days / total_days) * 100
+        month_label = SPANISH_MONTH_LABELS.get(marker_date.month, str(marker_date.month))
+        markers.append(
+            {
+                "left_pct": clamp_pct(marker_left_pct),
+                "label": f"{month_label[:3].capitalize()} {str(marker_date.year)[2:]}",
+            }
+        )
+
+    rows = []
+    unscheduled_rows = []
+    alert_rows = []
+
+    for item in ticket_items:
+        position = item.get("position")
+        trade_plan = item.get("trade_plan") or {}
+        if position is None:
+            continue
+
+        sale_date = trade_plan.get("sale_date")
+        if not trade_plan.get("available") or trade_plan.get("mode") not in {"sale_reentry", "sale_review"} or sale_date is None:
+            unscheduled_rows.append(
+                {
+                    "ticker": position.ticker,
+                    "company_name": position.company_name,
+                    "reason": "Sin venta clara en 24M" if trade_plan.get("mode") == "hold" else "Sin ventana tactica cerrada",
+                }
+            )
+            continue
+
+        projected_sale_price = resolve_tracking_trade_plan_projected_sale_price(position, trade_plan)
+        sale_preview = build_equity_sale_preview(
+            position,
+            sale_price_per_share=projected_sale_price,
+            closed_on=sale_date,
+        )
+        estimated_net_result = sale_preview.get("net_result") if sale_preview.get("available") else None
+        days_until_sale = (sale_date - reference_date).days
+        if days_until_sale <= 0:
+            status_key = "urgent"
+            status_label = "Vender ya"
+        elif days_until_sale <= 30:
+            status_key = "soon"
+            status_label = "Venta <= 30 dias"
+        elif days_until_sale <= 90:
+            status_key = "watch"
+            status_label = "Preparar venta"
+        else:
+            status_key = "scheduled"
+            status_label = "Venta programada"
+
+        if sale_date.year == reference_date.year and sale_date.month == reference_date.month and sale_date < reference_date:
+            window_start = reference_date
+            window_end = min(horizon_end, reference_date + timedelta(days=10))
+        else:
+            window_start = sale_date.replace(day=1)
+            window_end = sale_date.replace(day=monthrange(sale_date.year, sale_date.month)[1])
+
+        if window_start > horizon_end:
+            unscheduled_rows.append(
+                {
+                    "ticker": position.ticker,
+                    "company_name": position.company_name,
+                    "reason": "Ventana fuera del horizonte 24M",
+                }
+            )
+            continue
+
+        clamped_start = max(window_start, reference_date)
+        clamped_end = min(window_end, horizon_end)
+        if clamped_end < reference_date:
+            clamped_start = reference_date
+            clamped_end = min(horizon_end, reference_date + timedelta(days=10))
+
+        start_days = max((clamped_start - reference_date).days, 0)
+        end_days = max((clamped_end - reference_date).days, start_days + 1)
+        sale_days = max((sale_date - reference_date).days, 0)
+
+        left_pct = (start_days / total_days) * 100
+        width_pct = max(((end_days - start_days + 1) / total_days) * 100, 2.8)
+        pin_left_pct = (sale_days / total_days) * 100
+
+        row = {
+            "ticker": position.ticker,
+            "company_name": position.company_name,
+            "sale_date": sale_date,
+            "sale_window_label": trade_plan.get("sale_window_label") or sale_date.isoformat(),
+            "status_key": status_key,
+            "status_label": status_label,
+            "days_until_sale": days_until_sale,
+            "bar_left_pct": clamp_pct(left_pct),
+            "bar_width_pct": clamp_pct(min(left_pct + width_pct, 100.0) - left_pct),
+            "pin_left_pct": clamp_pct(pin_left_pct),
+            "estimated_net_result": quantize_decimal(estimated_net_result, "0.01") if estimated_net_result is not None else None,
+            "projected_sale_price": projected_sale_price,
+            "sale_mode_label": "Venta y reentrada" if trade_plan.get("mode") == "sale_reentry" else "Venta y revision",
+        }
+        rows.append(row)
+        if days_until_sale <= 90:
+            alert_rows.append(row)
+
+    rows.sort(key=lambda row: (row.get("sale_date") or date.max, row["company_name"]))
+    alert_rows.sort(key=lambda row: (row.get("sale_date") or date.max, row["company_name"]))
+    unscheduled_rows.sort(key=lambda row: row["company_name"])
+
+    if not rows and not unscheduled_rows:
+        return {"available": False}
+
+    projected_net_result_total = quantize_decimal(
+        sum(((row.get("estimated_net_result") or ZERO) for row in rows), ZERO),
+        "0.01",
+    ) or ZERO
+    next_row = rows[0] if rows else None
+    return {
+        "available": True,
+        "horizon_months": horizon_months,
+        "reference_date": reference_date,
+        "horizon_end": horizon_end,
+        "markers": markers,
+        "rows": rows,
+        "alert_rows": alert_rows[:4],
+        "unscheduled_rows": unscheduled_rows[:6],
+        "next_row": next_row,
+        "scheduled_count": len(rows),
+        "alert_count": len(alert_rows),
+        "unscheduled_count": len(unscheduled_rows),
+        "projected_net_result_total": projected_net_result_total,
+    }
+
+
 def add_calendar_years(value: date | None, years: int) -> date | None:
     if value is None:
         return None
@@ -5891,6 +6074,7 @@ def build_equity_ticket_tracking_context(
             "tickets": [],
             "tracked_ticket_count": 0,
             "snapshot_days_count": 0,
+            "sale_timeline": {"available": False},
             "global": {"available": False},
         }
 
@@ -5952,6 +6136,7 @@ def build_equity_ticket_tracking_context(
         "snapshot_days_count": len(snapshot_days),
         "anchor_date": earliest_baseline_date,
         "shared_anchor_date": tracking_anchor_date,
+        "sale_timeline": build_tracking_sale_timeline_context(ticket_items),
         "global": build_global_equity_ticket_tracking_item(ticket_items) if ticket_items else {"available": False},
     }
 

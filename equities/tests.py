@@ -2514,6 +2514,22 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(trade_plan["drawdown_margin_pct"], Decimal("-0.13"))
         self.assertEqual(tracking["tickets"][0]["rotation_plan"]["action"], "rotar")
         self.assertEqual(tracking["tickets"][0]["rotation_plan"]["alternative_ticker"], "ELE")
+        sale_timeline = tracking["sale_timeline"]
+        self.assertTrue(sale_timeline["available"])
+        self.assertEqual(sale_timeline["horizon_months"], 24)
+        self.assertEqual(sale_timeline["scheduled_count"], 1)
+        self.assertEqual(sale_timeline["alert_count"], 0)
+        self.assertEqual(sale_timeline["unscheduled_count"], 0)
+        self.assertEqual(sale_timeline["next_row"]["ticker"], "IBE")
+        self.assertEqual(sale_timeline["next_row"]["sale_window_label"], "abril 2027 (mes 12)")
+        self.assertEqual(sale_timeline["next_row"]["projected_sale_price"], Decimal("13.2840"))
+        expected_sale_preview = build_equity_sale_preview(
+            position,
+            sale_price_per_share=Decimal("13.2840"),
+            closed_on=date(2027, 4, 17),
+        )
+        self.assertEqual(sale_timeline["next_row"]["estimated_net_result"], expected_sale_preview["net_result"])
+        self.assertEqual(sale_timeline["projected_net_result_total"], expected_sale_preview["net_result"])
 
     def test_round_investment_plan_respects_existing_weights_and_review_dates(self):
         owned = {
@@ -8113,6 +8129,9 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "abril 2027 (mes 12)")
         self.assertContains(response, "Reentrada tactica")
         self.assertContains(response, "junio 2028 (mes 26)")
+        self.assertContains(response, "Agenda de ventas 24M")
+        self.assertContains(response, "Gantt tactico de salidas y neto estimado")
+        self.assertContains(response, "Neto estimado 24M")
         self.assertContains(response, "Pendiente 5M")
         self.assertContains(response, "Rotacion radar")
         self.assertContains(response, "Rotar a ELE")

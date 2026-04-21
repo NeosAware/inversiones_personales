@@ -1,0 +1,101 @@
+{% with sale_timeline=ticket_tracking.sale_timeline %}
+  {% if sale_timeline.available %}
+    <section class="equity-sale-gantt-shell">
+      <div class="equity-section-head">
+        <div>
+          <p class="section-title">Agenda de ventas {{ sale_timeline.horizon_months }}M</p>
+          <h3 style="margin:0;">Gantt tactico de salidas y neto estimado</h3>
+          <p style="margin:6px 0 0; color:#627380;">Cada barra marca el mes de salida sugerido; el punto fija la fecha prevista y el neto estima el resultado si vendes en esa ventana. Solo se muestran las acciones compradas con una salida clara dentro de los proximos 2 anos.</p>
+        </div>
+        <span class="pill">{{ sale_timeline.scheduled_count }} ventas | base {{ sale_timeline.reference_date|date:"Y-m-d" }} a {{ sale_timeline.horizon_end|date:"Y-m-d" }}</span>
+      </div>
+
+      <div class="equity-grid-4" style="margin-top:16px;">
+        <div class="equity-box">
+          <span>Proxima venta</span>
+          <strong>{% if sale_timeline.next_row %}{{ sale_timeline.next_row.ticker }}{% else %}-{% endif %}</strong>
+          <small>
+            {% if sale_timeline.next_row %}
+              {{ sale_timeline.next_row.sale_date|date:"Y-m-d" }} | {{ sale_timeline.next_row.status_label }}
+            {% else %}
+              Sin ventana cerrada
+            {% endif %}
+          </small>
+        </div>
+        <div class="equity-box">
+          <span>Ventas <= 90 dias</span>
+          <strong class="{% if sale_timeline.alert_count %}warn{% endif %}">{{ sale_timeline.alert_count }}</strong>
+          <small>{% if sale_timeline.alert_count %}Hay salidas para preparar ya.{% else %}No hay ventas cercanas por ahora.{% endif %}</small>
+        </div>
+        <div class="equity-box">
+          <span>Neto estimado 24M</span>
+          <strong class="{% if sale_timeline.projected_net_result_total >= 0 %}good{% else %}warn{% endif %}">{{ sale_timeline.projected_net_result_total|floatformat:0 }} EUR</strong>
+          <small>Suma del neto esperado si ejecutas todas las salidas visibles.</small>
+        </div>
+        <div class="equity-box">
+          <span>Sin ventana clara</span>
+          <strong>{{ sale_timeline.unscheduled_count }}</strong>
+          <small>Acciones a mantener o revisar fuera del gantt 24M.</small>
+        </div>
+      </div>
+
+      {% if sale_timeline.alert_rows %}
+        <div class="equity-sale-alert-strip">
+          {% for row in sale_timeline.alert_rows %}
+            <article class="equity-sale-alert-card {{ row.status_key }}">
+              <strong>{{ row.ticker }} | {{ row.company_name }}</strong>
+              <span>{{ row.sale_date|date:"Y-m-d" }} | {{ row.status_label }}</span>
+              <small>{% if row.estimated_net_result is not None %}Neto estimado {{ row.estimated_net_result|floatformat:0 }} EUR.{% else %}Neto estimado pendiente.{% endif %}</small>
+            </article>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if sale_timeline.rows %}
+        <div class="equity-sale-gantt-board">
+          <div class="equity-sale-gantt-axis">
+            <div class="equity-sale-gantt-axis-label">Accion</div>
+            <div class="equity-sale-gantt-axis-track">
+              {% for marker in sale_timeline.markers %}
+                <span class="equity-sale-gantt-marker" style="left:{{ marker.left_pct }}%;">{{ marker.label }}</span>
+              {% endfor %}
+            </div>
+            <div class="equity-sale-gantt-axis-meta">Salida y neto</div>
+          </div>
+
+          {% for row in sale_timeline.rows %}
+            <div class="equity-sale-gantt-row">
+              <div class="equity-sale-gantt-label">
+                <strong>{{ row.ticker }}</strong>
+                <span>{{ row.company_name }}</span>
+              </div>
+              <div class="equity-sale-gantt-track">
+                <div class="equity-sale-gantt-grid"></div>
+                <div class="equity-sale-gantt-bar {{ row.status_key }}" style="left:{{ row.bar_left_pct }}%; width:{{ row.bar_width_pct }}%;"></div>
+                <div class="equity-sale-gantt-pin {{ row.status_key }}" style="left:{{ row.pin_left_pct }}%;"></div>
+              </div>
+              <div class="equity-sale-gantt-meta">
+                <strong class="{% if row.estimated_net_result is not None and row.estimated_net_result >= 0 %}good{% elif row.estimated_net_result is not None %}warn{% endif %}">
+                  {% if row.estimated_net_result is not None %}{{ row.estimated_net_result|floatformat:0 }} EUR{% else %}-{% endif %}
+                </strong>
+                <span>{{ row.sale_window_label }}</span>
+                <small>{{ row.sale_date|date:"Y-m-d" }} | {{ row.sale_mode_label }}</small>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if sale_timeline.unscheduled_rows %}
+        <div class="equity-sale-unscheduled">
+          <strong>Acciones sin salida tactica cerrada</strong>
+          <div class="equity-chip-row" style="margin-top:10px;">
+            {% for row in sale_timeline.unscheduled_rows %}
+              <span class="equity-chip">{{ row.ticker }} | {{ row.reason }}</span>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endwith %}

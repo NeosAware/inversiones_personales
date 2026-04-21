@@ -67,6 +67,7 @@
       {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.net_chart_5y title="Rentabilidad neta 5A" note="Lectura neta agregada para el escenario largo." actual_label="Beneficio neto real" expected_label="Beneficio neto esperado" %}
     {% endif %}
   </div>
+  {% include "equities/_tracking_sale_timeline.html" %}
   {% if ticket_tracking.tickets %}
     <div class="equity-stock-tabs-shell" data-equity-tabs style="margin-top:18px;">
       <div class="equity-section-head">
