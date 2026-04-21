@@ -64,6 +64,7 @@ from .services import (
     build_equity_sale_preview,
     build_equity_ticket_tracking_context,
     build_equity_ticket_tracking_item,
+    build_portfolio_correlation_context,
     build_value_tracking_chart,
     build_equity_optimizer_candidate,
     build_owned_cycle_trade_timing_plan,
@@ -186,6 +187,59 @@ def populate_position_history(
     position.latest_price_date = stock_series.latest_date
     position.save(update_fields=["current_price_per_share", "latest_price_date"])
     return stock_series
+
+
+def populate_position_history_from_closes(
+    position: EquityPosition,
+    closes: list[Decimal | str],
+    *,
+    benchmark_closes: list[Decimal | str] | None = None,
+    start_year: int = 2025,
+    start_month: int = 1,
+):
+    normalized_closes = [Decimal(str(value)).quantize(Decimal("0.0001")) for value in closes]
+    if benchmark_closes is None:
+        benchmark_price = Decimal("100.0000")
+        benchmark_closes = []
+        for index in range(len(normalized_closes)):
+            if index == 0:
+                benchmark_closes.append(benchmark_price)
+                continue
+            benchmark_growth = Decimal("1.0060") if index % 2 else Decimal("0.9970")
+            benchmark_price = (benchmark_price * benchmark_growth).quantize(Decimal("0.0001"))
+            benchmark_closes.append(benchmark_price)
+    normalized_benchmark_closes = [
+        Decimal(str(value)).quantize(Decimal("0.0001")) for value in benchmark_closes
+    ]
+
+    for index, (close_price, benchmark_close) in enumerate(
+        zip(normalized_closes, normalized_benchmark_closes)
+    ):
+        month_number = (start_month - 1) + index
+        year = start_year + (month_number // 12)
+        month = (month_number % 12) + 1
+        month_end = monthrange(year, month)[1]
+        EquityPriceHistory.objects.create(
+            position=position,
+            price_date=date(year, month, month_end),
+            open_price=close_price,
+            high_price=(close_price * Decimal("1.0100")).quantize(Decimal("0.0001")),
+            low_price=(close_price * Decimal("0.9900")).quantize(Decimal("0.0001")),
+            close_price=close_price,
+            benchmark_close=benchmark_close,
+        )
+
+    position.current_price_per_share = normalized_closes[-1]
+    position.latest_price_date = date(
+        start_year + ((start_month - 1 + len(normalized_closes) - 1) // 12),
+        ((start_month - 1 + len(normalized_closes) - 1) % 12) + 1,
+        monthrange(
+            start_year + ((start_month - 1 + len(normalized_closes) - 1) // 12),
+            ((start_month - 1 + len(normalized_closes) - 1) % 12) + 1,
+        )[1],
+    )
+    position.save(update_fields=["current_price_per_share", "latest_price_date"])
+    return normalized_closes
 
 
 class FakeHTTPResponse(io.BytesIO):
@@ -1788,6 +1842,8 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(tracking["global"]["net_chart_5y"]["available"])
         self.assertTrue(tracking["global"]["return_chart_12m"]["available"])
         self.assertTrue(tracking["global"]["return_chart_5y"]["available"])
+        self.assertTrue(tracking["global"]["cumulative_alpha_chart"]["available"])
+        self.assertFalse(tracking["global"]["weekly_alpha_chart"]["available"])
         self.assertTrue(tracking["global"]["benchmark"]["available"])
         self.assertTrue(tracking["global"]["chart"]["benchmark_line"])
         self.assertTrue(tracking["global"]["return_chart_12m"]["benchmark_line"])
@@ -1834,6 +1890,24 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(chart["actual_display_points"][-1]["date_label"], "2026-04-24")
         self.assertTrue(chart["actual_display_points"][-1]["is_latest"])
         self.assertIn("lecturas", chart["actual_display_points"][-1]["tooltip"])
+
+    def test_build_value_tracking_chart_supports_single_real_series(self):
+        chart = build_value_tracking_chart(
+            actual_series=[
+                {"date": date(2026, 4, 14), "value": Decimal("-0.80")},
+                {"date": date(2026, 4, 17), "value": Decimal("0.60")},
+                {"date": date(2026, 4, 21), "value": Decimal("1.25")},
+            ],
+            expected_series=[],
+            value_suffix="%",
+            axis_formatter=lambda value: f"{Decimal(str(value)).quantize(Decimal('0.1'))}",
+        )
+
+        self.assertTrue(chart["available"])
+        self.assertTrue(chart["actual_line"])
+        self.assertEqual(chart["expected_line"], "")
+        self.assertEqual(chart["projection_end_label"], "2026-04-21")
+        self.assertIsNotNone(chart["zero_y"])
 
     def test_ticket_tracking_global_chart_keeps_first_real_portfolio_date_when_positions_enter_later(self):
         def create_position(ticker, company_name, start_price):
@@ -2138,6 +2212,121 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(tracking["global"]["net_gain_value"], Decimal("12.00"))
         self.assertEqual(tracking["global"]["invested_return_pct"], Decimal("1.89"))
         self.assertEqual(tracking["global"]["daily_change_pct"], Decimal("1.89"))
+
+    def test_ticket_tracking_builds_weekly_and_cumulative_alpha_charts(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("20.00"),
+        )
+        stock_series = build_compound_market_series(
+            "IBE.MC",
+            "Iberdrola",
+            growth=Decimal("1.0180"),
+            start_price=Decimal("10.0000"),
+        )
+        for stock_point in stock_series.points:
+            position.price_history.create(
+                price_date=stock_point["date"],
+                open_price=stock_point["open"],
+                high_price=stock_point["high"],
+                low_price=stock_point["low"],
+                close_price=stock_point["close"],
+                benchmark_close=Decimal("100.0000"),
+            )
+
+        snapshot_dates = [date(2026, 4, 13) + timedelta(days=offset) for offset in range(9)]
+        current_price = Decimal("10.0000")
+        for snapshot_date in snapshot_dates:
+            current_price = (current_price + Decimal("0.1500")).quantize(Decimal("0.0001"))
+            position.current_price_per_share = current_price
+            position.save(update_fields=["current_price_per_share", "updated_at"])
+            cards = build_equity_history_cards([position])
+            capture_equity_ticket_snapshots(cards, snapshot_date=snapshot_date)
+
+        benchmark_points = []
+        benchmark_price = Decimal("100.0000")
+        for snapshot_date in snapshot_dates:
+            benchmark_price = (benchmark_price + Decimal("0.4000")).quantize(Decimal("0.0001"))
+            benchmark_points.append(
+                {
+                    "date": snapshot_date,
+                    "open": benchmark_price,
+                    "high": benchmark_price,
+                    "low": benchmark_price,
+                    "close": benchmark_price,
+                }
+            )
+        benchmark_series = MarketSeries(
+            symbol="^IBEX",
+            name="IBEX 35",
+            latest_price=benchmark_points[-1]["close"],
+            latest_date=benchmark_points[-1]["date"],
+            points=benchmark_points,
+        )
+
+        cards = build_equity_history_cards(list(EquityPosition.objects.prefetch_related("price_history")))
+        with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
+            tracking = build_equity_ticket_tracking_context(cards)
+
+        self.assertTrue(tracking["global"]["cumulative_alpha_chart"]["available"])
+        self.assertTrue(tracking["global"]["weekly_alpha_chart"]["available"])
+        self.assertTrue(tracking["global"]["cumulative_alpha_chart"]["actual_line"])
+        self.assertTrue(tracking["global"]["weekly_alpha_chart"]["actual_line"])
+        self.assertIsNotNone(tracking["global"]["cumulative_alpha_chart"]["zero_y"])
+
+    def test_build_portfolio_correlation_context_calculates_matrix_and_dalio_risk(self):
+        close_sets = (
+            ("IBE", "Iberdrola", [Decimal("20.0000"), Decimal("19.4000"), Decimal("20.1760"), Decimal("19.7725"), Decimal("20.7611"), Decimal("20.1383"), Decimal("21.3466"), Decimal("20.9197")]),
+            ("ENG", "Enagas", [Decimal("18.0000"), Decimal("17.8200"), Decimal("18.3546"), Decimal("18.1709"), Decimal("18.7160"), Decimal("18.3417"), Decimal("19.0754"), Decimal("18.6940")]),
+            ("BBVA", "BBVA", [Decimal("12.0000"), Decimal("13.0200"), Decimal("12.4341"), Decimal("13.2413"), Decimal("13.0427"), Decimal("14.0209"), Decimal("13.4601"), Decimal("14.2677")]),
+            ("SAN", "Banco Santander", [Decimal("10.0000"), Decimal("11.0000"), Decimal("10.4500"), Decimal("11.2860"), Decimal("11.0603"), Decimal("11.9451"), Decimal("11.3478"), Decimal("12.1421")]),
+        )
+
+        for ticker, company_name, closes in close_sets:
+            position = EquityPosition.objects.create(
+                ownership_category=AssetOwnershipCategory.JOINT,
+                broker="Interactive Brokers",
+                ticker=ticker,
+                quote_symbol=f"{ticker}.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name=company_name,
+                shares=Decimal("10.0000"),
+                average_cost_per_share=closes[0],
+                current_price_per_share=closes[-1],
+            )
+            populate_position_history_from_closes(position, closes)
+
+        history_cards = build_equity_history_cards(
+            list(EquityPosition.objects.prefetch_related("price_history"))
+        )
+        correlation = build_portfolio_correlation_context(history_cards)
+
+        self.assertTrue(correlation["available"])
+        self.assertEqual(correlation["positions_count"], 4)
+        self.assertEqual(correlation["pair_count"], 6)
+        self.assertEqual(correlation["same_sector_pairs_count"], 1)
+        self.assertEqual(correlation["related_sector_pairs_count"], 1)
+        self.assertEqual(correlation["distinct_sector_pairs_count"], 4)
+        self.assertEqual(correlation["average_correlation"], Decimal("-0.28"))
+        self.assertEqual(correlation["average_positive_correlation_pct"], Decimal("34.55"))
+        self.assertEqual(correlation["estimated_loss_probability_pct"], Decimal("33.18"))
+        self.assertEqual(correlation["highest_pair"]["pair_label"], "BBVA / SAN")
+        self.assertEqual(correlation["most_diversifying_pair"]["pair_label"], "IBE / SAN")
+        self.assertEqual(correlation["heatmap_rows"][0]["cells"][0]["label"], "1.00")
+        self.assertEqual(len(correlation["heatmap_headers"]), 4)
+        self.assertEqual(len(correlation["heatmap_rows"]), 4)
+        self.assertTrue(correlation["risk_curve_chart"]["available"])
+        self.assertIsNotNone(correlation["risk_curve_chart"]["current_marker"])
 
     def test_build_owned_cycle_trade_timing_plan_detects_monthly_trend_turns(self):
         position = EquityPosition(
@@ -2555,6 +2744,31 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(preview["net_result"], Decimal("23.80"))
         self.assertGreater(preview["monthly_equivalent_return_pct"], Decimal("0.00"))
         self.assertEqual(preview["annualized_margin_pct"], preview["cumulative_margin_pct"])
+
+    def test_sale_preview_handles_recent_positions_with_extreme_annualization(self):
+        position = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.MONICA,
+            broker="Cartera Monica",
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Banco Santander",
+            opened_on=date(2026, 4, 19),
+            shares=Decimal("2550.0000"),
+            average_cost_per_share=Decimal("11.0420"),
+            current_price_per_share=Decimal("11.0420"),
+        )
+        populate_position_history(position)
+
+        preview = build_equity_sale_preview(
+            position,
+            closed_on=date(2026, 4, 21),
+        )
+
+        self.assertTrue(preview["available"])
+        self.assertEqual(preview["holding_days"], 2)
+        self.assertGreater(preview["annualized_margin_pct"], preview["cumulative_margin_pct"])
 
     def test_allocation_plan_respects_max_company_weight_and_sorts_by_projection(self):
         stronger = {
@@ -7496,6 +7710,7 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         page = response.content.decode("utf-8")
         self.assertContains(response, "Seguimiento desde")
+        self.assertContains(response, "Cartera vs IBEX y escenario 12M")
         self.assertContains(response, "Rentabilidad neta 1A")
         self.assertContains(response, "Rentabilidad neta 5A")
         self.assertContains(response, "% rentabilidad 1A")
@@ -7528,6 +7743,52 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(EquityTicketSnapshot.objects.count(), 2)
         self.assertContains(response, "Base por accion")
         self.assertContains(response, "Precio por accion")
+
+    def test_equities_page_renders_portfolio_correlation_section(self):
+        close_sets = (
+            ("IBE", "Iberdrola", [Decimal("20.0000"), Decimal("19.4000"), Decimal("20.1760"), Decimal("19.7725"), Decimal("20.7611"), Decimal("20.1383"), Decimal("21.3466"), Decimal("20.9197")]),
+            ("ENG", "Enagas", [Decimal("18.0000"), Decimal("17.8200"), Decimal("18.3546"), Decimal("18.1709"), Decimal("18.7160"), Decimal("18.3417"), Decimal("19.0754"), Decimal("18.6940")]),
+            ("BBVA", "BBVA", [Decimal("12.0000"), Decimal("13.0200"), Decimal("12.4341"), Decimal("13.2413"), Decimal("13.0427"), Decimal("14.0209"), Decimal("13.4601"), Decimal("14.2677")]),
+            ("SAN", "Banco Santander", [Decimal("10.0000"), Decimal("11.0000"), Decimal("10.4500"), Decimal("11.2860"), Decimal("11.0603"), Decimal("11.9451"), Decimal("11.3478"), Decimal("12.1421")]),
+        )
+
+        for ticker, company_name, closes in close_sets:
+            position = EquityPosition.objects.create(
+                ownership_category=AssetOwnershipCategory.JOINT,
+                broker="Interactive Brokers",
+                ticker=ticker,
+                quote_symbol=f"{ticker}.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name=company_name,
+                shares=Decimal("10.0000"),
+                average_cost_per_share=closes[0],
+                current_price_per_share=closes[-1],
+            )
+            populate_position_history_from_closes(position, closes)
+
+        benchmark_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+        with (
+            patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series),
+            patch("equities.views.build_equity_investment_journey_context", return_value={"available": False}),
+        ):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        page = response.content.decode("utf-8")
+        self.assertContains(response, "Correlacion entre tus acciones y riesgo de concentracion")
+        self.assertContains(response, "Curva orientativa correlacion vs probabilidad de perder dinero")
+        self.assertContains(response, "Matriz de correlacion entre tus acciones")
+        self.assertContains(response, "BBVA / SAN")
+        self.assertContains(response, "IBE / SAN")
+        self.assertContains(response, 'id="equity-correlation"', html=False)
+        self.assertLess(page.index('id="equity-ticket-tracking"'), page.index('id="equity-correlation"'))
+        self.assertLess(page.index('id="equity-correlation"'), page.index('id="equity-portfolio-summary"'))
 
     def test_equities_page_refreshes_today_snapshot_even_with_nightly_status_available(self):
         position = EquityPosition.objects.create(
@@ -8236,7 +8497,7 @@ class EquitiesViewTests(TestCase):
             )
 
         with (
-            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=empty_workbook),
+            patch("equities.services.load_ibex_reference_workbook_snapshot", return_value=workbook_snapshot),
             patch("equities.services.build_ibex_universe_companies", return_value=[company]),
             patch("equities.services.fetch_market_series", side_effect=fake_market_series),
             patch("equities.services.fetch_reference_series_for_choice", side_effect=fake_reference_series),

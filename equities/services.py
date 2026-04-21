@@ -4,13 +4,14 @@ import logging
 from calendar import monthrange
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from itertools import combinations
 import json
 import math
 import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, localcontext
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlencode
@@ -47,6 +48,16 @@ QUARTERLY_RECENT_WINDOW = 4
 TRACKING_HORIZON_DAYS = 365
 TRACKING_FORECAST_MARKERS = (91, 182, 273, TRACKING_HORIZON_DAYS)
 TRACKING_FIVE_YEAR_MARKERS = (1, 2, 3, 4, 5)
+TRACKING_MARKER_WEEKDAYS = {0, 3}
+TRACKING_WEEKLY_ALPHA_DAYS = 7
+PORTFOLIO_CORRELATION_MIN_COMMON_PERIODS = 6
+DALIO_CORRELATION_RISK_POINTS = (
+    (Decimal("0"), Decimal("11")),
+    (Decimal("10"), Decimal("24")),
+    (Decimal("20"), Decimal("31")),
+    (Decimal("40"), Decimal("34")),
+    (Decimal("60"), Decimal("38")),
+)
 COMPARABLE_MONTH_DAYS = Decimal("30.4375")
 OPTIMIZER_MAX_ENTRY_DRAG_PCT = Decimal("1.00")
 OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT = Decimal("2.00")
@@ -4049,6 +4060,75 @@ def project_expected_value_on_date(
     return quantize_decimal(start_value + ((target_value - start_value) * ratio), "0.01")
 
 
+def normalize_tracking_series(points: list[dict] | None) -> list[dict]:
+    grouped = {}
+    for point in points or []:
+        point_date = point.get("date")
+        value = point.get("value")
+        if point_date is None or value is None:
+            continue
+        grouped[point_date] = Decimal(str(value))
+    return [{"date": point_date, "value": grouped[point_date]} for point_date in sorted(grouped)]
+
+
+def build_tracking_series_difference(
+    primary_series: list[dict],
+    comparison_series: list[dict],
+) -> list[dict]:
+    primary_points = normalize_tracking_series(primary_series)
+    comparison_points = normalize_tracking_series(comparison_series)
+    if not primary_points or not comparison_points:
+        return []
+
+    primary_by_date = {point["date"]: point["value"] for point in primary_points}
+    comparison_by_date = {point["date"]: point["value"] for point in comparison_points}
+    combined_dates = sorted(set(primary_by_date) | set(comparison_by_date))
+    current_primary = None
+    current_comparison = None
+    difference_series = []
+
+    for point_date in combined_dates:
+        if point_date in primary_by_date:
+            current_primary = primary_by_date[point_date]
+        if point_date in comparison_by_date:
+            current_comparison = comparison_by_date[point_date]
+        if current_primary is None or current_comparison is None:
+            continue
+        difference_value = quantize_decimal(current_primary - current_comparison, "0.01")
+        if difference_value is None:
+            continue
+        difference_series.append({"date": point_date, "value": difference_value})
+
+    return difference_series
+
+
+def build_tracking_trailing_delta_series(
+    series: list[dict],
+    trailing_days: int = TRACKING_WEEKLY_ALPHA_DAYS,
+) -> list[dict]:
+    normalized_points = normalize_tracking_series(series)
+    if len(normalized_points) < 2 or trailing_days <= 0:
+        return []
+
+    anchor_cursor = 0
+    anchor_value = None
+    trailing_series = []
+
+    for point in normalized_points:
+        anchor_date = point["date"] - timedelta(days=trailing_days)
+        while anchor_cursor < len(normalized_points) and normalized_points[anchor_cursor]["date"] <= anchor_date:
+            anchor_value = normalized_points[anchor_cursor]["value"]
+            anchor_cursor += 1
+        if anchor_value is None:
+            continue
+        delta_value = quantize_decimal(point["value"] - anchor_value, "0.01")
+        if delta_value is None:
+            continue
+        trailing_series.append({"date": point["date"], "value": delta_value})
+
+    return trailing_series
+
+
 def build_value_tracking_chart(
     actual_series: list[dict],
     expected_series: list[dict],
@@ -4068,20 +4148,10 @@ def build_value_tracking_chart(
             return formatted
         return f"{formatted} {value_suffix}".strip()
 
-    def normalize_series(points: list[dict]) -> list[dict]:
-        grouped = {}
-        for point in points:
-            point_date = point.get("date")
-            value = point.get("value")
-            if point_date is None or value is None:
-                continue
-            grouped[point_date] = Decimal(str(value))
-        return [{"date": point_date, "value": grouped[point_date]} for point_date in sorted(grouped)]
-
-    actual_points = normalize_series(actual_series)
-    expected_points = normalize_series(expected_series)
-    benchmark_points = normalize_series(benchmark_series or [])
-    if not actual_points or not expected_points:
+    actual_points = normalize_tracking_series(actual_series)
+    expected_points = normalize_tracking_series(expected_series)
+    benchmark_points = normalize_tracking_series(benchmark_series or [])
+    if not actual_points or max(len(actual_points), len(expected_points), len(benchmark_points)) < 2:
         return {
             "available": False,
             "actual_line": "",
@@ -4097,6 +4167,7 @@ def build_value_tracking_chart(
             "latest_label": "",
             "projection_end_label": "",
             "points_count": 0,
+            "zero_y": None,
         }
 
     all_values = (
@@ -4109,8 +4180,13 @@ def build_value_tracking_chart(
     if series_min == series_max:
         series_max += Decimal("1")
 
-    min_date = min(actual_points[0]["date"], expected_points[0]["date"])
-    max_date = max(actual_points[-1]["date"], expected_points[-1]["date"])
+    all_dates = [point["date"] for point in actual_points]
+    if expected_points:
+        all_dates.extend(point["date"] for point in expected_points)
+    if benchmark_points:
+        all_dates.extend(point["date"] for point in benchmark_points)
+    min_date = min(all_dates)
+    max_date = max(all_dates)
     total_days = max((max_date - min_date).days, 1)
     span_x = width - (padding * 2)
     span_y = height - (padding * 2)
@@ -4131,6 +4207,7 @@ def build_value_tracking_chart(
                 {
                     "x": f"{x:.1f}",
                     "y": f"{y:.1f}",
+                    "date": point["date"],
                     "value_label": format_chart_value(point["value"]),
                     "date_label": point["date"].isoformat(),
                     "tooltip": f"{point['date'].isoformat()} | {format_chart_value(point['value'])}",
@@ -4151,14 +4228,23 @@ def build_value_tracking_chart(
                 for point in point_rows
             ]
 
+        selected_keys = {
+            point_rows[0]["key"],
+            point_rows[-1]["key"],
+        }
+        for point in point_rows:
+            if point["date"].weekday() in TRACKING_MARKER_WEEKDAYS:
+                selected_keys.add(point["key"])
+        selected_points = [point for point in point_rows if point["key"] in selected_keys]
+
         def distance(left: dict, right: dict) -> float:
             delta_x = float(left["x"]) - float(right["x"])
             delta_y = float(left["y"]) - float(right["y"])
             return (delta_x**2 + delta_y**2) ** 0.5
 
         clusters: list[list[dict]] = []
-        current_cluster = [point_rows[0]]
-        for point in point_rows[1:]:
+        current_cluster = [selected_points[0]]
+        for point in selected_points[1:]:
             if distance(point, current_cluster[-1]) < min_marker_distance:
                 current_cluster.append(point)
             else:
@@ -4166,7 +4252,7 @@ def build_value_tracking_chart(
                 current_cluster = [point]
         clusters.append(current_cluster)
 
-        latest_key = point_rows[-1]["key"]
+        latest_key = selected_points[-1]["key"]
         display_points = []
         for cluster in clusters:
             representative = dict(cluster[-1])
@@ -4191,6 +4277,9 @@ def build_value_tracking_chart(
     expected_line, expected_point_rows = build_series(expected_points, "expected")
     benchmark_line, benchmark_point_rows = build_series(benchmark_points, "benchmark")
     actual_display_points = build_display_points(actual_point_rows)
+    zero_y = None
+    if series_min <= ZERO <= series_max:
+        zero_y = f"{scale_point(min_date, ZERO)[1]:.1f}"
     return {
         "available": True,
         "actual_line": actual_line,
@@ -4204,10 +4293,15 @@ def build_value_tracking_chart(
         "max_label": format_chart_value(series_max),
         "start_label": min_date.isoformat(),
         "latest_label": actual_points[-1]["date"].isoformat(),
-        "projection_end_label": expected_points[-1]["date"].isoformat(),
+        "projection_end_label": (
+            expected_points[-1]["date"].isoformat()
+            if expected_points
+            else actual_points[-1]["date"].isoformat()
+        ),
         "points_count": len(actual_points),
+        "zero_y": zero_y,
         "x_markers": build_time_axis_markers(
-            [point["date"] for point in actual_points] + [point["date"] for point in expected_points],
+            all_dates,
             width=width,
             height=height,
             padding=padding,
@@ -5528,6 +5622,11 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         ticket_items,
         as_percentage=True,
     )
+    cumulative_alpha_series = build_tracking_series_difference(
+        return_series_12m,
+        return_benchmark_series,
+    )
+    weekly_alpha_series = build_tracking_trailing_delta_series(cumulative_alpha_series)
     net_chart_12m = build_value_tracking_chart(
         net_series_12m,
         net_expected_series_12m,
@@ -5547,6 +5646,18 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         return_series_5y,
         return_expected_series_5y,
         benchmark_series=return_benchmark_series,
+        value_suffix="%",
+        axis_formatter=format_percentage_axis_value,
+    )
+    cumulative_alpha_chart = build_value_tracking_chart(
+        cumulative_alpha_series,
+        [],
+        value_suffix="%",
+        axis_formatter=format_percentage_axis_value,
+    )
+    weekly_alpha_chart = build_value_tracking_chart(
+        weekly_alpha_series,
+        [],
         value_suffix="%",
         axis_formatter=format_percentage_axis_value,
     )
@@ -5570,6 +5681,8 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         "net_chart_5y": net_chart_5y,
         "return_chart_12m": return_chart_12m,
         "return_chart_5y": return_chart_5y,
+        "cumulative_alpha_chart": cumulative_alpha_chart,
+        "weekly_alpha_chart": weekly_alpha_chart,
         "baseline_value": baseline_value,
         "latest_value": latest_actual,
         "expected_today_value": current_expected_value,
@@ -6802,6 +6915,481 @@ def build_reference_rolling_correlation_rows_for_series(
     return rolling_rows
 
 
+def collapse_equity_history_to_close_map(history, frequency: str = "monthly") -> dict[str, dict]:
+    collapsed_rows = collapse_history_to_frequency(history, frequency)
+    return {
+        bucket_label_for_date(point.price_date, frequency): {
+            "date": point.price_date,
+            "close": point.close_price,
+        }
+        for point in collapsed_rows
+        if point.price_date is not None and point.close_price is not None
+    }
+
+
+def resolve_equity_sector_relationship(left_sector_label: str = "", right_sector_label: str = "") -> dict:
+    normalized_left = normalize_company_lookup(left_sector_label)
+    normalized_right = normalize_company_lookup(right_sector_label)
+    if not normalized_left or not normalized_right:
+        return {
+            "key": "unknown",
+            "label": "Sin sector suficiente",
+            "detail": "Falta al menos un sector",
+        }
+    if normalized_left == normalized_right:
+        return {
+            "key": "same",
+            "label": "Mismo sector",
+            "detail": left_sector_label or right_sector_label,
+        }
+
+    stop_words = {"Y", "E", "DE", "DEL", "LA", "EL", "AL", "LOS", "LAS", "CON"}
+    family_map = {
+        "energia": {
+            "ENERGIA", "ENERGETICA", "ENERGETICO", "ELECTRICA", "ELECTRICAS",
+            "GAS", "SOLAR", "RENOVABLE", "RENOVABLES", "REDES", "UTILITY", "UTILITIES",
+        },
+        "infraestructuras": {
+            "INFRAESTRUCTURA", "INFRAESTRUCTURAS", "CONSTRUCCION", "CONSTRUCCIONES",
+            "CONCESIONES", "INMOBILIARIO", "VIVIENDA", "HOGAR",
+        },
+        "finanzas": {
+            "BANCA", "BANCARIO", "BANCARIOS", "SEGUROS", "SEGURO", "FINANCIERO", "FINANCIEROS",
+        },
+        "tecnologia": {
+            "TECNOLOGIA", "TECNOLOGICO", "TECNOLOGICOS", "DEFENSA", "TELECOMUNICACIONES",
+        },
+        "consumo": {
+            "CONSUMO", "DISTRIBUCION", "LOGISTICA", "VIAJES", "MOVILIDAD", "AEROPUERTOS", "AEROLINEAS",
+        },
+        "industria": {
+            "INDUSTRIA", "INDUSTRIAL", "INDUSTRIALES", "MATERIALES", "ACERO", "COBRE", "EQUIPAMIENTO",
+        },
+        "salud": {"SALUD"},
+    }
+    family_labels = {
+        "energia": "energia y utilities",
+        "infraestructuras": "infraestructuras y ciclo inmobiliario",
+        "finanzas": "finanzas",
+        "tecnologia": "tecnologia y telecom",
+        "consumo": "consumo y movilidad",
+        "industria": "industria y materiales",
+        "salud": "salud",
+    }
+
+    def build_tags(sector_label: str) -> set[str]:
+        tokens = {
+            token
+            for token in normalize_company_lookup(sector_label).split()
+            if token and token not in stop_words
+        }
+        tags = set()
+        for family, keywords in family_map.items():
+            if tokens & keywords:
+                tags.add(family)
+        if not tags:
+            tags = {token.lower() for token in tokens}
+        return tags
+
+    shared_tags = sorted(build_tags(left_sector_label) & build_tags(right_sector_label))
+    if shared_tags:
+        shared_label = ", ".join(family_labels.get(tag, tag.replace("_", " ")) for tag in shared_tags)
+        return {
+            "key": "related",
+            "label": "Sectores afines",
+            "detail": shared_label,
+        }
+    return {
+        "key": "distinct",
+        "label": "Sectores distintos",
+        "detail": f"{left_sector_label} vs {right_sector_label}",
+    }
+
+
+def build_pairwise_equity_correlation(
+    left_card: dict,
+    right_card: dict,
+    frequency: str = "monthly",
+) -> dict:
+    left_position = left_card["position"]
+    right_position = right_card["position"]
+    left_history = list(left_position.price_history.all())
+    right_history = list(right_position.price_history.all())
+    sector_relationship = resolve_equity_sector_relationship(
+        left_card.get("sector_label", ""),
+        right_card.get("sector_label", ""),
+    )
+    left_map = collapse_equity_history_to_close_map(left_history, frequency)
+    right_map = collapse_equity_history_to_close_map(right_history, frequency)
+    shared_labels = sorted(set(left_map.keys()) & set(right_map.keys()))
+    if len(shared_labels) < PORTFOLIO_CORRELATION_MIN_COMMON_PERIODS:
+        return {
+            "available": False,
+            "left_ticker": left_position.ticker,
+            "right_ticker": right_position.ticker,
+            "left_company_name": left_position.company_name,
+            "right_company_name": right_position.company_name,
+            "left_sector_label": left_card.get("sector_label") or "Sin sector",
+            "right_sector_label": right_card.get("sector_label") or "Sin sector",
+            "pair_label": f"{left_position.ticker} / {right_position.ticker}",
+            "coefficient": None,
+            "observations_count": 0,
+            "shared_periods_count": len(shared_labels),
+            "years_covered": ZERO,
+            "start_label": "",
+            "end_label": "",
+            "sector_relationship_key": sector_relationship["key"],
+            "sector_relationship_label": sector_relationship["label"],
+            "sector_relationship_detail": sector_relationship["detail"],
+        }
+
+    rows = []
+    for label in shared_labels:
+        left_point = left_map[label]
+        right_point = right_map[label]
+        rows.append(
+            {
+                "date": max(left_point["date"], right_point["date"]),
+                "stock_close": left_point["close"],
+                "reference_close": right_point["close"],
+            }
+        )
+    correlation = build_correlation_from_rows(rows, frequency, secondary_change_mode="pct")
+    coefficient = correlation.get("coefficient")
+    return {
+        "available": coefficient is not None,
+        "left_ticker": left_position.ticker,
+        "right_ticker": right_position.ticker,
+        "left_company_name": left_position.company_name,
+        "right_company_name": right_position.company_name,
+        "left_sector_label": left_card.get("sector_label") or "Sin sector",
+        "right_sector_label": right_card.get("sector_label") or "Sin sector",
+        "pair_label": f"{left_position.ticker} / {right_position.ticker}",
+        "coefficient": coefficient,
+        "observations_count": correlation.get("observations_count", 0),
+        "shared_periods_count": len(rows),
+        "years_covered": correlation.get("years_covered") or ZERO,
+        "start_label": rows[0]["date"].isoformat() if rows else "",
+        "end_label": rows[-1]["date"].isoformat() if rows else "",
+        "sector_relationship_key": sector_relationship["key"],
+        "sector_relationship_label": sector_relationship["label"],
+        "sector_relationship_detail": sector_relationship["detail"],
+    }
+
+
+def estimate_dalio_loss_probability(correlation_pct: Decimal | None) -> Decimal | None:
+    if correlation_pct is None:
+        return None
+    points = list(DALIO_CORRELATION_RISK_POINTS)
+    if not points:
+        return None
+    if correlation_pct <= points[0][0]:
+        return points[0][1]
+    for left_point, right_point in zip(points, points[1:]):
+        left_x, left_y = left_point
+        right_x, right_y = right_point
+        if left_x <= correlation_pct <= right_x:
+            span = right_x - left_x
+            if span == ZERO:
+                return left_y
+            ratio = (correlation_pct - left_x) / span
+            return quantize_decimal(left_y + ((right_y - left_y) * ratio), "0.01")
+    last_left_x, last_left_y = points[-2]
+    last_right_x, last_right_y = points[-1]
+    tail_span = last_right_x - last_left_x
+    if tail_span == ZERO:
+        return last_right_y
+    tail_ratio = (correlation_pct - last_left_x) / tail_span
+    return quantize_decimal(last_left_y + ((last_right_y - last_left_y) * tail_ratio), "0.01")
+
+
+def build_correlation_risk_curve_chart(
+    current_correlation_pct: Decimal | None,
+    current_loss_probability_pct: Decimal | None,
+    width: int = 640,
+    height: int = 220,
+    padding: int = 26,
+) -> dict:
+    points = [
+        {
+            "correlation_pct": correlation_pct,
+            "loss_probability_pct": loss_probability_pct,
+        }
+        for correlation_pct, loss_probability_pct in DALIO_CORRELATION_RISK_POINTS
+    ]
+    if len(points) < 2:
+        return {"available": False}
+
+    max_curve_x = max(point["correlation_pct"] for point in points)
+    max_curve_y = max(point["loss_probability_pct"] for point in points)
+    current_x = current_correlation_pct if current_correlation_pct is not None else ZERO
+    current_y = current_loss_probability_pct if current_loss_probability_pct is not None else ZERO
+    x_max = max(max_curve_x, Decimal(str(int(math.ceil(float(current_x) / 10.0)) * 10))) if current_x else max_curve_x
+    y_max_base = max(max_curve_y, current_y)
+    y_max = Decimal(str(int(math.ceil(float((y_max_base or ZERO) + Decimal("4")) / 10.0)) * 10 or 10))
+    span_x = width - (padding * 2)
+    span_y = height - (padding * 2)
+
+    def to_x(value: Decimal) -> float:
+        base = float(x_max) if x_max not in {None, ZERO} else 1.0
+        return padding + (span_x * (float(value) / base))
+
+    def to_y(value: Decimal) -> float:
+        base = float(y_max) if y_max not in {None, ZERO} else 1.0
+        return height - padding - (span_y * (float(value) / base))
+
+    curve_line = " ".join(
+        f"{to_x(point['correlation_pct']):.1f},{to_y(point['loss_probability_pct']):.1f}"
+        for point in points
+    )
+    x_markers = []
+    x_tick = 0
+    while x_tick <= int(x_max):
+        x_markers.append(
+            {
+                "x": f"{to_x(Decimal(str(x_tick))):.1f}",
+                "label": f"{x_tick} %",
+                "y1": str(height - padding),
+                "y2": str(height - padding + 6),
+                "text_y": str(height - 2),
+            }
+        )
+        x_tick += 10
+    y_markers = []
+    y_tick = 0
+    while y_tick <= int(y_max):
+        y_markers.append(
+            {
+                "y": f"{to_y(Decimal(str(y_tick))):.1f}",
+                "label": f"{y_tick} %",
+            }
+        )
+        y_tick += 10
+    current_marker = None
+    if current_correlation_pct is not None and current_loss_probability_pct is not None:
+        current_marker = {
+            "x": f"{to_x(current_correlation_pct):.1f}",
+            "y": f"{to_y(current_loss_probability_pct):.1f}",
+            "correlation_label": f"{current_correlation_pct:.1f} %",
+            "loss_probability_label": f"{current_loss_probability_pct:.1f} %",
+        }
+    return {
+        "available": True,
+        "curve_line": curve_line,
+        "curve_points": [
+            {
+                "x": f"{to_x(point['correlation_pct']):.1f}",
+                "y": f"{to_y(point['loss_probability_pct']):.1f}",
+                "label": (
+                    f"Corr {point['correlation_pct']:.0f} % | "
+                    f"prob. perder dinero {point['loss_probability_pct']:.0f} %"
+                ),
+            }
+            for point in points
+        ],
+        "current_marker": current_marker,
+        "x_markers": x_markers,
+        "y_markers": y_markers,
+        "max_label": f"{y_max:.0f} %",
+        "min_label": "0 %",
+        "current_correlation_label": f"{current_correlation_pct:.1f} %" if current_correlation_pct is not None else "-",
+        "current_loss_probability_label": (
+            f"{current_loss_probability_pct:.1f} %"
+            if current_loss_probability_pct is not None
+            else "-"
+        ),
+    }
+
+
+def build_correlation_heatmap_palette(coefficient: Decimal | None, *, is_self: bool = False) -> dict:
+    if is_self:
+        return {"background": "#0d5d78", "text": "#ffffff"}
+    if coefficient is None:
+        return {"background": "#f3f7fa", "text": "#8aa0b1"}
+    if coefficient >= Decimal("0.75"):
+        return {"background": "#c9653d", "text": "#ffffff"}
+    if coefficient >= Decimal("0.50"):
+        return {"background": "#e69a64", "text": "#17384e"}
+    if coefficient >= Decimal("0.25"):
+        return {"background": "#f6d8bf", "text": "#17384e"}
+    if coefficient > Decimal("-0.25"):
+        return {"background": "#e8f0f7", "text": "#17384e"}
+    if coefficient > Decimal("-0.50"):
+        return {"background": "#cae6db", "text": "#17384e"}
+    return {"background": "#2f7d5a", "text": "#ffffff"}
+
+
+def build_portfolio_correlation_context(history_cards: list[dict]) -> dict:
+    owned_cards = [
+        card
+        for card in history_cards
+        if card.get("position") is not None
+        and card["position"].is_owned
+        and card.get("has_history")
+    ]
+    if len(owned_cards) < 2:
+        return {"available": False}
+
+    owned_cards = sorted(
+        owned_cards,
+        key=lambda card: (
+            -(card["position"].current_value or ZERO),
+            card["position"].company_name,
+        ),
+    )
+    total_current_value = sum((card["position"].current_value or ZERO) for card in owned_cards)
+    pair_rows = []
+    pairs_by_key = {}
+    pair_weight_total = ZERO
+    weighted_correlation_total = ZERO
+    weighted_positive_correlation_total = ZERO
+    sector_relation_counts = defaultdict(int)
+    unavailable_pairs_count = 0
+
+    for left_card, right_card in combinations(owned_cards, 2):
+        pair = build_pairwise_equity_correlation(left_card, right_card)
+        left_value = left_card["position"].current_value or ZERO
+        right_value = right_card["position"].current_value or ZERO
+        left_weight = (left_value / total_current_value) if total_current_value > ZERO else ZERO
+        right_weight = (right_value / total_current_value) if total_current_value > ZERO else ZERO
+        pair_weight = Decimal("2") * left_weight * right_weight
+        pair["pair_weight"] = pair_weight
+        pair["pair_weight_pct"] = quantize_decimal(pair_weight * ONE_HUNDRED, "0.01") or ZERO
+        if not pair.get("available"):
+            unavailable_pairs_count += 1
+            continue
+        coefficient = pair.get("coefficient")
+        if coefficient is None:
+            unavailable_pairs_count += 1
+            continue
+        pair_rows.append(pair)
+        pair_key = tuple(sorted((left_card["position"].id or 0, right_card["position"].id or 0)))
+        pairs_by_key[pair_key] = pair
+        pair_weight_total += pair_weight
+        weighted_correlation_total += coefficient * pair_weight
+        weighted_positive_correlation_total += max(coefficient, ZERO) * pair_weight
+        sector_relation_counts[pair["sector_relationship_key"]] += 1
+
+    if not pair_rows:
+        return {"available": False}
+
+    average_correlation = (
+        quantize_decimal(weighted_correlation_total / pair_weight_total, "0.01")
+        if pair_weight_total > ZERO
+        else average_decimal([pair["coefficient"] for pair in pair_rows])
+    )
+    dalio_correlation_pct = (
+        quantize_decimal((weighted_positive_correlation_total / pair_weight_total) * ONE_HUNDRED, "0.01")
+        if pair_weight_total > ZERO
+        else quantize_decimal(
+            average_decimal([max(pair["coefficient"], ZERO) * ONE_HUNDRED for pair in pair_rows]),
+            "0.01",
+        )
+    )
+    estimated_loss_probability_pct = estimate_dalio_loss_probability(dalio_correlation_pct)
+    risk_curve_chart = build_correlation_risk_curve_chart(
+        dalio_correlation_pct,
+        estimated_loss_probability_pct,
+    )
+    pair_rows.sort(
+        key=lambda pair: (
+            -(pair.get("coefficient") or Decimal("-9")),
+            -(pair.get("pair_weight_pct") or ZERO),
+            pair["pair_label"],
+        )
+    )
+    highest_pair = max(pair_rows, key=lambda pair: pair.get("coefficient") or Decimal("-9"))
+    most_diversifying_pair = min(pair_rows, key=lambda pair: pair.get("coefficient") or Decimal("9"))
+    total_pairs = len(pair_rows)
+
+    heatmap_rows = []
+    for left_card in owned_cards:
+        left_position = left_card["position"]
+        cells = []
+        for right_card in owned_cards:
+            right_position = right_card["position"]
+            if left_position.id == right_position.id:
+                palette = build_correlation_heatmap_palette(Decimal("1.00"), is_self=True)
+                cells.append(
+                    {
+                        "label": "1.00",
+                        "tooltip": f"{left_position.company_name} | misma accion",
+                        "background": palette["background"],
+                        "text_color": palette["text"],
+                        "is_self": True,
+                    }
+                )
+                continue
+            pair = pairs_by_key.get(tuple(sorted((left_position.id or 0, right_position.id or 0))))
+            coefficient = pair.get("coefficient") if pair else None
+            palette = build_correlation_heatmap_palette(coefficient)
+            if pair:
+                tooltip = (
+                    f"{pair['left_company_name']} vs {pair['right_company_name']} | "
+                    f"corr {pair['coefficient']:.2f} | {pair['sector_relationship_label']} | "
+                    f"{pair['years_covered']:.1f}A"
+                )
+            else:
+                tooltip = f"{left_position.company_name} vs {right_position.company_name} | sin historico comun suficiente"
+            cells.append(
+                {
+                    "label": f"{coefficient:.2f}" if coefficient is not None else "-",
+                    "tooltip": tooltip,
+                    "background": palette["background"],
+                    "text_color": palette["text"],
+                    "is_self": False,
+                }
+            )
+        heatmap_rows.append(
+            {
+                "ticker": left_position.ticker,
+                "company_name": left_position.company_name,
+                "sector_label": left_card.get("sector_label") or "Sin sector",
+                "cells": cells,
+            }
+        )
+
+    diversification_label = "Alta"
+    if dalio_correlation_pct is not None:
+        if dalio_correlation_pct >= Decimal("40"):
+            diversification_label = "Ajustada"
+        elif dalio_correlation_pct >= Decimal("20"):
+            diversification_label = "Media"
+        elif dalio_correlation_pct >= Decimal("10"):
+            diversification_label = "Buena"
+
+    return {
+        "available": True,
+        "positions_count": len(owned_cards),
+        "pair_count": total_pairs,
+        "total_possible_pairs": (len(owned_cards) * (len(owned_cards) - 1)) // 2,
+        "unavailable_pairs_count": unavailable_pairs_count,
+        "frequency_label": "mensual sobre cierres compartidos",
+        "average_correlation": average_correlation,
+        "average_positive_correlation_pct": dalio_correlation_pct,
+        "estimated_loss_probability_pct": estimated_loss_probability_pct,
+        "diversification_label": diversification_label,
+        "same_sector_pairs_count": sector_relation_counts.get("same", 0),
+        "related_sector_pairs_count": sector_relation_counts.get("related", 0),
+        "distinct_sector_pairs_count": sector_relation_counts.get("distinct", 0),
+        "highest_pair": highest_pair,
+        "most_diversifying_pair": most_diversifying_pair,
+        "pairs": pair_rows,
+        "heatmap_headers": [
+            {
+                "ticker": card["position"].ticker,
+                "company_name": card["position"].company_name,
+            }
+            for card in owned_cards
+        ],
+        "heatmap_rows": heatmap_rows,
+        "risk_curve_chart": risk_curve_chart,
+        "dalio_source_note": (
+            "Curva orientativa basada en los puntos que has indicado: 0, 10, 20, 40 y 60 % de correlacion."
+        ),
+    }
+
+
 def filter_history_window(history, start_date: date | None = None, end_date: date | None = None):
     return [
         point
@@ -6864,7 +7452,19 @@ def build_period_snapshot(
 def quantize_decimal(value: Decimal | None, places: str = "0.01") -> Decimal | None:
     if value is None:
         return None
-    return value.quantize(Decimal(places))
+    if not value.is_finite():
+        return None
+    quantizer = Decimal(places)
+    decimal_places = max(-quantizer.as_tuple().exponent, 0)
+    integer_digits = value.adjusted() + 1 if value != 0 else 1
+    required_precision = max(28, integer_digits + decimal_places + 2)
+    with localcontext() as context:
+        context.prec = required_precision
+        try:
+            return value.quantize(quantizer)
+        except InvalidOperation:
+            context.prec = max(context.prec, len(value.as_tuple().digits) + decimal_places + 2)
+            return value.quantize(quantizer)
 
 
 def clamp_decimal(value: Decimal, lower: Decimal, upper: Decimal) -> Decimal:

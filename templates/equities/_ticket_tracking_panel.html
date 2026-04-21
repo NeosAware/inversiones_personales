@@ -3,7 +3,7 @@
     <div>
       <p class="section-title">Seguimiento{% if ticket_tracking.anchor_date %} desde {{ ticket_tracking.anchor_date|date:"Y-m-d" }}{% endif %}</p>
       <h2>Valor diario real frente al escenario esperado y el IBEX</h2>
-      <p>La cartera agrega cada accion desde su fecha real de compra o desde la primera foto disponible tras subirla a la web. Asi no se pone a cero cuando entra un valor nuevo.</p>
+      <p>La cartera agrega cada accion desde su fecha real de compra o desde la primera foto disponible tras subirla a la web. Asi no se pone a cero cuando entra un valor nuevo. Para aligerar la lectura, los puntos visibles se quedan en lunes, jueves y el ultimo dato.</p>
     </div>
     <span class="pill">{{ ticket_tracking.tracked_ticket_count }} tickets | {{ ticket_tracking.snapshot_days_count }} dias visibles</span>
   </div>
@@ -45,121 +45,26 @@
     </div>
   </div>
   <div class="equity-grid-2" style="margin-top:18px;">
-    {% if ticket_tracking.global.net_chart_12m.available %}
-      <div class="equity-chart-shell" style="margin:0;">
-        <strong style="display:block; color:#17384e; margin-bottom:8px;">Rentabilidad neta 1A</strong>
-        <svg viewBox="0 0 640 220">
-          <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-          <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-          <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ ticket_tracking.global.net_chart_12m.expected_line }}" />
-          {% if ticket_tracking.global.net_chart_12m.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ ticket_tracking.global.net_chart_12m.actual_line }}" />{% endif %}
-          {% for marker in ticket_tracking.global.net_chart_12m.x_markers %}
-            <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
-            <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
-          {% endfor %}
-          {% for point in ticket_tracking.global.net_chart_12m.actual_display_points %}
-            <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#0d5d78" {% if point.cluster_size > 1 or point.is_latest %}stroke="#ffffff" stroke-width="1.4"{% endif %}>
-              <title>{{ point.tooltip }}</title>
-            </circle>
-          {% endfor %}
-          <text x="8" y="20" font-size="12" fill="#17384e">{{ ticket_tracking.global.net_chart_12m.max_label }}</text>
-          <text x="8" y="214" font-size="12" fill="#17384e">{{ ticket_tracking.global.net_chart_12m.min_label }}</text>
-        </svg>
-        <div class="equity-chart-foot">
-          <span>Azul: beneficio neto real</span>
-          <span>Naranja: beneficio neto esperado</span>
-          <span>{{ ticket_tracking.global.net_chart_12m.latest_label }} a {{ ticket_tracking.global.net_chart_12m.projection_end_label }}</span>
-          {% if ticket_tracking.global.expected_net_value_12m is not None %}<span>Escenario neto 12M {{ ticket_tracking.global.expected_net_value_12m|floatformat:0 }} EUR</span>{% endif %}
-        </div>
-      </div>
-    {% endif %}
-    {% if ticket_tracking.global.net_chart_5y.available %}
-      <div class="equity-chart-shell" style="margin:0;">
-        <strong style="display:block; color:#17384e; margin-bottom:8px;">Rentabilidad neta 5A</strong>
-        <svg viewBox="0 0 640 220">
-          <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-          <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-          <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ ticket_tracking.global.net_chart_5y.expected_line }}" />
-          {% if ticket_tracking.global.net_chart_5y.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ ticket_tracking.global.net_chart_5y.actual_line }}" />{% endif %}
-          {% for marker in ticket_tracking.global.net_chart_5y.x_markers %}
-            <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
-            <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
-          {% endfor %}
-          {% for point in ticket_tracking.global.net_chart_5y.actual_display_points %}
-            <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#0d5d78" {% if point.cluster_size > 1 or point.is_latest %}stroke="#ffffff" stroke-width="1.4"{% endif %}>
-              <title>{{ point.tooltip }}</title>
-            </circle>
-          {% endfor %}
-          <text x="8" y="20" font-size="12" fill="#17384e">{{ ticket_tracking.global.net_chart_5y.max_label }}</text>
-          <text x="8" y="214" font-size="12" fill="#17384e">{{ ticket_tracking.global.net_chart_5y.min_label }}</text>
-        </svg>
-        <div class="equity-chart-foot">
-          <span>Azul: beneficio neto real</span>
-          <span>Naranja: beneficio neto esperado</span>
-          <span>{{ ticket_tracking.global.net_chart_5y.latest_label }} a {{ ticket_tracking.global.net_chart_5y.projection_end_label }}</span>
-          {% if ticket_tracking.global.expected_net_value_5y is not None %}<span>Escenario neto 5A {{ ticket_tracking.global.expected_net_value_5y|floatformat:0 }} EUR</span>{% endif %}
-        </div>
-      </div>
+    {% if ticket_tracking.global.chart.available %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.chart full_width=True title="Cartera vs IBEX y escenario 12M" note="Comparativa normalizada a la misma base de arranque." actual_label="Cartera real" expected_label="Escenario esperado" benchmark_label=ticket_tracking.global.benchmark.label %}
     {% endif %}
     {% if ticket_tracking.global.return_chart_12m.available %}
-      <div class="equity-chart-shell" style="margin:0;">
-        <strong style="display:block; color:#17384e; margin-bottom:8px;">% rentabilidad 1A</strong>
-        <svg viewBox="0 0 640 220">
-          <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-          <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-          <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ ticket_tracking.global.return_chart_12m.expected_line }}" />
-          {% if ticket_tracking.global.return_chart_12m.benchmark_line %}<polyline fill="none" stroke="#2f7d5a" stroke-width="3.5" points="{{ ticket_tracking.global.return_chart_12m.benchmark_line }}" />{% endif %}
-          {% if ticket_tracking.global.return_chart_12m.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ ticket_tracking.global.return_chart_12m.actual_line }}" />{% endif %}
-          {% for marker in ticket_tracking.global.return_chart_12m.x_markers %}
-            <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
-            <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
-          {% endfor %}
-          {% for point in ticket_tracking.global.return_chart_12m.actual_display_points %}
-            <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#0d5d78" {% if point.cluster_size > 1 or point.is_latest %}stroke="#ffffff" stroke-width="1.4"{% endif %}>
-              <title>{{ point.tooltip }}</title>
-            </circle>
-          {% endfor %}
-          <text x="8" y="20" font-size="12" fill="#17384e">{{ ticket_tracking.global.return_chart_12m.max_label }}</text>
-          <text x="8" y="214" font-size="12" fill="#17384e">{{ ticket_tracking.global.return_chart_12m.min_label }}</text>
-        </svg>
-        <div class="equity-chart-foot">
-          <span>Azul: rentabilidad real</span>
-          <span>Naranja: rentabilidad esperada</span>
-          {% if ticket_tracking.global.return_chart_12m.benchmark_line %}<span>Verde: {{ ticket_tracking.global.benchmark.label }} equivalente</span>{% endif %}
-          <span>{{ ticket_tracking.global.return_chart_12m.latest_label }} a {{ ticket_tracking.global.return_chart_12m.projection_end_label }}</span>
-          {% if ticket_tracking.global.expected_return_pct_12m is not None %}<span>Escenario 12M {{ ticket_tracking.global.expected_return_pct_12m|floatformat:2 }} %</span>{% endif %}
-        </div>
-      </div>
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.return_chart_12m title="% rentabilidad 1A" note="Rentabilidad sobre la base activa visible en cada fecha." actual_label="Rentabilidad real" expected_label="Rentabilidad esperada" benchmark_label=ticket_tracking.global.benchmark.label %}
     {% endif %}
     {% if ticket_tracking.global.return_chart_5y.available %}
-      <div class="equity-chart-shell" style="margin:0;">
-        <strong style="display:block; color:#17384e; margin-bottom:8px;">% rentabilidad 5A</strong>
-        <svg viewBox="0 0 640 220">
-          <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
-          <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
-          <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ ticket_tracking.global.return_chart_5y.expected_line }}" />
-          {% if ticket_tracking.global.return_chart_5y.benchmark_line %}<polyline fill="none" stroke="#2f7d5a" stroke-width="3.5" points="{{ ticket_tracking.global.return_chart_5y.benchmark_line }}" />{% endif %}
-          {% if ticket_tracking.global.return_chart_5y.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ ticket_tracking.global.return_chart_5y.actual_line }}" />{% endif %}
-          {% for marker in ticket_tracking.global.return_chart_5y.x_markers %}
-            <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
-            <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
-          {% endfor %}
-          {% for point in ticket_tracking.global.return_chart_5y.actual_display_points %}
-            <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#0d5d78" {% if point.cluster_size > 1 or point.is_latest %}stroke="#ffffff" stroke-width="1.4"{% endif %}>
-              <title>{{ point.tooltip }}</title>
-            </circle>
-          {% endfor %}
-          <text x="8" y="20" font-size="12" fill="#17384e">{{ ticket_tracking.global.return_chart_5y.max_label }}</text>
-          <text x="8" y="214" font-size="12" fill="#17384e">{{ ticket_tracking.global.return_chart_5y.min_label }}</text>
-        </svg>
-        <div class="equity-chart-foot">
-          <span>Azul: rentabilidad real</span>
-          <span>Naranja: rentabilidad esperada</span>
-          {% if ticket_tracking.global.return_chart_5y.benchmark_line %}<span>Verde: {{ ticket_tracking.global.benchmark.label }} equivalente</span>{% endif %}
-          <span>{{ ticket_tracking.global.return_chart_5y.latest_label }} a {{ ticket_tracking.global.return_chart_5y.projection_end_label }}</span>
-          {% if ticket_tracking.global.expected_return_pct_5y is not None %}<span>Escenario 5A {{ ticket_tracking.global.expected_return_pct_5y|floatformat:2 }} %</span>{% endif %}
-        </div>
-      </div>
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.return_chart_5y title="% rentabilidad 5A" note="La misma comparativa extendida al escenario largo." actual_label="Rentabilidad real" expected_label="Rentabilidad esperada" benchmark_label=ticket_tracking.global.benchmark.label %}
+    {% endif %}
+    {% if ticket_tracking.global.weekly_alpha_chart.available %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.weekly_alpha_chart title="Alpha semanal vs IBEX" note="Cambio relativo de los ultimos 7 dias frente al indice." actual_label="Alpha semanal" zero_label="Cero = empate con el IBEX" %}
+    {% endif %}
+    {% if ticket_tracking.global.cumulative_alpha_chart.available %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.cumulative_alpha_chart title="Alpha acumulado vs IBEX" note="Exceso de rentabilidad acumulada de la cartera frente al IBEX." actual_label="Alpha acumulado" zero_label="Cero = empate con el IBEX" %}
+    {% endif %}
+    {% if ticket_tracking.global.net_chart_12m.available %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.net_chart_12m title="Rentabilidad neta 1A" note="Beneficio o perdida total frente a la base comprada." actual_label="Beneficio neto real" expected_label="Beneficio neto esperado" %}
+    {% endif %}
+    {% if ticket_tracking.global.net_chart_5y.available %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.net_chart_5y title="Rentabilidad neta 5A" note="Lectura neta agregada para el escenario largo." actual_label="Beneficio neto real" expected_label="Beneficio neto esperado" %}
     {% endif %}
   </div>
   {% if ticket_tracking.tickets %}

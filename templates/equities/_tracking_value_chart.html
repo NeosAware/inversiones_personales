@@ -1,0 +1,35 @@
+<div class="equity-chart-shell" style="margin:0;{% if full_width %} grid-column:1 / -1;{% endif %}">
+  <div class="equity-chart-head">
+    <strong style="display:block; color:#17384e;">{{ title }}</strong>
+    {% if note %}<span class="equity-chart-note">{{ note }}</span>{% endif %}
+  </div>
+  <svg viewBox="0 0 640 220" aria-label="{{ title }}">
+    <rect x="18" y="18" width="604" height="184" rx="14" fill="#fbfdff" stroke="#edf3f7" />
+    <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+    <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+    {% if chart.zero_y %}<line x1="18" y1="{{ chart.zero_y }}" x2="622" y2="{{ chart.zero_y }}" stroke="#c8d6e1" stroke-width="1" stroke-dasharray="4 5" />{% endif %}
+    {% if chart.expected_line %}<polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ chart.expected_line }}" />{% endif %}
+    {% if chart.benchmark_line %}<polyline fill="none" stroke="#2f7d5a" stroke-width="3.5" points="{{ chart.benchmark_line }}" />{% endif %}
+    {% if chart.actual_line %}<polyline fill="none" stroke="#0d5d78" stroke-width="4.2" points="{{ chart.actual_line }}" />{% endif %}
+    {% for marker in chart.x_markers %}
+      <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+      <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+    {% endfor %}
+    {% for point in chart.actual_display_points %}
+      <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#0d5d78" {% if point.cluster_size > 1 or point.is_latest %}stroke="#ffffff" stroke-width="1.6"{% endif %}>
+        <title>{{ point.tooltip }}</title>
+      </circle>
+    {% endfor %}
+    <text x="8" y="20" font-size="12" fill="#17384e">{{ chart.max_label }}</text>
+    <text x="8" y="214" font-size="12" fill="#17384e">{{ chart.min_label }}</text>
+  </svg>
+  <div class="equity-chart-foot">
+    {% if actual_label and chart.actual_line %}<span class="equity-legend"><i class="equity-legend-swatch actual"></i>{{ actual_label }}</span>{% endif %}
+    {% if expected_label and chart.expected_line %}<span class="equity-legend"><i class="equity-legend-swatch expected"></i>{{ expected_label }}</span>{% endif %}
+    {% if benchmark_label and chart.benchmark_line %}<span class="equity-legend"><i class="equity-legend-swatch benchmark"></i>{{ benchmark_label }}</span>{% endif %}
+    {% if zero_label and chart.zero_y %}<span class="equity-legend"><i class="equity-legend-swatch zero"></i>{{ zero_label }}</span>{% endif %}
+    {% if chart.latest_label %}<span>{{ chart.latest_label }}{% if chart.projection_end_label and chart.projection_end_label != chart.latest_label %} a {{ chart.projection_end_label }}{% endif %}</span>{% endif %}
+    {% if range_label %}<span>{{ range_label }}</span>{% endif %}
+    {% if summary_label %}<span>{{ summary_label }}</span>{% endif %}
+  </div>
+</div>

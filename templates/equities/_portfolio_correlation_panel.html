@@ -1,0 +1,167 @@
+<section class="equity-panel" id="equity-correlation">
+  <div class="equity-panel-head">
+    <div>
+      <p class="section-title">Diversificacion</p>
+      <h2>Correlacion entre tus acciones y riesgo de concentracion</h2>
+      <p>La matriz usa rentabilidades mensuales sobre el historico compartido de cada par. Cuanto mas baja o mas inversa es la correlacion, mejor amortigua el riesgo conjunto.</p>
+    </div>
+    <span class="pill">{{ portfolio_correlation.positions_count }} acciones | {{ portfolio_correlation.pair_count }} pares con dato</span>
+  </div>
+
+  <div class="equity-grid-4">
+    <div class="equity-box">
+      <span>Correlacion media</span>
+      <strong>{% if portfolio_correlation.average_correlation is not None %}{{ portfolio_correlation.average_correlation|floatformat:2 }}{% else %}-{% endif %}</strong>
+      <small>Media ponderada por peso de cartera entre todos los pares con historico comun.</small>
+    </div>
+    <div class="equity-box">
+      <span>Corr. positiva equivalente</span>
+      <strong>{% if portfolio_correlation.average_positive_correlation_pct is not None %}{{ portfolio_correlation.average_positive_correlation_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+      <small>Es la lectura usada para situar tu cartera en la curva de riesgo orientativa.</small>
+    </div>
+    <div class="equity-box">
+      <span>Riesgo anual orientativo</span>
+      <strong>{% if portfolio_correlation.estimated_loss_probability_pct is not None %}{{ portfolio_correlation.estimated_loss_probability_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+      <small>Interpolado sobre la curva que has indicado de Ray Dalio.</small>
+    </div>
+    <div class="equity-box">
+      <span>Lectura de diversificacion</span>
+      <strong>{{ portfolio_correlation.diversification_label }}</strong>
+      <small>{{ portfolio_correlation.same_sector_pairs_count }} mismo sector | {{ portfolio_correlation.related_sector_pairs_count }} afines | {{ portfolio_correlation.distinct_sector_pairs_count }} distintos</small>
+    </div>
+  </div>
+
+  <div class="equity-grid-2" style="margin-top:18px;">
+    {% if portfolio_correlation.risk_curve_chart.available %}
+      <div class="equity-chart-shell" style="margin:0;">
+        <div class="equity-chart-head">
+          <strong style="display:block; color:#17384e;">Curva orientativa correlacion vs probabilidad de perder dinero</strong>
+          <span class="equity-chart-note">El punto azul marca tu cartera usando la correlacion positiva equivalente.</span>
+        </div>
+        <svg viewBox="0 0 640 220" aria-label="Curva de riesgo por correlacion">
+          <rect x="26" y="26" width="588" height="168" rx="14" fill="#fbfdff" stroke="#edf3f7" />
+          {% for marker in portfolio_correlation.risk_curve_chart.y_markers %}
+            <line x1="26" y1="{{ marker.y }}" x2="614" y2="{{ marker.y }}" stroke="#edf2f6" stroke-width="1" />
+            <text x="18" y="{{ marker.y }}" font-size="11" text-anchor="end" dominant-baseline="middle" fill="#627380">{{ marker.label }}</text>
+          {% endfor %}
+          <polyline fill="none" stroke="#b7642d" stroke-width="3.5" points="{{ portfolio_correlation.risk_curve_chart.curve_line }}" />
+          {% for point in portfolio_correlation.risk_curve_chart.curve_points %}
+            <circle cx="{{ point.x }}" cy="{{ point.y }}" r="4.5" fill="#b7642d">
+              <title>{{ point.label }}</title>
+            </circle>
+          {% endfor %}
+          {% if portfolio_correlation.risk_curve_chart.current_marker %}
+            <circle cx="{{ portfolio_correlation.risk_curve_chart.current_marker.x }}" cy="{{ portfolio_correlation.risk_curve_chart.current_marker.y }}" r="6" fill="#0d5d78" stroke="#ffffff" stroke-width="2">
+              <title>Tu cartera | Corr {{ portfolio_correlation.risk_curve_chart.current_marker.correlation_label }} | Riesgo {{ portfolio_correlation.risk_curve_chart.current_marker.loss_probability_label }}</title>
+            </circle>
+            <text x="{{ portfolio_correlation.risk_curve_chart.current_marker.x }}" y="{{ portfolio_correlation.risk_curve_chart.current_marker.y }}" font-size="11" text-anchor="middle" fill="#0d5d78" dy="-10">Tu cartera</text>
+          {% endif %}
+          {% for marker in portfolio_correlation.risk_curve_chart.x_markers %}
+            <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+            <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+          {% endfor %}
+          <text x="26" y="16" font-size="12" fill="#17384e">{{ portfolio_correlation.risk_curve_chart.max_label }}</text>
+          <text x="26" y="214" font-size="12" fill="#17384e">{{ portfolio_correlation.risk_curve_chart.min_label }}</text>
+        </svg>
+        <div class="equity-chart-foot">
+          <span class="equity-legend"><i class="equity-legend-swatch expected"></i>Curva orientativa</span>
+          <span class="equity-legend"><i class="equity-legend-swatch actual"></i>Tu cartera</span>
+          <span>{{ portfolio_correlation.dalio_source_note }}</span>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="equity-chart-shell" style="margin:0;">
+      <div class="equity-chart-head">
+        <strong style="display:block; color:#17384e;">Resumen de pares</strong>
+        <span class="equity-chart-note">Sirve para localizar rapido donde se te junta el riesgo y donde diversificas mejor.</span>
+      </div>
+      <div class="equity-grid-2" style="gap:12px;">
+        <div class="equity-mini-stat">
+          <span>Par mas parecido</span>
+          <strong>{% if portfolio_correlation.highest_pair %}{{ portfolio_correlation.highest_pair.pair_label }}{% else %}-{% endif %}</strong>
+          <small>{% if portfolio_correlation.highest_pair %}Corr {{ portfolio_correlation.highest_pair.coefficient|floatformat:2 }} | {{ portfolio_correlation.highest_pair.sector_relationship_label }}{% endif %}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Par mas diversificador</span>
+          <strong>{% if portfolio_correlation.most_diversifying_pair %}{{ portfolio_correlation.most_diversifying_pair.pair_label }}{% else %}-{% endif %}</strong>
+          <small>{% if portfolio_correlation.most_diversifying_pair %}Corr {{ portfolio_correlation.most_diversifying_pair.coefficient|floatformat:2 }} | {{ portfolio_correlation.most_diversifying_pair.sector_relationship_label }}{% endif %}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Base calculada</span>
+          <strong>{{ portfolio_correlation.frequency_label }}</strong>
+          <small>{% if portfolio_correlation.unavailable_pairs_count %}{{ portfolio_correlation.unavailable_pairs_count }} pares aun sin solape suficiente.{% else %}Todos los pares tienen lectura suficiente.{% endif %}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Comparables usados</span>
+          <strong>{{ portfolio_correlation.pair_count }}/{{ portfolio_correlation.total_possible_pairs }}</strong>
+          <small>Solo se muestran pares con historico comun suficiente para una correlacion razonable.</small>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="equity-chart-shell" style="margin-top:18px;">
+    <div class="equity-chart-head">
+      <strong style="display:block; color:#17384e;">Matriz de correlacion entre tus acciones</strong>
+      <span class="equity-chart-note">Rojo significa que se mueven muy juntas; verde indica que diversifican mejor.</span>
+    </div>
+    <div class="equity-table-wrap" style="margin-top:0;">
+      <table class="equity-correlation-matrix">
+        <thead>
+          <tr>
+            <th>Accion</th>
+            {% for header in portfolio_correlation.heatmap_headers %}
+              <th>{{ header.ticker }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in portfolio_correlation.heatmap_rows %}
+            <tr>
+              <td><strong>{{ row.ticker }}</strong><br><span class="metric-sub">{{ row.sector_label }}</span></td>
+              {% for cell in row.cells %}
+                <td class="equity-correlation-cell">
+                  <span
+                    class="equity-correlation-chip{% if cell.is_self %} self{% endif %}"
+                    style="background:{{ cell.background }}; color:{{ cell.text_color }};"
+                    title="{{ cell.tooltip }}"
+                  >
+                    {{ cell.label }}
+                  </span>
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="equity-table-wrap" style="margin-top:18px;">
+    <table class="equity-correlation-table">
+      <thead>
+        <tr>
+          <th>Par</th>
+          <th>Sectores</th>
+          <th>Relacion</th>
+          <th>Corr</th>
+          <th>Historico comun</th>
+          <th>Peso cartera</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pair in portfolio_correlation.pairs %}
+          <tr>
+            <td><strong>{{ pair.pair_label }}</strong><br><span class="metric-sub">{{ pair.left_company_name }} y {{ pair.right_company_name }}</span></td>
+            <td>{{ pair.left_sector_label }}<br><span class="metric-sub">{{ pair.right_sector_label }}</span></td>
+            <td><strong>{{ pair.sector_relationship_label }}</strong><br><span class="metric-sub">{{ pair.sector_relationship_detail }}</span></td>
+            <td><strong>{{ pair.coefficient|floatformat:2 }}</strong></td>
+            <td>{{ pair.years_covered|floatformat:1 }}A<br><span class="metric-sub">{{ pair.shared_periods_count }} cierres</span></td>
+            <td>{{ pair.pair_weight_pct|floatformat:2 }} %</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>

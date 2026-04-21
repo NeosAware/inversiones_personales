@@ -53,6 +53,7 @@ from .services import (
     build_equity_investment_journey_context,
     build_equity_round_investment_plan,
     build_equity_ticket_tracking_context,
+    build_portfolio_correlation_context,
     build_ibex_universe_card,
     archive_equity_position_sale,
     capture_equity_ticket_snapshots,
@@ -313,6 +314,9 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["ticket_tracking"] = build_equity_ticket_tracking_context(
             dashboard["owned_history_cards"],
             optimizer_cards=dashboard["optimizer_cards"],
+        )
+        context["portfolio_correlation"] = build_portfolio_correlation_context(
+            dashboard["owned_history_cards"],
         )
         return context
 
