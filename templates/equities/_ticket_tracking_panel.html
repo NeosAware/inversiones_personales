@@ -2,8 +2,8 @@
   <div class="equity-panel-head">
     <div>
       <p class="section-title">Seguimiento{% if ticket_tracking.anchor_date %} desde {{ ticket_tracking.anchor_date|date:"Y-m-d" }}{% endif %}</p>
-      <h2>Valor diario real frente al escenario esperado y el IBEX</h2>
-      <p>La cartera agrega cada accion desde su fecha real de compra o desde la primera foto disponible tras subirla a la web. Asi no se pone a cero cuando entra un valor nuevo. Para aligerar la lectura, los puntos visibles se quedan en lunes, jueves y el ultimo dato.</p>
+      <h2>Seguimiento diario frente al IBEX y tus escenarios</h2>
+      <p>La primera grafica reescala tu cartera al nivel del IBEX en cada tramo estable. Solo cambia el factor cuando entra o sale capital, para ver si la cartera va por encima o por debajo del indice. Para aligerar la lectura, los puntos visibles se quedan en lunes, jueves y el ultimo dato.</p>
     </div>
     <span class="pill">{{ ticket_tracking.tracked_ticket_count }} tickets | {{ ticket_tracking.snapshot_days_count }} dias visibles</span>
   </div>
@@ -46,7 +46,7 @@
   </div>
   <div class="equity-grid-2" style="margin-top:18px;">
     {% if ticket_tracking.global.chart.available %}
-      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.chart full_width=True title="Cartera vs IBEX y escenario 12M" note="Comparativa normalizada a la misma base de arranque." actual_label="Cartera real" expected_label="Escenario esperado" benchmark_label=ticket_tracking.global.benchmark.label %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.chart full_width=True title="Cartera reescalada vs IBEX" note="La cartera se convierte a puntos IBEX con un factor fijo por tramo, y solo se recalcula cuando cambia el capital invertido." actual_label="Cartera reescalada" benchmark_label=ticket_tracking.global.benchmark.label %}
     {% endif %}
     {% if ticket_tracking.global.return_chart_12m.available %}
       {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.return_chart_12m title="% rentabilidad 1A" note="Rentabilidad sobre la base activa visible en cada fecha." actual_label="Rentabilidad real" expected_label="Rentabilidad esperada" benchmark_label=ticket_tracking.global.benchmark.label %}

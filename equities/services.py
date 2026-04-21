@@ -4611,6 +4611,53 @@ def build_normalized_reference_tracking_series(
     return series
 
 
+def build_reference_close_tracking_series(
+    reference_points: list[dict],
+    tracking_dates: list[date],
+) -> list[dict]:
+    normalized_points = [
+        {
+            "date": point.get("date"),
+            "close": Decimal(str(point.get("close"))),
+        }
+        for point in reference_points
+        if point.get("date") is not None and point.get("close") is not None
+    ]
+    requested_dates = sorted({point_date for point_date in tracking_dates if point_date is not None})
+    if not normalized_points or not requested_dates:
+        return []
+
+    normalized_points.sort(key=lambda item: item["date"])
+    point_index = 0
+    last_close = None
+    series = []
+
+    for point_date in requested_dates:
+        while point_index < len(normalized_points) and normalized_points[point_index]["date"] <= point_date:
+            last_close = normalized_points[point_index]["close"]
+            point_index += 1
+
+        current_close = last_close
+        if current_close is None:
+            future_point = next(
+                (point for point in normalized_points if point["date"] >= point_date),
+                None,
+            )
+            if future_point is None:
+                continue
+            current_close = future_point["close"]
+            last_close = future_point["close"]
+
+        series.append(
+            {
+                "date": point_date,
+                "value": quantize_decimal(current_close, "0.01") or ZERO,
+            }
+        )
+
+    return series
+
+
 def build_tracking_benchmark_context(
     tracking_dates: list[date],
     baseline_value: Decimal,
@@ -4647,11 +4694,16 @@ def build_tracking_benchmark_context(
         tracking_dates,
         baseline_value,
     )
+    close_series = build_reference_close_tracking_series(
+        benchmark_series.points,
+        tracking_dates,
+    )
     latest_value = series[-1]["value"] if series else None
     return {
         "available": bool(series),
         "label": benchmark_series.name or DEFAULT_BENCHMARK_NAME,
         "series": series,
+        "close_series": close_series,
         "latest_value": latest_value,
         "actual_change_pct": percentage_change(latest_value, series[0]["value"]) if series else None,
     }
@@ -4663,6 +4715,7 @@ def build_aggregated_tracking_benchmark_context(ticket_items: list[dict]) -> dic
             "available": False,
             "label": DEFAULT_BENCHMARK_NAME,
             "series": [],
+            "close_series": [],
             "latest_value": None,
             "actual_change_pct": None,
         }
@@ -4681,10 +4734,19 @@ def build_aggregated_tracking_benchmark_context(ticket_items: list[dict]) -> dic
             "available": False,
             "label": DEFAULT_BENCHMARK_NAME,
             "series": [],
+            "close_series": [],
             "latest_value": None,
             "actual_change_pct": None,
         }
 
+    tracking_dates = sorted(
+        {
+            point["date"]
+            for item in ticket_items
+            for point in item.get("actual_series", [])
+            if point.get("date") is not None
+        }
+    )
     baseline_total = ZERO
     benchmark_items = []
     for item in ticket_items:
@@ -4707,11 +4769,16 @@ def build_aggregated_tracking_benchmark_context(ticket_items: list[dict]) -> dic
         )
 
     series = build_aggregated_ticket_series(benchmark_items, "benchmark_series")
+    close_series = build_reference_close_tracking_series(
+        benchmark_series.points,
+        tracking_dates,
+    )
     if not series:
         return {
             "available": False,
             "label": benchmark_series.name or DEFAULT_BENCHMARK_NAME,
             "series": [],
+            "close_series": close_series,
             "latest_value": None,
             "actual_change_pct": None,
         }
@@ -4720,6 +4787,7 @@ def build_aggregated_tracking_benchmark_context(ticket_items: list[dict]) -> dic
         "available": bool(series),
         "label": benchmark_series.name or DEFAULT_BENCHMARK_NAME,
         "series": series,
+        "close_series": close_series,
         "latest_value": latest_value,
         "actual_change_pct": percentage_change(latest_value, baseline_total) if baseline_total else None,
     }
@@ -4860,6 +4928,92 @@ def build_tracking_series_vs_dynamic_baseline(
             }
         )
     return transformed
+
+
+def build_tracking_rebased_comparison_series(
+    actual_series: list[dict],
+    invested_series: list[dict],
+    benchmark_series: list[dict],
+) -> dict:
+    actual_points = normalize_tracking_series(actual_series)
+    invested_points = normalize_tracking_series(invested_series)
+    benchmark_points = normalize_tracking_series(benchmark_series)
+    if len(actual_points) < 2 or len(benchmark_points) < 2:
+        return {
+            "available": False,
+            "portfolio_series": [],
+            "benchmark_series": [],
+            "rebase_dates": [],
+            "capital_change_dates": [],
+            "latest_gap_value": None,
+            "latest_gap_pct": None,
+        }
+
+    invested_by_date = {point["date"]: point["value"] for point in invested_points}
+    benchmark_by_date = {point["date"]: point["value"] for point in benchmark_points}
+    current_invested = None
+    previous_invested = None
+    current_benchmark = None
+    scale_factor = None
+    rebased_portfolio_series = []
+    aligned_benchmark_series = []
+    rebase_dates = []
+
+    for point in actual_points:
+        point_date = point["date"]
+        point_value = point["value"]
+        if point_date in benchmark_by_date:
+            current_benchmark = benchmark_by_date[point_date]
+        if point_date in invested_by_date:
+            current_invested = invested_by_date[point_date]
+        if current_benchmark in {None, ZERO} or point_value in {None, ZERO}:
+            continue
+
+        should_rebase = scale_factor is None
+        if previous_invested is not None and current_invested is not None and current_invested != previous_invested:
+            should_rebase = True
+
+        if should_rebase:
+            scale_factor = current_benchmark / point_value
+            rebase_dates.append(point_date)
+
+        scaled_value = quantize_decimal(point_value * scale_factor, "0.01")
+        if scaled_value is None:
+            continue
+
+        rebased_portfolio_series.append({"date": point_date, "value": scaled_value})
+        aligned_benchmark_series.append(
+            {"date": point_date, "value": quantize_decimal(current_benchmark, "0.01") or ZERO}
+        )
+        previous_invested = current_invested
+
+    if len(rebased_portfolio_series) < 2 or len(aligned_benchmark_series) < 2:
+        return {
+            "available": False,
+            "portfolio_series": rebased_portfolio_series,
+            "benchmark_series": aligned_benchmark_series,
+            "rebase_dates": rebase_dates,
+            "capital_change_dates": rebase_dates[1:],
+            "latest_gap_value": None,
+            "latest_gap_pct": None,
+        }
+
+    latest_gap_value = quantize_decimal(
+        rebased_portfolio_series[-1]["value"] - aligned_benchmark_series[-1]["value"],
+        "0.01",
+    )
+    return {
+        "available": True,
+        "portfolio_series": rebased_portfolio_series,
+        "benchmark_series": aligned_benchmark_series,
+        "rebase_dates": rebase_dates,
+        "capital_change_dates": rebase_dates[1:],
+        "latest_gap_value": latest_gap_value,
+        "latest_gap_pct": quantize_decimal(
+            percentage_change(rebased_portfolio_series[-1]["value"], aligned_benchmark_series[-1]["value"]),
+            "0.01",
+        ),
+    }
 
 
 def add_calendar_years(value: date | None, years: int) -> date | None:
@@ -5434,6 +5588,7 @@ def build_equity_ticket_tracking_item(
     expected_market_value_12m = baseline.projected_market_value_12m or baseline.current_value
     expected_total_value_12m = baseline.projected_total_value_12m or expected_market_value_12m
     actual_series = [{"date": snapshot.snapshot_date, "value": snapshot.current_value} for snapshot in snapshots]
+    invested_series = [{"date": snapshot.snapshot_date, "value": snapshot.invested_amount} for snapshot in snapshots]
     expected_series, current_expected_value, projected_end_date = build_ticket_expected_series(
         snapshots,
         expected_market_value_12m,
@@ -5502,6 +5657,7 @@ def build_equity_ticket_tracking_item(
         "shared_snapshot_count": len(relevant_snapshots),
         "days_tracked": max((latest.snapshot_date - baseline.snapshot_date).days, 0),
         "actual_series": actual_series,
+        "invested_series": invested_series,
         "expected_series": expected_series,
         "expected_series_dense": dense_expected_series,
         "chart": chart,
@@ -5545,6 +5701,7 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
     if not actual_series:
         return {"available": False}
 
+    invested_series = build_aggregated_ticket_series(ticket_items, "invested_series")
     expected_series = build_aggregated_ticket_series(ticket_items, "expected_series_dense")
     expected_series_5y = build_aggregated_ticket_series(ticket_items, "expected_series_5y_dense")
     baseline_value = quantize_decimal(
@@ -5557,10 +5714,21 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         "0.01",
     ) or ZERO
     benchmark = build_aggregated_tracking_benchmark_context(ticket_items)
-    chart = build_value_tracking_chart(
+    rebased_comparison = build_tracking_rebased_comparison_series(
         actual_series,
-        expected_series,
-        benchmark_series=benchmark["series"],
+        invested_series,
+        benchmark.get("close_series", []),
+    )
+    chart = (
+        build_value_tracking_chart(
+            rebased_comparison["portfolio_series"],
+            [],
+            benchmark_series=rebased_comparison["benchmark_series"],
+            value_suffix="",
+            axis_formatter=format_axis_value,
+        )
+        if rebased_comparison.get("available")
+        else {"available": False}
     )
     chart_5y = build_value_tracking_chart(actual_series, expected_series_5y) if expected_series_5y else {"available": False}
     latest_actual = actual_series[-1]["value"]
@@ -5698,6 +5866,7 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         "expected_change_pct": percentage_change(current_expected_value, baseline_value)
         if current_expected_value is not None
         else None,
+        "rebased_comparison": rebased_comparison,
         "net_gain_value": net_gain_value,
         "net_gain_tone": "good" if net_gain_value is not None and net_gain_value >= ZERO else "warn",
         "invested_return_pct": quantize_decimal(actual_change_pct, "0.01"),

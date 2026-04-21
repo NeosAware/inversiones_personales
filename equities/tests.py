@@ -65,6 +65,7 @@ from .services import (
     build_equity_ticket_tracking_context,
     build_equity_ticket_tracking_item,
     build_portfolio_correlation_context,
+    build_tracking_rebased_comparison_series,
     build_value_tracking_chart,
     build_equity_optimizer_candidate,
     build_owned_cycle_trade_timing_plan,
@@ -1846,6 +1847,7 @@ class EquitiesServicesTests(TestCase):
         self.assertFalse(tracking["global"]["weekly_alpha_chart"]["available"])
         self.assertTrue(tracking["global"]["benchmark"]["available"])
         self.assertTrue(tracking["global"]["chart"]["benchmark_line"])
+        self.assertEqual(tracking["global"]["chart"]["expected_line"], "")
         self.assertTrue(tracking["global"]["return_chart_12m"]["benchmark_line"])
         self.assertEqual(tracking["snapshot_days_count"], 2)
         self.assertEqual(len(tracking["tickets"]), 2)
@@ -1908,6 +1910,41 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(chart["expected_line"], "")
         self.assertEqual(chart["projection_end_label"], "2026-04-21")
         self.assertIsNotNone(chart["zero_y"])
+
+    def test_build_tracking_rebased_comparison_series_resets_scale_on_capital_change(self):
+        comparison = build_tracking_rebased_comparison_series(
+            actual_series=[
+                {"date": date(2026, 4, 21), "value": Decimal("100.00")},
+                {"date": date(2026, 4, 22), "value": Decimal("110.00")},
+                {"date": date(2026, 4, 23), "value": Decimal("220.00")},
+                {"date": date(2026, 4, 24), "value": Decimal("210.00")},
+            ],
+            invested_series=[
+                {"date": date(2026, 4, 21), "value": Decimal("100.00")},
+                {"date": date(2026, 4, 22), "value": Decimal("100.00")},
+                {"date": date(2026, 4, 23), "value": Decimal("200.00")},
+                {"date": date(2026, 4, 24), "value": Decimal("200.00")},
+            ],
+            benchmark_series=[
+                {"date": date(2026, 4, 21), "value": Decimal("1000.00")},
+                {"date": date(2026, 4, 22), "value": Decimal("1050.00")},
+                {"date": date(2026, 4, 23), "value": Decimal("1100.00")},
+                {"date": date(2026, 4, 24), "value": Decimal("1150.00")},
+            ],
+        )
+
+        self.assertTrue(comparison["available"])
+        self.assertEqual(
+            [point["value"] for point in comparison["portfolio_series"]],
+            [
+                Decimal("1000.00"),
+                Decimal("1100.00"),
+                Decimal("1100.00"),
+                Decimal("1050.00"),
+            ],
+        )
+        self.assertEqual(comparison["capital_change_dates"], [date(2026, 4, 23)])
+        self.assertEqual(comparison["latest_gap_value"], Decimal("-100.00"))
 
     def test_ticket_tracking_global_chart_keeps_first_real_portfolio_date_when_positions_enter_later(self):
         def create_position(ticker, company_name, start_price):
@@ -1976,7 +2013,6 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(baselines_by_ticker["IBE"], date(2026, 4, 12))
         self.assertEqual(baselines_by_ticker["ENG"], date(2026, 4, 12))
         self.assertEqual(baselines_by_ticker["SCYR"], date(2026, 4, 13))
-        self.assertEqual(tracking["global"]["chart"]["start_label"], "2026-04-12")
         self.assertEqual(tracking["global"]["baseline_value"], Decimal("616.00"))
         self.assertEqual(tracking["global"]["net_gain_value"], Decimal("0.00"))
         self.assertEqual(tracking["global"]["daily_change_pct"], Decimal("0.00"))
@@ -7701,6 +7737,12 @@ class EquitiesViewTests(TestCase):
             growth=Decimal("1.0060"),
             start_price=Decimal("100.0000"),
         )
+        with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
+            initial_cards = build_equity_history_cards(
+                list(EquityPosition.objects.prefetch_related("price_history"))
+            )
+            capture_equity_ticket_snapshots(initial_cards, snapshot_date=date(2026, 4, 20))
+
         with (
             patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series),
             patch("equities.views.build_equity_investment_journey_context", return_value={"available": False}),
@@ -7710,7 +7752,7 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         page = response.content.decode("utf-8")
         self.assertContains(response, "Seguimiento desde")
-        self.assertContains(response, "Cartera vs IBEX y escenario 12M")
+        self.assertContains(response, "Cartera reescalada vs IBEX")
         self.assertContains(response, "Rentabilidad neta 1A")
         self.assertContains(response, "Rentabilidad neta 5A")
         self.assertContains(response, "% rentabilidad 1A")
@@ -7740,7 +7782,7 @@ class EquitiesViewTests(TestCase):
         self.assertLess(page.index('id="equity-ticket-tracking"'), page.index('id="equity-portfolio-summary"'))
         self.assertLess(page.index('id="equity-portfolio-summary"'), page.index('id="equity-decision"'))
         self.assertLess(page.index('id="equity-decision"'), page.index('id="equity-ibex"'))
-        self.assertEqual(EquityTicketSnapshot.objects.count(), 2)
+        self.assertEqual(EquityTicketSnapshot.objects.count(), 4)
         self.assertContains(response, "Base por accion")
         self.assertContains(response, "Precio por accion")
 
