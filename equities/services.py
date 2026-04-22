@@ -2628,6 +2628,84 @@ def build_time_axis_markers(
     return markers
 
 
+def build_month_axis_markers(
+    point_dates: list[date],
+    width: int = 640,
+    height: int = 220,
+    padding: int = 18,
+    max_labels: int = 8,
+) -> list[dict]:
+    filtered_dates = sorted({point_date for point_date in point_dates if point_date is not None})
+    if len(filtered_dates) < 2:
+        return []
+
+    min_date = filtered_dates[0]
+    max_date = filtered_dates[-1]
+    total_days = max((max_date - min_date).days, 1)
+    span_x = width - (padding * 2)
+
+    def to_x(point_date: date) -> float:
+        return padding + (span_x * ((point_date - min_date).days / total_days))
+
+    markers: list[dict] = [
+        {
+            "marker_date": min_date,
+            "draw_grid": False,
+        }
+    ]
+    cursor_year = min_date.year
+    cursor_month = min_date.month + 1
+    if cursor_month == 13:
+        cursor_month = 1
+        cursor_year += 1
+
+    while True:
+        marker_date = date(cursor_year, cursor_month, 1)
+        if marker_date > max_date:
+            break
+        markers.append(
+            {
+                "marker_date": marker_date,
+                "draw_grid": True,
+            }
+        )
+        cursor_month += 1
+        if cursor_month == 13:
+            cursor_month = 1
+            cursor_year += 1
+
+    if len(markers) < 2:
+        return build_time_axis_markers(
+            point_dates,
+            width=width,
+            height=height,
+            padding=padding,
+        )
+
+    label_step = max(1, int(math.ceil(len(markers) / max(max_labels, 1))))
+    serialized_markers = []
+    for index, marker in enumerate(markers):
+        marker_date = marker["marker_date"]
+        short_month_label = SPANISH_MONTH_LABELS.get(marker_date.month, str(marker_date.month))[:3].capitalize()
+        serialized_markers.append(
+            {
+                "x": f"{to_x(marker_date):.1f}",
+                "label": f"{short_month_label} {str(marker_date.year)[2:]}",
+                "date": marker_date.isoformat(),
+                "y1": str(height - padding),
+                "y2": str(height - padding + 6),
+                "text_y": str(height - 2),
+                "grid_y1": str(padding),
+                "grid_y2": str(height - padding),
+                "show_label": index % label_step == 0 or index == len(markers) - 1,
+                "draw_grid": marker["draw_grid"],
+                "is_major": marker_date.month == 1,
+                "anchor": "start" if index == 0 else ("end" if index == len(markers) - 1 else "middle"),
+            }
+        )
+    return serialized_markers
+
+
 def build_dual_axis_chart(
     stock_points,
     reference_points,
@@ -4135,6 +4213,8 @@ def build_value_tracking_chart(
     benchmark_series: list[dict] | None = None,
     value_suffix: str = "EUR",
     axis_formatter=None,
+    time_marker_mode: str = "auto",
+    grid_marker_mode: str = "none",
     width: int = 640,
     height: int = 220,
     padding: int = 18,
@@ -4161,6 +4241,7 @@ def build_value_tracking_chart(
             "actual_display_points": [],
             "expected_points": [],
             "benchmark_points": [],
+            "benchmark_display_points": [],
             "min_label": "-",
             "max_label": "-",
             "start_label": "",
@@ -4168,6 +4249,8 @@ def build_value_tracking_chart(
             "projection_end_label": "",
             "points_count": 0,
             "zero_y": None,
+            "x_markers": [],
+            "grid_markers": [],
         }
 
     all_values = (
@@ -4277,9 +4360,31 @@ def build_value_tracking_chart(
     expected_line, expected_point_rows = build_series(expected_points, "expected")
     benchmark_line, benchmark_point_rows = build_series(benchmark_points, "benchmark")
     actual_display_points = build_display_points(actual_point_rows)
+    benchmark_display_points = build_display_points(benchmark_point_rows) if benchmark_point_rows else []
     zero_y = None
     if series_min <= ZERO <= series_max:
         zero_y = f"{scale_point(min_date, ZERO)[1]:.1f}"
+
+    if time_marker_mode == "month":
+        x_markers = build_month_axis_markers(
+            all_dates,
+            width=width,
+            height=height,
+            padding=padding,
+        )
+    else:
+        x_markers = build_time_axis_markers(
+            all_dates,
+            width=width,
+            height=height,
+            padding=padding,
+        )
+
+    if grid_marker_mode == "month":
+        grid_markers = [marker for marker in x_markers if marker.get("draw_grid")]
+    else:
+        grid_markers = []
+
     return {
         "available": True,
         "actual_line": actual_line,
@@ -4289,6 +4394,7 @@ def build_value_tracking_chart(
         "actual_display_points": actual_display_points,
         "expected_points": expected_point_rows,
         "benchmark_points": benchmark_point_rows,
+        "benchmark_display_points": benchmark_display_points,
         "min_label": format_chart_value(series_min),
         "max_label": format_chart_value(series_max),
         "start_label": min_date.isoformat(),
@@ -4300,12 +4406,8 @@ def build_value_tracking_chart(
         ),
         "points_count": len(actual_points),
         "zero_y": zero_y,
-        "x_markers": build_time_axis_markers(
-            all_dates,
-            width=width,
-            height=height,
-            padding=padding,
-        ),
+        "x_markers": x_markers,
+        "grid_markers": grid_markers,
     }
 
 
@@ -5909,6 +6011,8 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
             benchmark_series=rebased_comparison["benchmark_series"],
             value_suffix="",
             axis_formatter=format_axis_value,
+            time_marker_mode="month",
+            grid_marker_mode="month",
         )
         if rebased_comparison.get("available")
         else {"available": False}

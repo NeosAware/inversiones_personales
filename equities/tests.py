@@ -77,6 +77,7 @@ from .services import (
     fetch_market_series,
     filter_positive_optimizer_candidates,
     find_equity_company_profile,
+    format_axis_value,
     load_ibex_reference_workbook_snapshot,
     sync_equity_market_data,
 )
@@ -1910,6 +1911,34 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(chart["expected_line"], "")
         self.assertEqual(chart["projection_end_label"], "2026-04-21")
         self.assertIsNotNone(chart["zero_y"])
+
+    def test_build_value_tracking_chart_can_render_month_markers_and_benchmark_points(self):
+        chart = build_value_tracking_chart(
+            actual_series=[
+                {"date": date(2026, 4, 21), "value": Decimal("18300.0")},
+                {"date": date(2026, 5, 19), "value": Decimal("18180.0")},
+                {"date": date(2026, 6, 17), "value": Decimal("18440.0")},
+                {"date": date(2026, 7, 14), "value": Decimal("18520.0")},
+            ],
+            expected_series=[],
+            benchmark_series=[
+                {"date": date(2026, 4, 21), "value": Decimal("18300.0")},
+                {"date": date(2026, 5, 19), "value": Decimal("18240.0")},
+                {"date": date(2026, 6, 17), "value": Decimal("18360.0")},
+                {"date": date(2026, 7, 14), "value": Decimal("18410.0")},
+            ],
+            value_suffix="",
+            axis_formatter=format_axis_value,
+            time_marker_mode="month",
+            grid_marker_mode="month",
+        )
+
+        self.assertTrue(chart["available"])
+        self.assertTrue(chart["grid_markers"])
+        self.assertTrue(chart["benchmark_display_points"])
+        self.assertEqual(chart["x_markers"][0]["label"], "Abr 26")
+        self.assertIn("May 26", [marker["label"] for marker in chart["x_markers"]])
+        self.assertTrue(any(marker["draw_grid"] for marker in chart["grid_markers"]))
 
     def test_build_tracking_rebased_comparison_series_resets_scale_on_capital_change(self):
         comparison = build_tracking_rebased_comparison_series(
