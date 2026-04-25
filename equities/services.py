@@ -4424,33 +4424,87 @@ def build_value_tracking_chart(
 def build_ticket_expected_series(
     snapshots: list[EquityTicketSnapshot],
     target_value: Decimal | None,
+    card: dict | None = None,
 ) -> tuple[list[dict], Decimal | None, date | None]:
     if not snapshots:
         return [], None, None
     baseline = snapshots[0]
     projected_end_date = baseline.snapshot_date + timedelta(days=TRACKING_HORIZON_DAYS)
-    series_dates = {baseline.snapshot_date, projected_end_date}
-    for days in TRACKING_FORECAST_MARKERS:
-        series_dates.add(baseline.snapshot_date + timedelta(days=days))
-    for snapshot in snapshots:
-        series_dates.add(snapshot.snapshot_date)
+    projection = (card or {}).get("projection") or {}
+    quarterly_path = projection.get("quarterly_path") or []
+    baseline_value = quantize_decimal(baseline.current_value, "0.01") or ZERO
+    normalized_target_value = quantize_decimal(target_value, "0.01") or baseline_value
 
-    series = []
-    for point_date in sorted(series_dates):
-        expected_value = project_expected_value_on_date(
-            baseline.current_value,
-            target_value or baseline.current_value,
-            baseline.snapshot_date,
-            point_date,
+    anchors = []
+    initial_unit_price = quantize_decimal(projection.get("latest_price"), "0.0001")
+    if initial_unit_price is None:
+        initial_unit_price = quantize_decimal(
+            getattr(card.get("position") if card else None, "current_price_per_share", None),
+            "0.0001",
         )
-        if expected_value is not None:
-            series.append({"date": point_date, "value": expected_value})
+    final_projection_price = quantize_decimal(projection.get("projected_price"), "0.0001")
 
-    latest_snapshot_date = snapshots[-1].snapshot_date
-    latest_expected_value = next(
-        (point["value"] for point in reversed(series) if point["date"] <= latest_snapshot_date),
-        None,
-    )
+    for fallback_days, step in zip(TRACKING_FORECAST_MARKERS, quarterly_path):
+        step_price = quantize_decimal(step.get("projected_price"), "0.0001")
+        step_date = step.get("projected_date")
+        if step_date is None:
+            step_date = baseline.snapshot_date + timedelta(days=fallback_days)
+        progress_ratio = None
+        if (
+            initial_unit_price not in {None, ZERO}
+            and final_projection_price not in {None, ZERO}
+            and step_price not in {None, ZERO}
+            and final_projection_price != initial_unit_price
+        ):
+            try:
+                denominator = math.log(float(final_projection_price / initial_unit_price))
+                numerator = math.log(float(step_price / initial_unit_price))
+                if denominator != 0:
+                    progress_ratio = Decimal(str(numerator / denominator))
+            except (ValueError, ZeroDivisionError):
+                progress_ratio = None
+        if progress_ratio is None:
+            progress_ratio = Decimal(str(fallback_days / TRACKING_HORIZON_DAYS))
+        progress_ratio = clamp_decimal(progress_ratio, ZERO, Decimal("1.00"))
+        if baseline_value > ZERO and normalized_target_value > ZERO:
+            anchor_multiplier = float(normalized_target_value / baseline_value) ** float(progress_ratio)
+            anchor_value = quantize_decimal(baseline_value * Decimal(str(anchor_multiplier)), "0.01")
+        else:
+            anchor_value = quantize_decimal(
+                baseline_value + ((normalized_target_value - baseline_value) * progress_ratio),
+                "0.01",
+            )
+        if anchor_value is not None:
+            anchors.append({"date": step_date, "value": anchor_value})
+
+    if anchors:
+        series, latest_expected_value, projected_end_date = build_segmented_expected_series(
+            snapshots,
+            anchors,
+        )
+    else:
+        series_dates = {baseline.snapshot_date, projected_end_date}
+        for days in TRACKING_FORECAST_MARKERS:
+            series_dates.add(baseline.snapshot_date + timedelta(days=days))
+        for snapshot in snapshots:
+            series_dates.add(snapshot.snapshot_date)
+
+        series = []
+        for point_date in sorted(series_dates):
+            expected_value = project_expected_value_on_date(
+                baseline.current_value,
+                target_value or baseline.current_value,
+                baseline.snapshot_date,
+                point_date,
+            )
+            if expected_value is not None:
+                series.append({"date": point_date, "value": expected_value})
+
+        latest_snapshot_date = snapshots[-1].snapshot_date
+        latest_expected_value = next(
+            (point["value"] for point in reversed(series) if point["date"] <= latest_snapshot_date),
+            None,
+        )
     return series, latest_expected_value, projected_end_date
 
 
@@ -6229,6 +6283,7 @@ def build_equity_ticket_tracking_item(
     expected_series, current_expected_value, projected_end_date = build_ticket_expected_series(
         snapshots,
         expected_market_value_12m,
+        card=card,
     )
     expected_series, current_expected_value, expected_series_calibration = apply_tracking_expected_series_calibration(
         snapshots,
@@ -6279,6 +6334,7 @@ def build_equity_ticket_tracking_item(
     shared_expected_series, shared_current_expected_value, shared_projection_end_date = build_ticket_expected_series(
         relevant_snapshots,
         shared_expected_market_value_12m,
+        card=card,
     )
     shared_expected_series, shared_current_expected_value, shared_expected_series_calibration = apply_tracking_expected_series_calibration(
         relevant_snapshots,
@@ -8949,13 +9005,41 @@ def project_price_from_return(current_price: Decimal | None, return_pct: Decimal
     return current_price * multiplier
 
 
-def build_projection_path(current_price: Decimal | None, annual_return_pct: Decimal | None, anchor_date: date | None = None) -> list[dict]:
+def resolve_projection_path_quarter_weights(
+    annual_return_pct: Decimal | None,
+    cycle_phase: str = "Transicion",
+) -> list[Decimal]:
+    if (annual_return_pct or ZERO) >= ZERO:
+        return {
+            "Correccion": [Decimal("0.12"), Decimal("0.20"), Decimal("0.28"), Decimal("0.40")],
+            "Recuperacion": [Decimal("0.30"), Decimal("0.28"), Decimal("0.23"), Decimal("0.19")],
+            "Expansion": [Decimal("0.21"), Decimal("0.24"), Decimal("0.26"), Decimal("0.29")],
+            "Transicion": [Decimal("0.16"), Decimal("0.22"), Decimal("0.27"), Decimal("0.35")],
+        }.get(cycle_phase or "Transicion", [Decimal("0.16"), Decimal("0.22"), Decimal("0.27"), Decimal("0.35")])
+
+    return {
+        "Correccion": [Decimal("0.42"), Decimal("0.28"), Decimal("0.18"), Decimal("0.12")],
+        "Recuperacion": [Decimal("0.34"), Decimal("0.27"), Decimal("0.22"), Decimal("0.17")],
+        "Expansion": [Decimal("0.28"), Decimal("0.26"), Decimal("0.24"), Decimal("0.22")],
+        "Transicion": [Decimal("0.35"), Decimal("0.28"), Decimal("0.22"), Decimal("0.15")],
+    }.get(cycle_phase or "Transicion", [Decimal("0.35"), Decimal("0.28"), Decimal("0.22"), Decimal("0.15")])
+
+
+def build_projection_path(
+    current_price: Decimal | None,
+    annual_return_pct: Decimal | None,
+    anchor_date: date | None = None,
+    cycle_phase: str = "Transicion",
+) -> list[dict]:
     if current_price in {None, ZERO} or annual_return_pct is None:
         return []
     annual_multiplier = max(0.01, 1 + (float(annual_return_pct) / 100))
+    quarter_weights = resolve_projection_path_quarter_weights(annual_return_pct, cycle_phase=cycle_phase)
+    cumulative_share = Decimal("0.00")
     path = []
-    for months, label, days in ((3, "3M", 91), (6, "6M", 182), (9, "9M", 273), (12, "12M", 365)):
-        projected_multiplier = annual_multiplier ** (months / 12)
+    for (months, label, days), share in zip(((3, "3M", 91), (6, "6M", 182), (9, "9M", 273), (12, "12M", 365)), quarter_weights):
+        cumulative_share += share
+        projected_multiplier = annual_multiplier ** float(cumulative_share)
         projected_price = Decimal(str(round(float(current_price) * projected_multiplier, 4)))
         path.append(
             {
@@ -9552,7 +9636,12 @@ def build_one_year_projection(
         "projected_price": project_price_from_return(latest_price, price_return_pct),
         "low_price": project_price_from_return(latest_price, price_low_return_pct),
         "high_price": project_price_from_return(latest_price, price_high_return_pct),
-        "quarterly_path": build_projection_path(latest_price, price_return_pct, anchor_date=history[-1].price_date),
+        "quarterly_path": build_projection_path(
+            latest_price,
+            price_return_pct,
+            anchor_date=history[-1].price_date,
+            cycle_phase=cycle_metrics.get("cycle_phase") or "Transicion",
+        ),
         "scenarios": scenarios,
         "confidence_label": confidence["label"],
         "confidence_note": confidence["note"],
@@ -10037,7 +10126,12 @@ def apply_news_context_adjustments_to_card(card: dict) -> dict:
     projection["projected_price"] = project_price_from_return(latest_price, adjusted_price_return_pct)
     projection["low_price"] = project_price_from_return(latest_price, adjusted_price_low_return_pct)
     projection["high_price"] = project_price_from_return(latest_price, adjusted_price_high_return_pct)
-    projection["quarterly_path"] = build_projection_path(latest_price, adjusted_price_return_pct, anchor_date=latest_date)
+    projection["quarterly_path"] = build_projection_path(
+        latest_price,
+        adjusted_price_return_pct,
+        anchor_date=latest_date,
+        cycle_phase=projection.get("cycle_phase") or "Transicion",
+    )
     projection["confidence_label"] = adjusted_confidence_label
     projection["confidence_score_pct"] = quantize_decimal(adjusted_confidence_score_pct)
     projection["confidence_note"] = (

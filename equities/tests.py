@@ -1931,6 +1931,67 @@ class EquitiesServicesTests(TestCase):
         self.assertGreater(ticket["current_expected_value"], Decimal("920.00"))
         self.assertLess(ticket["expected_market_value_12m"], Decimal("1360.00"))
 
+    def test_ticket_expected_series_uses_quarterly_shape_instead_of_linear_path(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("100.0000"),
+            current_price_per_share=Decimal("100.0000"),
+            annual_dividend_income=Decimal("0.00"),
+        )
+        EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 4, 25),
+            invested_amount=Decimal("1000.00"),
+            current_value=Decimal("1000.00"),
+            projected_market_value_12m=Decimal("1400.00"),
+            projected_total_value_12m=Decimal("1400.00"),
+            projected_price_12m=Decimal("140.0000"),
+        )
+        EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 5, 25),
+            invested_amount=Decimal("1000.00"),
+            current_value=Decimal("1010.00"),
+            projected_market_value_12m=Decimal("1400.00"),
+            projected_total_value_12m=Decimal("1400.00"),
+            projected_price_12m=Decimal("140.0000"),
+        )
+        snapshots = list(position.ticket_snapshots.order_by("snapshot_date"))
+
+        linear_series, _, _ = build_ticket_expected_series(snapshots, Decimal("1400.00"))
+        shaped_series, _, _ = build_ticket_expected_series(
+            snapshots,
+            Decimal("1400.00"),
+            card={
+                "position": position,
+                "projection": {
+                    "latest_price": Decimal("100.0000"),
+                    "projected_price": Decimal("140.0000"),
+                    "quarterly_path": [
+                        {"label": "3M", "projected_date": date(2026, 7, 25), "projected_price": Decimal("105.5316")},
+                        {"label": "6M", "projected_date": date(2026, 10, 24), "projected_price": Decimal("113.6244")},
+                        {"label": "9M", "projected_date": date(2027, 1, 23), "projected_price": Decimal("124.4352")},
+                        {"label": "12M", "projected_date": date(2027, 4, 25), "projected_price": Decimal("140.0000")},
+                    ],
+                },
+            },
+        )
+
+        linear_3m = next(point["value"] for point in linear_series if point["date"] == date(2026, 7, 25))
+        shaped_3m = next(point["value"] for point in shaped_series if point["date"] == date(2026, 7, 25))
+        linear_9m = next(point["value"] for point in linear_series if point["date"] == date(2027, 1, 23))
+        shaped_9m = next(point["value"] for point in shaped_series if point["date"] == date(2027, 1, 23))
+
+        self.assertLess(shaped_3m, linear_3m)
+        self.assertNotEqual(shaped_9m, linear_9m)
+
     def test_ticket_tracking_recalibrates_expected_curve_when_reality_runs_ahead(self):
         position = EquityPosition.objects.create(
             broker="Interactive Brokers",
