@@ -1,0 +1,87 @@
+{% with purchase_timeline=optimization_purchase_timeline %}
+  {% if purchase_timeline.available %}
+    <section class="equity-sale-gantt-shell" style="margin-top:18px;">
+      <div class="equity-section-head">
+        <div>
+          <p class="section-title">Agenda de compras {{ purchase_timeline.horizon_months }}M</p>
+          <h3 style="margin:0;">Gantt tactico de entradas e importe recomendado</h3>
+          <p style="margin:6px 0 0; color:#627380;">Cada barra marca la espera hasta la ventana de compra sugerida para la cartera optimizada. El pin fija la fecha estimada y el bloque final muestra el importe y el precio objetivo de entrada.</p>
+        </div>
+        <span class="pill">{{ purchase_timeline.scheduled_count }} compras | base {{ purchase_timeline.reference_date|date:"Y-m-d" }} a {{ purchase_timeline.horizon_end|date:"Y-m-d" }}</span>
+      </div>
+
+      <div class="equity-grid-4" style="margin-top:16px;">
+        <div class="equity-box">
+          <span>Proxima compra</span>
+          <strong>{% if purchase_timeline.next_row %}{{ purchase_timeline.next_row.ticker }}{% else %}-{% endif %}</strong>
+          <small>
+            {% if purchase_timeline.next_row %}
+              {{ purchase_timeline.next_row.buy_date|date:"Y-m-d" }} | {{ purchase_timeline.next_row.status_label }}
+            {% else %}
+              Sin ventana cerrada
+            {% endif %}
+          </small>
+        </div>
+        <div class="equity-box">
+          <span>Compras <= 14 dias</span>
+          <strong class="{% if purchase_timeline.immediate_count %}warn{% endif %}">{{ purchase_timeline.immediate_count }}</strong>
+          <small>{% if purchase_timeline.immediate_count %}Hay entradas para preparar ya.{% else %}No hay compras inmediatas por ahora.{% endif %}</small>
+        </div>
+        <div class="equity-box">
+          <span>Capital planificado</span>
+          <strong>{{ purchase_timeline.planned_amount_total|floatformat:0 }} EUR</strong>
+          <small>Suma visible de las compras con fecha propuesta.</small>
+        </div>
+        <div class="equity-box">
+          <span>Nuevas / ampliaciones</span>
+          <strong>{{ purchase_timeline.new_positions_count }} / {{ purchase_timeline.top_up_count }}</strong>
+          <small>Nuevas posiciones frente a compras sobre valores ya tenidos.</small>
+        </div>
+      </div>
+
+      <div class="equity-sale-gantt-board">
+        <div class="equity-sale-gantt-axis">
+          <div class="equity-sale-gantt-axis-label">Accion</div>
+          <div class="equity-sale-gantt-axis-track">
+            {% for marker in purchase_timeline.markers %}
+              <span class="equity-sale-gantt-marker" style="left:{{ marker.left_pct }}%;">{{ marker.label }}</span>
+            {% endfor %}
+          </div>
+          <div class="equity-sale-gantt-axis-meta">Compra y valor</div>
+        </div>
+
+        {% for row in purchase_timeline.rows %}
+          <div class="equity-sale-gantt-row">
+            <div class="equity-sale-gantt-label">
+              <strong>{{ row.ticker }}</strong>
+              <span>{{ row.company_name }}</span>
+            </div>
+            <div class="equity-sale-gantt-track">
+              <div class="equity-sale-gantt-grid"></div>
+              <div class="equity-sale-gantt-bar {{ row.status_key }}" style="left:{{ row.bar_left_pct }}%; width:{{ row.bar_width_pct }}%;"></div>
+              <div class="equity-sale-gantt-pin {{ row.status_key }}" style="left:{{ row.pin_left_pct }}%;"></div>
+            </div>
+            <div class="equity-sale-gantt-meta">
+              <strong>
+                {% if row.allocated_amount is not None %}{{ row.allocated_amount|floatformat:0 }} EUR{% else %}-{% endif %}
+              </strong>
+              <span>{{ row.buy_window_label }}</span>
+              <small>{% if row.buy_price is not None %}{{ row.buy_price|floatformat:4 }} EUR{% else %}-{% endif %} | {{ row.buy_date|date:"Y-m-d" }}</small>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+
+      {% if purchase_timeline.unscheduled_rows %}
+        <div class="equity-sale-unscheduled">
+          <strong>Valores sin ventana cerrada en la ultima optimizacion</strong>
+          <div class="equity-chip-row" style="margin-top:10px;">
+            {% for row in purchase_timeline.unscheduled_rows %}
+              <span class="equity-chip">{{ row.ticker }} | {{ row.reason }}</span>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endwith %}

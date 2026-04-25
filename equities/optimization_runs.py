@@ -781,6 +781,7 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
     created_at = timezone.localtime(run.created_at)
     top_pick = plan.get("top_pick")
     top_pick_name = top_pick["position"].company_name if top_pick else ""
+    top_pick_purchase_timing = dict(plan.get("top_pick_purchase_timing") or {})
     progress_data = dict(run.progress_data or {})
     return {
         "reference_code": run.reference_code,
@@ -823,6 +824,11 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "max_company_pct": float(plan.get("max_company_pct", 0) or 0),
         "max_sector_positions": int(plan.get("max_sector_positions", 0) or 0),
         "top_pick_name": top_pick_name,
+        "top_pick_buy_window_label": top_pick_purchase_timing.get("buy_window_label", ""),
+        "top_pick_buy_date": top_pick_purchase_timing.get("buy_date_label", ""),
+        "top_pick_buy_price": float(top_pick_purchase_timing["buy_price"]) if top_pick_purchase_timing.get("buy_price") is not None else None,
+        "top_pick_buy_mode_label": top_pick_purchase_timing.get("mode_label", ""),
+        "top_pick_allocated_amount": float(top_pick.get("allocated_amount", 0) or 0) if top_pick else None,
         "news_signals_count": news_overview["signals_count"],
         "news_items_count": news_overview["items_count"],
         "positive_news_count": news_overview["positive_count"],
@@ -841,6 +847,7 @@ def serialize_allocations_data(plan: dict) -> list[dict]:
     items = []
     for item in plan.get("allocations", []):
         position = item["position"]
+        purchase_timing = dict(item.get("purchase_timing") or {})
         items.append(
             {
                 "rank": item["rank"],
@@ -848,6 +855,8 @@ def serialize_allocations_data(plan: dict) -> list[dict]:
                 "ticker": position.ticker,
                 "sector_label": item["sector_label"],
                 "status_label": item["status_label"],
+                "status_key": item.get("status_key", ""),
+                "is_owned": bool(position.is_owned),
                 "trade_alert_label": item["trade_alert_label"],
                 "reference_label": item["reference_label"],
                 "strategy_label": item.get("strategy_label", ""),
@@ -872,6 +881,25 @@ def serialize_allocations_data(plan: dict) -> list[dict]:
                 "external_signal_label": item.get("external_signal_label", ""),
                 "external_signal_score": float(item.get("external_signal_score", 0) or 0),
                 "reliability_score": float(item["reliability_score"]) if item.get("reliability_score") is not None else None,
+                "purchase_timing": {
+                    "available": bool(purchase_timing.get("available")),
+                    "mode": purchase_timing.get("mode", ""),
+                    "mode_label": purchase_timing.get("mode_label", ""),
+                    "analysis_basis_label": purchase_timing.get("analysis_basis_label", ""),
+                    "buy_month_number": int(purchase_timing.get("buy_month_number", 0) or 0) if purchase_timing.get("buy_month_number") is not None else None,
+                    "buy_date": purchase_timing.get("buy_date_label", ""),
+                    "buy_window_label": purchase_timing.get("buy_window_label", ""),
+                    "buy_price": float(purchase_timing["buy_price"]) if purchase_timing.get("buy_price") is not None else None,
+                    "discount_vs_now_pct": float(purchase_timing["discount_vs_now_pct"]) if purchase_timing.get("discount_vs_now_pct") is not None else None,
+                    "expected_exit_month_number": int(purchase_timing.get("expected_exit_month_number", 0) or 0) if purchase_timing.get("expected_exit_month_number") is not None else None,
+                    "expected_exit_date": purchase_timing.get("expected_exit_date_label", ""),
+                    "expected_exit_window_label": purchase_timing.get("expected_exit_window_label", ""),
+                    "expected_exit_price": float(purchase_timing["expected_exit_price"]) if purchase_timing.get("expected_exit_price") is not None else None,
+                    "expected_holding_months": int(purchase_timing.get("expected_holding_months", 0) or 0) if purchase_timing.get("expected_holding_months") is not None else None,
+                    "expected_trade_return_pct": float(purchase_timing["expected_trade_return_pct"]) if purchase_timing.get("expected_trade_return_pct") is not None else None,
+                    "calendar_adjusted_return_pct": float(purchase_timing["calendar_adjusted_return_pct"]) if purchase_timing.get("calendar_adjusted_return_pct") is not None else None,
+                    "summary": purchase_timing.get("summary", ""),
+                },
                 "cycle_yearly_margins": [
                     {
                         "year_number": int(year_item.get("year_number") or 0),
@@ -967,6 +995,149 @@ def build_optimization_comparison_context(runs: list[EquityOptimizationRun]) -> 
     }
 
 
+def build_optimization_purchase_timeline(
+    run: EquityOptimizationRun | None,
+    *,
+    max_rows: int = 8,
+) -> dict:
+    if run is None:
+        return {"available": False, "rows": []}
+
+    allocations = list(run.allocations_data or [])
+    if not allocations:
+        return {"available": False, "rows": []}
+
+    progress_data = dict(run.progress_data or {})
+    summary_data = dict(run.summary_data or {})
+    reference_date_label = (
+        summary_data.get("scheduled_analysis_date")
+        or progress_data.get("scheduled_analysis_date")
+        or ""
+    )
+    try:
+        reference_date = date.fromisoformat(reference_date_label) if reference_date_label else None
+    except ValueError:
+        reference_date = None
+    if reference_date is None:
+        reference_date = timezone.localtime(run.completed_at or run.created_at).date()
+
+    scheduled_rows = []
+    unscheduled_rows = []
+    for item in allocations:
+        purchase_timing = dict(item.get("purchase_timing") or {})
+        if not purchase_timing.get("available"):
+            unscheduled_rows.append(
+                {
+                    "ticker": item.get("ticker", ""),
+                    "company_name": item.get("company_name", ""),
+                    "reason": "Sin ventana de compra clara",
+                }
+            )
+            continue
+        buy_date_label = str(purchase_timing.get("buy_date") or "").strip()
+        try:
+            buy_date = date.fromisoformat(buy_date_label) if buy_date_label else None
+        except ValueError:
+            buy_date = None
+        if buy_date is None:
+            unscheduled_rows.append(
+                {
+                    "ticker": item.get("ticker", ""),
+                    "company_name": item.get("company_name", ""),
+                    "reason": "Fecha de compra no disponible",
+                }
+            )
+            continue
+        buy_price = purchase_timing.get("buy_price")
+        allocated_amount = item.get("allocated_amount")
+        days_until_buy = max((buy_date - reference_date).days, 0)
+        if days_until_buy <= 14:
+            status_key = "urgent"
+            status_label = "Comprar ya"
+        elif days_until_buy <= 90:
+            status_key = "soon"
+            status_label = "Proxima ventana"
+        else:
+            status_key = "scheduled"
+            status_label = "Compra programada"
+        scheduled_rows.append(
+            {
+                "ticker": item.get("ticker", ""),
+                "company_name": item.get("company_name", ""),
+                "rank": int(item.get("rank") or 0),
+                "is_owned": bool(item.get("is_owned")),
+                "status_key": status_key,
+                "status_label": status_label,
+                "buy_date": buy_date,
+                "buy_window_label": purchase_timing.get("buy_window_label", "") or buy_date.isoformat(),
+                "buy_mode_label": purchase_timing.get("mode_label", "") or status_label,
+                "buy_price": Decimal(str(buy_price)) if buy_price is not None else None,
+                "allocated_amount": Decimal(str(allocated_amount)) if allocated_amount is not None else None,
+                "allocated_weight_pct": Decimal(str(item.get("allocated_weight_pct"))) if item.get("allocated_weight_pct") is not None else None,
+                "expected_trade_return_pct": Decimal(str(purchase_timing["expected_trade_return_pct"])) if purchase_timing.get("expected_trade_return_pct") is not None else None,
+            }
+        )
+
+    if not scheduled_rows:
+        return {
+            "available": False,
+            "rows": [],
+            "reference_date": reference_date,
+            "unscheduled_rows": unscheduled_rows,
+        }
+
+    scheduled_rows.sort(key=lambda item: (item["buy_date"], item["rank"], item["ticker"]))
+    visible_rows = scheduled_rows[:max_rows]
+    horizon_end = max(shift_date_by_months(reference_date, 12), max(item["buy_date"] for item in visible_rows))
+    horizon_days = max((horizon_end - reference_date).days, 1)
+    horizon_months = max(
+        ((horizon_end.year - reference_date.year) * 12) + (horizon_end.month - reference_date.month),
+        1,
+    )
+    markers = []
+    marker_months = sorted({0, 3, 6, 9, 12, horizon_months})
+    for month_offset in marker_months:
+        marker_date = shift_date_by_months(reference_date, month_offset)
+        left_pct = min(max(((marker_date - reference_date).days / horizon_days) * 100, 0), 100)
+        markers.append(
+            {
+                "label": marker_date.strftime("%Y-%m"),
+                "left_pct": f"{left_pct:.2f}",
+            }
+        )
+
+    planned_amount_total = ZERO
+    immediate_count = 0
+    for row in visible_rows:
+        if row.get("allocated_amount") is not None:
+            planned_amount_total += row["allocated_amount"]
+        if row["status_key"] == "urgent":
+            immediate_count += 1
+        pin_left_pct = min(max((((row["buy_date"] - reference_date).days) / horizon_days) * 100, 0), 100)
+        row["pin_left_pct"] = f"{pin_left_pct:.2f}"
+        row["bar_left_pct"] = "0.00"
+        row["bar_width_pct"] = f"{max(pin_left_pct, 2.6):.2f}"
+    next_row = visible_rows[0]
+    next_new_row = next((row for row in visible_rows if not row.get("is_owned")), None)
+    return {
+        "available": True,
+        "rows": visible_rows,
+        "markers": markers,
+        "reference_date": reference_date,
+        "horizon_end": horizon_end,
+        "horizon_months": horizon_months,
+        "scheduled_count": len(visible_rows),
+        "unscheduled_count": len(unscheduled_rows),
+        "planned_amount_total": planned_amount_total.quantize(Decimal("0.01")),
+        "immediate_count": immediate_count,
+        "new_positions_count": sum(1 for row in visible_rows if not row.get("is_owned")),
+        "top_up_count": sum(1 for row in visible_rows if row.get("is_owned")),
+        "next_row": next_row,
+        "next_new_row": next_new_row,
+        "unscheduled_rows": unscheduled_rows[:max_rows],
+    }
+
+
 def build_scheduled_optimization_persistence_context(
     *,
     as_of: date | None = None,
@@ -1018,6 +1189,11 @@ def build_scheduled_optimization_persistence_context(
             return "Media"
         return "Baja"
 
+    currently_owned_tickers = {
+        str(position.ticker or "").strip().upper()
+        for position in EquityPosition.objects.all()
+        if position.is_owned
+    }
     stats_by_ticker: dict[str, dict] = {}
     runs_count = 0
     distinct_days = set()
@@ -1059,6 +1235,20 @@ def build_scheduled_optimization_persistence_context(
                     "year_margin_totals": {year_number: Decimal("0") for year_number in range(1, 6)},
                     "year_margin_counts": {year_number: 0 for year_number in range(1, 6)},
                     "daily_strategies": {},
+                    "buy_dates_3m": [],
+                    "buy_window_labels_3m": set(),
+                    "buy_modes_3m": set(),
+                    "buy_price_total_3m": Decimal("0"),
+                    "buy_price_count_3m": 0,
+                    "allocated_amount_total_3m": Decimal("0"),
+                    "allocated_amount_count_3m": 0,
+                    "allocated_weight_total_3m": Decimal("0"),
+                    "allocated_weight_count_3m": 0,
+                    "latest_buy_date": None,
+                    "latest_buy_window_label": "",
+                    "latest_buy_price": None,
+                    "latest_allocated_amount": None,
+                    "latest_allocated_weight_pct": None,
                 },
             )
             stats["company_name"] = str(item.get("company_name") or stats["company_name"] or ticker)
@@ -1081,6 +1271,40 @@ def build_scheduled_optimization_persistence_context(
             if reliability_score is not None:
                 stats["reliability_total_3m"] += Decimal(str(reliability_score))
                 stats["reliability_count_3m"] += 1
+            purchase_timing = dict(item.get("purchase_timing") or {})
+            buy_date = None
+            buy_date_value = str(purchase_timing.get("buy_date") or "").strip()
+            if buy_date_value:
+                try:
+                    buy_date = date.fromisoformat(buy_date_value)
+                except ValueError:
+                    buy_date = None
+            if buy_date is not None:
+                stats["buy_dates_3m"].append(buy_date)
+            buy_window_label = str(purchase_timing.get("buy_window_label") or "").strip()
+            if buy_window_label:
+                stats["buy_window_labels_3m"].add(buy_window_label)
+            buy_mode_label = str(purchase_timing.get("mode_label") or "").strip()
+            if buy_mode_label:
+                stats["buy_modes_3m"].add(buy_mode_label)
+            buy_price = purchase_timing.get("buy_price")
+            if buy_price is not None:
+                stats["buy_price_total_3m"] += Decimal(str(buy_price))
+                stats["buy_price_count_3m"] += 1
+            allocated_amount = item.get("allocated_amount")
+            if allocated_amount is not None:
+                stats["allocated_amount_total_3m"] += Decimal(str(allocated_amount))
+                stats["allocated_amount_count_3m"] += 1
+            allocated_weight_pct = item.get("allocated_weight_pct")
+            if allocated_weight_pct is not None:
+                stats["allocated_weight_total_3m"] += Decimal(str(allocated_weight_pct))
+                stats["allocated_weight_count_3m"] += 1
+            if buy_date is not None and (stats["latest_buy_date"] is None or buy_date >= stats["latest_buy_date"]):
+                stats["latest_buy_date"] = buy_date
+                stats["latest_buy_window_label"] = buy_window_label
+                stats["latest_buy_price"] = Decimal(str(buy_price)) if buy_price is not None else None
+                stats["latest_allocated_amount"] = Decimal(str(allocated_amount)) if allocated_amount is not None else None
+                stats["latest_allocated_weight_pct"] = Decimal(str(allocated_weight_pct)) if allocated_weight_pct is not None else None
             for year_item in item.get("cycle_yearly_margins") or []:
                 try:
                     year_number = int(year_item.get("year_number") or 0)
@@ -1131,6 +1355,21 @@ def build_scheduled_optimization_persistence_context(
             average_reliability_score = (
                 stats["reliability_total_3m"] / Decimal(str(stats["reliability_count_3m"]))
             ).quantize(Decimal("0.1"))
+        average_buy_price = None
+        if stats["buy_price_count_3m"]:
+            average_buy_price = (
+                stats["buy_price_total_3m"] / Decimal(str(stats["buy_price_count_3m"]))
+            ).quantize(Decimal("0.0001"))
+        average_allocated_amount = None
+        if stats["allocated_amount_count_3m"]:
+            average_allocated_amount = (
+                stats["allocated_amount_total_3m"] / Decimal(str(stats["allocated_amount_count_3m"]))
+            ).quantize(Decimal("0.01"))
+        average_allocated_weight_pct = None
+        if stats["allocated_weight_count_3m"]:
+            average_allocated_weight_pct = (
+                stats["allocated_weight_total_3m"] / Decimal(str(stats["allocated_weight_count_3m"]))
+            ).quantize(Decimal("0.1"))
         average_year_margins = []
         for year_number in range(1, 6):
             year_average = None
@@ -1150,6 +1389,20 @@ def build_scheduled_optimization_persistence_context(
         day_presence_pct = ratio_percent(distinct_days_count, total_days_count)
         top3_pct = ratio_percent(stats["top3_3m"], stats["appearances_3m"])
         latest_strategy_count = len(latest_strategies)
+        sorted_buy_dates = sorted(set(stats["buy_dates_3m"]))
+        buy_dates_sample_label = "-"
+        if sorted_buy_dates:
+            if len(sorted_buy_dates) <= 3:
+                buy_dates_sample_label = ", ".join(item.isoformat() for item in sorted_buy_dates)
+            else:
+                buy_dates_sample_label = (
+                    f"{sorted_buy_dates[0].isoformat()} a {sorted_buy_dates[-1].isoformat()} "
+                    f"(+{len(sorted_buy_dates) - 2})"
+                )
+        latest_buy_date = stats["latest_buy_date"]
+        latest_buy_window_label = stats["latest_buy_window_label"] or (
+            format(latest_buy_date, "%Y-%m-%d") if latest_buy_date else ""
+        )
         if distinct_days_count >= 4 and latest_strategy_count >= 2:
             persistence_label = "Alta"
         elif distinct_days_count >= 2:
@@ -1177,6 +1430,23 @@ def build_scheduled_optimization_persistence_context(
                 "strategy_labels_3m_label": ", ".join(sorted(stats["strategy_labels_3m"])) or "-",
                 "latest_day_strategy_count": latest_strategy_count,
                 "latest_day_strategy_label": ", ".join(sorted(latest_strategies)) or "-",
+                "currently_owned": stats["ticker"] in currently_owned_tickers,
+                "buy_recommendation_available": latest_buy_date is not None,
+                "latest_buy_date": latest_buy_date,
+                "latest_buy_date_label": latest_buy_date.isoformat() if latest_buy_date else "",
+                "latest_buy_window_label": latest_buy_window_label,
+                "latest_buy_price": stats["latest_buy_price"],
+                "latest_allocated_amount": stats["latest_allocated_amount"],
+                "latest_allocated_weight_pct": stats["latest_allocated_weight_pct"],
+                "average_buy_price_3m": average_buy_price,
+                "average_allocated_amount_3m": average_allocated_amount,
+                "average_allocated_weight_pct_3m": average_allocated_weight_pct,
+                "buy_dates_count_3m": len(sorted_buy_dates),
+                "buy_dates_sample_label": buy_dates_sample_label,
+                "buy_window_labels_3m": sorted(stats["buy_window_labels_3m"]),
+                "buy_window_labels_3m_label": ", ".join(sorted(stats["buy_window_labels_3m"])) or "-",
+                "buy_modes_3m": sorted(stats["buy_modes_3m"]),
+                "buy_modes_3m_label": ", ".join(sorted(stats["buy_modes_3m"])) or "-",
                 "last_seen_on": stats["last_seen_on"],
                 "last_seen_on_label": stats["last_seen_on"].isoformat(),
             }
@@ -1201,10 +1471,39 @@ def build_scheduled_optimization_persistence_context(
             item["ticker"],
         )
     )
+    top_non_owned_recommendation = next(
+        (
+            {
+                "available": True,
+                "ticker": row["ticker"],
+                "company_name": row["company_name"],
+                "buy_date": row.get("latest_buy_date"),
+                "buy_date_label": row.get("latest_buy_date_label", ""),
+                "buy_window_label": row.get("latest_buy_window_label", ""),
+                "buy_price": row.get("latest_buy_price"),
+                "average_buy_price": row.get("average_buy_price_3m"),
+                "allocated_amount": row.get("latest_allocated_amount"),
+                "average_allocated_amount": row.get("average_allocated_amount_3m"),
+                "allocated_weight_pct": row.get("latest_allocated_weight_pct"),
+                "average_allocated_weight_pct": row.get("average_allocated_weight_pct_3m"),
+                "presence_pct_3m": row.get("presence_pct_3m"),
+                "strategy_labels_3m_label": row.get("strategy_labels_3m_label", ""),
+                "summary": (
+                    f"Aparece en {row.get('presence_pct_3m') or Decimal('0'):.0f} % de las optimizaciones "
+                    f"programadas y la ultima ventana de compra sale en "
+                    f"{(row.get('latest_buy_window_label') or row.get('latest_buy_date_label') or '').lower()}."
+                ),
+            }
+            for row in rows
+            if not row.get("currently_owned") and row.get("buy_recommendation_available")
+        ),
+        {"available": False},
+    )
     return {
         "available": bool(rows),
         "rows": rows[:max_rows],
         "total_rows": len(rows),
+        "top_non_owned_recommendation": top_non_owned_recommendation,
         "weekdays_label": weekdays_label,
         "next_run_date_label": next_run_date.isoformat() if next_run_date else "",
         "window_label": "ultimos 3 meses",

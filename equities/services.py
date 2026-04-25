@@ -6642,32 +6642,9 @@ def build_purchase_forecast_trade_plan(
     }
 
 
-def build_cycle_projection_monthly_trend_rows(card: dict) -> list[dict]:
-    position = card.get("position")
-    cycle_projection = card.get("cycle_projection_5y") or {}
-    if position is None or not cycle_projection.get("available"):
-        return []
-
-    current_price = getattr(position, "current_price_per_share", None)
-    path = cycle_projection.get("path") or []
-    if current_price in {None, ZERO} or not path:
-        return []
-
-    anchor_date = getattr(position, "latest_price_date", None) or django_timezone.localdate()
-    anchor_points = [(0, current_price, anchor_date)]
-    for index, step in enumerate(path, start=1):
-        projected_price = step.get("projected_price")
-        months_offset = parse_projection_label_months(step.get("label")) or (index * 6)
-        if projected_price in {None, ZERO} or months_offset <= 0:
-            continue
-        anchor_points.append(
-            (
-                months_offset,
-                projected_price,
-                step.get("projected_date") or add_calendar_months(anchor_date, months_offset),
-            )
-        )
-
+def build_interpolated_projection_monthly_rows(
+    anchor_points: list[tuple[int, Decimal, date]],
+) -> list[dict]:
     if len(anchor_points) < 2:
         return []
 
@@ -6729,6 +6706,308 @@ def build_cycle_projection_monthly_trend_rows(card: dict) -> list[dict]:
             )
 
     return deduped_rows
+
+
+def build_projection_monthly_trend_rows(card: dict) -> list[dict]:
+    position = card.get("position")
+    projection = card.get("projection") or {}
+    if position is None or not projection.get("available"):
+        return []
+
+    current_price = quantize_decimal(
+        projection.get("latest_price") or getattr(position, "current_price_per_share", None),
+        "0.0001",
+    )
+    path = resolve_projection_tracking_path(projection)
+    if current_price in {None, ZERO} or not path:
+        return []
+
+    anchor_date = (
+        projection.get("latest_date")
+        or getattr(position, "latest_price_date", None)
+        or django_timezone.localdate()
+    )
+    anchor_points = [(0, current_price, anchor_date)]
+    for index, step in enumerate(path, start=1):
+        projected_price = quantize_decimal(step.get("projected_price"), "0.0001")
+        months_offset = parse_projection_label_months(step.get("label"))
+        projected_date = step.get("projected_date")
+        if months_offset is None and projected_date is not None:
+            months_offset = max(
+                ((projected_date.year - anchor_date.year) * 12)
+                + (projected_date.month - anchor_date.month),
+                index,
+            )
+        if months_offset is None:
+            months_offset = index
+        if projected_price in {None, ZERO} or months_offset <= 0:
+            continue
+        anchor_points.append(
+            (
+                months_offset,
+                projected_price,
+                projected_date or add_calendar_months(anchor_date, months_offset),
+            )
+        )
+    return build_interpolated_projection_monthly_rows(anchor_points)
+
+
+def build_candidate_purchase_timing_plan(
+    card: dict,
+    strategy_mode: str = "12m_primary",
+) -> dict:
+    position = card.get("position")
+    projection = card.get("projection") or {}
+    cycle_projection = card.get("cycle_projection_5y") or {}
+    if position is None or not projection.get("available"):
+        return {"available": False}
+
+    strategy = get_optimizer_strategy_config(strategy_mode)
+    twelve_month_rows = build_projection_monthly_trend_rows(card)
+    cycle_rows = build_cycle_projection_monthly_trend_rows(card)
+
+    path_candidates = []
+    if twelve_month_rows:
+        path_candidates.append(
+            {
+                "basis_key": "projection_12m",
+                "basis_label": "Senda 12M neta del modelo",
+                "rows": twelve_month_rows,
+                "entry_search_months": min(12, max((twelve_month_rows[-1]["month_number"] or 0) - 1, 0)),
+            }
+        )
+    if cycle_rows:
+        path_candidates.append(
+            {
+                "basis_key": "cycle_5y",
+                "basis_label": "Patron de ciclo 5A desestacionalizado",
+                "rows": cycle_rows,
+                "entry_search_months": min(18, max((cycle_rows[-1]["month_number"] or 0) - 1, 0)),
+            }
+        )
+    if not path_candidates:
+        return {"available": False}
+
+    net_income_yield_pct = quantize_decimal(projection.get("net_income_yield_pct"), "0.01") or ZERO
+    transaction_drag_pct = quantize_decimal(projection.get("transaction_drag_pct"), "0.01") or ZERO
+
+    def evaluate_path(candidate_path: dict) -> dict | None:
+        rows = candidate_path["rows"]
+        if len(rows) < 2:
+            return None
+        current_row = rows[0]
+        current_price = current_row.get("projected_price")
+        if current_price in {None, ZERO}:
+            return None
+        search_limit = candidate_path.get("entry_search_months") or 0
+        entry_candidates = []
+        for entry_row in rows:
+            entry_month_number = int(entry_row.get("month_number") or 0)
+            entry_price = entry_row.get("projected_price")
+            if entry_price in {None, ZERO}:
+                continue
+            if entry_month_number > search_limit:
+                continue
+            best_exit = None
+            for exit_row in rows:
+                exit_month_number = int(exit_row.get("month_number") or 0)
+                exit_price = exit_row.get("projected_price")
+                if exit_month_number <= entry_month_number or exit_price in {None, ZERO}:
+                    continue
+                holding_months = exit_month_number - entry_month_number
+                if holding_months <= 0:
+                    continue
+                price_return_pct = quantize_decimal(
+                    percentage_change(exit_price, entry_price),
+                    "0.01",
+                )
+                if price_return_pct is None:
+                    continue
+                income_support_pct = quantize_decimal(
+                    net_income_yield_pct * Decimal(str(holding_months / 12)),
+                    "0.01",
+                ) or ZERO
+                trade_return_pct = quantize_decimal(
+                    price_return_pct + income_support_pct - transaction_drag_pct,
+                    "0.01",
+                )
+                if trade_return_pct is None:
+                    continue
+                calendar_adjusted_return_pct = annualize_return_pct(
+                    trade_return_pct,
+                    max(exit_month_number, 1),
+                )
+                exit_candidate = {
+                    "exit_row": exit_row,
+                    "price_return_pct": price_return_pct,
+                    "income_support_pct": income_support_pct,
+                    "trade_return_pct": trade_return_pct,
+                    "calendar_adjusted_return_pct": quantize_decimal(calendar_adjusted_return_pct, "0.01"),
+                    "holding_months": holding_months,
+                }
+                if best_exit is None:
+                    best_exit = exit_candidate
+                    continue
+                current_score = exit_candidate.get("calendar_adjusted_return_pct")
+                best_score = best_exit.get("calendar_adjusted_return_pct")
+                if (
+                    current_score is not None
+                    and (
+                        best_score is None
+                        or current_score > best_score
+                        or (
+                            current_score == best_score
+                            and (
+                                exit_candidate["trade_return_pct"] > best_exit["trade_return_pct"]
+                                or (
+                                    exit_candidate["trade_return_pct"] == best_exit["trade_return_pct"]
+                                    and exit_month_number < int(best_exit["exit_row"].get("month_number") or 999)
+                                )
+                            )
+                        )
+                    )
+                ):
+                    best_exit = exit_candidate
+            if best_exit is None:
+                continue
+            discount_vs_now_pct = None
+            if current_price not in {None, ZERO}:
+                discount_vs_now_pct = quantize_decimal(
+                    ((current_price - entry_price) / current_price) * ONE_HUNDRED,
+                    "0.01",
+                )
+            entry_candidates.append(
+                {
+                    "entry_row": entry_row,
+                    "entry_month_number": entry_month_number,
+                    "entry_price": entry_price,
+                    "entry_date": entry_row.get("projected_date"),
+                    "buy_window_label": format_projection_month_window(
+                        entry_row.get("projected_date"),
+                        entry_month_number,
+                    ),
+                    "discount_vs_now_pct": discount_vs_now_pct,
+                    **best_exit,
+                }
+            )
+        if not entry_candidates:
+            return None
+        return max(
+            entry_candidates,
+            key=lambda item: (
+                item.get("calendar_adjusted_return_pct")
+                if item.get("calendar_adjusted_return_pct") is not None
+                else Decimal("-9999"),
+                item["trade_return_pct"],
+                item.get("discount_vs_now_pct")
+                if item.get("discount_vs_now_pct") is not None
+                else Decimal("-9999"),
+                -(item["entry_month_number"] or 0),
+            ),
+        )
+
+    preferred_basis_key = "cycle_5y" if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY else "projection_12m"
+    primary_path = next((item for item in path_candidates if item["basis_key"] == preferred_basis_key), None) or path_candidates[0]
+    primary_plan = evaluate_path(primary_path)
+    secondary_path = next((item for item in path_candidates if item["basis_key"] != primary_path["basis_key"]), None)
+    secondary_plan = evaluate_path(secondary_path) if secondary_path else None
+    chosen_plan = primary_plan or secondary_plan
+    chosen_path = primary_path if primary_plan else secondary_path
+    if chosen_plan is None or chosen_path is None:
+        return {"available": False}
+
+    buy_month_number = chosen_plan["entry_month_number"]
+    buy_date = chosen_plan.get("entry_date")
+    buy_price = chosen_plan.get("entry_price")
+    exit_row = chosen_plan.get("exit_row") or {}
+    expected_exit_date = exit_row.get("projected_date")
+    exit_month_number = int(exit_row.get("month_number") or 0)
+    expected_exit_price = exit_row.get("projected_price")
+    if buy_month_number <= 1:
+        mode = "buy_now"
+        mode_label = "Comprar ya"
+    elif (chosen_plan.get("discount_vs_now_pct") or ZERO) >= Decimal("1.00"):
+        mode = "wait_pullback"
+        mode_label = "Esperar correccion"
+    else:
+        mode = "entrada_gradual"
+        mode_label = "Entrada gradual"
+
+    summary = (
+        f"La mejor ventana de entrada sale en {chosen_plan['buy_window_label'].lower()} alrededor de "
+        f"{buy_price:.4f} EUR. Desde ahi la senda apunta a {chosen_plan['trade_return_pct']:.2f} % neto "
+        f"hasta {format_projection_month_window(expected_exit_date, exit_month_number).lower()}."
+    )
+    if secondary_plan is not None and secondary_path is not None and secondary_plan.get("buy_window_label"):
+        secondary_delta = abs(
+            int(secondary_plan.get("entry_month_number") or 0) - int(chosen_plan.get("entry_month_number") or 0)
+        )
+        if secondary_delta <= 2:
+            summary += (
+                f" El contraste {secondary_path['basis_label'].lower()} confirma una ventana similar en "
+                f"{secondary_plan['buy_window_label'].lower()}."
+            )
+        else:
+            summary += (
+                f" El contraste {secondary_path['basis_label'].lower()} empuja a revisar tambien "
+                f"{secondary_plan['buy_window_label'].lower()}."
+            )
+
+    return {
+        "available": True,
+        "mode": mode,
+        "mode_label": mode_label,
+        "analysis_basis_key": chosen_path["basis_key"],
+        "analysis_basis_label": chosen_path["basis_label"],
+        "buy_month_number": buy_month_number,
+        "buy_date": buy_date,
+        "buy_date_label": buy_date.isoformat() if buy_date else "",
+        "buy_window_label": chosen_plan.get("buy_window_label") or "",
+        "buy_price": buy_price,
+        "discount_vs_now_pct": chosen_plan.get("discount_vs_now_pct"),
+        "expected_exit_month_number": exit_month_number,
+        "expected_exit_date": expected_exit_date,
+        "expected_exit_date_label": expected_exit_date.isoformat() if expected_exit_date else "",
+        "expected_exit_window_label": format_projection_month_window(expected_exit_date, exit_month_number),
+        "expected_exit_price": expected_exit_price,
+        "expected_holding_months": chosen_plan.get("holding_months"),
+        "price_return_pct": chosen_plan.get("price_return_pct"),
+        "income_support_pct": chosen_plan.get("income_support_pct"),
+        "expected_trade_return_pct": chosen_plan.get("trade_return_pct"),
+        "calendar_adjusted_return_pct": chosen_plan.get("calendar_adjusted_return_pct"),
+        "summary": summary,
+        "primary_basis_label": primary_path.get("basis_label") if primary_path else "",
+        "secondary_basis_label": secondary_path.get("basis_label") if secondary_path else "",
+    }
+
+
+def build_cycle_projection_monthly_trend_rows(card: dict) -> list[dict]:
+    position = card.get("position")
+    cycle_projection = card.get("cycle_projection_5y") or {}
+    if position is None or not cycle_projection.get("available"):
+        return []
+
+    current_price = getattr(position, "current_price_per_share", None)
+    path = cycle_projection.get("path") or []
+    if current_price in {None, ZERO} or not path:
+        return []
+
+    anchor_date = getattr(position, "latest_price_date", None) or django_timezone.localdate()
+    anchor_points = [(0, current_price, anchor_date)]
+    for index, step in enumerate(path, start=1):
+        projected_price = step.get("projected_price")
+        months_offset = parse_projection_label_months(step.get("label")) or (index * 6)
+        if projected_price in {None, ZERO} or months_offset <= 0:
+            continue
+        anchor_points.append(
+            (
+                months_offset,
+                projected_price,
+                step.get("projected_date") or add_calendar_months(anchor_date, months_offset),
+            )
+        )
+
+    return build_interpolated_projection_monthly_rows(anchor_points)
 
 
 def build_owned_cycle_trade_timing_plan(card: dict) -> dict:
@@ -14377,6 +14656,7 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         Decimal("12.00"),
     )
     strategy = get_optimizer_strategy_config(strategy_mode)
+    purchase_timing = build_candidate_purchase_timing_plan(card, strategy["mode"])
     if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY:
         primary_signal_pct = robust_cycle_support_score
         secondary_signal_pct = robust_return_signal_pct
@@ -14469,6 +14749,7 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         "model_uncertainty_penalty_pct": uncertainty_profile.get("model_uncertainty_penalty_pct") or ZERO,
         "external_signal_penalty_pct": uncertainty_profile.get("external_signal_penalty_pct") or ZERO,
         "coverage_penalty_pct": uncertainty_profile.get("coverage_penalty_pct") or ZERO,
+        "purchase_timing": purchase_timing,
     }
 
 
@@ -15199,6 +15480,7 @@ def build_equity_allocation_plan(
             continue
         if scenario is None:
             scenario = build_optimizer_allocation_scenario(candidate, allocated_amount)
+        purchase_timing = dict(candidate.get("purchase_timing") or {"available": False})
         allocations.append(
             {
                 "rank": rank,
@@ -15268,6 +15550,7 @@ def build_equity_allocation_plan(
                 "max_drawdown_pct": candidate["max_drawdown_pct"],
                 "current_drawdown_pct": candidate["current_drawdown_pct"],
                 "projected_price": candidate["projection"].get("projected_price"),
+                "purchase_timing": purchase_timing,
             }
         )
 
@@ -15441,6 +15724,7 @@ def build_equity_allocation_plan(
         )
 
     top_pick = allocations[0] if allocations else None
+    top_pick_purchase_timing = dict(top_pick.get("purchase_timing") or {}) if top_pick else {}
     return {
         "available": bool(allocations),
         "reason": reason,
@@ -15495,6 +15779,7 @@ def build_equity_allocation_plan(
         "ticket_filter_note": ticket_filter_note,
         "reserve_reason": reserve_reason,
         "top_pick": top_pick,
+        "top_pick_purchase_timing": top_pick_purchase_timing,
         "methodology_note": (
             f"Esta ejecucion usa la estrategia {strategy['label']}: "
             f"prioriza la lectura de {strategy['primary_horizon_label']} y deja {strategy['secondary_horizon_label']} como contraste secundario para reforzar o penalizar la jerarquia final. "

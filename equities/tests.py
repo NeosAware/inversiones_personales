@@ -5275,6 +5275,7 @@ class EquitiesServicesTests(TestCase):
 
     @override_settings(EQUITIES_IBEX_UNIVERSE_LIMIT=1)
     def test_process_equity_optimization_run_persists_summary_and_report(self):
+        analysis_day = date(2026, 4, 25)
         run = EquityOptimizationRun.objects.create(
             reference_code="OPT-TEST-001",
             label="Cartera de prueba",
@@ -5323,6 +5324,13 @@ class EquitiesServicesTests(TestCase):
                 "cycle_phase": "Expansion",
                 "current_drawdown_pct": Decimal("-3.00"),
                 "max_drawdown_pct": Decimal("-20.00"),
+                "monthly_path": [
+                    {"label": "1M", "projected_date": analysis_day + timedelta(days=30), "projected_price": Decimal("10.8200")},
+                    {"label": "3M", "projected_date": analysis_day + timedelta(days=90), "projected_price": Decimal("10.5000")},
+                    {"label": "6M", "projected_date": analysis_day + timedelta(days=180), "projected_price": Decimal("11.2400")},
+                    {"label": "9M", "projected_date": analysis_day + timedelta(days=270), "projected_price": Decimal("11.5600")},
+                    {"label": "12M", "projected_date": analysis_day + timedelta(days=365), "projected_price": Decimal("11.6800")},
+                ],
             },
         }
         dashboard = {
@@ -5351,7 +5359,12 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(run.summary_data["selected_sectors"], ["Energia"])
         self.assertEqual(run.summary_data["selected_owned_tickers"], ["IBE"])
         self.assertEqual(run.summary_data["top_pick_name"], "Iberdrola")
+        self.assertTrue(run.summary_data["top_pick_buy_window_label"])
+        self.assertIsNotNone(run.summary_data["top_pick_buy_price"])
         self.assertIsNone(run.summary_data["weighted_cycle_return_annual_pct"])
+        self.assertTrue(run.allocations_data[0]["purchase_timing"]["available"])
+        self.assertTrue(run.allocations_data[0]["purchase_timing"]["buy_window_label"])
+        self.assertIsNotNone(run.allocations_data[0]["purchase_timing"]["buy_price"])
         self.assertEqual(run.progress_data["percent"], 100)
         self.assertEqual(run.progress_data["note"], "Optimizacion completada")
         self.assertEqual(run.progress_data["stage_key"], "report")
@@ -5553,6 +5566,18 @@ class EquitiesServicesTests(TestCase):
             ("12M principal", "12m_primary"),
             ("5A principal", "5y_primary"),
         ]
+        EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("11.0000"),
+        )
 
         for index, analysis_day in enumerate(scheduled_days, start=1):
             for strategy_label, strategy_mode in strategy_runs:
@@ -5584,8 +5609,17 @@ class EquitiesServicesTests(TestCase):
                             "ticker": "IBE",
                             "net_projected_return_pct": 12.0 if strategy_mode == "12m_primary" else 10.0,
                             "cycle_return_5y_pct": 74.0 if strategy_mode == "12m_primary" else 70.0,
+                            "allocated_amount": 25000.0,
+                            "allocated_weight_pct": 25.0,
                             "reliability_label": "Alta",
                             "reliability_score": 82.0 if strategy_mode == "12m_primary" else 78.0,
+                            "purchase_timing": {
+                                "available": True,
+                                "buy_date": (analysis_day + timedelta(days=30)).isoformat(),
+                                "buy_window_label": f"mayo {analysis_day.year}",
+                                "buy_price": 10.45,
+                                "mode_label": "Esperar correccion",
+                            },
                             "cycle_yearly_margins": [
                                 {"year_number": 1, "label": "AÑO 1", "margin_pct": 12.0 if strategy_mode == "12m_primary" else 10.0},
                                 {"year_number": 2, "label": "AÑO 2", "margin_pct": 7.0},
@@ -5600,8 +5634,17 @@ class EquitiesServicesTests(TestCase):
                             "ticker": "REP",
                             "net_projected_return_pct": 6.0,
                             "cycle_return_5y_pct": 28.0,
+                            "allocated_amount": 18000.0,
+                            "allocated_weight_pct": 18.0,
                             "reliability_label": "Media",
                             "reliability_score": 64.0,
+                            "purchase_timing": {
+                                "available": True,
+                                "buy_date": (analysis_day + timedelta(days=18)).isoformat(),
+                                "buy_window_label": f"mayo {analysis_day.year}",
+                                "buy_price": 13.10,
+                                "mode_label": "Comprar ya",
+                            },
                             "cycle_yearly_margins": [
                                 {"year_number": 1, "label": "AÑO 1", "margin_pct": 6.0},
                                 {"year_number": 2, "label": "AÑO 2", "margin_pct": 4.0},
@@ -5613,8 +5656,17 @@ class EquitiesServicesTests(TestCase):
                             "ticker": "ACS",
                             "net_projected_return_pct": 8.0,
                             "cycle_return_5y_pct": 40.0,
+                            "allocated_amount": 22000.0,
+                            "allocated_weight_pct": 22.0,
                             "reliability_label": "Media",
                             "reliability_score": 60.0,
+                            "purchase_timing": {
+                                "available": True,
+                                "buy_date": (analysis_day + timedelta(days=12)).isoformat(),
+                                "buy_window_label": f"mayo {analysis_day.year}",
+                                "buy_price": 39.25,
+                                "mode_label": "Comprar ya",
+                            },
                             "cycle_yearly_margins": [
                                 {"year_number": 1, "label": "AÃ‘O 1", "margin_pct": 8.0},
                                 {"year_number": 2, "label": "AÃ‘O 2", "margin_pct": 5.0},
@@ -5649,11 +5701,16 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(top_row["average_return_5y_3m"], Decimal("72.0"))
         self.assertEqual(top_row["average_reliability_label_3m"], "Alta")
         self.assertEqual(top_row["average_reliability_score_3m"], Decimal("80.0"))
+        self.assertTrue(top_row["buy_recommendation_available"])
+        self.assertEqual(top_row["average_buy_price_3m"], Decimal("10.4500"))
+        self.assertEqual(top_row["average_allocated_amount_3m"], Decimal("25000.00"))
         self.assertEqual([item["ticker"] for item in context["rows"][:3]], ["IBE", "ACS", "REP"])
         self.assertEqual(
             [item["margin_pct"] for item in top_row["average_year_margins"]],
             [Decimal("11.0"), Decimal("7.0"), Decimal("8.0"), Decimal("9.0"), Decimal("10.0")],
         )
+        self.assertTrue(context["top_non_owned_recommendation"]["available"])
+        self.assertEqual(context["top_non_owned_recommendation"]["ticker"], "ACS")
 
     def test_dashboard_can_extend_optimizer_to_full_ibex_universe(self):
         acerinox = find_equity_company_profile("Acerinox")
@@ -7415,6 +7472,67 @@ class EquitiesServicesTests(TestCase):
         mocked_cached_dashboard.assert_called_once()
         mocked_live_dashboard.assert_not_called()
 
+    def test_optimizer_plan_exposes_purchase_timing_for_each_allocation(self):
+        anchor_day = date(2026, 4, 25)
+        card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                broker="Interactive Brokers",
+                ticker="ACS",
+                quote_symbol="ACS.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="ACS",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("40.0000"),
+            ),
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "sector_label": "Infraestructuras",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": "Tendencia favorable."},
+            "projection_reliability": {"label": "Alta", "score": Decimal("84.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("14.50"),
+                "price_return_pct": Decimal("11.00"),
+                "price_low_return_pct": Decimal("-3.00"),
+                "price_high_return_pct": Decimal("18.00"),
+                "projected_price": Decimal("46.2000"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("76.00"),
+                "gross_dividend_yield_pct": Decimal("3.00"),
+                "net_income_yield_pct": Decimal("2.40"),
+                "transaction_drag_pct": Decimal("0.80"),
+                "annualized_volatility_pct": Decimal("12.00"),
+                "positive_year_ratio_pct": Decimal("70.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.50"),
+                "max_drawdown_pct": Decimal("-18.00"),
+                "monthly_path": [
+                    {"label": "1M", "projected_date": anchor_day + timedelta(days=30), "projected_price": Decimal("39.1000")},
+                    {"label": "3M", "projected_date": anchor_day + timedelta(days=90), "projected_price": Decimal("37.8000")},
+                    {"label": "6M", "projected_date": anchor_day + timedelta(days=180), "projected_price": Decimal("42.9000")},
+                    {"label": "9M", "projected_date": anchor_day + timedelta(days=270), "projected_price": Decimal("44.8000")},
+                    {"label": "12M", "projected_date": anchor_day + timedelta(days=365), "projected_price": Decimal("46.2000")},
+                ],
+            },
+            "cycle_projection_5y": {"available": False},
+        }
+
+        plan = build_equity_allocation_plan([card], Decimal("80000"), Decimal("40"))
+
+        self.assertTrue(plan["available"])
+        self.assertEqual(len(plan["allocations"]), 1)
+        purchase_timing = plan["allocations"][0]["purchase_timing"]
+        self.assertTrue(purchase_timing["available"])
+        self.assertGreaterEqual(purchase_timing["buy_month_number"], 1)
+        self.assertTrue(purchase_timing["buy_window_label"])
+        self.assertIsNotNone(purchase_timing["buy_price"])
+        self.assertEqual(plan["top_pick_purchase_timing"]["buy_window_label"], purchase_timing["buy_window_label"])
+
 @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=False, EQUITIES_IBEX_UNIVERSE_ANALYSIS=False)
 @override_settings(EQUITIES_FETCH_FUNDAMENTALS=False)
 class EquitiesViewTests(TestCase):
@@ -8904,6 +9022,111 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "35,0 %")
         self.assertContains(response, "Repsol")
         self.assertContains(response, "25,0 %")
+
+    def test_equities_page_shows_purchase_recommendation_and_gantt_for_optimization(self):
+        scheduled_day = timezone.localdate() - timedelta(days=3)
+        EquityOptimizationRun.objects.create(
+            reference_code="OPT-SCHED-BUY-12M",
+            label="Programada 12M",
+            total_investment=Decimal("200000"),
+            max_company_pct=Decimal("30"),
+            max_total_positions=5,
+            max_sector_positions=2,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            report_html="<html>scheduled</html>",
+            progress_data={
+                "strategy_label": "12M principal",
+                "strategy_mode": "12m_primary",
+                "schedule_kind": "nightly",
+                "scheduled_run_key": f"scheduled-optimization:{scheduled_day.isoformat()}",
+                "scheduled_analysis_date": scheduled_day.isoformat(),
+                "scheduled_weekdays_label": "martes y jueves",
+            },
+            summary_data={
+                "available": True,
+                "strategy_label": "12M principal",
+                "scheduled_analysis_date": scheduled_day.isoformat(),
+            },
+            allocations_data=[
+                {
+                    "rank": 1,
+                    "company_name": "ACS",
+                    "ticker": "ACS",
+                    "allocated_amount": 22000.0,
+                    "allocated_weight_pct": 22.0,
+                    "net_projected_return_pct": 8.0,
+                    "cycle_return_5y_pct": 40.0,
+                    "reliability_label": "Media",
+                    "reliability_score": 60.0,
+                    "purchase_timing": {
+                        "available": True,
+                        "buy_date": (scheduled_day + timedelta(days=12)).isoformat(),
+                        "buy_window_label": "mayo 2026",
+                        "buy_price": 39.25,
+                        "mode_label": "Comprar ya",
+                    },
+                    "cycle_yearly_margins": [
+                        {"year_number": 1, "label": "ANO 1", "margin_pct": 8.0},
+                    ],
+                },
+            ],
+        )
+        EquityOptimizationRun.objects.create(
+            reference_code="OPT-LATEST-BUY",
+            label="Ultima optimizacion",
+            total_investment=Decimal("180000"),
+            max_company_pct=Decimal("30"),
+            max_total_positions=5,
+            max_sector_positions=2,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            report_html="<html>latest</html>",
+            summary_data={
+                "available": True,
+                "strategy_label": "12M principal",
+                "projected_gain_total": 18000,
+                "weighted_return_pct": 10.0,
+                "weighted_low_return_pct": -4.0,
+                "allocations_count": 1,
+                "top_pick_name": "ACS",
+                "top_pick_buy_window_label": "mayo 2026",
+                "top_pick_buy_price": 39.25,
+            },
+            allocations_data=[
+                {
+                    "rank": 1,
+                    "company_name": "ACS",
+                    "ticker": "ACS",
+                    "status_label": "Radar IBEX",
+                    "sector_label": "Infraestructuras",
+                    "trade_alert_label": "Comprar",
+                    "reference_label": "IBEX 35",
+                    "external_signal_label": "Prensa neutra",
+                    "allocated_amount": 24000.0,
+                    "allocated_weight_pct": 24.0,
+                    "net_projected_return_pct": 11.0,
+                    "low_return_pct": -3.0,
+                    "expected_net_dividend_income": 200.0,
+                    "annual_cost_used": 12.0,
+                    "roundtrip_total_cost": 40.0,
+                    "purchase_timing": {
+                        "available": True,
+                        "buy_date": (timezone.localdate() + timedelta(days=10)).isoformat(),
+                        "buy_window_label": "mayo 2026",
+                        "buy_price": 39.25,
+                        "mode_label": "Comprar ya",
+                        "expected_trade_return_pct": 11.4,
+                    },
+                },
+            ],
+        )
+
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Primera compra tactica")
+        self.assertContains(response, "mayo 2026")
+        self.assertContains(response, "Gantt tactico de entradas e importe recomendado")
+        self.assertContains(response, "39,2500 EUR")
 
     def helper_equities_page_shows_scheduled_optimization_persistence_panel_legacy(self):
         today = timezone.localdate()

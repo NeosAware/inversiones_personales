@@ -80,7 +80,7 @@
       padding:7px 12px; border-radius:999px; border:1px solid var(--line);
       background:#f7fafc; color:#244355; font-size:12px; font-weight:700;
     }
-    .mini-grid{ display:grid; gap:14px; grid-template-columns:repeat(6, minmax(0,1fr)); }
+    .mini-grid{ display:grid; gap:14px; grid-template-columns:repeat(7, minmax(0,1fr)); }
     .mini{
       border:1px solid var(--line); border-radius:18px; background:#fff; padding:16px;
     }
@@ -137,7 +137,7 @@
           <div class="card box"><span>Dividendos netos</span><strong>{{ plan.net_dividend_income_total|floatformat:0 }} EUR</strong><small>Flujo esperado menos comisiones de dividendo.</small></div>
           <div class="card box"><span>Coste anual</span><strong>{{ plan.annual_cost_total|floatformat:0 }} EUR</strong><small>Custodia y mantenimiento.</small></div>
           <div class="card box"><span>Compra + venta</span><strong>{{ plan.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Coste total de ida y vuelta.</small></div>
-          <div class="card box"><span>Top pick</span><strong>{% if plan.top_pick %}{{ plan.top_pick.position.company_name }}{% else %}-{% endif %}</strong><small>Mejor equilibrio actual con {{ plan.primary_horizon_label|default:"12 meses" }} como motor y {{ plan.secondary_horizon_label|default:"5 anos" }} como contraste.</small></div>
+          <div class="card box"><span>Top pick</span><strong>{% if plan.top_pick %}{{ plan.top_pick.position.company_name }}{% else %}-{% endif %}</strong><small>Mejor equilibrio actual con {{ plan.primary_horizon_label|default:"12 meses" }} como motor y {{ plan.secondary_horizon_label|default:"5 anos" }} como contraste.{% if plan.top_pick_purchase_timing.buy_window_label %} Compra sugerida en {{ plan.top_pick_purchase_timing.buy_window_label }}.{% endif %}</small></div>
         </div>
       {% else %}
         <div class="note">{{ plan.reason }}</div>
@@ -197,7 +197,7 @@
         <h2>Tabla de asignacion</h2>
         <div class="card">
           <table>
-            <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Retorno robusto</th><th>Peor escenario</th><th>Shock</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
+            <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Compra sugerida</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Retorno robusto</th><th>Peor escenario</th><th>Shock</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
             <tbody>
               {% for item in plan.allocations %}
                 <tr>
@@ -206,6 +206,7 @@
                   <td>{{ item.sector_label }}</td>
                   <td>{{ item.status_label }}</td>
                   <td>{{ item.trade_alert_label }}</td>
+                  <td>{% if item.purchase_timing.available %}<strong>{% if item.purchase_timing.buy_window_label %}{{ item.purchase_timing.buy_window_label }}{% elif item.purchase_timing.buy_date %}{{ item.purchase_timing.buy_date|date:"Y-m-d" }}{% else %}-{% endif %}</strong><br><span class="muted">{% if item.purchase_timing.buy_price is not None %}{{ item.purchase_timing.buy_price|floatformat:4 }} EUR{% else %}-{% endif %}{% if item.purchase_timing.mode_label %} | {{ item.purchase_timing.mode_label }}{% endif %}</span>{% else %}<span class="muted">Sin ventana clara</span>{% endif %}</td>
                   <td>{{ item.external_signal_label }}{% if item.external_signal_score %}<br><span class="muted">{% if item.external_signal_score > 0 %}+{% endif %}{{ item.external_signal_score|floatformat:2 }}</span>{% endif %}</td>
                   <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>
                   <td>{{ item.allocated_amount|floatformat:0 }} EUR</td>
@@ -249,6 +250,7 @@
 
           <div class="mini-grid">
             <div class="mini"><span>Peso sugerido</span><strong>{{ entry.allocation.allocated_weight_pct|floatformat:1 }} %</strong><small>{{ entry.allocation.allocated_amount|floatformat:0 }} EUR</small></div>
+            <div class="mini"><span>Compra sugerida</span><strong>{% if entry.allocation.purchase_timing.available %}{% if entry.allocation.purchase_timing.buy_window_label %}{{ entry.allocation.purchase_timing.buy_window_label }}{% elif entry.allocation.purchase_timing.buy_date %}{{ entry.allocation.purchase_timing.buy_date|date:"Y-m-d" }}{% else %}-{% endif %}{% else %}-{% endif %}</strong><small>{% if entry.allocation.purchase_timing.buy_price is not None %}{{ entry.allocation.purchase_timing.buy_price|floatformat:4 }} EUR{% endif %}{% if entry.allocation.purchase_timing.mode_label %} | {{ entry.allocation.purchase_timing.mode_label }}{% endif %}</small></div>
             <div class="mini"><span>Retorno neto 12M</span><strong class="{% if entry.allocation.net_projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ entry.allocation.net_projected_return_pct|floatformat:2 }} %</strong><small>Peor escenario {{ entry.allocation.low_return_pct|floatformat:2 }} %</small></div>
             <div class="mini"><span>Dividendos netos</span><strong>{{ entry.allocation.expected_net_dividend_income|floatformat:0 }} EUR</strong><small>Coste anual {{ entry.allocation.annual_cost_used|floatformat:0 }} EUR</small></div>
             <div class="mini"><span>Compra + venta</span><strong>{{ entry.allocation.roundtrip_total_cost|floatformat:0 }} EUR</strong><small>Entrada {{ entry.allocation.purchase_total_cost|floatformat:0 }} EUR</small></div>

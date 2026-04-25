@@ -34,6 +34,7 @@ from .nightly_analysis import (
 )
 from .optimization_runs import (
     build_fallback_report_pdf_html,
+    build_optimization_purchase_timeline,
     build_scheduled_optimization_persistence_context,
     launch_equity_optimization_run_pair,
     render_report_pdf,
@@ -301,11 +302,47 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             None,
         )
         context["scheduled_optimization_persistence"] = build_scheduled_optimization_persistence_context()
+        context["optimization_purchase_timeline"] = build_optimization_purchase_timeline(
+            context["latest_completed_optimization"]
+        )
         context["prefill_source_filename"] = kwargs.get("prefill_source_filename")
         context["equity_company_catalog"] = get_equity_company_catalog()
         context["today"] = timezone.localdate()
         for row in context["scheduled_optimization_persistence"].get("rows", []):
             row["detail_url"] = reverse("equities:ibex_detail", kwargs={"ticker": row["ticker"]})
+        next_purchase_recommendation = dict(
+            context["scheduled_optimization_persistence"].get("top_non_owned_recommendation") or {"available": False}
+        )
+        if next_purchase_recommendation.get("available"):
+            next_purchase_recommendation["detail_url"] = reverse(
+                "equities:ibex_detail",
+                kwargs={"ticker": next_purchase_recommendation["ticker"]},
+            )
+        elif context["optimization_purchase_timeline"].get("next_new_row"):
+            next_new_row = context["optimization_purchase_timeline"]["next_new_row"]
+            next_purchase_recommendation = {
+                "available": True,
+                "ticker": next_new_row["ticker"],
+                "company_name": next_new_row["company_name"],
+                "buy_date": next_new_row.get("buy_date"),
+                "buy_date_label": next_new_row.get("buy_date").isoformat() if next_new_row.get("buy_date") else "",
+                "buy_window_label": next_new_row.get("buy_window_label", ""),
+                "buy_price": next_new_row.get("buy_price"),
+                "allocated_amount": next_new_row.get("allocated_amount"),
+                "allocated_weight_pct": next_new_row.get("allocated_weight_pct"),
+                "presence_pct_3m": None,
+                "strategy_labels_3m_label": (
+                    context["latest_completed_optimization"].summary_data.get("strategy_label", "")
+                    if context["latest_completed_optimization"] is not None
+                    else ""
+                ),
+                "summary": (
+                    f"La ultima optimizacion propone abrir {next_new_row['company_name']} en "
+                    f"{str(next_new_row.get('buy_window_label') or '').lower()}."
+                ),
+                "detail_url": reverse("equities:ibex_detail", kwargs={"ticker": next_new_row["ticker"]}),
+            }
+        context["next_purchase_recommendation"] = next_purchase_recommendation
         self._ensure_purchase_forecast_baselines(positions)
         capture_equity_ticket_snapshots(
             dashboard["owned_history_cards"],
