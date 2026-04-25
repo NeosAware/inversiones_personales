@@ -5602,12 +5602,13 @@ def build_aggregated_tracking_benchmark_context(ticket_items: list[dict]) -> dic
     }
 
 
-def build_aggregated_ticket_series(ticket_items: list[dict], series_key: str) -> list[dict]:
+def build_aggregated_series_entries(series_items: list[dict]) -> list[dict]:
     prepared_items = []
     all_dates = set()
-    for item in ticket_items:
+    for item in series_items:
+        baseline_date = item.get("baseline_date")
         normalized_series = {}
-        for point in item.get(series_key, []):
+        for point in item.get("series", []):
             point_date = point.get("date")
             point_value = point.get("value")
             if point_date is None or point_value is None:
@@ -5626,7 +5627,7 @@ def build_aggregated_ticket_series(ticket_items: list[dict], series_key: str) ->
         all_dates.update(point_date for point_date, _ in sorted_series)
         prepared_items.append(
             {
-                "baseline_date": getattr(item.get("baseline_snapshot"), "snapshot_date", None),
+                "baseline_date": baseline_date,
                 "series": sorted_series,
                 "series_meta": normalized_series,
                 "cursor": 0,
@@ -5674,6 +5675,18 @@ def build_aggregated_ticket_series(ticket_items: list[dict], series_key: str) ->
                 }
             )
     return aggregated
+
+
+def build_aggregated_ticket_series(ticket_items: list[dict], series_key: str) -> list[dict]:
+    return build_aggregated_series_entries(
+        [
+            {
+                "baseline_date": getattr(item.get("baseline_snapshot"), "snapshot_date", None),
+                "series": item.get(series_key, []),
+            }
+            for item in ticket_items
+        ]
+    )
 
 
 def build_aggregated_ticket_actual_series(ticket_items: list[dict]) -> list[dict]:
@@ -5755,6 +5768,395 @@ def build_tracking_series_vs_dynamic_baseline(
             }
         )
     return transformed
+
+
+def build_tracking_series_vs_static_baseline(
+    series: list[dict],
+    baseline_value: Decimal | None = None,
+    *,
+    as_percentage: bool = False,
+) -> list[dict]:
+    normalized_points = normalize_tracking_series(series)
+    if not normalized_points:
+        return []
+
+    resolved_baseline = baseline_value
+    if resolved_baseline is None:
+        resolved_baseline = normalized_points[0]["value"]
+    if resolved_baseline is None:
+        return []
+    resolved_baseline = quantize_decimal(Decimal(str(resolved_baseline)), "0.01")
+    if resolved_baseline is None or resolved_baseline <= ZERO:
+        return []
+
+    transformed = []
+    for point in normalized_points:
+        point_value = Decimal(str(point["value"]))
+        transformed_value = (
+            percentage_change(point_value, resolved_baseline)
+            if as_percentage
+            else quantize_decimal(point_value - resolved_baseline, "0.01")
+        )
+        if transformed_value is None:
+            continue
+        transformed.append(
+            {
+                **point,
+                "value": quantize_decimal(transformed_value, "0.01") or ZERO,
+            }
+        )
+    return transformed
+
+
+def resolve_position_price_history_points(position: EquityPosition) -> list[EquityPriceHistory]:
+    prefetched = getattr(position, "_prefetched_objects_cache", {}).get("price_history")
+    if prefetched is not None:
+        return sorted(prefetched, key=lambda point: point.price_date)
+    return list(position.price_history.order_by("price_date"))
+
+
+def build_position_market_value_history_series(
+    position: EquityPosition,
+    history_points: list[EquityPriceHistory],
+    *,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    rows = []
+    last_before_start = None
+    for point in history_points:
+        if point.price_date is None or point.close_price is None:
+            continue
+        if point.price_date < start_date:
+            last_before_start = point
+            continue
+        if point.price_date > end_date:
+            break
+        rows.append(
+            {
+                "date": point.price_date,
+                "value": quantize_decimal(position.shares * point.close_price, "0.01") or ZERO,
+            }
+        )
+
+    if last_before_start is not None and (not rows or rows[0]["date"] > start_date):
+        rows.insert(
+            0,
+            {
+                "date": start_date,
+                "value": quantize_decimal(position.shares * last_before_start.close_price, "0.01") or ZERO,
+            },
+        )
+
+    return normalize_tracking_series(rows)
+
+
+def build_position_benchmark_value_series(
+    position: EquityPosition,
+    history_points: list[EquityPriceHistory],
+    *,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    rows = []
+    last_before_start = None
+    for point in history_points:
+        if point.price_date is None or point.close_price is None or point.benchmark_close is None:
+            continue
+        if point.price_date < start_date:
+            last_before_start = point
+            continue
+        if point.price_date > end_date:
+            break
+        rows.append(
+            {
+                "date": point.price_date,
+                "close_price": Decimal(str(point.close_price)),
+                "benchmark_close": Decimal(str(point.benchmark_close)),
+            }
+        )
+
+    if last_before_start is not None and (not rows or rows[0]["date"] > start_date):
+        rows.insert(
+            0,
+            {
+                "date": start_date,
+                "close_price": Decimal(str(last_before_start.close_price)),
+                "benchmark_close": Decimal(str(last_before_start.benchmark_close)),
+            },
+        )
+
+    if not rows:
+        return []
+
+    base_market_value = quantize_decimal(position.shares * rows[0]["close_price"], "0.01")
+    base_benchmark_close = quantize_decimal(rows[0]["benchmark_close"], "0.0001")
+    if base_market_value is None or base_market_value <= ZERO or base_benchmark_close is None or base_benchmark_close <= ZERO:
+        return []
+
+    benchmark_series = []
+    for row in rows:
+        benchmark_close = quantize_decimal(row["benchmark_close"], "0.0001")
+        if benchmark_close is None or benchmark_close <= ZERO:
+            continue
+        benchmark_value = quantize_decimal(
+            base_market_value * (benchmark_close / base_benchmark_close),
+            "0.01",
+        )
+        if benchmark_value is None:
+            continue
+        benchmark_series.append({"date": row["date"], "value": benchmark_value})
+
+    return normalize_tracking_series(benchmark_series)
+
+
+def build_position_projection_market_value_series(
+    card: dict,
+    actual_series: list[dict],
+    *,
+    horizon: str,
+) -> list[dict]:
+    actual_points = normalize_tracking_series(actual_series)
+    if not actual_points:
+        return []
+
+    latest_actual = actual_points[-1]
+    position = card["position"]
+    projection_series = [
+        {
+            "date": latest_actual["date"],
+            "value": latest_actual["value"],
+            "is_anchor": True,
+            "label": "Hoy",
+        }
+    ]
+    if horizon == "12m":
+        projection_path = resolve_projection_tracking_path(card.get("projection"))
+    else:
+        projection_path = (card.get("cycle_projection_5y") or {}).get("path") or []
+
+    for index, step in enumerate(projection_path, start=1):
+        projected_date = step.get("projected_date")
+        projected_price = step.get("projected_price")
+        if projected_date is None or projected_price is None or projected_date <= latest_actual["date"]:
+            continue
+        projection_series.append(
+            {
+                "date": projected_date,
+                "value": quantize_decimal(position.shares * Decimal(str(projected_price)), "0.01") or ZERO,
+                "is_anchor": True,
+                "label": str(step.get("label") or (f"{index}M" if horizon == "12m" else f"{index}A")).strip(),
+            }
+        )
+
+    if len(projection_series) == 1:
+        if horizon == "12m":
+            fallback_offsets = (("1A", 365),)
+        else:
+            fallback_offsets = tuple((f"{year}A", 365 * year) for year in range(1, 6))
+        for label, offset_days in fallback_offsets:
+            projection_series.append(
+                {
+                    "date": latest_actual["date"] + timedelta(days=offset_days),
+                    "value": latest_actual["value"],
+                    "is_anchor": True,
+                    "label": label,
+                }
+            )
+
+    return densify_projected_tracking_series(projection_series)
+
+
+def build_portfolio_weight_mix_label(history_cards: list[dict], max_items: int = 3) -> str:
+    weighted_rows = []
+    total_value = ZERO
+    for card in history_cards:
+        position = card["position"]
+        current_value = quantize_decimal(position.current_value, "0.01") or ZERO
+        if current_value <= ZERO:
+            continue
+        total_value += current_value
+        weighted_rows.append(
+            {
+                "ticker": position.ticker,
+                "company_name": position.company_name,
+                "value": current_value,
+            }
+        )
+
+    if total_value <= ZERO or not weighted_rows:
+        return ""
+
+    labels = []
+    for row in sorted(weighted_rows, key=lambda item: (-item["value"], item["company_name"]))[:max_items]:
+        weight_pct = quantize_decimal((row["value"] / total_value) * ONE_HUNDRED, "0.1") or ZERO
+        labels.append(f"{row['ticker']} {weight_pct}%")
+    return f"Peso actual: {', '.join(labels)}"
+
+
+def build_portfolio_summary_horizon_context(
+    history_cards: list[dict],
+    *,
+    horizon: str,
+) -> dict:
+    horizon_days = TRACKING_HORIZON_DAYS if horizon == "12m" else TRACKING_HORIZON_DAYS * 5
+    cards_with_history = []
+    latest_dates = []
+    history_by_position = {}
+
+    for card in history_cards:
+        position = card["position"]
+        history_points = resolve_position_price_history_points(position)
+        if len(history_points) < 2:
+            continue
+        history_by_position[position.id or id(position)] = history_points
+        latest_dates.append(history_points[-1].price_date)
+        cards_with_history.append(card)
+
+    if not cards_with_history or not latest_dates:
+        return {"available": False}
+
+    history_end = max(latest_dates)
+    requested_start = history_end - timedelta(days=horizon_days)
+    history_start = max(
+        next(
+            (point.price_date for point in history_by_position[card["position"].id or id(card["position"])] if point.price_date >= requested_start),
+            history_by_position[card["position"].id or id(card["position"])][0].price_date,
+        )
+        for card in cards_with_history
+    )
+
+    actual_entries = []
+    expected_entries = []
+    benchmark_entries = []
+    for card in cards_with_history:
+        position = card["position"]
+        history_points = history_by_position[position.id or id(position)]
+        actual_series = build_position_market_value_history_series(
+            position,
+            history_points,
+            start_date=history_start,
+            end_date=history_end,
+        )
+        if not actual_series:
+            continue
+        actual_entries.append(
+            {
+                "baseline_date": actual_series[0]["date"],
+                "series": actual_series,
+            }
+        )
+        expected_series = build_position_projection_market_value_series(
+            card,
+            actual_series,
+            horizon=horizon,
+        )
+        if expected_series:
+            expected_entries.append(
+                {
+                    "baseline_date": expected_series[0]["date"],
+                    "series": expected_series,
+                }
+            )
+        benchmark_series = build_position_benchmark_value_series(
+            position,
+            history_points,
+            start_date=history_start,
+            end_date=history_end,
+        )
+        if benchmark_series:
+            benchmark_entries.append(
+                {
+                    "baseline_date": benchmark_series[0]["date"],
+                    "series": benchmark_series,
+                }
+            )
+
+    actual_series = build_aggregated_series_entries(actual_entries)
+    expected_series = build_aggregated_series_entries(expected_entries)
+    benchmark_series = build_aggregated_series_entries(benchmark_entries)
+    if len(actual_series) < 2:
+        return {"available": False}
+
+    baseline_value = actual_series[0]["value"]
+    net_series = build_tracking_series_vs_static_baseline(actual_series, baseline_value)
+    net_expected_series = build_tracking_series_vs_static_baseline(expected_series, baseline_value)
+    return_series = build_tracking_series_vs_static_baseline(
+        actual_series,
+        baseline_value,
+        as_percentage=True,
+    )
+    return_expected_series = build_tracking_series_vs_static_baseline(
+        expected_series,
+        baseline_value,
+        as_percentage=True,
+    )
+    return_benchmark_series = build_tracking_series_vs_static_baseline(
+        benchmark_series,
+        baseline_value,
+        as_percentage=True,
+    )
+    net_chart = build_value_tracking_chart(
+        net_series,
+        net_expected_series,
+        time_marker_mode="month",
+        grid_marker_mode="month",
+    )
+    return_chart = build_value_tracking_chart(
+        return_series,
+        return_expected_series,
+        benchmark_series=return_benchmark_series,
+        value_suffix="%",
+        axis_formatter=format_percentage_axis_value,
+        time_marker_mode="month",
+        grid_marker_mode="month",
+    )
+    return {
+        "available": bool(net_chart.get("available") or return_chart.get("available")),
+        "history_start": actual_series[0]["date"],
+        "history_end": actual_series[-1]["date"],
+        "projection_end": expected_series[-1]["date"] if expected_series else actual_series[-1]["date"],
+        "range_label": f"Historico comun desde {actual_series[0]['date'].isoformat()}",
+        "baseline_value": baseline_value,
+        "actual_series": actual_series,
+        "expected_series": expected_series,
+        "benchmark_series": benchmark_series,
+        "net_series": net_series,
+        "net_expected_series": net_expected_series,
+        "return_series": return_series,
+        "return_expected_series": return_expected_series,
+        "return_benchmark_series": return_benchmark_series,
+        "net_chart": net_chart,
+        "return_chart": return_chart,
+    }
+
+
+def build_portfolio_summary_context(
+    history_cards: list[dict],
+    *,
+    benchmark_label: str | None = None,
+) -> dict:
+    owned_cards = [card for card in history_cards if card["position"].is_owned]
+    if not owned_cards:
+        return {"available": False}
+
+    horizon_12m = build_portfolio_summary_horizon_context(owned_cards, horizon="12m")
+    horizon_5y = build_portfolio_summary_horizon_context(owned_cards, horizon="5y")
+    return {
+        "available": bool(horizon_12m.get("available") or horizon_5y.get("available")),
+        "benchmark_label": benchmark_label or DEFAULT_BENCHMARK_NAME,
+        "weight_mix_label": build_portfolio_weight_mix_label(owned_cards),
+        "actual_series_12m": horizon_12m.get("actual_series", []),
+        "expected_series_12m": horizon_12m.get("expected_series", []),
+        "actual_series_5y": horizon_5y.get("actual_series", []),
+        "expected_series_5y": horizon_5y.get("expected_series", []),
+        "net_chart_12m": horizon_12m.get("net_chart", {"available": False}),
+        "net_chart_5y": horizon_5y.get("net_chart", {"available": False}),
+        "return_chart_12m": horizon_12m.get("return_chart", {"available": False}),
+        "return_chart_5y": horizon_5y.get("return_chart", {"available": False}),
+        "range_label_12m": horizon_12m.get("range_label", ""),
+        "range_label_5y": horizon_5y.get("range_label", ""),
+    }
 
 
 def build_tracking_rebased_comparison_series(
@@ -6783,7 +7185,10 @@ def build_equity_ticket_tracking_item(
     }
 
 
-def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
+def build_global_equity_ticket_tracking_item(
+    ticket_items: list[dict],
+    history_cards: list[dict] | None = None,
+) -> dict:
     actual_series = build_aggregated_ticket_actual_series(ticket_items)
     if not actual_series:
         return {"available": False}
@@ -6801,6 +7206,10 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         "0.01",
     ) or ZERO
     benchmark = build_aggregated_tracking_benchmark_context(ticket_items)
+    portfolio_summary = build_portfolio_summary_context(
+        history_cards or [],
+        benchmark_label=benchmark.get("label"),
+    )
     rebased_comparison = build_tracking_rebased_comparison_series(
         actual_series,
         invested_series,
@@ -6961,6 +7370,7 @@ def build_global_equity_ticket_tracking_item(ticket_items: list[dict]) -> dict:
         "invested_return_pct": quantize_decimal(actual_change_pct, "0.01"),
         "annualized_return_pct": quantize_decimal(comparable_returns.get("annual_equivalent_return_pct"), "0.01"),
         "benchmark": benchmark,
+        "portfolio_summary": portfolio_summary,
         "gap_value": gap_value,
         "gap_pct": percentage_change(latest_actual, current_expected_value) if current_expected_value is not None else None,
         "gap_tone": "good" if gap_value is not None and gap_value >= ZERO else "warn",
@@ -7043,7 +7453,7 @@ def build_equity_ticket_tracking_context(
         "anchor_date": earliest_baseline_date,
         "shared_anchor_date": tracking_anchor_date,
         "sale_timeline": build_tracking_sale_timeline_context(ticket_items),
-        "global": build_global_equity_ticket_tracking_item(ticket_items) if ticket_items else {"available": False},
+        "global": build_global_equity_ticket_tracking_item(ticket_items, history_cards=owned_cards) if ticket_items else {"available": False},
     }
 
 

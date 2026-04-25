@@ -48,11 +48,11 @@
     {% if ticket_tracking.global.chart.available %}
       {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.chart full_width=True title="Cartera reescalada vs IBEX" note="La cartera se convierte a puntos IBEX con un factor fijo por tramo, y solo se recalcula cuando cambia el capital invertido." actual_label="Cartera reescalada" benchmark_label=ticket_tracking.global.benchmark.label %}
     {% endif %}
-    {% if ticket_tracking.global.return_chart_12m.available %}
-      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.return_chart_12m title="% rentabilidad 1A" note="Rentabilidad sobre la base activa visible en cada fecha." actual_label="Rentabilidad real" expected_label="Rentabilidad esperada" benchmark_label=ticket_tracking.global.benchmark.label %}
+    {% if ticket_tracking.global.portfolio_summary.return_chart_12m.available %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.portfolio_summary.return_chart_12m title="% rentabilidad 1A" note="Ultimo ano comun de tu cartera y escenario 12M agregando cada accion por su valor real." actual_label="Cartera real" expected_label="Escenario agregado" benchmark_label=ticket_tracking.global.portfolio_summary.benchmark_label range_label=ticket_tracking.global.portfolio_summary.range_label_12m summary_label=ticket_tracking.global.portfolio_summary.weight_mix_label %}
     {% endif %}
-    {% if ticket_tracking.global.return_chart_5y.available %}
-      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.return_chart_5y title="% rentabilidad 5A" note="La misma comparativa extendida al escenario largo." actual_label="Rentabilidad real" expected_label="Rentabilidad esperada" benchmark_label=ticket_tracking.global.benchmark.label %}
+    {% if ticket_tracking.global.portfolio_summary.return_chart_5y.available %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.portfolio_summary.return_chart_5y title="% rentabilidad 5A" note="Historico comun largo de la cartera y su ciclo futuro a 5 anos, siempre ponderado por valor." actual_label="Cartera real" expected_label="Escenario agregado" benchmark_label=ticket_tracking.global.portfolio_summary.benchmark_label range_label=ticket_tracking.global.portfolio_summary.range_label_5y summary_label=ticket_tracking.global.portfolio_summary.weight_mix_label %}
     {% endif %}
     {% if ticket_tracking.global.weekly_alpha_chart.available %}
       {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.weekly_alpha_chart title="Alpha semanal vs IBEX" note="Cambio relativo de los ultimos 7 dias frente al indice." actual_label="Alpha semanal" zero_label="Cero = empate con el IBEX" %}
@@ -60,11 +60,11 @@
     {% if ticket_tracking.global.cumulative_alpha_chart.available %}
       {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.cumulative_alpha_chart title="Alpha acumulado vs IBEX" note="Exceso de rentabilidad acumulada de la cartera frente al IBEX." actual_label="Alpha acumulado" zero_label="Cero = empate con el IBEX" %}
     {% endif %}
-    {% if ticket_tracking.global.net_chart_12m.available %}
-      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.net_chart_12m title="Rentabilidad neta 1A" note="Beneficio o perdida total frente a la base comprada." actual_label="Beneficio neto real" expected_label="Beneficio neto esperado" %}
+    {% if ticket_tracking.global.portfolio_summary.net_chart_12m.available %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.portfolio_summary.net_chart_12m title="Rentabilidad neta 1A" note="Cambio en EUR de la cartera actual frente al arranque comun visible, mas la previson agregada." actual_label="Cartera real" expected_label="Escenario agregado" range_label=ticket_tracking.global.portfolio_summary.range_label_12m summary_label=ticket_tracking.global.portfolio_summary.weight_mix_label %}
     {% endif %}
-    {% if ticket_tracking.global.net_chart_5y.available %}
-      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.net_chart_5y title="Rentabilidad neta 5A" note="Lectura neta agregada para el escenario largo." actual_label="Beneficio neto real" expected_label="Beneficio neto esperado" %}
+    {% if ticket_tracking.global.portfolio_summary.net_chart_5y.available %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.portfolio_summary.net_chart_5y title="Rentabilidad neta 5A" note="Lectura neta del historico comun largo y de la proyeccion futura agregada de toda la cartera." actual_label="Cartera real" expected_label="Escenario agregado" range_label=ticket_tracking.global.portfolio_summary.range_label_5y summary_label=ticket_tracking.global.portfolio_summary.weight_mix_label %}
     {% endif %}
   </div>
   {% include "equities/_tracking_sale_timeline.html" %}

@@ -3359,6 +3359,116 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(tracking["global"]["invested_return_pct"], Decimal("1.89"))
         self.assertEqual(tracking["global"]["daily_change_pct"], Decimal("1.89"))
 
+    def test_ticket_tracking_portfolio_summary_aggregates_real_history_and_future_projection(self):
+        iberdrola = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("11.0000"),
+        )
+        enagas = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="ENG",
+            quote_symbol="ENG.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Enagas",
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("20.0000"),
+            current_price_per_share=Decimal("19.0000"),
+        )
+
+        populate_position_history_from_closes(
+            iberdrola,
+            [Decimal("10.00"), Decimal("10.40"), Decimal("10.80"), Decimal("11.00")],
+            benchmark_closes=[Decimal("100.00"), Decimal("102.00"), Decimal("104.00"), Decimal("106.00")],
+            start_year=2026,
+            start_month=1,
+        )
+        populate_position_history_from_closes(
+            enagas,
+            [Decimal("20.00"), Decimal("19.50"), Decimal("19.20"), Decimal("19.00")],
+            benchmark_closes=[Decimal("100.00"), Decimal("102.00"), Decimal("104.00"), Decimal("106.00")],
+            start_year=2026,
+            start_month=1,
+        )
+
+        cards = build_equity_history_cards(
+            list(EquityPosition.objects.prefetch_related("price_history"))
+        )
+        capture_equity_ticket_snapshots(cards, snapshot_date=date(2026, 4, 30))
+        tracking = build_equity_ticket_tracking_context(cards)
+
+        portfolio_summary = tracking["global"]["portfolio_summary"]
+        expected_total_value_12m = sum(
+            (
+                (card["position"].shares * Decimal(str(card["projection"]["projected_price"]))).quantize(Decimal("0.01"))
+            )
+            for card in cards
+            if card.get("projection", {}).get("projected_price") is not None
+        ) if any(card.get("projection", {}).get("projected_price") is not None for card in cards) else ZERO
+        self.assertTrue(portfolio_summary["available"])
+        self.assertTrue(portfolio_summary["net_chart_12m"]["available"])
+        self.assertTrue(portfolio_summary["return_chart_12m"]["available"])
+        self.assertEqual(portfolio_summary["actual_series_12m"][0]["value"], Decimal("500.00"))
+        self.assertEqual(portfolio_summary["actual_series_12m"][-1]["value"], Decimal("490.00"))
+        self.assertEqual(portfolio_summary["expected_series_12m"][0]["value"], Decimal("490.00"))
+        self.assertEqual(portfolio_summary["expected_series_12m"][-1]["value"], expected_total_value_12m)
+        self.assertIn("Peso actual:", portfolio_summary["weight_mix_label"])
+
+    def test_ticket_tracking_portfolio_summary_uses_common_history_start_for_all_positions(self):
+        iberdrola = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        sabadell = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="SAB",
+            quote_symbol="SAB.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Banco Sabadell",
+            shares=Decimal("15.0000"),
+            average_cost_per_share=Decimal("1.0000"),
+            current_price_per_share=Decimal("1.2500"),
+        )
+
+        populate_position_history_from_closes(
+            iberdrola,
+            [Decimal("10.00"), Decimal("10.50"), Decimal("11.10"), Decimal("11.70"), Decimal("12.00")],
+            start_year=2025,
+            start_month=12,
+        )
+        populate_position_history_from_closes(
+            sabadell,
+            [Decimal("1.00"), Decimal("1.10"), Decimal("1.25")],
+            start_year=2026,
+            start_month=2,
+        )
+
+        cards = build_equity_history_cards(
+            list(EquityPosition.objects.prefetch_related("price_history"))
+        )
+        capture_equity_ticket_snapshots(cards, snapshot_date=date(2026, 4, 30))
+        tracking = build_equity_ticket_tracking_context(cards)
+
+        portfolio_summary = tracking["global"]["portfolio_summary"]
+        self.assertTrue(portfolio_summary["available"])
+        self.assertEqual(portfolio_summary["actual_series_12m"][0]["date"], date(2026, 2, 28))
+        self.assertEqual(portfolio_summary["range_label_12m"], "Historico comun desde 2026-02-28")
+
     def test_ticket_tracking_builds_weekly_and_cumulative_alpha_charts(self):
         position = EquityPosition.objects.create(
             broker="Interactive Brokers",
