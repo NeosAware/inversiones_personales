@@ -182,8 +182,9 @@
             <text x="8" y="214" font-size="12" fill="#0d5d78">{{ card.projection_12m_chart.stock_min_label }}</text>
           </svg>
           <div class="equity-chart-foot">
-            <span>Azul: {{ card.projection_12m_chart.history_window_label|default:"Ultimo ano" }} usado como base</span>
-            <span>Naranja: escenario central 12M</span>
+            <span>Azul: {{ card.projection_12m_chart.history_window_label|default:"Ultimo ano visible" }}</span>
+            <span>Naranja: {{ card.projection_12m_chart.projection_window_label|default:"Escenario central 12M" }}</span>
+            {% if card.projection_12m_chart.model_window_label %}<span>Modelo: {{ card.projection_12m_chart.model_window_label }}</span>{% endif %}
             <span>{{ card.projection_12m_chart.end_label }} a {{ card.projection_12m_chart.projection_end_label }}</span>
           </div>
         </div>

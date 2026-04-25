@@ -3121,7 +3121,9 @@ def build_projection_12m_chart(history, projection: dict) -> dict:
         "end_label": latest_date.isoformat(),
         "projection_end_label": end_projection_step.get("projected_date").isoformat() if end_projection_step and end_projection_step.get("projected_date") else "",
         "points_count": len(stock_series),
-        "history_window_label": "Ultimo ano",
+        "history_window_label": projection.get("history_window_label", "Ultimo ano visible"),
+        "projection_window_label": projection.get("path_source_label", "Escenario central 12M"),
+        "model_window_label": projection.get("path_model_window_label", ""),
     }
 
 
@@ -9675,6 +9677,169 @@ def build_monthly_projection_path(
     )
 
 
+def build_quarterly_projection_path_from_monthly_path(monthly_path: list[dict]) -> list[dict]:
+    quarterly_path = []
+    for step in monthly_path or []:
+        months_offset = parse_projection_label_months(step.get("label"))
+        if months_offset in {3, 6, 9, 12}:
+            quarterly_path.append(step)
+    return quarterly_path
+
+
+def build_cycle_zoomed_monthly_projection_path(
+    current_price: Decimal | None,
+    target_price: Decimal | None,
+    *,
+    anchor_date: date | None,
+    cycle_projection: dict | None,
+    months: int = 12,
+) -> list[dict]:
+    cycle_projection = cycle_projection or {}
+    if (
+        current_price in {None, ZERO}
+        or target_price in {None, ZERO}
+        or anchor_date is None
+        or months <= 0
+        or not cycle_projection.get("available")
+    ):
+        return []
+
+    normalized_current_price = quantize_decimal(current_price, "0.0001") or Decimal(str(current_price))
+    normalized_target_price = quantize_decimal(target_price, "0.0001") or Decimal(str(target_price))
+    anchor_prices_by_month = {0: normalized_current_price}
+    for step in cycle_projection.get("path") or []:
+        step_price = quantize_decimal(step.get("projected_price"), "0.0001")
+        if step_price in {None, ZERO}:
+            continue
+        months_offset = parse_projection_label_months(step.get("label"))
+        if months_offset is None:
+            projected_date = step.get("projected_date")
+            if projected_date and anchor_date:
+                months_offset = max(
+                    ((projected_date.year - anchor_date.year) * 12)
+                    + (projected_date.month - anchor_date.month),
+                    0,
+                )
+        if months_offset is None or months_offset <= 0:
+            continue
+        anchor_prices_by_month[months_offset] = step_price
+
+    anchor_months = sorted(anchor_prices_by_month.keys())
+    if len(anchor_months) < 2 or anchor_months[-1] < months:
+        return []
+
+    def interpolate_source_value(month_number: int) -> Decimal | None:
+        if month_number in anchor_prices_by_month:
+            return anchor_prices_by_month[month_number]
+        previous_months = [value for value in anchor_months if value < month_number]
+        next_months = [value for value in anchor_months if value > month_number]
+        if not previous_months or not next_months:
+            return None
+        start_month = previous_months[-1]
+        end_month = next_months[0]
+        start_price = anchor_prices_by_month.get(start_month)
+        end_price = anchor_prices_by_month.get(end_month)
+        if start_price in {None, ZERO} or end_price in {None, ZERO}:
+            return None
+        segment_months = max(end_month - start_month, 1)
+        progress = (month_number - start_month) / segment_months
+        if start_price > ZERO and end_price > ZERO:
+            projected_value = Decimal(
+                str(round(float(start_price) * ((float(end_price / start_price)) ** progress), 4))
+            )
+        else:
+            projected_value = quantize_decimal(
+                start_price + ((end_price - start_price) * Decimal(str(progress))),
+                "0.0001",
+            )
+        return projected_value
+
+    raw_monthly_values = []
+    for month_number in range(1, months + 1):
+        source_value = interpolate_source_value(month_number)
+        if source_value in {None, ZERO}:
+            return []
+        raw_monthly_values.append((month_number, source_value))
+
+    raw_end_price = raw_monthly_values[-1][1]
+    if raw_end_price in {None, ZERO}:
+        return []
+
+    monthly_path = []
+    for month_number, raw_source_value in raw_monthly_values:
+        progress = Decimal(str(month_number / months))
+        raw_baseline_value = normalized_current_price
+        target_baseline_value = normalized_current_price
+        if normalized_current_price > ZERO and raw_end_price > ZERO:
+            raw_baseline_multiplier = Decimal(
+                str(round((float(raw_end_price / normalized_current_price)) ** float(progress), 8))
+            )
+            raw_baseline_value = normalized_current_price * raw_baseline_multiplier
+        if normalized_current_price > ZERO and normalized_target_price > ZERO:
+            target_baseline_multiplier = Decimal(
+                str(round((float(normalized_target_price / normalized_current_price)) ** float(progress), 8))
+            )
+            target_baseline_value = normalized_current_price * target_baseline_multiplier
+        raw_excess_factor = (
+            raw_source_value / raw_baseline_value
+            if raw_baseline_value not in {None, ZERO}
+            else Decimal("1.00")
+        )
+        raw_excess_factor = clamp_decimal(raw_excess_factor, Decimal("0.70"), Decimal("1.35"))
+        projected_price = quantize_decimal(target_baseline_value * raw_excess_factor, "0.0001") or target_baseline_value
+        projected_date = add_calendar_months(anchor_date, month_number)
+        if projected_date is None:
+            projected_date = anchor_date + timedelta(days=int(round((365 * month_number) / 12)))
+        monthly_path.append(
+            {
+                "label": f"{month_number}M" if month_number < 12 else "1A",
+                "projected_date": projected_date,
+                "projected_price": projected_price,
+            }
+        )
+    return monthly_path
+
+
+def synchronize_projection_path_with_cycle_zoom(
+    projection: dict | None,
+    cycle_projection: dict | None,
+    *,
+    current_price: Decimal | None,
+    anchor_date: date | None,
+) -> dict:
+    projection = projection or {}
+    cycle_projection = cycle_projection or {}
+    if not projection.get("available"):
+        return projection
+
+    projection["history_window_label"] = "Ultimo ano visible"
+    projection["path_source_label"] = "Escenario central 12M"
+    projection["path_model_window_label"] = ""
+    projection["uses_cycle_zoom_shape"] = False
+
+    zoomed_monthly_path = build_cycle_zoomed_monthly_projection_path(
+        current_price,
+        projection.get("projected_price"),
+        anchor_date=anchor_date,
+        cycle_projection=cycle_projection,
+        months=12,
+    )
+    if not zoomed_monthly_path:
+        projection["quarterly_path"] = (
+            build_quarterly_projection_path_from_monthly_path(projection.get("monthly_path") or [])
+            or projection.get("quarterly_path")
+            or []
+        )
+        return projection
+
+    projection["monthly_path"] = zoomed_monthly_path
+    projection["quarterly_path"] = build_quarterly_projection_path_from_monthly_path(zoomed_monthly_path)
+    projection["path_source_label"] = "Zoom 12M del patron 5A"
+    projection["path_model_window_label"] = cycle_projection.get("model_window_label", "")
+    projection["uses_cycle_zoom_shape"] = True
+    return projection
+
+
 def build_cycle_projection_path(
     current_price: Decimal | None,
     annual_return_pct: Decimal | None,
@@ -10253,11 +10418,7 @@ def build_one_year_projection(
         anchor_date=history[-1].price_date,
         cycle_phase=cycle_metrics.get("cycle_phase") or "Transicion",
     )
-    quarterly_projection_path = [
-        step
-        for step in monthly_projection_path
-        if step.get("label") in {"3M", "6M", "9M", "1A", "12M"}
-    ]
+    quarterly_projection_path = build_quarterly_projection_path_from_monthly_path(monthly_projection_path)
     if not quarterly_projection_path:
         quarterly_projection_path = build_projection_path(
             latest_price,
@@ -10315,6 +10476,12 @@ def build_one_year_projection(
         "net_dividend_income": net_dividend_income,
         "broker_costs": broker_costs,
         "reference_label": position.analysis_reference_label,
+        "latest_price": quantize_decimal(latest_price, "0.0001"),
+        "latest_date": latest_date,
+        "history_window_label": "Ultimo ano visible",
+        "path_source_label": "Escenario central 12M",
+        "path_model_window_label": "",
+        "uses_cycle_zoom_shape": False,
         "explanation": explanation,
     }
 
@@ -10770,11 +10937,7 @@ def apply_news_context_adjustments_to_card(card: dict) -> dict:
         anchor_date=latest_date,
         cycle_phase=projection.get("cycle_phase") or "Transicion",
     )
-    projection["quarterly_path"] = [
-        step
-        for step in projection["monthly_path"]
-        if step.get("label") in {"3M", "6M", "9M", "1A", "12M"}
-    ]
+    projection["quarterly_path"] = build_quarterly_projection_path_from_monthly_path(projection["monthly_path"])
     if not projection["quarterly_path"]:
         projection["quarterly_path"] = build_projection_path(
             latest_price,
@@ -10884,6 +11047,13 @@ def apply_news_context_adjustments_to_card(card: dict) -> dict:
                 "note": note,
             }
             cycle_projection["explanation"] = f"{str(cycle_projection.get('explanation') or '').strip()} {note}".strip()
+
+    synchronize_projection_path_with_cycle_zoom(
+        projection,
+        cycle_projection,
+        current_price=latest_price,
+        anchor_date=latest_date,
+    )
 
     one_year_snapshot = next(
         (snapshot for snapshot in (card.get("period_snapshots") or []) if snapshot.get("label") == "1Y"),
@@ -11126,11 +11296,7 @@ def apply_expert_consensus_adjustments_to_card(card: dict) -> dict:
         anchor_date=latest_date,
         cycle_phase=projection.get("cycle_phase") or "Transicion",
     )
-    projection["quarterly_path"] = [
-        step
-        for step in projection["monthly_path"]
-        if step.get("label") in {"3M", "6M", "9M", "1A", "12M"}
-    ]
+    projection["quarterly_path"] = build_quarterly_projection_path_from_monthly_path(projection["monthly_path"])
     if not projection["quarterly_path"]:
         projection["quarterly_path"] = build_projection_path(
             latest_price,
@@ -11239,6 +11405,13 @@ def apply_expert_consensus_adjustments_to_card(card: dict) -> dict:
                 "note": note,
             }
             cycle_projection["explanation"] = f"{str(cycle_projection.get('explanation') or '').strip()} {note}".strip()
+
+    synchronize_projection_path_with_cycle_zoom(
+        projection,
+        cycle_projection,
+        current_price=latest_price,
+        anchor_date=latest_date,
+    )
 
     one_year_snapshot = next(
         (snapshot for snapshot in (card.get("period_snapshots") or []) if snapshot.get("label") == "1Y"),
@@ -11798,6 +11971,12 @@ def build_equity_history_card(
         cycle_metrics=cycle_metrics,
         reference_cache=reference_cache,
         include_visuals=include_visuals,
+    )
+    synchronize_projection_path_with_cycle_zoom(
+        projection,
+        cycle_projection_5y,
+        current_price=latest_point.close_price or position.current_price_per_share,
+        anchor_date=latest_point.price_date,
     )
     projection_backtest = build_projection_backtest(
         history,

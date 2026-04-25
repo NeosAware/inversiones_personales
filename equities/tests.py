@@ -64,6 +64,7 @@ from .services import (
     build_equity_investment_journey_context,
     build_reference_correlation,
     build_reference_cycle_template_from_series,
+    build_cycle_zoomed_monthly_projection_path,
     build_equity_round_investment_plan,
     build_equity_sale_preview,
     build_equity_ticket_tracking_context,
@@ -1277,10 +1278,39 @@ class EquitiesServicesTests(TestCase):
 
         chart = cards[0]["projection_12m_chart"]
         self.assertTrue(chart["available"])
-        self.assertEqual(chart["history_window_label"], "Ultimo ano")
+        self.assertEqual(chart["history_window_label"], "Ultimo ano visible")
         self.assertEqual(chart["start_label"], "2025-06-30")
         self.assertEqual(cards[0]["historical_chart"]["start_label"], "2024-01-31")
         self.assertGreater(cards[0]["historical_chart"]["points_count"], chart["points_count"])
+
+    def test_cycle_zoomed_projection_path_preserves_first_year_shape_of_5y_cycle(self):
+        path = build_cycle_zoomed_monthly_projection_path(
+            Decimal("10.0000"),
+            Decimal("11.5000"),
+            anchor_date=date(2026, 4, 30),
+            cycle_projection={
+                "available": True,
+                "path": [
+                    {
+                        "label": "6M",
+                        "projected_date": date(2026, 10, 30),
+                        "projected_price": Decimal("12.0000"),
+                    },
+                    {
+                        "label": "1A",
+                        "projected_date": date(2027, 4, 30),
+                        "projected_price": Decimal("10.8000"),
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(len(path), 12)
+        self.assertEqual(path[-1]["label"], "1A")
+        self.assertEqual(path[-1]["projected_price"], Decimal("11.5000"))
+        month_6 = next(step for step in path if step["label"] == "6M")
+        self.assertGreater(month_6["projected_price"], path[-1]["projected_price"])
+        self.assertTrue(path[0]["projected_date"].isoformat().startswith("2026-05-"))
 
     def test_cycle_projection_5y_uses_last_five_years_on_chart_and_ten_years_for_model(self):
         position = EquityPosition.objects.create(
@@ -1333,6 +1363,9 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(cycle_chart["projection_end_label"].startswith("2030-"))
         self.assertEqual(cycle_projection["path"][-1]["label"], "5A")
         self.assertIn("historico disponible", cycle_projection["explanation"])
+        self.assertTrue(cards[0]["projection"]["uses_cycle_zoom_shape"])
+        self.assertEqual(cards[0]["projection_12m_chart"]["projection_window_label"], "Zoom 12M del patron 5A")
+        self.assertEqual(cards[0]["projection_12m_chart"]["model_window_label"], cycle_chart["model_window_label"])
         path_deltas = [
             (current["projected_price"] - previous["projected_price"]).quantize(Decimal("0.01"))
             for previous, current in zip(cycle_projection["path"], cycle_projection["path"][1:])
