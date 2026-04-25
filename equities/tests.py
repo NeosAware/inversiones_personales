@@ -64,6 +64,7 @@ from .services import (
     build_equity_sale_preview,
     build_equity_ticket_tracking_context,
     build_equity_ticket_tracking_item,
+    build_ticket_expected_series,
     build_portfolio_correlation_context,
     build_tracking_rebased_comparison_series,
     build_value_tracking_chart,
@@ -1869,6 +1870,186 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(tracking["global"]["invested_return_pct"], Decimal("2.91"))
         self.assertEqual(tracking["global"]["annualized_return_pct"], Decimal("3512395.03"))
         self.assertEqual(tracking["global"]["daily_change_pct"], Decimal("2.91"))
+
+    def test_ticket_tracking_recalibrates_expected_curve_when_reality_lags(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("100.0000"),
+            current_price_per_share=Decimal("92.0000"),
+            annual_dividend_income=Decimal("0.00"),
+        )
+        EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 4, 1),
+            invested_amount=Decimal("1000.00"),
+            current_value=Decimal("1000.00"),
+            projected_market_value_12m=Decimal("1360.00"),
+            projected_total_value_12m=Decimal("1360.00"),
+            projected_price_12m=Decimal("136.0000"),
+        )
+        EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 4, 8),
+            invested_amount=Decimal("1000.00"),
+            current_value=Decimal("920.00"),
+            projected_market_value_12m=Decimal("1360.00"),
+            projected_total_value_12m=Decimal("1360.00"),
+            projected_price_12m=Decimal("136.0000"),
+        )
+        snapshots = list(position.ticket_snapshots.order_by("snapshot_date"))
+        raw_expected_series, raw_current_expected_value, _ = build_ticket_expected_series(
+            snapshots,
+            Decimal("1360.00"),
+        )
+
+        with patch("equities.services.build_owned_cycle_trade_timing_plan", return_value={"available": False}), patch(
+            "equities.services.build_purchase_trade_rotation_guidance",
+            return_value={"available": False},
+        ):
+            ticket = build_equity_ticket_tracking_item(
+                {
+                    "position": position,
+                    "reference_label": "IBEX 35",
+                    "projection": {"projected_price": Decimal("136.0000"), "base_return_pct": Decimal("36.00")},
+                    "projection_reliability": {"label": "Baja", "score": Decimal("42.00")},
+                    "cycle_projection_5y": {"available": False, "path": []},
+                },
+                snapshots,
+            )
+
+        self.assertIsNotNone(ticket)
+        self.assertEqual(ticket["expected_series_calibration"]["label"], "Enfria")
+        self.assertEqual(ticket["expected_series_calibration"]["tracked_days"], 7)
+        self.assertLess(ticket["current_expected_value"], raw_current_expected_value)
+        self.assertGreater(ticket["current_expected_value"], Decimal("920.00"))
+        self.assertLess(ticket["expected_market_value_12m"], Decimal("1360.00"))
+
+    def test_ticket_tracking_recalibrates_expected_curve_when_reality_runs_ahead(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="ENG",
+            quote_symbol="ENG.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Enagas",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("100.0000"),
+            current_price_per_share=Decimal("111.0000"),
+            annual_dividend_income=Decimal("0.00"),
+        )
+        EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 4, 1),
+            invested_amount=Decimal("1000.00"),
+            current_value=Decimal("1000.00"),
+            projected_market_value_12m=Decimal("1120.00"),
+            projected_total_value_12m=Decimal("1120.00"),
+            projected_price_12m=Decimal("112.0000"),
+        )
+        EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 4, 8),
+            invested_amount=Decimal("1000.00"),
+            current_value=Decimal("1110.00"),
+            projected_market_value_12m=Decimal("1120.00"),
+            projected_total_value_12m=Decimal("1120.00"),
+            projected_price_12m=Decimal("112.0000"),
+        )
+        snapshots = list(position.ticket_snapshots.order_by("snapshot_date"))
+        raw_expected_series, raw_current_expected_value, _ = build_ticket_expected_series(
+            snapshots,
+            Decimal("1120.00"),
+        )
+
+        with patch("equities.services.build_owned_cycle_trade_timing_plan", return_value={"available": False}), patch(
+            "equities.services.build_purchase_trade_rotation_guidance",
+            return_value={"available": False},
+        ):
+            ticket = build_equity_ticket_tracking_item(
+                {
+                    "position": position,
+                    "reference_label": "IBEX 35",
+                    "projection": {"projected_price": Decimal("112.0000"), "base_return_pct": Decimal("12.00")},
+                    "projection_reliability": {"label": "Baja", "score": Decimal("42.00")},
+                    "cycle_projection_5y": {"available": False, "path": []},
+                },
+                snapshots,
+            )
+
+        self.assertIsNotNone(ticket)
+        self.assertEqual(ticket["expected_series_calibration"]["label"], "Acelera")
+        self.assertGreater(ticket["current_expected_value"], raw_current_expected_value)
+        self.assertLess(ticket["current_expected_value"], Decimal("1110.00"))
+        self.assertGreater(ticket["expected_market_value_12m"], Decimal("1120.00"))
+
+    def test_ticket_tracking_moderates_overoptimistic_targets_when_backtest_is_weak(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="RED",
+            quote_symbol="RED.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Redeia",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("100.0000"),
+            current_price_per_share=Decimal("100.0000"),
+            annual_dividend_income=Decimal("0.00"),
+        )
+        EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 4, 25),
+            invested_amount=Decimal("1000.00"),
+            current_value=Decimal("1000.00"),
+            projected_market_value_12m=Decimal("1400.00"),
+            projected_total_value_12m=Decimal("1450.00"),
+            projected_price_12m=Decimal("140.0000"),
+        )
+
+        with patch("equities.services.build_owned_cycle_trade_timing_plan", return_value={"available": False}), patch(
+            "equities.services.build_purchase_trade_rotation_guidance",
+            return_value={"available": False},
+        ):
+            ticket = build_equity_ticket_tracking_item(
+                {
+                    "position": position,
+                    "reference_label": "IBEX 35",
+                    "projection": {
+                        "projected_price": Decimal("140.0000"),
+                        "base_return_pct": Decimal("45.00"),
+                        "safety_score": Decimal("52.00"),
+                        "cagr_pct": Decimal("6.50"),
+                    },
+                    "projection_reliability": {"label": "Baja", "score": Decimal("42.00")},
+                    "projection_backtest": {
+                        "available": False,
+                        "precision_label": "Sin historico suficiente",
+                        "monthly_chart": {"available": False},
+                    },
+                    "cycle_projection_5y": {
+                        "available": True,
+                        "path": [
+                            {"label": "1A", "projected_price": Decimal("145.0000")},
+                            {"label": "5A", "projected_price": Decimal("200.0000")},
+                        ],
+                    },
+                },
+                list(position.ticket_snapshots.order_by("snapshot_date")),
+            )
+
+        self.assertIsNotNone(ticket)
+        self.assertTrue(ticket["expected_target_moderation_12m"]["available"])
+        self.assertLess(ticket["expected_market_value_12m"], Decimal("1400.00"))
+        self.assertLess(ticket["expected_total_value_12m"], Decimal("1450.00"))
+        self.assertLess(ticket["expected_total_value_5y"], Decimal("2000.00"))
 
     def test_build_value_tracking_chart_reduces_overlapping_actual_markers(self):
         chart = build_value_tracking_chart(

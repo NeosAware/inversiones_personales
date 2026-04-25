@@ -50,6 +50,16 @@ TRACKING_FORECAST_MARKERS = (91, 182, 273, TRACKING_HORIZON_DAYS)
 TRACKING_FIVE_YEAR_MARKERS = (1, 2, 3, 4, 5)
 TRACKING_MARKER_WEEKDAYS = {0, 3}
 TRACKING_WEEKLY_ALPHA_DAYS = 7
+TRACKING_EXPECTED_FEEDBACK_MIN_DAYS = 5
+TRACKING_EXPECTED_FEEDBACK_FULL_STRENGTH_DAYS = 21
+TRACKING_EXPECTED_FEEDBACK_MIN_GAP_PCT = Decimal("1.25")
+TRACKING_EXPECTED_FEEDBACK_MAX_WEIGHT = Decimal("0.65")
+TRACKING_EXPECTED_FEEDBACK_TARGET_CARRY = Decimal("0.45")
+TRACKING_TARGET_MIN_EXCESS_PCT = Decimal("0.75")
+TRACKING_TARGET_MAX_ANNUAL_CAP_12M = Decimal("14.00")
+TRACKING_TARGET_MAX_ANNUAL_CAP_5Y = Decimal("10.50")
+TRACKING_TARGET_MIN_EXCESS_KEEP_RATIO = Decimal("0.18")
+TRACKING_TARGET_MAX_EXCESS_KEEP_RATIO = Decimal("0.44")
 PORTFOLIO_CORRELATION_MIN_COMMON_PERIODS = 6
 DALIO_CORRELATION_RISK_POINTS = (
     (Decimal("0"), Decimal("11")),
@@ -4444,6 +4454,323 @@ def build_ticket_expected_series(
     return series, latest_expected_value, projected_end_date
 
 
+def resolve_tracking_projection_reliability_score(card: dict | None) -> Decimal:
+    reliability = (card or {}).get("projection_reliability") or {}
+    raw_score = reliability.get("score")
+    if raw_score not in {None, ""}:
+        try:
+            return clamp_decimal(Decimal(str(raw_score)), ZERO, ONE_HUNDRED)
+        except Exception:
+            pass
+
+    label = str(reliability.get("label") or "").strip()
+    return {
+        "Alta": Decimal("82.00"),
+        "Media": Decimal("64.00"),
+        "Baja": Decimal("42.00"),
+    }.get(label, Decimal("50.00"))
+
+
+def resolve_tracking_projection_backtest_score(card: dict | None) -> Decimal | None:
+    card = card or {}
+    if "projection_backtest" not in card:
+        return None
+    backtest = card.get("projection_backtest") or {}
+    if backtest.get("available"):
+        return {
+            "Alta": Decimal("82.00"),
+            "Media": Decimal("64.00"),
+            "Baja": Decimal("42.00"),
+        }.get(str(backtest.get("precision_label") or "").strip(), Decimal("42.00"))
+    return Decimal("32.00")
+
+
+def project_return_pct_from_annualized_rate(annualized_return_pct: Decimal | None, months: int) -> Decimal | None:
+    if annualized_return_pct is None or months <= 0:
+        return None
+    years = Decimal(str(months)) / Decimal("12")
+    growth_base = max(0.01, 1 + (float(annualized_return_pct) / 100))
+    projected_return = ((growth_base ** float(years)) - 1) * 100
+    return Decimal(str(round(projected_return, 4)))
+
+
+def moderate_tracking_target_value(
+    baseline_value: Decimal | None,
+    target_value: Decimal | None,
+    *,
+    months: int,
+    card: dict | None = None,
+) -> tuple[Decimal | None, dict]:
+    backtest_score = resolve_tracking_projection_backtest_score(card)
+    base_payload = {
+        "available": False,
+        "quality_score": None,
+        "annualized_target_pct": None,
+        "annualized_cap_pct": None,
+        "moderated_annualized_pct": None,
+        "moderated_return_pct": None,
+    }
+    if baseline_value in {None, ZERO} or target_value is None or months <= 0 or backtest_score is None:
+        return target_value, base_payload
+
+    raw_target_return_pct = percentage_change(target_value, baseline_value)
+    if raw_target_return_pct is None or raw_target_return_pct <= ZERO:
+        return target_value, {
+            **base_payload,
+            "annualized_target_pct": quantize_decimal(raw_target_return_pct),
+        }
+
+    annualized_target_pct = (
+        raw_target_return_pct
+        if months <= 12
+        else annualize_return_pct(raw_target_return_pct, months)
+    )
+    if annualized_target_pct is None or annualized_target_pct <= ZERO:
+        return target_value, {
+            **base_payload,
+            "annualized_target_pct": quantize_decimal(annualized_target_pct),
+        }
+
+    reliability_score = resolve_tracking_projection_reliability_score(card)
+    quality_score = average_decimal([reliability_score, backtest_score]) or reliability_score
+    projection = (card or {}).get("projection") or {}
+    raw_safety_score = projection.get("safety_score")
+    try:
+        safety_score = clamp_decimal(
+            Decimal(str(raw_safety_score if raw_safety_score not in {None, ""} else Decimal("55.00"))),
+            Decimal("15.00"),
+            Decimal("92.00"),
+        )
+    except Exception:
+        safety_score = Decimal("55.00")
+    cagr_pct = projection.get("cagr_pct")
+    cagr_component = ZERO
+    if cagr_pct is not None:
+        try:
+            cagr_component = clamp_decimal(Decimal(str(cagr_pct)) * Decimal("0.15"), Decimal("-1.00"), Decimal("2.00"))
+        except Exception:
+            cagr_component = ZERO
+
+    annualized_cap_pct = clamp_decimal(
+        Decimal("3.80")
+        + ((quality_score / ONE_HUNDRED) * Decimal("7.00"))
+        + ((safety_score / ONE_HUNDRED) * Decimal("2.50"))
+        + cagr_component,
+        Decimal("5.00"),
+        TRACKING_TARGET_MAX_ANNUAL_CAP_12M if months <= 12 else TRACKING_TARGET_MAX_ANNUAL_CAP_5Y,
+    )
+    if annualized_target_pct <= annualized_cap_pct + TRACKING_TARGET_MIN_EXCESS_PCT:
+        return target_value, {
+            **base_payload,
+            "quality_score": quantize_decimal(quality_score),
+            "annualized_target_pct": quantize_decimal(annualized_target_pct),
+            "annualized_cap_pct": quantize_decimal(annualized_cap_pct),
+        }
+
+    excess_keep_ratio = clamp_decimal(
+        TRACKING_TARGET_MIN_EXCESS_KEEP_RATIO + ((quality_score / ONE_HUNDRED) * Decimal("0.24")),
+        TRACKING_TARGET_MIN_EXCESS_KEEP_RATIO,
+        TRACKING_TARGET_MAX_EXCESS_KEEP_RATIO,
+    )
+    moderated_annualized_pct = annualized_cap_pct + ((annualized_target_pct - annualized_cap_pct) * excess_keep_ratio)
+    moderated_return_pct = (
+        moderated_annualized_pct
+        if months <= 12
+        else project_return_pct_from_annualized_rate(moderated_annualized_pct, months)
+    )
+    if moderated_return_pct is None:
+        return target_value, {
+            **base_payload,
+            "quality_score": quantize_decimal(quality_score),
+            "annualized_target_pct": quantize_decimal(annualized_target_pct),
+            "annualized_cap_pct": quantize_decimal(annualized_cap_pct),
+        }
+    moderated_target_value = quantize_decimal(
+        baseline_value * (Decimal("1") + (moderated_return_pct / ONE_HUNDRED)),
+        "0.01",
+    )
+    if moderated_target_value is None:
+        moderated_target_value = target_value
+
+    return moderated_target_value, {
+        "available": moderated_target_value != target_value,
+        "quality_score": quantize_decimal(quality_score),
+        "annualized_target_pct": quantize_decimal(annualized_target_pct),
+        "annualized_cap_pct": quantize_decimal(annualized_cap_pct),
+        "moderated_annualized_pct": quantize_decimal(moderated_annualized_pct),
+        "moderated_return_pct": quantize_decimal(moderated_return_pct),
+    }
+
+
+def build_tracking_expected_series_calibration(
+    snapshots: list[EquityTicketSnapshot],
+    expected_series: list[dict],
+    target_value: Decimal | None,
+    card: dict | None = None,
+) -> dict:
+    baseline = snapshots[0] if snapshots else None
+    latest = snapshots[-1] if snapshots else None
+    raw_latest_expected_value = (
+        next(
+            (
+                point["value"]
+                for point in reversed(expected_series)
+                if latest is not None and point["date"] <= latest.snapshot_date
+            ),
+            None,
+        )
+        if expected_series
+        else None
+    )
+    base_payload = {
+        "available": False,
+        "tracked_days": (
+            max((latest.snapshot_date - baseline.snapshot_date).days, 0)
+            if baseline is not None and latest is not None
+            else 0
+        ),
+        "latest_gap_value": None,
+        "latest_gap_pct": None,
+        "correction_weight": Decimal("0.00"),
+        "target_carry_weight": Decimal("0.00"),
+        "reliability_score": resolve_tracking_projection_reliability_score(card),
+        "raw_latest_expected_value": raw_latest_expected_value,
+        "adjusted_latest_expected_value": raw_latest_expected_value,
+        "adjusted_target_value": quantize_decimal(target_value, "0.01"),
+        "label": "Sin recalibracion",
+    }
+    if (
+        baseline is None
+        or latest is None
+        or len(snapshots) < 2
+        or raw_latest_expected_value is None
+        or latest.current_value is None
+    ):
+        return base_payload
+
+    tracked_days = base_payload["tracked_days"]
+    if tracked_days < TRACKING_EXPECTED_FEEDBACK_MIN_DAYS:
+        return base_payload
+
+    latest_gap_value = quantize_decimal(latest.current_value - raw_latest_expected_value, "0.01")
+    latest_gap_pct = percentage_change(latest.current_value, raw_latest_expected_value)
+    latest_gap_pct_abs = abs(latest_gap_pct) if latest_gap_pct is not None else None
+    if latest_gap_pct_abs is not None and latest_gap_pct_abs < TRACKING_EXPECTED_FEEDBACK_MIN_GAP_PCT:
+        return {
+            **base_payload,
+            "latest_gap_value": latest_gap_value,
+            "latest_gap_pct": quantize_decimal(latest_gap_pct),
+            "label": "Gap asumible",
+        }
+
+    tracked_days_ratio = clamp_decimal(
+        Decimal(str(tracked_days)) / Decimal(str(TRACKING_EXPECTED_FEEDBACK_FULL_STRENGTH_DAYS)),
+        ZERO,
+        Decimal("1.00"),
+    )
+    reliability_score = base_payload["reliability_score"]
+    reliability_flex = clamp_decimal(
+        Decimal("1.00") - (reliability_score / ONE_HUNDRED),
+        Decimal("0.18"),
+        Decimal("0.70"),
+    )
+    correction_weight = clamp_decimal(
+        tracked_days_ratio * (Decimal("0.35") + reliability_flex),
+        ZERO,
+        TRACKING_EXPECTED_FEEDBACK_MAX_WEIGHT,
+    )
+    target_carry_weight = clamp_decimal(
+        correction_weight * TRACKING_EXPECTED_FEEDBACK_TARGET_CARRY,
+        ZERO,
+        Decimal("0.30"),
+    )
+    adjusted_latest_expected_value = quantize_decimal(
+        raw_latest_expected_value + ((latest.current_value - raw_latest_expected_value) * correction_weight),
+        "0.01",
+    )
+    adjusted_target_value = quantize_decimal(target_value, "0.01")
+    if adjusted_target_value is not None and latest_gap_value is not None:
+        adjusted_target_value = quantize_decimal(
+            max(ZERO, adjusted_target_value + ((latest.current_value - raw_latest_expected_value) * target_carry_weight)),
+            "0.01",
+        )
+
+    return {
+        "available": True,
+        "tracked_days": tracked_days,
+        "latest_gap_value": latest_gap_value,
+        "latest_gap_pct": quantize_decimal(latest_gap_pct),
+        "correction_weight": correction_weight,
+        "target_carry_weight": target_carry_weight,
+        "reliability_score": reliability_score,
+        "raw_latest_expected_value": raw_latest_expected_value,
+        "adjusted_latest_expected_value": adjusted_latest_expected_value,
+        "adjusted_target_value": adjusted_target_value,
+        "label": "Acelera" if latest_gap_value is not None and latest_gap_value > ZERO else "Enfria",
+    }
+
+
+def apply_tracking_expected_series_calibration(
+    snapshots: list[EquityTicketSnapshot],
+    expected_series: list[dict],
+    target_value: Decimal | None,
+    projected_end_date: date | None,
+    card: dict | None = None,
+) -> tuple[list[dict], Decimal | None, dict]:
+    calibration = build_tracking_expected_series_calibration(
+        snapshots,
+        expected_series,
+        target_value,
+        card=card,
+    )
+    if not expected_series:
+        return expected_series, None, calibration
+    if not calibration.get("available"):
+        return expected_series, calibration.get("raw_latest_expected_value"), calibration
+
+    baseline = snapshots[0]
+    latest = snapshots[-1]
+    adjusted_latest_expected_value = calibration.get("adjusted_latest_expected_value")
+    if adjusted_latest_expected_value is None:
+        return expected_series, calibration.get("raw_latest_expected_value"), calibration
+
+    tracked_days = max((latest.snapshot_date - baseline.snapshot_date).days, 1)
+    effective_projected_end_date = projected_end_date or expected_series[-1]["date"]
+    future_horizon_days = max((effective_projected_end_date - latest.snapshot_date).days, 1)
+    adjusted_target_value = calibration.get("adjusted_target_value")
+
+    calibrated_series = []
+    for point in expected_series:
+        point_date = point["date"]
+        point_value = point.get("value")
+        if point_date <= latest.snapshot_date:
+            calibrated_value = project_expected_value_on_date(
+                quantize_decimal(baseline.current_value, "0.01") or ZERO,
+                adjusted_latest_expected_value,
+                baseline.snapshot_date,
+                point_date,
+                horizon_days=tracked_days,
+            )
+        elif adjusted_target_value is not None:
+            calibrated_value = project_expected_value_on_date(
+                adjusted_latest_expected_value,
+                adjusted_target_value,
+                latest.snapshot_date,
+                point_date,
+                horizon_days=future_horizon_days,
+            )
+        else:
+            calibrated_value = point_value
+        if calibrated_value is not None:
+            calibrated_series.append({"date": point_date, "value": calibrated_value})
+
+    latest_expected_value = next(
+        (point["value"] for point in reversed(calibrated_series) if point["date"] <= latest.snapshot_date),
+        None,
+    )
+    return calibrated_series, latest_expected_value, calibration
+
+
 def build_segmented_expected_series(
     snapshots: list[EquityTicketSnapshot],
     anchors: list[dict],
@@ -4520,6 +4847,7 @@ def build_ticket_expected_series_5y(
 
     baseline_snapshot = snapshots[0]
     position = card["position"]
+    baseline_current_value = quantize_decimal(baseline_snapshot.current_value, "0.01") or ZERO
     anchors = []
 
     def add_anchor(months: int | None, value: Decimal | None):
@@ -4528,9 +4856,14 @@ def build_ticket_expected_series_5y(
         anchor_date = add_calendar_months(baseline_snapshot.snapshot_date, months)
         if anchor_date is None:
             return
-        anchors.append({"date": anchor_date, "value": quantize_decimal(value, "0.01") or ZERO})
+        moderated_value, _ = moderate_tracking_target_value(
+            baseline_current_value,
+            quantize_decimal(value, "0.01") or ZERO,
+            months=months,
+            card=card,
+        )
+        anchors.append({"date": anchor_date, "value": moderated_value if moderated_value is not None else (quantize_decimal(value, "0.01") or ZERO)})
 
-    baseline_current_value = quantize_decimal(baseline_snapshot.current_value, "0.01") or ZERO
     if purchase_baseline:
         for step in purchase_baseline.projected_path_5y or []:
             label = str(step.get("label") or "").strip()
@@ -4551,7 +4884,14 @@ def build_ticket_expected_series_5y(
                 continue
             projected_value = quantize_decimal(position.shares * projected_price, "0.01")
             if projected_date and projected_date > baseline_snapshot.snapshot_date:
-                anchors.append({"date": projected_date, "value": projected_value})
+                months = max((projected_date.year - baseline_snapshot.snapshot_date.year) * 12 + (projected_date.month - baseline_snapshot.snapshot_date.month), 1)
+                moderated_value, _ = moderate_tracking_target_value(
+                    baseline_current_value,
+                    projected_value,
+                    months=months,
+                    card=card,
+                )
+                anchors.append({"date": projected_date, "value": moderated_value if moderated_value is not None else projected_value})
             else:
                 add_anchor(months, projected_value)
 
@@ -5870,14 +6210,48 @@ def build_equity_ticket_tracking_item(
         purchase_baseline=purchase_baseline,
     )
     previous = snapshots[-2] if len(snapshots) >= 2 else None
-    expected_market_value_12m = baseline.projected_market_value_12m or baseline.current_value
-    expected_total_value_12m = baseline.projected_total_value_12m or expected_market_value_12m
+    raw_expected_market_value_12m = baseline.projected_market_value_12m or baseline.current_value
+    raw_expected_total_value_12m = baseline.projected_total_value_12m or raw_expected_market_value_12m
+    expected_market_value_12m, expected_target_moderation_12m = moderate_tracking_target_value(
+        quantize_decimal(baseline.current_value, "0.01") or ZERO,
+        quantize_decimal(raw_expected_market_value_12m, "0.01") or ZERO,
+        months=12,
+        card=card,
+    )
+    expected_total_value_12m, expected_total_target_moderation_12m = moderate_tracking_target_value(
+        quantize_decimal(baseline.current_value, "0.01") or ZERO,
+        quantize_decimal(raw_expected_total_value_12m, "0.01") or ZERO,
+        months=12,
+        card=card,
+    )
     actual_series = [{"date": snapshot.snapshot_date, "value": snapshot.current_value} for snapshot in snapshots]
     invested_series = [{"date": snapshot.snapshot_date, "value": snapshot.invested_amount} for snapshot in snapshots]
     expected_series, current_expected_value, projected_end_date = build_ticket_expected_series(
         snapshots,
         expected_market_value_12m,
     )
+    expected_series, current_expected_value, expected_series_calibration = apply_tracking_expected_series_calibration(
+        snapshots,
+        expected_series,
+        expected_market_value_12m,
+        projected_end_date,
+        card=card,
+    )
+    adjusted_expected_market_value_12m = (
+        expected_series_calibration.get("adjusted_target_value")
+        if expected_series_calibration.get("available")
+        else quantize_decimal(expected_market_value_12m, "0.01")
+    ) or quantize_decimal(expected_market_value_12m, "0.01") or ZERO
+    adjusted_expected_total_value_12m = quantize_decimal(expected_total_value_12m, "0.01")
+    if (
+        adjusted_expected_total_value_12m is not None
+        and expected_market_value_12m is not None
+        and adjusted_expected_market_value_12m is not None
+    ):
+        adjusted_expected_total_value_12m = quantize_decimal(
+            adjusted_expected_total_value_12m + (adjusted_expected_market_value_12m - expected_market_value_12m),
+            "0.01",
+        )
     expected_series_5y, current_expected_value_5y, projected_end_date_5y, expected_total_value_5y = build_ticket_expected_series_5y(
         card,
         snapshots,
@@ -5887,13 +6261,48 @@ def build_equity_ticket_tracking_item(
     dense_expected_series_5y = densify_projected_tracking_series(expected_series_5y)
     chart = build_value_tracking_chart(actual_series, expected_series)
     shared_baseline = relevant_snapshots[0]
-    shared_expected_market_value_12m = shared_baseline.projected_market_value_12m or shared_baseline.current_value
-    shared_expected_total_value_12m = shared_baseline.projected_total_value_12m or shared_expected_market_value_12m
+    raw_shared_expected_market_value_12m = shared_baseline.projected_market_value_12m or shared_baseline.current_value
+    raw_shared_expected_total_value_12m = shared_baseline.projected_total_value_12m or raw_shared_expected_market_value_12m
+    shared_expected_market_value_12m, shared_expected_target_moderation_12m = moderate_tracking_target_value(
+        quantize_decimal(shared_baseline.current_value, "0.01") or ZERO,
+        quantize_decimal(raw_shared_expected_market_value_12m, "0.01") or ZERO,
+        months=12,
+        card=card,
+    )
+    shared_expected_total_value_12m, shared_expected_total_target_moderation_12m = moderate_tracking_target_value(
+        quantize_decimal(shared_baseline.current_value, "0.01") or ZERO,
+        quantize_decimal(raw_shared_expected_total_value_12m, "0.01") or ZERO,
+        months=12,
+        card=card,
+    )
     shared_actual_series = [{"date": snapshot.snapshot_date, "value": snapshot.current_value} for snapshot in relevant_snapshots]
     shared_expected_series, shared_current_expected_value, shared_projection_end_date = build_ticket_expected_series(
         relevant_snapshots,
         shared_expected_market_value_12m,
     )
+    shared_expected_series, shared_current_expected_value, shared_expected_series_calibration = apply_tracking_expected_series_calibration(
+        relevant_snapshots,
+        shared_expected_series,
+        shared_expected_market_value_12m,
+        shared_projection_end_date,
+        card=card,
+    )
+    adjusted_shared_expected_market_value_12m = (
+        shared_expected_series_calibration.get("adjusted_target_value")
+        if shared_expected_series_calibration.get("available")
+        else quantize_decimal(shared_expected_market_value_12m, "0.01")
+    ) or quantize_decimal(shared_expected_market_value_12m, "0.01") or ZERO
+    adjusted_shared_expected_total_value_12m = quantize_decimal(shared_expected_total_value_12m, "0.01")
+    if (
+        adjusted_shared_expected_total_value_12m is not None
+        and shared_expected_market_value_12m is not None
+        and adjusted_shared_expected_market_value_12m is not None
+    ):
+        adjusted_shared_expected_total_value_12m = quantize_decimal(
+            adjusted_shared_expected_total_value_12m
+            + (adjusted_shared_expected_market_value_12m - shared_expected_market_value_12m),
+            "0.01",
+        )
     shared_expected_series_5y, shared_current_expected_value_5y, shared_projection_end_date_5y, shared_expected_total_value_5y = build_ticket_expected_series_5y(
         card,
         relevant_snapshots,
@@ -5945,10 +6354,13 @@ def build_equity_ticket_tracking_item(
         "invested_series": invested_series,
         "expected_series": expected_series,
         "expected_series_dense": dense_expected_series,
+        "expected_target_moderation_12m": expected_target_moderation_12m,
+        "expected_total_target_moderation_12m": expected_total_target_moderation_12m,
+        "expected_series_calibration": expected_series_calibration,
         "chart": chart,
         "current_expected_value": current_expected_value,
-        "expected_market_value_12m": expected_market_value_12m,
-        "expected_total_value_12m": expected_total_value_12m,
+        "expected_market_value_12m": adjusted_expected_market_value_12m,
+        "expected_total_value_12m": adjusted_expected_total_value_12m,
         "expected_series_5y": expected_series_5y,
         "expected_series_5y_dense": dense_expected_series_5y,
         "current_expected_value_5y": current_expected_value_5y,
@@ -5957,9 +6369,12 @@ def build_equity_ticket_tracking_item(
         "shared_actual_series": shared_actual_series,
         "shared_expected_series": shared_expected_series,
         "shared_expected_series_dense": shared_dense_expected_series,
+        "shared_expected_target_moderation_12m": shared_expected_target_moderation_12m,
+        "shared_expected_total_target_moderation_12m": shared_expected_total_target_moderation_12m,
+        "shared_expected_series_calibration": shared_expected_series_calibration,
         "shared_current_expected_value": shared_current_expected_value,
-        "shared_expected_market_value_12m": shared_expected_market_value_12m,
-        "shared_expected_total_value_12m": shared_expected_total_value_12m,
+        "shared_expected_market_value_12m": adjusted_shared_expected_market_value_12m,
+        "shared_expected_total_value_12m": adjusted_shared_expected_total_value_12m,
         "shared_projection_end_date": shared_projection_end_date,
         "shared_expected_series_5y": shared_expected_series_5y,
         "shared_expected_series_5y_dense": shared_dense_expected_series_5y,
