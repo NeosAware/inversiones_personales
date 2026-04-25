@@ -60,6 +60,7 @@ from .services import (
     build_equity_history_cards,
     build_equity_investment_journey_context,
     build_reference_correlation,
+    build_reference_cycle_template_from_series,
     build_equity_round_investment_plan,
     build_equity_sale_preview,
     build_equity_ticket_tracking_context,
@@ -138,6 +139,54 @@ def build_compound_market_series(
                 "open": price,
                 "high": (price * Decimal("1.0100")).quantize(Decimal("0.0001")),
                 "low": (price * Decimal("0.9900")).quantize(Decimal("0.0001")),
+                "close": price,
+            }
+        )
+
+    return MarketSeries(
+        symbol=symbol,
+        name=name,
+        latest_price=points[-1]["close"],
+        latest_date=points[-1]["date"],
+        points=points,
+    )
+
+
+def build_market_series_from_monthly_factors(
+    symbol: str,
+    name: str,
+    monthly_factors: list[Decimal | str],
+    *,
+    start_year: int = 2000,
+    start_month: int = 1,
+    start_price: Decimal = Decimal("100.0000"),
+) -> MarketSeries:
+    points = []
+    price = start_price.quantize(Decimal("0.0001"))
+    month_offset = 0
+    points.append(
+        {
+            "date": date(start_year, start_month, monthrange(start_year, start_month)[1]),
+            "open": price,
+            "high": price,
+            "low": price,
+            "close": price,
+        }
+    )
+    for raw_factor in monthly_factors:
+        factor = Decimal(str(raw_factor))
+        price = (price * factor).quantize(Decimal("0.0001"))
+        month_offset += 1
+        month_number = (start_month - 1) + month_offset
+        year = start_year + (month_number // 12)
+        month = (month_number % 12) + 1
+        month_end = monthrange(year, month)[1]
+        points.append(
+            {
+                "date": date(year, month, month_end),
+                "open": price,
+                "high": price,
+                "low": price,
                 "close": price,
             }
         )
@@ -386,7 +435,7 @@ class EquitiesServicesTests(TestCase):
                 )
             return MarketSeries(symbol=symbol, name=name, latest_price=points[-1]["close"], latest_date=points[-1]["date"], points=points)
 
-        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name="", range_key="10y"):
             if reference_profile == EquityPosition.ReferenceProfile.SPAIN_HOUSE_PRICE:
                 return build_quarterly_series(
                     benchmark_symbol,
@@ -452,6 +501,137 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(len(euribor_factor["correction_rows"]), 5)
         self.assertTrue(any(row["anchor_path_value"] is not None for row in euribor_factor["correction_rows"]))
         self.assertIsNotNone(euribor_factor["weight_inputs"]["coefficient_component"])
+
+    def test_reference_cycle_template_detects_similar_ibex_shape_in_long_history(self):
+        recent_shape_factors = [
+            Decimal("0.9650"),
+            Decimal("0.9820"),
+            Decimal("1.0180"),
+            Decimal("1.0240"),
+            Decimal("0.9890"),
+            Decimal("1.0210"),
+            Decimal("1.0170"),
+            Decimal("0.9780"),
+            Decimal("1.0120"),
+            Decimal("1.0260"),
+            Decimal("0.9920"),
+            Decimal("1.0150"),
+            Decimal("1.0080"),
+            Decimal("0.9810"),
+            Decimal("1.0200"),
+            Decimal("1.0140"),
+            Decimal("0.9870"),
+            Decimal("1.0190"),
+        ]
+        expected_step_returns = [
+            Decimal("-6.00"),
+            Decimal("14.00"),
+            Decimal("5.00"),
+            Decimal("-3.00"),
+            Decimal("11.00"),
+            Decimal("6.00"),
+            Decimal("-2.50"),
+            Decimal("9.00"),
+            Decimal("4.50"),
+            Decimal("8.00"),
+        ]
+
+        def expand_half_year_returns(step_returns: list[Decimal]) -> list[Decimal]:
+            monthly_factors = []
+            for step_return in step_returns:
+                monthly_factor = Decimal(str(round((1 + (float(step_return) / 100)) ** (1 / 6), 8)))
+                monthly_factors.extend([monthly_factor] * 6)
+            return monthly_factors
+
+        prefix_noise = [Decimal("1.0040"), Decimal("0.9980"), Decimal("1.0060"), Decimal("0.9970")] * 6
+        bridge_noise = [Decimal("1.0120"), Decimal("0.9890"), Decimal("1.0110"), Decimal("0.9920")] * 6
+        monthly_factors = (
+            prefix_noise
+            + recent_shape_factors
+            + expand_half_year_returns(expected_step_returns)
+            + bridge_noise
+            + recent_shape_factors
+        )
+        reference_series = build_market_series_from_monthly_factors(
+            "^IBEX",
+            "IBEX 35",
+            monthly_factors,
+            start_year=2010,
+            start_month=1,
+            start_price=Decimal("100.0000"),
+        )
+        candidate_anchor_date = reference_series.points[len(prefix_noise) + len(recent_shape_factors)]["date"]
+
+        with patch("equities.services.REFERENCE_CYCLE_TEMPLATE_MAX_MATCHES", 1):
+            template = build_reference_cycle_template_from_series(
+                reference_series,
+                latest_date=reference_series.latest_date,
+                years=5,
+                step_months=6,
+            )
+
+        self.assertTrue(template["available"])
+        self.assertEqual(template["selected_windows_count"], 1)
+        self.assertEqual(template["selected_anchor_dates"], [candidate_anchor_date])
+        self.assertEqual(template["recent_months"], 18)
+        self.assertEqual(template["shape_window_end_date"], reference_series.latest_date)
+        self.assertGreater(template["years_covered"], Decimal("11.00"))
+        for actual_return, expected_return in zip(template["step_return_pcts"], expected_step_returns):
+            self.assertLess(abs(actual_return - expected_return), Decimal("0.20"))
+
+    def test_cycle_projection_5y_uses_longest_reference_history_for_ibex_shape(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="REP",
+            quote_symbol="REP.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Repsol, S.A.",
+            shares=Decimal("25"),
+            average_cost_per_share=Decimal("12.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        stock_price = Decimal("12.00")
+        benchmark_price = Decimal("100.00")
+        pattern = [Decimal("1.025"), Decimal("0.985"), Decimal("1.030"), Decimal("0.992")]
+        benchmark_pattern = [Decimal("1.010"), Decimal("1.004"), Decimal("1.012"), Decimal("0.998")]
+        for index in range(120):
+            year = 2016 + (index // 12)
+            month = (index % 12) + 1
+            month_end = monthrange(year, month)[1]
+            stock_price = (stock_price * pattern[index % len(pattern)]).quantize(Decimal("0.0001"))
+            benchmark_price = (benchmark_price * benchmark_pattern[index % len(benchmark_pattern)]).quantize(Decimal("0.0001"))
+            position.price_history.create(
+                price_date=date(year, month, month_end),
+                close_price=stock_price,
+                benchmark_close=benchmark_price,
+            )
+
+        long_reference_series = build_market_series_from_monthly_factors(
+            "^IBEX",
+            "IBEX 35",
+            ([Decimal("1.0180"), Decimal("0.9840"), Decimal("1.0220"), Decimal("0.9910"), Decimal("1.0160"), Decimal("0.9870")] * 44)[:264],
+            start_year=2000,
+            start_month=1,
+            start_price=Decimal("100.0000"),
+        )
+
+        with (
+            patch("equities.services.fetch_reference_series_for_choice", return_value=long_reference_series),
+            patch("equities.services.fetch_ecb_yield_curve_series", return_value=None),
+        ):
+            card = build_equity_history_cards([position])[0]
+
+        cycle_projection = card["cycle_projection_5y"]
+        reference_template = cycle_projection["reference_cycle_template"]
+        self.assertTrue(cycle_projection["available"])
+        self.assertTrue(reference_template["available"])
+        self.assertEqual(reference_template["reference_label"], "IBEX 35")
+        self.assertGreater(reference_template["years_covered"], Decimal("20.00"))
+        self.assertGreater(reference_template["years_covered"], cycle_projection["analysis_years_used"])
+        self.assertEqual(reference_template["shape_window_end_date"], long_reference_series.latest_date)
+        self.assertIn("ventanas historicas parecidas", cycle_projection["explanation"])
+        self.assertEqual(cycle_projection["history_window_label"], "Ultimos 5 anos visibles")
 
     def test_equity_history_card_exposes_12m_and_5y_scenarios(self):
         position = EquityPosition.objects.create(
@@ -704,7 +884,7 @@ class EquitiesServicesTests(TestCase):
             ],
         )
 
-        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name="", range_key="10y"):
             if reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
                 return euribor_series
             return generic_series
@@ -826,24 +1006,34 @@ class EquitiesServicesTests(TestCase):
                 benchmark_close=benchmark_price,
             )
 
-        cards = build_equity_history_cards([position])
+        reference_series = build_market_series_from_monthly_factors(
+            "^IBEX",
+            "IBEX 35",
+            ([Decimal("1.0150"), Decimal("0.9860"), Decimal("1.0180"), Decimal("0.9930"), Decimal("1.0110"), Decimal("0.9890")] * 24)[:144],
+            start_year=2008,
+            start_month=1,
+            start_price=Decimal("100.0000"),
+        )
+
+        with patch("equities.services.fetch_reference_series_for_choice", return_value=reference_series):
+            cards = build_equity_history_cards([position])
 
         cycle_projection = cards[0]["cycle_projection_5y"]
         cycle_chart = cards[0]["cycle_projection_5y_chart"]
         self.assertTrue(cycle_projection["available"])
         self.assertTrue(cycle_chart["available"])
-        self.assertEqual(cycle_chart["history_window_label"], "Ultimos 5 anos")
-        self.assertIn("10.0 anos", cycle_chart["model_window_label"])
+        self.assertEqual(cycle_chart["history_window_label"], "Ultimos 5 anos visibles")
+        self.assertIn("anos de historico", cycle_chart["model_window_label"])
+        self.assertGreater(cycle_projection["analysis_years_used"], Decimal("9.80"))
         self.assertEqual(cycle_chart["start_label"], "2021-01-31")
         self.assertTrue(cycle_chart["projection_end_label"].startswith("2030-"))
         self.assertEqual(cycle_projection["path"][-1]["label"], "5A")
-        self.assertIn("10.0 anos", cycle_projection["explanation"])
-        self.assertTrue(
-            any(
-                current["projected_price"] < previous["projected_price"]
-                for previous, current in zip(cycle_projection["path"], cycle_projection["path"][1:])
-            )
-        )
+        self.assertIn("historico disponible", cycle_projection["explanation"])
+        path_deltas = [
+            (current["projected_price"] - previous["projected_price"]).quantize(Decimal("0.01"))
+            for previous, current in zip(cycle_projection["path"], cycle_projection["path"][1:])
+        ]
+        self.assertGreater(len(set(path_deltas)), 1)
 
     def test_decision_rows_include_five_year_projection_and_yearly_margins(self):
         position = EquityPosition.objects.create(
@@ -4699,7 +4889,7 @@ class EquitiesServicesTests(TestCase):
             growth = Decimal("1.0210") if symbol.startswith("ACS") else Decimal("1.0170")
             return build_compound_market_series(symbol, symbol, growth=growth, start_price=Decimal("12.0000"))
 
-        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name="", range_key="10y"):
             return build_compound_market_series(
                 benchmark_symbol or "^IBEX",
                 benchmark_name or "Referencia",
@@ -4798,7 +4988,7 @@ class EquitiesServicesTests(TestCase):
             growth = Decimal("1.0210") if symbol.startswith("ACS") else Decimal("1.0170")
             return build_compound_market_series(symbol, symbol, growth=growth, start_price=Decimal("12.0000"))
 
-        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name="", range_key="10y"):
             return build_compound_market_series(
                 benchmark_symbol or "^IBEX",
                 benchmark_name or "Referencia",
@@ -4849,7 +5039,7 @@ class EquitiesServicesTests(TestCase):
             start_price = Decimal("12.0000") if symbol.startswith("ACS") else Decimal("100.0000")
             return build_compound_market_series(symbol, symbol, growth=growth, start_price=start_price)
 
-        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name="", range_key="10y"):
             return build_compound_market_series(
                 benchmark_symbol or "^IBEX",
                 benchmark_name or "Referencia",
@@ -8820,7 +9010,7 @@ class EquitiesViewTests(TestCase):
         def fake_market_series(symbol, range_key="10y", interval="1d"):
             return build_compound_market_series(symbol, symbol, growth=Decimal("1.0200"), start_price=Decimal("12.0000"))
 
-        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name="", range_key="10y"):
             return build_compound_market_series(
                 benchmark_symbol or "^IBEX",
                 benchmark_name or "Referencia",
@@ -8871,7 +9061,7 @@ class EquitiesViewTests(TestCase):
         def fake_market_series(symbol, range_key="10y", interval="1d"):
             return build_compound_market_series(symbol, symbol, growth=Decimal("1.0200"), months=120, start_price=Decimal("12.0000"))
 
-        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name="", range_key="10y"):
             return build_compound_market_series(
                 benchmark_symbol or "^IBEX",
                 benchmark_name or "Referencia",
@@ -8950,7 +9140,7 @@ class EquitiesViewTests(TestCase):
         def fake_market_series(symbol, range_key="10y", interval="1d"):
             return build_compound_market_series(symbol, symbol, growth=Decimal("1.0200"), months=120, start_price=Decimal("12.0000"))
 
-        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name="", range_key="10y"):
             return build_compound_market_series(
                 benchmark_symbol or "^IBEX",
                 benchmark_name or "Referencia",
@@ -8997,7 +9187,7 @@ class EquitiesViewTests(TestCase):
         def fake_market_series(symbol, range_key="10y", interval="1d"):
             return build_compound_market_series(symbol, symbol, growth=Decimal("1.0200"), start_price=Decimal("12.0000"))
 
-        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name=""):
+        def fake_reference_series(reference_profile, benchmark_symbol="", benchmark_name="", range_key="10y"):
             return build_compound_market_series(
                 benchmark_symbol or "^IBEX",
                 benchmark_name or "Referencia",

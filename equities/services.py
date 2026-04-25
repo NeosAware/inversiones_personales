@@ -38,6 +38,7 @@ from .models import (
 ZERO = Decimal("0.00")
 ONE_HUNDRED = Decimal("100")
 DEFAULT_MARKET_RANGE_KEY = "10y"
+MAX_MARKET_RANGE_KEY = "max"
 LONG_ANALYSIS_YEARS = 10
 LONG_ANALYSIS_DAYS = 365 * LONG_ANALYSIS_YEARS
 LONG_MONTHLY_OBSERVATIONS = 132
@@ -72,6 +73,8 @@ COMPARABLE_MONTH_DAYS = Decimal("30.4375")
 OPTIMIZER_MAX_ENTRY_DRAG_PCT = Decimal("1.00")
 OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT = Decimal("2.00")
 OPTIMIZER_MIN_GAIN_TO_ROUNDTRIP_MULTIPLE = Decimal("1.80")
+REFERENCE_CYCLE_TEMPLATE_RECENT_MONTHS = 18
+REFERENCE_CYCLE_TEMPLATE_MAX_MATCHES = 12
 
 logger = logging.getLogger(__name__)
 SPANISH_MONTH_LABELS = {
@@ -574,6 +577,12 @@ class EquityDocumentPrefill:
     detected_fields: list[str]
     candidate_count: int
     source_kind: str
+
+
+@dataclass(frozen=True)
+class MarketHistoryPoint:
+    price_date: date
+    close_price: Decimal
 
 
 def normalize_company_lookup(value: str) -> str:
@@ -1929,6 +1938,7 @@ def _fetch_reference_series_for_choice_cached(
     reference_profile: str,
     benchmark_symbol: str = "",
     benchmark_name: str = "",
+    range_key: str = DEFAULT_MARKET_RANGE_KEY,
     cache_bucket: int = 0,
 ) -> MarketSeries | None:
     if reference_profile == EquityPosition.ReferenceProfile.EURIBOR_12M:
@@ -1942,7 +1952,7 @@ def _fetch_reference_series_for_choice_cached(
     if benchmark_symbol:
         return _fetch_market_series_cached(
             clean_symbol(benchmark_symbol),
-            DEFAULT_MARKET_RANGE_KEY,
+            range_key,
             "1d",
             cache_bucket,
         )
@@ -1953,22 +1963,25 @@ def fetch_reference_series_for_choice(
     reference_profile: str,
     benchmark_symbol: str = "",
     benchmark_name: str = "",
+    range_key: str = DEFAULT_MARKET_RANGE_KEY,
 ) -> MarketSeries | None:
     return clone_market_series(
         _fetch_reference_series_for_choice_cached(
             reference_profile,
             benchmark_symbol,
             benchmark_name,
+            range_key,
             build_market_data_cache_bucket(),
         )
     )
 
 
-def fetch_reference_series(position: EquityPosition) -> MarketSeries | None:
+def fetch_reference_series(position: EquityPosition, range_key: str = DEFAULT_MARKET_RANGE_KEY) -> MarketSeries | None:
     return fetch_reference_series_for_choice(
         position.reference_profile,
         benchmark_symbol=position.benchmark_symbol,
         benchmark_name=position.benchmark_name,
+        range_key=range_key,
     )
 
 
@@ -3607,16 +3620,12 @@ def build_base_five_year_cycle_projection(
         return {"available": False}
 
     latest_date = history[-1].price_date
-    analysis_history = filter_history_window(
-        history,
-        start_date=latest_date - timedelta(days=LONG_ANALYSIS_DAYS),
-        end_date=latest_date,
-    )
+    analysis_history = [point for point in history if point.price_date <= latest_date]
     monthly_history = collapse_history_to_frequency(analysis_history, "monthly")
     if len(monthly_history) < 24:
         return {"available": False}
 
-    cycle_metrics = cycle_metrics or build_cycle_metrics(analysis_history)
+    cycle_metrics = build_cycle_metrics(analysis_history, max_days=None)
     latest_price = monthly_history[-1].close_price
     three_year_snapshot = build_period_snapshot(
         analysis_history,
@@ -3786,6 +3795,18 @@ def build_base_five_year_cycle_projection(
     if all(value <= ZERO for value in step_return_pcts):
         step_return_pcts[1] = max(upside_return, Decimal("1.50"))
 
+    reference_cycle_template = build_reference_cycle_template(
+        position,
+        latest_date=latest_date,
+        years=5,
+        step_months=6,
+    )
+    if reference_cycle_template.get("available"):
+        step_return_pcts = [
+            Decimal(str(value))
+            for value in (reference_cycle_template.get("step_return_pcts") or step_return_pcts)
+        ]
+
     path = build_cycle_projection_path(
         latest_price,
         annual_return_pct,
@@ -3802,9 +3823,7 @@ def build_base_five_year_cycle_projection(
 
     projected_price = path[-1]["projected_price"]
     five_year_return_pct = percentage_change(projected_price, latest_price)
-    analysis_years_used = min(years_covered, Decimal(str(LONG_ANALYSIS_YEARS))) if years_covered else ZERO
-    if analysis_years_used >= Decimal(str(LONG_ANALYSIS_YEARS)) - Decimal("0.15"):
-        analysis_years_used = Decimal(str(LONG_ANALYSIS_YEARS))
+    analysis_years_used = years_covered or ZERO
     confidence = build_projection_confidence(
         correlation.get("coefficient"),
         correlation.get("observations_count", 0),
@@ -3831,10 +3850,17 @@ def build_base_five_year_cycle_projection(
         confidence_label=confidence["label"],
     )
     explanation = (
-        f"Esta vista 5A usa los ultimos {analysis_years_used:.1f} anos para leer el ciclo de {position.company_name}. "
+        f"Esta vista 5A usa {analysis_years_used:.1f} anos del historico disponible para leer el ciclo de {position.company_name}. "
         f"Combina CAGR del ciclo, ritmo a 3-5 anos, drawdown actual y fase {cycle_metrics.get('cycle_phase', 'sin ciclo').lower()} "
-        "para dibujar una senda larga de orientacion con tramos de correccion y rebote inspirados en las ventanas bajistas y alcistas del historico, separada de la decision a 12 meses."
+        "para dibujar una senda larga de orientacion."
     )
+    if reference_cycle_template.get("available"):
+        explanation += (
+            f" La forma de la senda sale de {reference_cycle_template.get('years_covered') or ZERO:.1f} anos de "
+            f"{reference_cycle_template.get('reference_label') or position.analysis_reference_label}, buscando ventanas historicas parecidas al punto actual para incluir ciclos economicos completos."
+        )
+    else:
+        explanation += " Como no hay suficiente referencia larga comparable, el modelo recurre a una plantilla sintetica de ciclo."
     return {
         "available": True,
         "annual_return_pct": quantize_decimal(annual_return_pct),
@@ -3843,7 +3869,7 @@ def build_base_five_year_cycle_projection(
         "path": path,
         "cycle_phase": cycle_metrics.get("cycle_phase"),
         "analysis_years_used": analysis_years_used,
-        "history_window_label": "Ultimos 5 anos",
+        "history_window_label": "Ultimos 5 anos visibles",
         "model_window_label": f"{analysis_years_used:.1f} anos de historico",
         "step_return_pcts": [quantize_decimal(value) or ZERO for value in step_return_pcts],
         "latest_price": quantize_decimal(latest_price, "0.0001"),
@@ -3856,6 +3882,7 @@ def build_base_five_year_cycle_projection(
         "safety_score": safety["score"],
         "scenario_spread_annual_pct": quantize_decimal(scenario_spread_annual_pct),
         "scenarios": scenarios,
+        "reference_cycle_template": reference_cycle_template,
         "base_explanation": explanation,
         "explanation": explanation,
     }
@@ -7577,7 +7604,7 @@ def describe_cycle_phase(
     return "Transicion"
 
 
-def build_cycle_metrics(history) -> dict:
+def build_cycle_metrics(history, max_days: int | None = LONG_ANALYSIS_DAYS) -> dict:
     if not history:
         return {
             "available": False,
@@ -7586,11 +7613,14 @@ def build_cycle_metrics(history) -> dict:
         }
 
     latest_date = history[-1].price_date
-    window = filter_history_window(
-        history,
-        start_date=latest_date - timedelta(days=LONG_ANALYSIS_DAYS),
-        end_date=latest_date,
-    )
+    if max_days is None:
+        window = [point for point in history if point.price_date <= latest_date]
+    else:
+        window = filter_history_window(
+            history,
+            start_date=latest_date - timedelta(days=max_days),
+            end_date=latest_date,
+        )
     monthly_history = collapse_history_to_frequency(window, "monthly")
     if len(monthly_history) < 6:
         return {
@@ -7666,6 +7696,224 @@ def build_cycle_metrics(history) -> dict:
             cagr_pct,
         ),
     }
+
+
+def build_market_history_points(points: list[dict], end_date: date | None = None) -> list[MarketHistoryPoint]:
+    history = []
+    for point in points or []:
+        point_date = point.get("date")
+        close_price = point.get("close")
+        if point_date is None or close_price in {None, ""}:
+            continue
+        if end_date is not None and point_date > end_date:
+            continue
+        try:
+            history.append(
+                MarketHistoryPoint(
+                    price_date=point_date,
+                    close_price=Decimal(str(close_price)),
+                )
+            )
+        except Exception:
+            continue
+    return history
+
+
+def build_normalized_history_path(window: list[MarketHistoryPoint]) -> list[Decimal]:
+    if len(window) < 2 or window[0].close_price in {None, ZERO}:
+        return []
+
+    baseline_price = window[0].close_price
+    path = [ZERO]
+    for point in window[1:]:
+        change_pct = percentage_change(point.close_price, baseline_price)
+        path.append(change_pct if change_pct is not None else ZERO)
+    return path
+
+
+def build_history_step_returns(window: list[MarketHistoryPoint]) -> list[Decimal]:
+    step_returns = []
+    for previous, current in zip(window, window[1:]):
+        period_return = percentage_change(current.close_price, previous.close_price)
+        step_returns.append(period_return if period_return is not None else ZERO)
+    return step_returns
+
+
+def average_absolute_difference(left: list[Decimal], right: list[Decimal]) -> Decimal | None:
+    if len(left) != len(right) or not left:
+        return None
+    differences = [abs(left_value - right_value) for left_value, right_value in zip(left, right)]
+    return average_decimal(differences)
+
+
+def build_reference_cycle_template_from_series(
+    reference_series: MarketSeries | None,
+    *,
+    latest_date: date | None,
+    years: int = 5,
+    step_months: int = 6,
+) -> dict:
+    if reference_series is None or years <= 0 or step_months <= 0:
+        return {"available": False}
+
+    monthly_history = collapse_history_to_frequency(
+        build_market_history_points(reference_series.points, end_date=latest_date),
+        "monthly",
+    )
+    step_count = int((years * 12) / step_months)
+    recent_months = max(REFERENCE_CYCLE_TEMPLATE_RECENT_MONTHS, step_months * 2)
+    minimum_points = recent_months + (step_count * step_months) + 1
+    if len(monthly_history) < minimum_points:
+        return {
+            "available": False,
+            "reference_label": reference_series.name or reference_series.symbol,
+            "years_covered": calculate_years_between(
+                monthly_history[0].price_date if monthly_history else None,
+                monthly_history[-1].price_date if monthly_history else None,
+            ),
+            "match_windows_count": 0,
+            "selected_windows_count": 0,
+        }
+
+    current_metrics = build_cycle_metrics(monthly_history, max_days=None)
+    current_window = monthly_history[-(recent_months + 1) :]
+    current_shape_path = build_normalized_history_path(current_window)
+    current_return_shape = build_history_step_returns(current_window)
+    current_recent_return_pct = percentage_change(
+        current_window[-1].close_price,
+        current_window[0].close_price,
+    ) or ZERO
+    current_one_year_return_pct = current_metrics.get("one_year_return_pct") or ZERO
+    current_drawdown_pct = current_metrics.get("current_drawdown_pct") or ZERO
+    current_volatility_pct = current_metrics.get("annualized_volatility_pct") or ZERO
+    current_phase = current_metrics.get("cycle_phase") or "Sin ciclo"
+    matches = []
+
+    last_anchor_index = len(monthly_history) - (step_count * step_months) - 1
+    for anchor_index in range(recent_months, last_anchor_index + 1):
+        anchor_history = monthly_history[: anchor_index + 1]
+        anchor_metrics = build_cycle_metrics(anchor_history, max_days=None)
+        if not anchor_metrics.get("available"):
+            continue
+        anchor_window = monthly_history[(anchor_index - recent_months) : (anchor_index + 1)]
+        if len(anchor_window) != len(current_window):
+            continue
+
+        anchor_shape_path = build_normalized_history_path(anchor_window)
+        anchor_return_shape = build_history_step_returns(anchor_window)
+        shape_gap = average_absolute_difference(anchor_shape_path, current_shape_path)
+        return_shape_gap = average_absolute_difference(anchor_return_shape, current_return_shape)
+        recent_return_gap = abs(
+            (percentage_change(anchor_window[-1].close_price, anchor_window[0].close_price) or ZERO)
+            - current_recent_return_pct
+        )
+        if shape_gap is None or return_shape_gap is None:
+            continue
+
+        phase_penalty = (
+            Decimal("0.00")
+            if (anchor_metrics.get("cycle_phase") or "Sin ciclo") == current_phase
+            else Decimal("5.00")
+        )
+        score = (
+            (shape_gap * Decimal("1.60"))
+            + (return_shape_gap * Decimal("0.95"))
+            + (recent_return_gap * Decimal("0.55"))
+            + abs((anchor_metrics.get("one_year_return_pct") or ZERO) - current_one_year_return_pct)
+            + (abs((anchor_metrics.get("current_drawdown_pct") or ZERO) - current_drawdown_pct) * Decimal("1.35"))
+            + (abs((anchor_metrics.get("annualized_volatility_pct") or ZERO) - current_volatility_pct) * Decimal("0.35"))
+            + phase_penalty
+        )
+
+        step_return_pcts = []
+        for step_number in range(1, step_count + 1):
+            previous_index = anchor_index + ((step_number - 1) * step_months)
+            next_index = anchor_index + (step_number * step_months)
+            if next_index >= len(monthly_history):
+                step_return_pcts = []
+                break
+            step_return_pct = percentage_change(
+                monthly_history[next_index].close_price,
+                monthly_history[previous_index].close_price,
+            )
+            if step_return_pct is None:
+                step_return_pcts = []
+                break
+            step_return_pcts.append(step_return_pct)
+
+        if len(step_return_pcts) != step_count:
+            continue
+
+        matches.append(
+            {
+                "score": score,
+                "step_return_pcts": step_return_pcts,
+                "anchor_date": monthly_history[anchor_index].price_date,
+                "cycle_phase": anchor_metrics.get("cycle_phase") or "Sin ciclo",
+                "shape_gap": shape_gap,
+                "return_shape_gap": return_shape_gap,
+            }
+        )
+
+    if not matches:
+        return {
+            "available": False,
+            "reference_label": reference_series.name or reference_series.symbol,
+            "years_covered": calculate_years_between(monthly_history[0].price_date, monthly_history[-1].price_date),
+            "match_windows_count": 0,
+            "selected_windows_count": 0,
+        }
+
+    selected_matches = sorted(matches, key=lambda item: (item["score"], item["anchor_date"]))[
+        : min(REFERENCE_CYCLE_TEMPLATE_MAX_MATCHES, len(matches))
+    ]
+    averaged_steps = []
+    for step_index in range(step_count):
+        weighted_total = ZERO
+        total_weight = ZERO
+        for match in selected_matches:
+            weight = Decimal("1.00") / (Decimal("1.00") + (match["score"] / Decimal("10.00")))
+            weighted_total += match["step_return_pcts"][step_index] * weight
+            total_weight += weight
+        averaged_steps.append((weighted_total / total_weight) if total_weight else ZERO)
+
+    return {
+        "available": True,
+        "reference_label": reference_series.name or reference_series.symbol,
+        "years_covered": calculate_years_between(monthly_history[0].price_date, monthly_history[-1].price_date),
+        "match_windows_count": len(matches),
+        "selected_windows_count": len(selected_matches),
+        "selected_anchor_dates": [match["anchor_date"] for match in selected_matches],
+        "recent_months": recent_months,
+        "shape_window_start_date": current_window[0].price_date,
+        "shape_window_end_date": current_window[-1].price_date,
+        "selected_shape_gaps": [quantize_decimal(match["shape_gap"]) or ZERO for match in selected_matches],
+        "step_return_pcts": [quantize_decimal(value) or ZERO for value in averaged_steps],
+        "current_cycle_phase": current_phase,
+    }
+
+
+def build_reference_cycle_template(
+    position: EquityPosition,
+    *,
+    latest_date: date | None,
+    years: int = 5,
+    step_months: int = 6,
+) -> dict:
+    try:
+        reference_series = fetch_reference_series(
+            position,
+            range_key=MAX_MARKET_RANGE_KEY,
+        )
+    except Exception:
+        logger.exception("No se pudo cargar la referencia larga para %s", position.ticker)
+        return {"available": False}
+    return build_reference_cycle_template_from_series(
+        reference_series,
+        latest_date=latest_date,
+        years=years,
+        step_months=step_months,
+    )
 
 
 def pearson_correlation(xs: list[Decimal], ys: list[Decimal]) -> Decimal | None:
@@ -8353,10 +8601,12 @@ def build_period_snapshot(
     first_point = window[0]
     last_point = window[-1]
     stock_return_pct = percentage_change(last_point.close_price, first_point.close_price)
-    benchmark_return_pct = percentage_change(last_point.benchmark_close, first_point.benchmark_close)
+    first_benchmark_close = getattr(first_point, "benchmark_close", None)
+    last_benchmark_close = getattr(last_point, "benchmark_close", None)
+    benchmark_return_pct = percentage_change(last_benchmark_close, first_benchmark_close)
     benchmark_change = calculate_series_change(
-        last_point.benchmark_close,
-        first_point.benchmark_close,
+        last_benchmark_close,
+        first_benchmark_close,
         change_mode=benchmark_change_mode,
     )
     alpha_pct = (
