@@ -66,6 +66,7 @@ from .services import (
     build_equity_ticket_tracking_context,
     build_equity_ticket_tracking_item,
     build_ticket_expected_series,
+    densify_projected_tracking_series,
     build_portfolio_correlation_context,
     build_tracking_rebased_comparison_series,
     build_value_tracking_chart,
@@ -80,6 +81,7 @@ from .services import (
     filter_positive_optimizer_candidates,
     find_equity_company_profile,
     format_axis_value,
+    format_percentage_axis_value,
     load_ibex_reference_workbook_snapshot,
     sync_equity_market_data,
 )
@@ -934,8 +936,14 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(projection["available"])
         self.assertGreater(projection["base_return_pct"], Decimal("0"))
         self.assertGreater(projection["projected_price"], Decimal("22.00"))
+        self.assertEqual(len(projection["monthly_path"]), 12)
         self.assertEqual(len(projection["quarterly_path"]), 4)
         self.assertIsNotNone(projection["quarterly_path"][0]["projected_date"])
+        monthly_deltas = [
+            (current["projected_price"] - previous["projected_price"]).quantize(Decimal("0.0001"))
+            for previous, current in zip(projection["monthly_path"], projection["monthly_path"][1:])
+        ]
+        self.assertGreater(len(set(monthly_deltas)), 1)
         self.assertIn("IBEX 35", projection["explanation"])
         self.assertTrue(cards[0]["projection_line"])
         self.assertTrue(cards[0]["historical_chart"]["available"])
@@ -2182,6 +2190,96 @@ class EquitiesServicesTests(TestCase):
         self.assertLess(shaped_3m, linear_3m)
         self.assertNotEqual(shaped_9m, linear_9m)
 
+    def test_ticket_expected_series_prefers_monthly_projection_path_for_tracking_shape(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("100.0000"),
+            current_price_per_share=Decimal("100.0000"),
+            annual_dividend_income=Decimal("0.00"),
+        )
+        EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 4, 25),
+            invested_amount=Decimal("1000.00"),
+            current_value=Decimal("1000.00"),
+            projected_market_value_12m=Decimal("1400.00"),
+            projected_total_value_12m=Decimal("1400.00"),
+            projected_price_12m=Decimal("140.0000"),
+        )
+        EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 5, 25),
+            invested_amount=Decimal("1000.00"),
+            current_value=Decimal("1010.00"),
+            projected_market_value_12m=Decimal("1400.00"),
+            projected_total_value_12m=Decimal("1400.00"),
+            projected_price_12m=Decimal("140.0000"),
+        )
+        snapshots = list(position.ticket_snapshots.order_by("snapshot_date"))
+
+        quarterly_series, _, _ = build_ticket_expected_series(
+            snapshots,
+            Decimal("1400.00"),
+            card={
+                "position": position,
+                "projection": {
+                    "latest_price": Decimal("100.0000"),
+                    "projected_price": Decimal("140.0000"),
+                    "quarterly_path": [
+                        {"label": "3M", "projected_date": date(2026, 7, 25), "projected_price": Decimal("109.0000")},
+                        {"label": "6M", "projected_date": date(2026, 10, 25), "projected_price": Decimal("118.0000")},
+                        {"label": "9M", "projected_date": date(2027, 1, 25), "projected_price": Decimal("128.0000")},
+                        {"label": "1A", "projected_date": date(2027, 4, 25), "projected_price": Decimal("140.0000")},
+                    ],
+                },
+            },
+        )
+        monthly_series, _, _ = build_ticket_expected_series(
+            snapshots,
+            Decimal("1400.00"),
+            card={
+                "position": position,
+                "projection": {
+                    "latest_price": Decimal("100.0000"),
+                    "projected_price": Decimal("140.0000"),
+                    "monthly_path": [
+                        {"label": "1M", "projected_date": date(2026, 5, 25), "projected_price": Decimal("102.0000")},
+                        {"label": "2M", "projected_date": date(2026, 6, 25), "projected_price": Decimal("103.5000")},
+                        {"label": "3M", "projected_date": date(2026, 7, 25), "projected_price": Decimal("105.5000")},
+                        {"label": "4M", "projected_date": date(2026, 8, 25), "projected_price": Decimal("108.5000")},
+                        {"label": "5M", "projected_date": date(2026, 9, 25), "projected_price": Decimal("112.0000")},
+                        {"label": "6M", "projected_date": date(2026, 10, 25), "projected_price": Decimal("115.5000")},
+                        {"label": "7M", "projected_date": date(2026, 11, 25), "projected_price": Decimal("118.5000")},
+                        {"label": "8M", "projected_date": date(2026, 12, 25), "projected_price": Decimal("122.5000")},
+                        {"label": "9M", "projected_date": date(2027, 1, 25), "projected_price": Decimal("127.0000")},
+                        {"label": "10M", "projected_date": date(2027, 2, 25), "projected_price": Decimal("131.0000")},
+                        {"label": "11M", "projected_date": date(2027, 3, 25), "projected_price": Decimal("135.0000")},
+                        {"label": "1A", "projected_date": date(2027, 4, 25), "projected_price": Decimal("140.0000")},
+                    ],
+                    "quarterly_path": [
+                        {"label": "3M", "projected_date": date(2026, 7, 25), "projected_price": Decimal("109.0000")},
+                        {"label": "6M", "projected_date": date(2026, 10, 25), "projected_price": Decimal("118.0000")},
+                        {"label": "9M", "projected_date": date(2027, 1, 25), "projected_price": Decimal("128.0000")},
+                        {"label": "1A", "projected_date": date(2027, 4, 25), "projected_price": Decimal("140.0000")},
+                    ],
+                },
+            },
+        )
+
+        monthly_first_anchor = next(point for point in monthly_series if point["date"] == date(2026, 5, 25) and point.get("is_anchor"))
+        quarterly_first_future = next(point for point in quarterly_series if point["date"] == date(2026, 7, 25) and point.get("is_anchor"))
+
+        self.assertEqual(monthly_first_anchor["label"], "1M")
+        self.assertLess(monthly_first_anchor["value"], quarterly_first_future["value"])
+        self.assertGreaterEqual(sum(1 for point in monthly_series if point.get("is_anchor")), 12)
+
     def test_ticket_tracking_recalibrates_expected_curve_when_reality_runs_ahead(self):
         position = EquityPosition.objects.create(
             broker="Interactive Brokers",
@@ -2324,7 +2422,42 @@ class EquitiesServicesTests(TestCase):
         self.assertLess(len(chart["actual_display_points"]), len(chart["actual_points"]))
         self.assertEqual(chart["actual_display_points"][-1]["date_label"], "2026-04-24")
         self.assertTrue(chart["actual_display_points"][-1]["is_latest"])
-        self.assertIn("lecturas", chart["actual_display_points"][-1]["tooltip"])
+        self.assertIn("2026-04-24", chart["actual_display_points"][-1]["tooltip"])
+
+    def test_build_value_tracking_chart_expands_short_real_window_against_long_projection(self):
+        chart = build_value_tracking_chart(
+            actual_series=[
+                {"date": date(2026, 4, 25), "value": Decimal("-4.43")},
+                {"date": date(2026, 4, 28), "value": Decimal("-3.20")},
+                {"date": date(2026, 4, 30), "value": Decimal("-2.40")},
+            ],
+            expected_series=densify_projected_tracking_series(
+                [
+                    {"date": date(2026, 4, 25), "value": Decimal("-4.43"), "label": "Hoy", "is_anchor": True},
+                    {"date": date(2026, 7, 25), "value": Decimal("2.00"), "label": "3M", "is_anchor": True},
+                    {"date": date(2026, 10, 25), "value": Decimal("6.10"), "label": "6M", "is_anchor": True},
+                    {"date": date(2027, 1, 25), "value": Decimal("10.50"), "label": "9M", "is_anchor": True},
+                    {"date": date(2027, 4, 25), "value": Decimal("15.10"), "label": "1A", "is_anchor": True},
+                ]
+            ),
+            benchmark_series=[
+                {"date": date(2026, 4, 25), "value": Decimal("-3.10")},
+                {"date": date(2026, 4, 30), "value": Decimal("-3.60")},
+                {"date": date(2027, 4, 25), "value": Decimal("1.50")},
+            ],
+            value_suffix="%",
+            axis_formatter=format_percentage_axis_value,
+        )
+
+        self.assertTrue(chart["available"])
+        self.assertTrue(chart["segmented_time_axis"])
+        self.assertIsNotNone(chart["projection_zone_start_x"])
+        self.assertTrue(chart["scale_note"])
+        self.assertTrue(chart["latest_gap_line"])
+        self.assertTrue(chart["expected_display_points"])
+        self.assertIn("Hoy", [marker["label"] for marker in chart["x_markers"]])
+        self.assertIn("1A", [marker["label"] for marker in chart["x_markers"]])
+        self.assertGreater(float(chart["actual_display_points"][-1]["x"]), 180.0)
 
     def test_build_value_tracking_chart_supports_single_real_series(self):
         chart = build_value_tracking_chart(

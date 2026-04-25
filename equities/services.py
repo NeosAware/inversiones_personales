@@ -3080,6 +3080,11 @@ def build_best_correlation_chart(history, suggestions: list[dict], reference_cac
     }
 
 
+def resolve_projection_tracking_path(projection: dict | None) -> list[dict]:
+    projection = projection or {}
+    return projection.get("monthly_path") or projection.get("quarterly_path") or []
+
+
 def build_projection_12m_chart(history, projection: dict) -> dict:
     if len(history) < 2 or not projection.get("available"):
         return {"available": False}
@@ -3092,6 +3097,7 @@ def build_projection_12m_chart(history, projection: dict) -> dict:
     )
     if len(recent_history) < 2:
         recent_history = history
+    projection_path = resolve_projection_tracking_path(projection)
     stock_series = [{"date": point.price_date, "value": point.close_price} for point in recent_history]
     projection_series = [{"date": latest_date, "value": recent_history[-1].close_price}]
     projection_series.extend(
@@ -3099,11 +3105,11 @@ def build_projection_12m_chart(history, projection: dict) -> dict:
             "date": step["projected_date"],
             "value": step["projected_price"],
         }
-        for step in projection.get("quarterly_path", [])
+        for step in projection_path
         if step.get("projected_date") and step.get("projected_price") is not None
     )
     chart = build_dual_axis_chart(stock_series, [], projection_points=projection_series)
-    end_projection_step = projection.get("quarterly_path", [])[-1] if projection.get("quarterly_path") else None
+    end_projection_step = projection_path[-1] if projection_path else None
     return {
         "available": bool(chart.get("stock_line") and chart.get("projection_line")),
         "stock_line": chart.get("stock_line", ""),
@@ -4182,8 +4188,12 @@ def normalize_tracking_series(points: list[dict] | None) -> list[dict]:
         value = point.get("value")
         if point_date is None or value is None:
             continue
-        grouped[point_date] = Decimal(str(value))
-    return [{"date": point_date, "value": grouped[point_date]} for point_date in sorted(grouped)]
+        grouped[point_date] = {
+            **point,
+            "date": point_date,
+            "value": Decimal(str(value)),
+        }
+    return [grouped[point_date] for point_date in sorted(grouped)]
 
 
 def build_tracking_series_difference(
@@ -4258,6 +4268,7 @@ def build_value_tracking_chart(
 ) -> dict:
     axis_formatter = axis_formatter or format_axis_value
     min_marker_distance = 10.0
+    expected_marker_distance = 22.0
 
     def format_chart_value(value: Decimal | None) -> str:
         formatted = axis_formatter(value)
@@ -4277,6 +4288,7 @@ def build_value_tracking_chart(
             "actual_points": [],
             "actual_display_points": [],
             "expected_points": [],
+            "expected_display_points": [],
             "benchmark_points": [],
             "benchmark_display_points": [],
             "min_label": "-",
@@ -4288,6 +4300,12 @@ def build_value_tracking_chart(
             "zero_y": None,
             "x_markers": [],
             "grid_markers": [],
+            "segmented_time_axis": False,
+            "projection_zone_start_x": None,
+            "projection_zone_width": None,
+            "scale_note": "",
+            "latest_gap_line": None,
+            "latest_expected_point": None,
         }
 
     all_values = (
@@ -4310,9 +4328,42 @@ def build_value_tracking_chart(
     total_days = max((max_date - min_date).days, 1)
     span_x = width - (padding * 2)
     span_y = height - (padding * 2)
+    latest_actual_date = actual_points[-1]["date"]
+    projection_end_date = expected_points[-1]["date"] if expected_points else latest_actual_date
+    observed_days = max((latest_actual_date - min_date).days, 0)
+    future_days = max((projection_end_date - latest_actual_date).days, 0)
+    segmented_time_axis = bool(
+        expected_points
+        and future_days >= 45
+        and future_days >= max(observed_days * 2, 30)
+    )
+    observed_ratio = None
+    if segmented_time_axis:
+        observed_ratio = max(
+            0.30,
+            min(0.46, 0.30 + ((observed_days / max(total_days, 1)) * 1.8)),
+        )
+    projection_zone_start_x = None
+
+    def scale_x(point_date: date) -> float:
+        nonlocal projection_zone_start_x
+        if not segmented_time_axis:
+            return padding + (span_x * ((point_date - min_date).days / total_days))
+
+        observed_span_x = span_x * float(observed_ratio or 0.34)
+        future_span_x = span_x - observed_span_x
+        if point_date <= latest_actual_date:
+            observed_denominator = max(observed_days, 1)
+            x_value = padding + (observed_span_x * ((point_date - min_date).days / observed_denominator))
+        else:
+            future_denominator = max(future_days, 1)
+            x_value = padding + observed_span_x + (future_span_x * ((point_date - latest_actual_date).days / future_denominator))
+        if projection_zone_start_x is None:
+            projection_zone_start_x = f"{padding + observed_span_x:.1f}"
+        return x_value
 
     def scale_point(point_date: date, value: Decimal) -> tuple[float, float]:
-        x = padding + (span_x * ((point_date - min_date).days / total_days))
+        x = scale_x(point_date)
         normalized_value = (value - series_min) / (series_max - series_min)
         y = height - padding - (normalized_value * span_y)
         return x, y
@@ -4332,6 +4383,8 @@ def build_value_tracking_chart(
                     "date_label": point["date"].isoformat(),
                     "tooltip": f"{point['date'].isoformat()} | {format_chart_value(point['value'])}",
                     "key": f"{prefix}-{point['date'].isoformat()}",
+                    "label": point.get("label"),
+                    "is_anchor": bool(point.get("is_anchor")),
                 }
             )
         return " ".join(line_points) if len(line_points) >= 2 else "", point_rows
@@ -4393,16 +4446,165 @@ def build_value_tracking_chart(
             display_points.append(representative)
         return display_points
 
+    def reduce_rows(rows: list[dict], max_points: int) -> list[dict]:
+        if len(rows) <= max_points:
+            return rows
+        if max_points <= 2:
+            return [rows[0], rows[-1]]
+        step = max(1, int(math.ceil((len(rows) - 2) / max(max_points - 2, 1))))
+        reduced = [rows[0]]
+        reduced.extend(row for index, row in enumerate(rows[1:-1], start=1) if index % step == 0)
+        if rows[-1]["key"] != reduced[-1]["key"]:
+            reduced.append(rows[-1])
+        return reduced[: max_points - 1] + [rows[-1]] if len(reduced) > max_points else reduced
+
+    def build_expected_display_points(point_rows: list[dict]) -> list[dict]:
+        if not point_rows:
+            return []
+
+        selected_rows = [point_rows[0], point_rows[-1]]
+        current_expected_row = next(
+            (point for point in reversed(point_rows) if point["date"] <= latest_actual_date),
+            None,
+        )
+        if current_expected_row is not None:
+            selected_rows.append(current_expected_row)
+
+        anchor_rows = [point for point in point_rows if point.get("is_anchor") and point["date"] > latest_actual_date]
+        if anchor_rows:
+            max_anchor_points = 6 if future_days <= 450 else 5
+            if future_days > 900:
+                yearly_anchor_rows = [point for point in anchor_rows if str(point.get("label") or "").endswith("A")]
+                anchor_rows = yearly_anchor_rows or anchor_rows
+            selected_rows.extend(reduce_rows(anchor_rows, max_anchor_points))
+
+        deduped_rows = []
+        seen_keys = set()
+        for row in selected_rows:
+            if row["key"] in seen_keys:
+                continue
+            seen_keys.add(row["key"])
+            deduped_rows.append(row)
+        deduped_rows.sort(key=lambda row: row["date"])
+
+        if len(deduped_rows) == 1:
+            row = dict(deduped_rows[0])
+            row["radius"] = "4.2"
+            row["is_latest_expected"] = True
+            return [row]
+
+        clusters: list[list[dict]] = []
+        current_cluster = [deduped_rows[0]]
+
+        def distance(left: dict, right: dict) -> float:
+            delta_x = float(left["x"]) - float(right["x"])
+            delta_y = float(left["y"]) - float(right["y"])
+            return (delta_x**2 + delta_y**2) ** 0.5
+
+        for row in deduped_rows[1:]:
+            if distance(row, current_cluster[-1]) < expected_marker_distance:
+                current_cluster.append(row)
+            else:
+                clusters.append(current_cluster)
+                current_cluster = [row]
+        clusters.append(current_cluster)
+
+        latest_key = deduped_rows[-1]["key"]
+        display_points = []
+        for cluster in clusters:
+            representative = dict(cluster[-1])
+            representative["cluster_size"] = len(cluster)
+            representative["is_latest_expected"] = representative["key"] == latest_key
+            representative["radius"] = "4.8" if representative["is_latest_expected"] else "3.6"
+            if len(cluster) > 1:
+                representative["tooltip"] = (
+                    f"{cluster[0]['date_label']} a {cluster[-1]['date_label']} | "
+                    f"{len(cluster)} hitos esperados | ultimo {cluster[-1]['value_label']}"
+                )
+            display_points.append(representative)
+        return display_points
+
+    def build_segmented_axis_markers(
+        actual_point_rows: list[dict],
+        expected_point_rows: list[dict],
+    ) -> list[dict]:
+        if not segmented_time_axis:
+            return []
+
+        def short_date_label(point_date: date) -> str:
+            month_label = SPANISH_MONTH_LABELS.get(point_date.month, str(point_date.month))[:3].capitalize()
+            return f"{month_label} {str(point_date.year)[2:]}"
+
+        marker_rows = []
+        if actual_point_rows:
+            marker_rows.append(
+                {
+                    **actual_point_rows[0],
+                    "marker_label": short_date_label(actual_point_rows[0]["date"]),
+                    "is_major": True,
+                }
+            )
+            marker_rows.append(
+                {
+                    **actual_point_rows[-1],
+                    "marker_label": "Hoy",
+                    "is_major": True,
+                }
+            )
+
+        future_anchor_rows = [point for point in expected_point_rows if point.get("is_anchor") and point["date"] > latest_actual_date]
+        if future_anchor_rows:
+            if future_days > 900:
+                yearly_rows = [point for point in future_anchor_rows if str(point.get("label") or "").endswith("A")]
+                future_anchor_rows = yearly_rows or future_anchor_rows
+            future_anchor_rows = reduce_rows(future_anchor_rows, 5 if future_days <= 450 else 6)
+            for row in future_anchor_rows:
+                marker_rows.append(
+                    {
+                        **row,
+                        "marker_label": str(row.get("label") or short_date_label(row["date"])).strip(),
+                        "is_major": str(row.get("label") or "").endswith("A"),
+                    }
+                )
+
+        serialized_markers = []
+        seen_dates = set()
+        for row in sorted(marker_rows, key=lambda item: item["date"]):
+            marker_date = row["date"]
+            if marker_date in seen_dates:
+                continue
+            seen_dates.add(marker_date)
+            serialized_markers.append(
+                {
+                    "x": row["x"],
+                    "label": row["marker_label"],
+                    "date": marker_date.isoformat(),
+                    "y1": str(height - padding),
+                    "y2": str(height - padding + 7),
+                    "text_y": str(height - 2),
+                    "draw_grid": bool(row.get("is_anchor")) and marker_date > latest_actual_date,
+                    "grid_y1": str(padding),
+                    "grid_y2": str(height - padding),
+                    "is_major": bool(row.get("is_major")),
+                    "show_label": True,
+                    "anchor": "start" if marker_date == min_date else ("end" if marker_date == projection_end_date else "middle"),
+                }
+            )
+        return serialized_markers
+
     actual_line, actual_point_rows = build_series(actual_points, "actual")
     expected_line, expected_point_rows = build_series(expected_points, "expected")
     benchmark_line, benchmark_point_rows = build_series(benchmark_points, "benchmark")
     actual_display_points = build_display_points(actual_point_rows)
+    expected_display_points = build_expected_display_points(expected_point_rows)
     benchmark_display_points = build_display_points(benchmark_point_rows) if benchmark_point_rows else []
     zero_y = None
     if series_min <= ZERO <= series_max:
         zero_y = f"{scale_point(min_date, ZERO)[1]:.1f}"
 
-    if time_marker_mode == "month":
+    if segmented_time_axis:
+        x_markers = build_segmented_axis_markers(actual_point_rows, expected_point_rows)
+    elif time_marker_mode == "month":
         x_markers = build_month_axis_markers(
             all_dates,
             width=width,
@@ -4417,10 +4619,27 @@ def build_value_tracking_chart(
             padding=padding,
         )
 
-    if grid_marker_mode == "month":
+    if segmented_time_axis:
+        grid_markers = [marker for marker in x_markers if marker.get("draw_grid")]
+    elif grid_marker_mode == "month":
         grid_markers = [marker for marker in x_markers if marker.get("draw_grid")]
     else:
         grid_markers = []
+
+    latest_expected_point = next(
+        (point for point in reversed(expected_point_rows) if point["date"] <= latest_actual_date),
+        None,
+    )
+    latest_gap_line = None
+    if latest_expected_point is not None and actual_point_rows:
+        latest_actual_point = actual_point_rows[-1]
+        latest_gap_line = {
+            "x": latest_actual_point["x"],
+            "y1": latest_actual_point["y"],
+            "y2": latest_expected_point["y"],
+            "actual_value_label": latest_actual_point["value_label"],
+            "expected_value_label": latest_expected_point["value_label"],
+        }
 
     return {
         "available": True,
@@ -4430,6 +4649,7 @@ def build_value_tracking_chart(
         "actual_points": actual_point_rows,
         "actual_display_points": actual_display_points,
         "expected_points": expected_point_rows,
+        "expected_display_points": expected_display_points,
         "benchmark_points": benchmark_point_rows,
         "benchmark_display_points": benchmark_display_points,
         "min_label": format_chart_value(series_min),
@@ -4445,6 +4665,20 @@ def build_value_tracking_chart(
         "zero_y": zero_y,
         "x_markers": x_markers,
         "grid_markers": grid_markers,
+        "segmented_time_axis": segmented_time_axis,
+        "projection_zone_start_x": projection_zone_start_x,
+        "projection_zone_width": (
+            f"{max((width - padding) - float(projection_zone_start_x), 0):.1f}"
+            if projection_zone_start_x is not None
+            else None
+        ),
+        "scale_note": (
+            "Tramo real ampliado para separar mejor los primeros dias frente al horizonte proyectado."
+            if segmented_time_axis
+            else ""
+        ),
+        "latest_gap_line": latest_gap_line,
+        "latest_expected_point": latest_expected_point,
     }
 
 
@@ -4458,7 +4692,7 @@ def build_ticket_expected_series(
     baseline = snapshots[0]
     projected_end_date = baseline.snapshot_date + timedelta(days=TRACKING_HORIZON_DAYS)
     projection = (card or {}).get("projection") or {}
-    quarterly_path = projection.get("quarterly_path") or []
+    projection_path = resolve_projection_tracking_path(projection)
     baseline_value = quantize_decimal(baseline.current_value, "0.01") or ZERO
     normalized_target_value = quantize_decimal(target_value, "0.01") or baseline_value
 
@@ -4471,10 +4705,11 @@ def build_ticket_expected_series(
         )
     final_projection_price = quantize_decimal(projection.get("projected_price"), "0.0001")
 
-    for fallback_days, step in zip(TRACKING_FORECAST_MARKERS, quarterly_path):
+    for step_index, step in enumerate(projection_path, start=1):
         step_price = quantize_decimal(step.get("projected_price"), "0.0001")
         step_date = step.get("projected_date")
         if step_date is None:
+            fallback_days = int(round((TRACKING_HORIZON_DAYS * step_index) / max(len(projection_path), 1)))
             step_date = baseline.snapshot_date + timedelta(days=fallback_days)
         progress_ratio = None
         if (
@@ -4502,7 +4737,14 @@ def build_ticket_expected_series(
                 "0.01",
             )
         if anchor_value is not None:
-            anchors.append({"date": step_date, "value": anchor_value})
+            anchors.append(
+                {
+                    "date": step_date,
+                    "value": anchor_value,
+                    "label": step.get("label"),
+                    "is_anchor": True,
+                }
+            )
 
     if anchors:
         series, latest_expected_value, projected_end_date = build_segmented_expected_series(
@@ -4864,6 +5106,8 @@ def build_segmented_expected_series(
         {
             "date": baseline.snapshot_date,
             "value": quantize_decimal(baseline.current_value, "0.01") or ZERO,
+            "label": "Hoy",
+            "is_anchor": True,
         }
     ]
     for anchor in sorted(anchors, key=lambda item: item.get("date") or baseline.snapshot_date):
@@ -4875,6 +5119,8 @@ def build_segmented_expected_series(
             {
                 "date": anchor_date,
                 "value": quantize_decimal(anchor_value, "0.01") or ZERO,
+                "label": anchor.get("label"),
+                "is_anchor": bool(anchor.get("is_anchor", True)),
             }
         )
 
@@ -4886,6 +5132,13 @@ def build_segmented_expected_series(
         series_dates.add(snapshot.snapshot_date)
     for anchor in normalized_anchors[1:]:
         series_dates.add(anchor["date"])
+    anchor_meta_by_date = {
+        anchor["date"]: {
+            "label": anchor.get("label"),
+            "is_anchor": bool(anchor.get("is_anchor")),
+        }
+        for anchor in normalized_anchors
+    }
 
     def project_on_anchor_path(point_date: date) -> Decimal | None:
         if point_date <= normalized_anchors[0]["date"]:
@@ -4908,7 +5161,15 @@ def build_segmented_expected_series(
     for point_date in sorted(series_dates):
         expected_value = project_on_anchor_path(point_date)
         if expected_value is not None:
-            series.append({"date": point_date, "value": expected_value})
+            anchor_meta = anchor_meta_by_date.get(point_date, {})
+            series.append(
+                {
+                    "date": point_date,
+                    "value": expected_value,
+                    "label": anchor_meta.get("label"),
+                    "is_anchor": bool(anchor_meta.get("is_anchor")),
+                }
+            )
 
     latest_snapshot_date = snapshots[-1].snapshot_date
     latest_expected_value = next(
@@ -4931,7 +5192,7 @@ def build_ticket_expected_series_5y(
     baseline_current_value = quantize_decimal(baseline_snapshot.current_value, "0.01") or ZERO
     anchors = []
 
-    def add_anchor(months: int | None, value: Decimal | None):
+    def add_anchor(months: int | None, value: Decimal | None, label: str | None = None):
         if months is None or months <= 0 or value is None:
             return
         anchor_date = add_calendar_months(baseline_snapshot.snapshot_date, months)
@@ -4943,7 +5204,14 @@ def build_ticket_expected_series_5y(
             months=months,
             card=card,
         )
-        anchors.append({"date": anchor_date, "value": moderated_value if moderated_value is not None else (quantize_decimal(value, "0.01") or ZERO)})
+        anchors.append(
+            {
+                "date": anchor_date,
+                "value": moderated_value if moderated_value is not None else (quantize_decimal(value, "0.01") or ZERO),
+                "label": label or (f"{months // 12}A" if months % 12 == 0 else f"{months}M"),
+                "is_anchor": True,
+            }
+        )
 
     if purchase_baseline:
         for step in purchase_baseline.projected_path_5y or []:
@@ -4972,9 +5240,16 @@ def build_ticket_expected_series_5y(
                     months=months,
                     card=card,
                 )
-                anchors.append({"date": projected_date, "value": moderated_value if moderated_value is not None else projected_value})
+                anchors.append(
+                    {
+                        "date": projected_date,
+                        "value": moderated_value if moderated_value is not None else projected_value,
+                        "label": label or (f"{months // 12}A" if months % 12 == 0 else f"{months}M"),
+                        "is_anchor": True,
+                    }
+                )
             else:
-                add_anchor(months, projected_value)
+                add_anchor(months, projected_value, label=label)
 
     if purchase_baseline and not anchors:
         for year in TRACKING_FIVE_YEAR_MARKERS:
@@ -4988,7 +5263,7 @@ def build_ticket_expected_series_5y(
                     baseline_current_value * (Decimal("1") + (projected_return_pct / ONE_HUNDRED)),
                     "0.01",
                 )
-            add_anchor(year * 12, projected_value)
+            add_anchor(year * 12, projected_value, label=f"{year}A")
 
     if not anchors:
         cycle_projection = card.get("cycle_projection_5y") or {}
@@ -4998,12 +5273,16 @@ def build_ticket_expected_series_5y(
             projected_price = row.get("projected_price")
             if projected_price is None:
                 continue
-            add_anchor(months, quantize_decimal(position.shares * projected_price, "0.01"))
+            add_anchor(
+                months,
+                quantize_decimal(position.shares * projected_price, "0.01"),
+                label=row.get("label"),
+            )
 
         if not anchors:
             projected_price = cycle_projection.get("projected_price")
             if projected_price is not None:
-                add_anchor(60, quantize_decimal(position.shares * projected_price, "0.01"))
+                add_anchor(60, quantize_decimal(position.shares * projected_price, "0.01"), label="5A")
             else:
                 five_year_return_pct = cycle_projection.get("five_year_return_pct")
                 if five_year_return_pct is not None:
@@ -5013,6 +5292,7 @@ def build_ticket_expected_series_5y(
                             baseline_current_value * (Decimal("1") + (five_year_return_pct / ONE_HUNDRED)),
                             "0.01",
                         ),
+                        label="5A",
                     )
 
     series, latest_expected_value, projected_end_date = build_segmented_expected_series(snapshots, anchors)
@@ -5027,16 +5307,20 @@ def densify_projected_tracking_series(series: list[dict]) -> list[dict]:
         point_value = point.get("value")
         if point_date is None or point_value is None:
             continue
-        normalized_rows[point_date] = quantize_decimal(Decimal(str(point_value)), "0.01") or ZERO
+        normalized_rows[point_date] = {
+            **point,
+            "date": point_date,
+            "value": quantize_decimal(Decimal(str(point_value)), "0.01") or ZERO,
+        }
 
     normalized_series = [
-        {"date": point_date, "value": normalized_rows[point_date]}
+        normalized_rows[point_date]
         for point_date in sorted(normalized_rows)
     ]
     if len(normalized_series) < 2:
         return normalized_series
 
-    dense_series = [normalized_series[0]]
+    dense_series = [dict(normalized_series[0])]
     for previous_point, next_point in zip(normalized_series, normalized_series[1:]):
         previous_date = previous_point["date"]
         next_date = next_point["date"]
@@ -5062,7 +5346,7 @@ def densify_projected_tracking_series(series: list[dict]) -> list[dict]:
                     "value": quantize_decimal(interpolated_value, "0.01") or ZERO,
                 }
             )
-        dense_series.append(next_point)
+        dense_series.append(dict(next_point))
     return dense_series
 
 
@@ -5326,15 +5610,23 @@ def build_aggregated_ticket_series(ticket_items: list[dict], series_key: str) ->
             point_value = point.get("value")
             if point_date is None or point_value is None:
                 continue
-            normalized_series[point_date] = Decimal(str(point_value))
+            normalized_series[point_date] = {
+                **point,
+                "date": point_date,
+                "value": Decimal(str(point_value)),
+            }
         if not normalized_series:
             continue
-        sorted_series = sorted(normalized_series.items())
+        sorted_series = sorted(
+            (point_date, point["value"])
+            for point_date, point in normalized_series.items()
+        )
         all_dates.update(point_date for point_date, _ in sorted_series)
         prepared_items.append(
             {
                 "baseline_date": getattr(item.get("baseline_snapshot"), "snapshot_date", None),
                 "series": sorted_series,
+                "series_meta": normalized_series,
                 "cursor": 0,
                 "current_value": None,
             }
@@ -5347,6 +5639,8 @@ def build_aggregated_ticket_series(ticket_items: list[dict], series_key: str) ->
     for point_date in sorted(all_dates):
         total_value = ZERO
         has_value = False
+        has_anchor = False
+        labels = []
         for prepared in prepared_items:
             baseline_date = prepared["baseline_date"]
             if baseline_date is not None and point_date < baseline_date:
@@ -5362,11 +5656,19 @@ def build_aggregated_ticket_series(ticket_items: list[dict], series_key: str) ->
                 continue
             total_value += current_value
             has_value = True
+            point_meta = prepared["series_meta"].get(point_date) or {}
+            if point_meta.get("is_anchor"):
+                has_anchor = True
+                label = str(point_meta.get("label") or "").strip()
+                if label and label not in labels:
+                    labels.append(label)
         if has_value:
             aggregated.append(
                 {
                     "date": point_date,
                     "value": quantize_decimal(total_value, "0.01") or ZERO,
+                    "is_anchor": has_anchor,
+                    "label": " / ".join(labels[:2]) if labels else None,
                 }
             )
     return aggregated
@@ -6333,7 +6635,7 @@ def build_equity_ticket_tracking_item(
         adjusted_expected_total_value_12m = quantize_decimal(
             adjusted_expected_total_value_12m + (adjusted_expected_market_value_12m - expected_market_value_12m),
             "0.01",
-        )
+    )
     expected_series_5y, current_expected_value_5y, projected_end_date_5y, expected_total_value_5y = build_ticket_expected_series_5y(
         card,
         snapshots,
@@ -6341,7 +6643,7 @@ def build_equity_ticket_tracking_item(
     )
     dense_expected_series = densify_projected_tracking_series(expected_series)
     dense_expected_series_5y = densify_projected_tracking_series(expected_series_5y)
-    chart = build_value_tracking_chart(actual_series, expected_series)
+    chart = build_value_tracking_chart(actual_series, dense_expected_series)
     shared_baseline = relevant_snapshots[0]
     raw_shared_expected_market_value_12m = shared_baseline.projected_market_value_12m or shared_baseline.current_value
     raw_shared_expected_total_value_12m = shared_baseline.projected_total_value_12m or raw_shared_expected_market_value_12m
@@ -9275,30 +9577,102 @@ def resolve_projection_path_quarter_weights(
     }.get(cycle_phase or "Transicion", [Decimal("0.35"), Decimal("0.28"), Decimal("0.22"), Decimal("0.15")])
 
 
+def resolve_projection_path_month_weights(
+    annual_return_pct: Decimal | None,
+    cycle_phase: str = "Transicion",
+) -> list[Decimal]:
+    quarter_weights = resolve_projection_path_quarter_weights(
+        annual_return_pct,
+        cycle_phase=cycle_phase,
+    )
+    if (annual_return_pct or ZERO) >= ZERO:
+        month_split = {
+            "Correccion": [Decimal("0.14"), Decimal("0.29"), Decimal("0.57")],
+            "Recuperacion": [Decimal("0.48"), Decimal("0.31"), Decimal("0.21")],
+            "Expansion": [Decimal("0.24"), Decimal("0.33"), Decimal("0.43")],
+            "Transicion": [Decimal("0.18"), Decimal("0.31"), Decimal("0.51")],
+        }.get(cycle_phase or "Transicion", [Decimal("0.18"), Decimal("0.31"), Decimal("0.51")])
+    else:
+        month_split = {
+            "Correccion": [Decimal("0.54"), Decimal("0.29"), Decimal("0.17")],
+            "Recuperacion": [Decimal("0.42"), Decimal("0.33"), Decimal("0.25")],
+            "Expansion": [Decimal("0.37"), Decimal("0.33"), Decimal("0.30")],
+            "Transicion": [Decimal("0.49"), Decimal("0.30"), Decimal("0.21")],
+        }.get(cycle_phase or "Transicion", [Decimal("0.49"), Decimal("0.30"), Decimal("0.21")])
+
+    month_weights = []
+    for quarter_weight in quarter_weights:
+        for month_weight in month_split:
+            month_weights.append(quarter_weight * month_weight)
+    return month_weights
+
+
+def build_projection_path_from_weights(
+    current_price: Decimal | None,
+    annual_return_pct: Decimal | None,
+    *,
+    weights: list[Decimal],
+    anchor_date: date | None = None,
+    months_per_step: int = 1,
+) -> list[dict]:
+    if current_price in {None, ZERO} or annual_return_pct is None or not weights or months_per_step <= 0:
+        return []
+
+    annual_multiplier = max(0.01, 1 + (float(annual_return_pct) / 100))
+    cumulative_share = Decimal("0.00")
+    path = []
+    for step_index, share in enumerate(weights, start=1):
+        cumulative_share += share
+        projected_multiplier = annual_multiplier ** float(cumulative_share)
+        projected_price = Decimal(str(round(float(current_price) * projected_multiplier, 4)))
+        months = step_index * months_per_step
+        if months % 12 == 0:
+            label = f"{months // 12}A"
+        else:
+            label = f"{months}M"
+        path.append(
+            {
+                "label": label,
+                "projected_date": anchor_date + timedelta(days=int(round((365 * months) / 12))) if anchor_date else None,
+                "projected_price": projected_price,
+            }
+        )
+    return path
+
+
 def build_projection_path(
     current_price: Decimal | None,
     annual_return_pct: Decimal | None,
     anchor_date: date | None = None,
     cycle_phase: str = "Transicion",
 ) -> list[dict]:
-    if current_price in {None, ZERO} or annual_return_pct is None:
-        return []
-    annual_multiplier = max(0.01, 1 + (float(annual_return_pct) / 100))
     quarter_weights = resolve_projection_path_quarter_weights(annual_return_pct, cycle_phase=cycle_phase)
-    cumulative_share = Decimal("0.00")
-    path = []
-    for (months, label, days), share in zip(((3, "3M", 91), (6, "6M", 182), (9, "9M", 273), (12, "12M", 365)), quarter_weights):
-        cumulative_share += share
-        projected_multiplier = annual_multiplier ** float(cumulative_share)
-        projected_price = Decimal(str(round(float(current_price) * projected_multiplier, 4)))
-        path.append(
-            {
-                "label": label,
-                "projected_date": anchor_date + timedelta(days=days) if anchor_date else None,
-                "projected_price": projected_price,
-            }
-        )
-    return path
+    return build_projection_path_from_weights(
+        current_price,
+        annual_return_pct,
+        weights=quarter_weights,
+        anchor_date=anchor_date,
+        months_per_step=3,
+    )
+
+
+def build_monthly_projection_path(
+    current_price: Decimal | None,
+    annual_return_pct: Decimal | None,
+    anchor_date: date | None = None,
+    cycle_phase: str = "Transicion",
+) -> list[dict]:
+    month_weights = resolve_projection_path_month_weights(
+        annual_return_pct,
+        cycle_phase=cycle_phase,
+    )
+    return build_projection_path_from_weights(
+        current_price,
+        annual_return_pct,
+        weights=month_weights,
+        anchor_date=anchor_date,
+        months_per_step=1,
+    )
 
 
 def build_cycle_projection_path(
@@ -9873,6 +10247,24 @@ def build_one_year_projection(
         high_return_pct=high_return_pct,
         confidence_label=confidence["label"],
     )
+    monthly_projection_path = build_monthly_projection_path(
+        latest_price,
+        price_return_pct,
+        anchor_date=history[-1].price_date,
+        cycle_phase=cycle_metrics.get("cycle_phase") or "Transicion",
+    )
+    quarterly_projection_path = [
+        step
+        for step in monthly_projection_path
+        if step.get("label") in {"3M", "6M", "9M", "1A", "12M"}
+    ]
+    if not quarterly_projection_path:
+        quarterly_projection_path = build_projection_path(
+            latest_price,
+            price_return_pct,
+            anchor_date=history[-1].price_date,
+            cycle_phase=cycle_metrics.get("cycle_phase") or "Transicion",
+        )
 
     return {
         "available": True,
@@ -9886,12 +10278,8 @@ def build_one_year_projection(
         "projected_price": project_price_from_return(latest_price, price_return_pct),
         "low_price": project_price_from_return(latest_price, price_low_return_pct),
         "high_price": project_price_from_return(latest_price, price_high_return_pct),
-        "quarterly_path": build_projection_path(
-            latest_price,
-            price_return_pct,
-            anchor_date=history[-1].price_date,
-            cycle_phase=cycle_metrics.get("cycle_phase") or "Transicion",
-        ),
+        "monthly_path": monthly_projection_path,
+        "quarterly_path": quarterly_projection_path,
         "scenarios": scenarios,
         "confidence_label": confidence["label"],
         "confidence_note": confidence["note"],
@@ -10376,12 +10764,24 @@ def apply_news_context_adjustments_to_card(card: dict) -> dict:
     projection["projected_price"] = project_price_from_return(latest_price, adjusted_price_return_pct)
     projection["low_price"] = project_price_from_return(latest_price, adjusted_price_low_return_pct)
     projection["high_price"] = project_price_from_return(latest_price, adjusted_price_high_return_pct)
-    projection["quarterly_path"] = build_projection_path(
+    projection["monthly_path"] = build_monthly_projection_path(
         latest_price,
         adjusted_price_return_pct,
         anchor_date=latest_date,
         cycle_phase=projection.get("cycle_phase") or "Transicion",
     )
+    projection["quarterly_path"] = [
+        step
+        for step in projection["monthly_path"]
+        if step.get("label") in {"3M", "6M", "9M", "1A", "12M"}
+    ]
+    if not projection["quarterly_path"]:
+        projection["quarterly_path"] = build_projection_path(
+            latest_price,
+            adjusted_price_return_pct,
+            anchor_date=latest_date,
+            cycle_phase=projection.get("cycle_phase") or "Transicion",
+        )
     projection["confidence_label"] = adjusted_confidence_label
     projection["confidence_score_pct"] = quantize_decimal(adjusted_confidence_score_pct)
     projection["confidence_note"] = (
@@ -11142,13 +11542,14 @@ def build_equity_history_card(
         ]
         projection_series = []
         if projection.get("available"):
+            projection_path = resolve_projection_tracking_path(projection)
             projection_series = [{"date": latest_point.price_date, "value": latest_point.close_price}]
             projection_series.extend(
                 {
                     "date": step["projected_date"],
                     "value": step["projected_price"],
                 }
-                for step in projection.get("quarterly_path", [])
+                for step in projection_path
                 if step.get("projected_date") and step.get("projected_price") is not None
             )
         dual_axis_chart = build_dual_axis_chart(stock_series, benchmark_series, projection_points=projection_series)
