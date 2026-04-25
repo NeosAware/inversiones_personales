@@ -961,6 +961,26 @@
               </small>
             </div>
             <div class="equity-mini-stat">
+              <span class="equity-label-with-help">Tecnica de velas <span class="equity-help-dot" tabindex="0" data-tooltip="Resume la lectura combinada de velas, medias, RSI, soportes, resistencias y rupturas del historico reciente.">i</span></span>
+              <strong class="{% if card.technical_signal.signal_score and card.technical_signal.signal_score > 0 %}good{% elif card.technical_signal.signal_score and card.technical_signal.signal_score < 0 %}warn{% endif %}">{{ card.technical_signal.signal_label|default:"Sin senal" }}</strong>
+              <small>Score {% if card.technical_signal.signal_score is not None %}{{ card.technical_signal.signal_score|floatformat:2 }}{% else %}-{% endif %} | Confianza {{ card.technical_signal.confidence_label|default:"Baja" }}</small>
+            </div>
+            <div class="equity-mini-stat">
+              <span class="equity-label-with-help">RSI y patron <span class="equity-help-dot" tabindex="0" data-tooltip="El RSI 14 mide impulso. El patron resume la vela reciente mas relevante para compra o venta tactica.">i</span></span>
+              <strong>{% if card.technical_signal.rsi_14 is not None %}{{ card.technical_signal.rsi_14|floatformat:1 }}{% else %}-{% endif %}</strong>
+              <small>{{ card.technical_signal.rsi_label|default:"Sin RSI" }} | {{ card.technical_signal.pattern_label|default:card.technical_signal.last_candle_label }}</small>
+            </div>
+            <div class="equity-mini-stat">
+              <span class="equity-label-with-help">Ruptura y momento <span class="equity-help-dot" tabindex="0" data-tooltip="Combina si el precio esta rompiendo resistencia, perdiendo soporte o simplemente moviendose sin confirmacion.">i</span></span>
+              <strong>{{ card.technical_signal.breakout_label|default:"Sin ruptura" }}</strong>
+              <small>{{ card.technical_signal.momentum_label|default:"Momento neutro" }} | {{ card.technical_signal.volatility_label|default:"Normal" }}</small>
+            </div>
+            <div class="equity-mini-stat">
+              <span class="equity-label-with-help">Soporte / resistencia <span class="equity-help-dot" tabindex="0" data-tooltip="Niveles tecnicos recientes donde suelen aparecer compras o ventas. Cuanto mas cerca, mas importante es vigilar la reaccion del precio.">i</span></span>
+              <strong>{% if card.technical_signal.support_level is not None %}{{ card.technical_signal.support_level|floatformat:2 }}{% else %}-{% endif %} / {% if card.technical_signal.resistance_level is not None %}{{ card.technical_signal.resistance_level|floatformat:2 }}{% else %}-{% endif %}</strong>
+              <small>Dist. soporte {% if card.technical_signal.distance_to_support_pct is not None %}{{ card.technical_signal.distance_to_support_pct|floatformat:1 }} %{% else %}-{% endif %} | Dist. resistencia {% if card.technical_signal.distance_to_resistance_pct is not None %}{{ card.technical_signal.distance_to_resistance_pct|floatformat:1 }} %{% else %}-{% endif %}</small>
+            </div>
+            <div class="equity-mini-stat">
               <span>Dividendos netos</span>
               <strong>{{ card.broker_costs.net_dividend_income|floatformat:0 }} EUR</strong>
               <small>Bruto {{ card.broker_costs.annual_dividend_income_used|floatformat:0 }} EUR{% if card.projection.gross_dividend_yield_pct is not None %} | Yield {{ card.projection.gross_dividend_yield_pct|floatformat:1 }} %{% endif %}</small>
@@ -1006,7 +1026,7 @@
           {% endif %}
 
           <div class="equity-compact-note" style="margin-top:14px;">
-            {{ card.trade_alert.note }} {% if card.coefficient_alert.available %}{{ card.coefficient_alert.note }} {% endif %}{{ card.projection.explanation }} {% if card.cycle_projection_5y.available %}{{ card.cycle_projection_5y.explanation }} {% endif %}{{ card.projection.confidence_note }}
+            {{ card.trade_alert.note }} {% if card.technical_signal.note %}{{ card.technical_signal.note }} {% endif %}{% if card.coefficient_alert.available %}{{ card.coefficient_alert.note }} {% endif %}{{ card.projection.explanation }} {% if card.cycle_projection_5y.available %}{{ card.cycle_projection_5y.explanation }} {% endif %}{{ card.projection.confidence_note }}
           </div>
           {% if card.broker_costs.analysis_value_source == "normalized_watchlist" %}
             <p class="metric-sub" style="margin-top:8px;">Seguimiento y radar IBEX usan un ticket analitico minimo de {{ card.broker_costs.analysis_value_amount|floatformat:0 }} EUR para que los costes fijos del broker no distorsionen la proyeccion por usar una sola accion de muestra.</p>

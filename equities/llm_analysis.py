@@ -253,6 +253,7 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
     sale_preview = card.get("sale_preview") or {}
     news_context = card.get("news_context") or {}
     expert_consensus = card.get("expert_consensus") or {}
+    technical_signal = card.get("technical_signal") or {}
     snapshots_by_label = {
         snapshot.get("label"): snapshot
         for snapshot in (card.get("period_snapshots") or [])
@@ -382,6 +383,20 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
             "reliability_label": reliability.get("label") or "Baja",
             "reliability_score": json_ready_number(reliability.get("score"), "0.1"),
         },
+        "technical_view": {
+            "available": bool(technical_signal.get("available")),
+            "signal_label": technical_signal.get("signal_label") or "",
+            "signal_score": json_ready_number(technical_signal.get("signal_score"), "0.01"),
+            "confidence_label": technical_signal.get("confidence_label") or "",
+            "trend_label": technical_signal.get("trend_label") or "",
+            "momentum_label": technical_signal.get("momentum_label") or "",
+            "pattern_label": technical_signal.get("pattern_label") or "",
+            "breakout_label": technical_signal.get("breakout_label") or "",
+            "rsi_14": json_ready_number(technical_signal.get("rsi_14"), "0.01"),
+            "support_level": json_ready_number(technical_signal.get("support_level"), "0.0001"),
+            "resistance_level": json_ready_number(technical_signal.get("resistance_level"), "0.0001"),
+            "note": trim_text(technical_signal.get("note") or "", 220),
+        },
         "history_windows": {
             "one_year_stock_return_pct": json_ready_number((snapshots_by_label.get("1Y") or {}).get("stock_return_pct")),
             "one_year_reference_return_pct": json_ready_number((snapshots_by_label.get("1Y") or {}).get("benchmark_return_pct")),
@@ -443,6 +458,7 @@ def build_system_prompt() -> str:
         "action_label debe ser una de estas opciones: Comprar, Mantener, Vigilar, Reducir, Vender. "
         "confidence_label debe ser Alta, Media o Baja. "
         "Distingue entre lo que viene del modelo cuantitativo y lo que viene del contexto web reciente o del consenso experto. "
+        "Si aparece technical_view.available, integra la lectura tecnica de velas, momentum y soportes como evidencia adicional, nunca como garantia. "
         "Si el JSON trae escenarios 12M o 5A, usalos para explicar rango y no solo el caso central. "
         "Si material_event es true, explicitalo y reduce la confianza si la tesis cuantitativa puede quedar temporalmente desfasada. "
         "Si expert_consensus.available es true, explica si refuerza o cuestiona la tesis base y cita el sesgo agregado sin convertirlo en verdad absoluta. "
@@ -456,8 +472,9 @@ def build_user_prompt(card_context: dict) -> str:
     payload = json.dumps(card_context, ensure_ascii=True, separators=(",", ":"))
     return (
         "Analiza esta empresa del IBEX o de la cartera usando exclusivamente este JSON estructurado. "
-        "Prioriza rentabilidad 12M, ciclo 5A, backtest, coherencia con la alerta cuantitativa, contexto web reciente y consenso experto si esta disponible. "
+        "Prioriza rentabilidad 12M, ciclo 5A, backtest, lectura tecnica de velas/momentum, coherencia con la alerta cuantitativa, contexto web reciente y consenso experto si esta disponible. "
         "Si hay escenarios, explica cual parece mas probable y que haria cambiar de escenario. "
+        "Si technical_view.available es true, explica si la tecnica confirma o contradice la tesis cuantitativa. "
         "Si el bloque news_context detecta un evento material, explica si cambia el timing o la confianza aunque la tesis base siga igual. "
         "Si el bloque expert_consensus existe, valora la calidad historica de las fuentes y si el consenso acompana o contradice al modelo. "
         "Si wall_street_signal esta disponible, explica si Wall Street esta empujando o frenando el escenario. "

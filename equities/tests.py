@@ -64,6 +64,7 @@ from .services import (
     build_equity_investment_journey_context,
     build_reference_correlation,
     build_reference_cycle_template_from_series,
+    build_candlestick_metrics,
     build_cycle_zoomed_monthly_projection_path,
     build_equity_round_investment_plan,
     build_equity_sale_preview,
@@ -81,6 +82,7 @@ from .services import (
     build_reference_suggestions_for_equity,
     clear_market_data_caches,
     capture_equity_ticket_snapshots,
+    synchronize_projection_path_with_cycle_zoom,
     fetch_market_series,
     filter_positive_optimizer_candidates,
     find_equity_company_profile,
@@ -1248,6 +1250,85 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(cards[0]["historical_chart"]["x_markers"])
         self.assertTrue(cards[0]["projection_12m_chart"]["x_markers"])
 
+    def test_candlestick_metrics_detect_buy_bias_from_historical_velas(self):
+        history = []
+        start_date = date(2025, 1, 31)
+        close_price = Decimal("9.80")
+        for index in range(18):
+            current_date = start_date + timedelta(days=index * 31)
+            close_price = (close_price + Decimal("0.35")).quantize(Decimal("0.0001"))
+            open_price = (close_price - Decimal("0.18")).quantize(Decimal("0.0001"))
+            high_price = (close_price + Decimal("0.28")).quantize(Decimal("0.0001"))
+            low_price = (open_price - Decimal("0.10")).quantize(Decimal("0.0001"))
+            if index == 17:
+                open_price = Decimal("15.4000")
+                close_price = Decimal("16.4500")
+                high_price = Decimal("16.8000")
+                low_price = Decimal("15.2500")
+            history.append(
+                EquityPriceHistory(
+                    price_date=current_date,
+                    open_price=open_price,
+                    high_price=high_price,
+                    low_price=low_price,
+                    close_price=close_price,
+                )
+            )
+
+        metrics = build_candlestick_metrics(history)
+
+        self.assertTrue(metrics["available"])
+        self.assertGreater(metrics["signal_score"], ZERO)
+        self.assertIn(metrics["signal_label"], {"Compra tecnica", "Sesgo comprador"})
+        self.assertGreater(metrics["rsi_14"], Decimal("55.00"))
+        self.assertNotEqual(metrics["breakout_label"], "Sin ruptura")
+
+    def test_history_cards_include_technical_signal_and_projection_overlay(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="AMS",
+            quote_symbol="AMS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Amadeus IT Group",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("54.0000"),
+            current_price_per_share=Decimal("54.0000"),
+        )
+        stock_price = Decimal("42.00")
+        benchmark_price = Decimal("100.00")
+        for index in range(30):
+            year = 2024 + (index // 12)
+            month = (index % 12) + 1
+            month_end = monthrange(year, month)[1]
+            stock_price = (stock_price * Decimal("1.0240")).quantize(Decimal("0.0001"))
+            benchmark_price = (benchmark_price * Decimal("1.0090")).quantize(Decimal("0.0001"))
+            open_price = (stock_price * Decimal("0.9880")).quantize(Decimal("0.0001"))
+            high_price = (stock_price * Decimal("1.0180")).quantize(Decimal("0.0001"))
+            low_price = (open_price * Decimal("0.9920")).quantize(Decimal("0.0001"))
+            if index == 29:
+                open_price = (stock_price * Decimal("0.9760")).quantize(Decimal("0.0001"))
+                high_price = (stock_price * Decimal("1.0320")).quantize(Decimal("0.0001"))
+                low_price = (open_price * Decimal("0.9940")).quantize(Decimal("0.0001"))
+            position.price_history.create(
+                price_date=date(year, month, month_end),
+                open_price=open_price,
+                high_price=high_price,
+                low_price=low_price,
+                close_price=stock_price,
+                benchmark_close=benchmark_price,
+            )
+
+        cards = build_equity_history_cards([position])
+
+        technical_signal = cards[0]["technical_signal"]
+        projection = cards[0]["projection"]
+        self.assertTrue(technical_signal["available"])
+        self.assertGreater(technical_signal["signal_score"], ZERO)
+        self.assertTrue(projection["technical_adjustment"]["applied"])
+        self.assertGreater(projection["technical_adjustment"]["return_adjustment_pct"], ZERO)
+        self.assertEqual(cards[0]["trade_alert"]["technical_label"], technical_signal["signal_label"])
+
     def test_projection_chart_uses_last_year_while_history_keeps_full_cycle(self):
         position = EquityPosition.objects.create(
             broker="Interactive Brokers",
@@ -1312,6 +1393,55 @@ class EquitiesServicesTests(TestCase):
         self.assertGreater(month_6["projected_price"], path[-1]["projected_price"])
         self.assertTrue(path[0]["projected_date"].isoformat().startswith("2026-05-"))
 
+    def test_projection_sync_uses_first_year_of_5y_cycle_even_if_old_12m_target_was_positive(self):
+        projection = {
+            "available": True,
+            "projected_price": Decimal("11.5000"),
+            "price_return_pct": Decimal("15.00"),
+            "base_return_pct": Decimal("16.20"),
+            "band_pct": Decimal("10.00"),
+            "confidence_label": "Media",
+            "safety_score": Decimal("62.00"),
+            "net_income_yield_pct": Decimal("1.50"),
+            "transaction_drag_pct": Decimal("0.30"),
+            "monthly_path": [],
+            "quarterly_path": [],
+        }
+        cycle_projection = {
+            "available": True,
+            "model_window_label": "10.0 anos de historico",
+            "path": [
+                {
+                    "label": "6M",
+                    "projected_date": date(2026, 10, 30),
+                    "projected_price": Decimal("9.1000"),
+                },
+                {
+                    "label": "1A",
+                    "projected_date": date(2027, 4, 30),
+                    "projected_price": Decimal("8.8000"),
+                },
+                {
+                    "label": "18M",
+                    "projected_date": date(2027, 10, 30),
+                    "projected_price": Decimal("9.4000"),
+                },
+            ],
+        }
+
+        synchronize_projection_path_with_cycle_zoom(
+            projection,
+            cycle_projection,
+            current_price=Decimal("10.0000"),
+            anchor_date=date(2026, 4, 30),
+        )
+
+        self.assertTrue(projection["uses_cycle_zoom_shape"])
+        self.assertEqual(projection["projected_price"], Decimal("11.5000"))
+        self.assertEqual(projection["monthly_path"][-1]["projected_price"], Decimal("8.8000"))
+        self.assertTrue(projection["cycle_sync"]["applied"])
+        self.assertEqual(projection["cycle_sync"]["projected_price"], Decimal("8.8000"))
+
     def test_cycle_projection_5y_uses_last_five_years_on_chart_and_ten_years_for_model(self):
         position = EquityPosition.objects.create(
             broker="Interactive Brokers",
@@ -1366,6 +1496,10 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(cards[0]["projection"]["uses_cycle_zoom_shape"])
         self.assertEqual(cards[0]["projection_12m_chart"]["projection_window_label"], "Zoom 12M del patron 5A")
         self.assertEqual(cards[0]["projection_12m_chart"]["model_window_label"], cycle_chart["model_window_label"])
+        first_year_step = next(step for step in cycle_projection["path"] if step["label"] == "1A")
+        self.assertEqual(cards[0]["projection"]["monthly_path"][-1]["projected_price"], first_year_step["projected_price"])
+        self.assertTrue(cards[0]["projection"]["cycle_sync"]["applied"])
+        self.assertEqual(cards[0]["projection"]["cycle_sync"]["source_label"], "1A del patron 5A")
         path_deltas = [
             (current["projected_price"] - previous["projected_price"]).quantize(Decimal("0.01"))
             for previous, current in zip(cycle_projection["path"], cycle_projection["path"][1:])
@@ -2148,6 +2282,59 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(alert["label"], "Vigilar")
         self.assertEqual(alert["tone"], "watch")
         self.assertIn("neto 12M sigue en negativo", alert["note"])
+
+    def test_trade_alert_can_use_technical_signal_as_extra_confirmation(self):
+        position = EquityPosition(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            broker="Interactive Brokers",
+            ticker="AMS",
+            quote_symbol="AMS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Amadeus IT Group",
+            shares=Decimal("1"),
+            average_cost_per_share=Decimal("70.0000"),
+            current_price_per_share=Decimal("70.0000"),
+        )
+        base_kwargs = {
+            "projection": {
+                "available": True,
+                "safety_score": Decimal("60.00"),
+                "base_return_pct": Decimal("8.00"),
+            },
+            "correlation": {"coefficient": Decimal("0.30")},
+            "reliability": {"score": Decimal("66.00")},
+            "relative_trend": {
+                "label": "Mejora inicial",
+                "periods_label": "meses",
+                "positive_streak": 2,
+                "negative_streak": 0,
+                "prolonged_positive": False,
+                "prolonged_negative": False,
+                "recent_gap_avg_pct": Decimal("1.50"),
+                "gap_slope_pct": Decimal("0.25"),
+            },
+            "six_month_snapshot": {"available": True, "alpha_pct": Decimal("2.00")},
+            "one_year_snapshot": {"available": False},
+            "valuation": {"score": Decimal("1.00")},
+        }
+
+        alert_without_technical = build_trade_alert(position, **base_kwargs)
+        alert_with_technical = build_trade_alert(
+            position,
+            **base_kwargs,
+            technical_signal={
+                "available": True,
+                "signal_label": "Compra tecnica",
+                "signal_score": Decimal("4.50"),
+                "confidence_label": "Alta",
+            },
+        )
+
+        self.assertEqual(alert_without_technical["label"], "Vigilar")
+        self.assertEqual(alert_with_technical["label"], "Comprar")
+        self.assertGreater(alert_with_technical["score"], alert_without_technical["score"])
+        self.assertEqual(alert_with_technical["technical_label"], "Compra tecnica")
 
     def test_watchlist_positions_do_not_count_into_portfolio_totals(self):
         EquityPosition.objects.create(
@@ -5974,6 +6161,10 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(context["expert_consensus"]["wall_street_signal"]["label"], "Wall Street favorable")
         self.assertTrue(context["expert_consensus"]["bridgewater_signal"]["available"])
         self.assertEqual(context["expert_consensus"]["bridgewater_signal"]["label"], "Bridgewater favorable")
+        self.assertTrue(context["technical_view"]["available"])
+        self.assertTrue(context["technical_view"]["signal_label"])
+        self.assertTrue(context["technical_view"]["trend_label"])
+        self.assertTrue(context["technical_view"]["note"])
 
     @override_settings(
         AI_LLM_PROVIDER="anthropic",

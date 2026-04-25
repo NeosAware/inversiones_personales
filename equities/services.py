@@ -9800,6 +9800,71 @@ def build_cycle_zoomed_monthly_projection_path(
     return monthly_path
 
 
+def resolve_cycle_projection_step(
+    cycle_projection: dict | None,
+    *,
+    months: int,
+    anchor_date: date | None = None,
+) -> dict | None:
+    cycle_projection = cycle_projection or {}
+    if months <= 0:
+        return None
+
+    exact_match = None
+    dated_candidates = []
+    for step in cycle_projection.get("path") or []:
+        step_price = step.get("projected_price")
+        if step_price in {None, ZERO}:
+            continue
+        months_offset = parse_projection_label_months(step.get("label"))
+        if months_offset == months:
+            exact_match = step
+            break
+        projected_date = step.get("projected_date")
+        if projected_date is not None and anchor_date is not None:
+            months_offset = max(
+                ((projected_date.year - anchor_date.year) * 12)
+                + (projected_date.month - anchor_date.month),
+                0,
+            )
+            dated_candidates.append((abs(months_offset - months), months_offset, step))
+    if exact_match is not None:
+        return exact_match
+    if dated_candidates:
+        dated_candidates.sort(key=lambda item: (item[0], item[1]))
+        return dated_candidates[0][2]
+    return None
+
+
+def align_projection_with_cycle_year_one(
+    projection: dict | None,
+    *,
+    current_price: Decimal | None,
+    cycle_projection: dict | None,
+    anchor_date: date | None = None,
+) -> dict:
+    projection = projection or {}
+    cycle_year_one_step = resolve_cycle_projection_step(cycle_projection, months=12, anchor_date=anchor_date)
+    cycle_year_one_price = quantize_decimal(
+        cycle_year_one_step.get("projected_price"),
+        "0.0001",
+    ) if cycle_year_one_step else None
+    if (
+        not projection.get("available")
+        or current_price in {None, ZERO}
+        or cycle_year_one_price in {None, ZERO}
+    ):
+        return projection
+
+    projection["cycle_sync"] = {
+        "applied": True,
+        "source_label": "1A del patron 5A",
+        "projected_price": cycle_year_one_price,
+        "note": "El cierre de 12 meses replica el punto 1A de la curva 5A para que ambos graficos cuenten la misma historia.",
+    }
+    return projection
+
+
 def synchronize_projection_path_with_cycle_zoom(
     projection: dict | None,
     cycle_projection: dict | None,
@@ -9817,9 +9882,14 @@ def synchronize_projection_path_with_cycle_zoom(
     projection["path_model_window_label"] = ""
     projection["uses_cycle_zoom_shape"] = False
 
+    cycle_year_one_step = resolve_cycle_projection_step(cycle_projection, months=12, anchor_date=anchor_date)
+    cycle_year_one_price = quantize_decimal(
+        cycle_year_one_step.get("projected_price"),
+        "0.0001",
+    ) if cycle_year_one_step else None
     zoomed_monthly_path = build_cycle_zoomed_monthly_projection_path(
         current_price,
-        projection.get("projected_price"),
+        cycle_year_one_price or projection.get("projected_price"),
         anchor_date=anchor_date,
         cycle_projection=cycle_projection,
         months=12,
@@ -9832,6 +9902,12 @@ def synchronize_projection_path_with_cycle_zoom(
         )
         return projection
 
+    align_projection_with_cycle_year_one(
+        projection,
+        current_price=current_price,
+        cycle_projection=cycle_projection,
+        anchor_date=anchor_date,
+    )
     projection["monthly_path"] = zoomed_monthly_path
     projection["quarterly_path"] = build_quarterly_projection_path_from_monthly_path(zoomed_monthly_path)
     projection["path_source_label"] = "Zoom 12M del patron 5A"
@@ -10247,6 +10323,7 @@ def build_one_year_projection(
     correlation: dict,
     six_month_snapshot: dict,
     cycle_metrics: dict | None = None,
+    technical_signal: dict | None = None,
 ) -> dict:
     if not history:
         return {"available": False}
@@ -10309,6 +10386,7 @@ def build_one_year_projection(
 
     price_return_pct = sum(price_return_components, ZERO)
     annualized_volatility_pct = cycle_metrics.get("annualized_volatility_pct")
+    technical_signal = technical_signal or build_candlestick_metrics(history)
     confidence = build_projection_confidence(
         coefficient,
         observations_count,
@@ -10326,6 +10404,24 @@ def build_one_year_projection(
     safety_multiplier = clamp_decimal(Decimal("0.88") + (safety["score"] / Decimal("600")), Decimal("0.88"), Decimal("1.05"))
     price_return_pct = clamp_decimal(
         price_return_pct * evidence_factor * safety_multiplier,
+        Decimal("-35.00"),
+        Decimal("40.00"),
+    )
+    model_price_return_pct = price_return_pct
+    technical_return_adjustment_pct = quantize_decimal(technical_signal.get("return_adjustment_pct"), "0.01") or ZERO
+    technical_band_multiplier = technical_signal.get("band_multiplier") or Decimal("1.00")
+    technical_alignment_label = "Sin lectura"
+    if technical_signal.get("available") and technical_signal.get("signal_score") is not None:
+        technical_score = Decimal(str(technical_signal.get("signal_score") or ZERO))
+        if technical_score * model_price_return_pct > ZERO and abs(technical_score) >= Decimal("1.40"):
+            technical_alignment_label = "De apoyo"
+        elif technical_score * model_price_return_pct < ZERO and abs(technical_score) >= Decimal("1.40"):
+            technical_alignment_label = "En conflicto"
+            technical_band_multiplier = clamp_decimal(technical_band_multiplier + Decimal("0.06"), Decimal("0.92"), Decimal("1.16"))
+        else:
+            technical_alignment_label = "Mixto"
+    price_return_pct = clamp_decimal(
+        model_price_return_pct + technical_return_adjustment_pct,
         Decimal("-35.00"),
         Decimal("40.00"),
     )
@@ -10351,14 +10447,38 @@ def build_one_year_projection(
     base_return_pct = clamp_decimal(base_return_pct, Decimal("-45.00"), Decimal("45.00"))
 
     band_pct = annualized_volatility_pct * Decimal("0.65") if annualized_volatility_pct is not None else Decimal("16.00")
-    if confidence["label"] == "Alta":
+    confidence_score_pct = confidence["score_pct"]
+    if technical_signal.get("available") and technical_signal.get("signal_score") is not None:
+        technical_score = Decimal(str(technical_signal.get("signal_score") or ZERO))
+        confidence_delta = ZERO
+        if technical_alignment_label == "De apoyo":
+            confidence_delta = clamp_decimal(abs(technical_score) * Decimal("1.05"), ZERO, Decimal("5.00"))
+        elif technical_alignment_label == "En conflicto":
+            confidence_delta = -clamp_decimal(abs(technical_score) * Decimal("1.20"), ZERO, Decimal("6.00"))
+        elif technical_alignment_label == "Mixto":
+            confidence_delta = clamp_decimal(
+                (Decimal(str(technical_signal.get("confidence_score") or Decimal("55.00"))) - Decimal("60.00")) * Decimal("0.12"),
+                Decimal("-2.00"),
+                Decimal("2.00"),
+            )
+        confidence_score_pct = clamp_decimal(confidence_score_pct + confidence_delta, Decimal("35.00"), Decimal("90.00"))
+    confidence_label = resolve_projection_confidence_label(confidence_score_pct)
+    confidence_note = confidence["note"]
+    if technical_signal.get("available") and technical_signal.get("signal_label"):
+        confidence_note = (
+            f"{confidence_note} La lectura tecnica reciente ({technical_signal.get('signal_label', '').lower()}) "
+            f"entra como capa adicional y hoy queda {technical_alignment_label.lower()} frente al escenario base."
+        )
+
+    if confidence_label == "Alta":
         band_pct -= Decimal("2.50")
-    elif confidence["label"] == "Baja":
+    elif confidence_label == "Baja":
         band_pct += Decimal("5.00")
     if safety["label"] == "Alta":
         band_pct -= Decimal("1.50")
     elif safety["label"] == "Baja":
         band_pct += Decimal("3.00")
+    band_pct *= technical_band_multiplier
     band_pct = clamp_decimal(band_pct, Decimal("8.00"), Decimal("32.00"))
 
     low_return_pct = clamp_decimal(base_return_pct - band_pct, Decimal("-80.00"), Decimal("120.00"))
@@ -10366,7 +10486,7 @@ def build_one_year_projection(
     benefit_risk_ratio = None
     if band_pct > 0:
         benefit_risk_ratio = base_return_pct / band_pct
-    decision_score = base_return_pct * projection_confidence_multiplier(confidence["label"]) * (safety["score"] / ONE_HUNDRED)
+    decision_score = base_return_pct * projection_confidence_multiplier(confidence_label) * (safety["score"] / ONE_HUNDRED)
     years_covered = cycle_metrics.get("years_covered", ZERO)
     if coefficient is None or beta is None or reference_one_year_change is None:
         explanation = (
@@ -10399,6 +10519,12 @@ def build_one_year_projection(
             f" Como es un valor en seguimiento, los costes y dividendos se normalizan sobre un ticket analitico de "
             f"{analysis_value:.0f} EUR para que una sola accion de muestra no distorsione la lectura."
         )
+    if technical_signal.get("available") and technical_signal.get("signal_label"):
+        explanation += (
+            f" La capa tecnica de velas, tendencia, RSI y soportes/resistencias apunta "
+            f"{str(technical_signal.get('signal_label') or '').lower()} "
+            f"y queda {technical_alignment_label.lower()} frente al modelo principal."
+        )
 
     price_low_return_pct = clamp_decimal(price_return_pct - band_pct, Decimal("-80.00"), Decimal("120.00"))
     price_high_return_pct = clamp_decimal(price_return_pct + band_pct, Decimal("-80.00"), Decimal("140.00"))
@@ -10410,7 +10536,7 @@ def build_one_year_projection(
         base_return_pct=base_return_pct,
         low_return_pct=low_return_pct,
         high_return_pct=high_return_pct,
-        confidence_label=confidence["label"],
+        confidence_label=confidence_label,
     )
     monthly_projection_path = build_monthly_projection_path(
         latest_price,
@@ -10442,13 +10568,14 @@ def build_one_year_projection(
         "monthly_path": monthly_projection_path,
         "quarterly_path": quarterly_projection_path,
         "scenarios": scenarios,
-        "confidence_label": confidence["label"],
-        "confidence_note": confidence["note"],
-        "confidence_score_pct": confidence["score_pct"],
+        "confidence_label": confidence_label,
+        "confidence_note": confidence_note,
+        "confidence_score_pct": quantize_decimal(confidence_score_pct),
         "safety_score": safety["score"],
         "safety_label": safety["label"],
         "benefit_risk_ratio": benefit_risk_ratio,
         "decision_score": decision_score,
+        "model_price_return_pct": quantize_decimal(model_price_return_pct),
         "stock_6m_return_pct": stock_6m_return_pct,
         "reference_6m_return_pct": reference_6m_change,
         "stock_1y_return_pct": one_year_snapshot.get("stock_return_pct") if one_year_snapshot.get("available") else None,
@@ -10482,6 +10609,16 @@ def build_one_year_projection(
         "path_source_label": "Escenario central 12M",
         "path_model_window_label": "",
         "uses_cycle_zoom_shape": False,
+        "technical_adjustment": {
+            "applied": bool(technical_signal.get("available")),
+            "signal_label": technical_signal.get("signal_label"),
+            "signal_score": technical_signal.get("signal_score"),
+            "confidence_label": technical_signal.get("confidence_label"),
+            "alignment_label": technical_alignment_label,
+            "return_adjustment_pct": quantize_decimal(technical_return_adjustment_pct),
+            "band_multiplier": quantize_decimal(technical_band_multiplier, "0.01"),
+            "note": technical_signal.get("note") or "",
+        },
         "explanation": explanation,
     }
 
@@ -10663,7 +10800,9 @@ def build_trade_alert(
     six_month_snapshot: dict,
     one_year_snapshot: dict,
     valuation: dict | None = None,
+    technical_signal: dict | None = None,
 ) -> dict:
+    technical_signal = technical_signal or {}
     base_payload = {
         "label": "Vigilar",
         "tone": "watch",
@@ -10676,6 +10815,8 @@ def build_trade_alert(
         "positive_streak": relative_trend.get("positive_streak", 0),
         "negative_streak": relative_trend.get("negative_streak", 0),
         "trigger_label": "Sin confirmacion prolongada",
+        "technical_label": technical_signal.get("signal_label", "Sin lectura tecnica"),
+        "technical_score": technical_signal.get("signal_score"),
     }
     if not projection.get("available"):
         base_payload["note"] = "Todavia no hay suficiente historico para activar una alerta operativa."
@@ -10709,6 +10850,12 @@ def build_trade_alert(
     trade_score += clamp_decimal((projected_return_pct - Decimal("4.00")) * Decimal("0.08"), Decimal("-1.50"), Decimal("1.50"))
     trade_score += clamp_decimal((safety_score - Decimal("55.00")) * Decimal("0.03"), Decimal("-0.75"), Decimal("0.75"))
     trade_score += clamp_decimal(valuation_score * Decimal("0.22"), Decimal("-1.25"), Decimal("1.25"))
+    technical_score = technical_signal.get("signal_score")
+    if technical_score is not None:
+        technical_score = Decimal(str(technical_score))
+        trade_score += clamp_decimal(technical_score * Decimal("0.28"), Decimal("-1.25"), Decimal("1.25"))
+        if technical_signal.get("confidence_label") == "Alta" and abs(technical_score) >= Decimal("3.20"):
+            trade_score += Decimal("0.35") if technical_score > ZERO else Decimal("-0.35")
 
     if reliability_score < Decimal("55.00"):
         trade_score *= Decimal("0.78")
@@ -10721,12 +10868,18 @@ def build_trade_alert(
     negative_streak = relative_trend.get("negative_streak", 0)
     periods_label = relative_trend.get("periods_label", "periodos")
     trend_label = relative_trend.get("label", "Sin tendencia relativa")
+    technical_note = ""
+    if technical_signal.get("available") and technical_signal.get("signal_label"):
+        technical_note = (
+            f" La lectura tecnica de velas y tendencia apunta {str(technical_signal.get('signal_label') or '').lower()}."
+        )
 
     if trade_score >= Decimal("3.20") and projected_return_pct < ZERO:
         note = (
             f"La accion encadena {positive_streak} {periods_label} mejorando frente a su referencia ajustada por coeficiente, "
             f"pero el retorno neto 12M sigue en negativo. Conviene vigilar antes de activar compra."
         )
+        note += technical_note
         return {
             **base_payload,
             "score": quantize_decimal(trade_score) or ZERO,
@@ -10740,6 +10893,7 @@ def build_trade_alert(
             f"La accion encadena {negative_streak} {periods_label} perdiendo fuerza frente a su referencia, "
             f"pero la proyeccion neta 12M todavia es positiva. Conviene vigilar antes de activar venta."
         )
+        note += technical_note
         return {
             **base_payload,
             "score": quantize_decimal(trade_score) or ZERO,
@@ -10759,6 +10913,7 @@ def build_trade_alert(
             note += " Ademas, el PER acompana y da apoyo extra a la valoracion."
         if position.is_owned:
             note += " Si ya esta en cartera, la lectura es compatible con mantener o ampliar."
+        note += technical_note
         return {
             **base_payload,
             "label": "Comprar",
@@ -10778,6 +10933,7 @@ def build_trade_alert(
             note += " El PER ayuda un poco, pero no compensa el deterioro operativo."
         if position.is_owned:
             note += " Conviene revisar venta total o parcial."
+        note += technical_note
         return {
             **base_payload,
             "label": "Vender",
@@ -10794,6 +10950,7 @@ def build_trade_alert(
         note = (
             f"La lectura relativa esta {direction}, pero todavia no acumula suficiente persistencia para activar compra o venta."
         )
+    note += technical_note
     return {
         **base_payload,
         "score": quantize_decimal(trade_score) or ZERO,
@@ -11068,6 +11225,7 @@ def apply_news_context_adjustments_to_card(card: dict) -> dict:
         card.get("relative_trend") or {},
         six_month_snapshot,
         one_year_snapshot,
+        technical_signal=card.get("technical_signal") or {},
     )
     trade_alert["note"] = f"{str(trade_alert.get('note') or '').strip()} {note}".strip()
     card["trade_alert"] = trade_alert
@@ -11426,6 +11584,7 @@ def apply_expert_consensus_adjustments_to_card(card: dict) -> dict:
         card.get("relative_trend") or {},
         six_month_snapshot,
         one_year_snapshot,
+        technical_signal=card.get("technical_signal") or {},
     )
     trade_alert["note"] = f"{str(trade_alert.get('note') or '').strip()} {note}".strip()
     card["trade_alert"] = trade_alert
@@ -11720,42 +11879,204 @@ def build_candlestick_svg(history, width: int = 640, height: int = 220, padding:
     return "".join(fragments)
 
 
+def normalize_candle_prices(point) -> dict:
+    close_price = point.close_price or ZERO
+    open_price = point.open_price or close_price
+    high_price = point.high_price or max(open_price, close_price)
+    low_price = point.low_price or min(open_price, close_price)
+    return {
+        "open_price": open_price,
+        "high_price": high_price,
+        "low_price": low_price,
+        "close_price": close_price,
+    }
+
+
+def calculate_rsi(closes: list[Decimal], period: int = 14) -> Decimal | None:
+    filtered = [value for value in closes if value is not None]
+    if len(filtered) <= period:
+        return None
+
+    gains = []
+    losses = []
+    window = filtered[-(period + 1):]
+    for previous_close, current_close in zip(window, window[1:]):
+        delta = current_close - previous_close
+        gains.append(max(delta, ZERO))
+        losses.append(max(-delta, ZERO))
+
+    average_gain = average_decimal(gains) or ZERO
+    average_loss = average_decimal(losses) or ZERO
+    if average_loss == ZERO:
+        if average_gain == ZERO:
+            return Decimal("50.00")
+        return Decimal("100.00")
+    relative_strength = average_gain / average_loss
+    rsi = Decimal("100.00") - (Decimal("100.00") / (Decimal("1.00") + relative_strength))
+    return quantize_decimal(rsi)
+
+
+def resolve_projection_confidence_label(score_pct: Decimal | None) -> str:
+    score_pct = score_pct or Decimal("40.00")
+    if score_pct >= Decimal("75.00"):
+        return "Alta"
+    if score_pct >= Decimal("58.00"):
+        return "Media"
+    return "Baja"
+
+
+def detect_candlestick_pattern(
+    previous_candle: dict | None,
+    latest_candle: dict,
+    *,
+    support_level: Decimal | None = None,
+    resistance_level: Decimal | None = None,
+) -> dict:
+    open_price = latest_candle["open_price"]
+    close_price = latest_candle["close_price"]
+    high_price = latest_candle["high_price"]
+    low_price = latest_candle["low_price"]
+    body_size = abs(close_price - open_price)
+    candle_range = high_price - low_price
+    upper_shadow = high_price - max(open_price, close_price)
+    lower_shadow = min(open_price, close_price) - low_price
+
+    near_support = False
+    near_resistance = False
+    if support_level not in {None, ZERO}:
+        near_support = abs(low_price - support_level) / support_level <= Decimal("0.025")
+    if resistance_level not in {None, ZERO}:
+        near_resistance = abs(high_price - resistance_level) / resistance_level <= Decimal("0.025")
+
+    if previous_candle is not None:
+        previous_open = previous_candle["open_price"]
+        previous_close = previous_candle["close_price"]
+        if (
+            previous_close < previous_open
+            and close_price > open_price
+            and open_price <= previous_close
+            and close_price >= previous_open
+        ):
+            return {
+                "label": "Envolvente alcista",
+                "score": Decimal("1.70"),
+                "note": "La ultima vela absorbe la caida previa y deja una senal de compra tactica.",
+            }
+        if (
+            previous_close > previous_open
+            and close_price < open_price
+            and open_price >= previous_close
+            and close_price <= previous_open
+        ):
+            return {
+                "label": "Envolvente bajista",
+                "score": Decimal("-1.70"),
+                "note": "La ultima vela absorbe el avance previo y deja una senal de venta tactica.",
+            }
+
+    if candle_range > ZERO and body_size <= candle_range * Decimal("0.15"):
+        return {
+            "label": "Doji",
+            "score": Decimal("0.20") if near_support else Decimal("-0.20") if near_resistance else ZERO,
+            "note": "La ultima vela cierra muy equilibrada y pide confirmacion adicional.",
+        }
+    if candle_range > ZERO and lower_shadow >= body_size * Decimal("2.20") and upper_shadow <= max(body_size, candle_range * Decimal("0.18")):
+        return {
+            "label": "Martillo",
+            "score": Decimal("1.20") if close_price >= open_price or near_support else Decimal("0.70"),
+            "note": "La sombra inferior larga sugiere rechazo de precios bajos y posible giro comprador.",
+        }
+    if candle_range > ZERO and upper_shadow >= body_size * Decimal("2.20") and lower_shadow <= max(body_size, candle_range * Decimal("0.18")):
+        return {
+            "label": "Estrella fugaz",
+            "score": Decimal("-1.20") if close_price <= open_price or near_resistance else Decimal("-0.70"),
+            "note": "La sombra superior larga sugiere rechazo de precios altos y posible giro vendedor.",
+        }
+    if close_price >= open_price:
+        return {
+            "label": "Vela alcista",
+            "score": Decimal("0.30"),
+            "note": "La ultima vela acompana al alza, aunque sin patron fuerte de giro.",
+        }
+    return {
+        "label": "Vela bajista",
+        "score": Decimal("-0.30"),
+        "note": "La ultima vela acompana a la baja, aunque sin patron fuerte de giro.",
+    }
+
+
 def build_candlestick_metrics(history) -> dict:
-    recent = history[-50:]
+    recent = history[-220:]
     if not recent:
         return {
+            "available": False,
             "trend_label": "Sin historico",
             "last_candle_label": "Sin vela",
             "average_range_pct": None,
             "support_level": None,
             "resistance_level": None,
+            "momentum_label": "Sin momento",
+            "pattern_label": "Sin patron",
+            "breakout_label": "Sin ruptura",
+            "volatility_label": "Sin lectura",
+            "signal_label": "Sin senal",
+            "signal_score": None,
+            "confidence_score": None,
+            "confidence_label": "Baja",
+            "return_adjustment_pct": ZERO,
+            "band_multiplier": Decimal("1.00"),
+            "rsi_14": None,
+            "rsi_label": "Sin RSI",
+            "distance_to_support_pct": None,
+            "distance_to_resistance_pct": None,
+            "note": "",
             "candlestick_svg": "",
         }
 
     closes = [point.close_price for point in recent]
     sma20 = average_decimal(closes[-20:]) or recent[-1].close_price
     sma50 = average_decimal(closes[-50:]) or sma20
+    sma200 = average_decimal(closes[-200:]) if len(closes) >= 120 else None
     latest_close = recent[-1].close_price
+    trend_score = ZERO
+    if latest_close > sma20:
+        trend_score += Decimal("0.70")
+    elif latest_close < sma20:
+        trend_score -= Decimal("0.70")
+    if sma20 > sma50:
+        trend_score += Decimal("1.25")
+    elif sma20 < sma50:
+        trend_score -= Decimal("1.25")
+    if sma200 is not None:
+        if sma50 > sma200:
+            trend_score += Decimal("1.55")
+        elif sma50 < sma200:
+            trend_score -= Decimal("1.55")
+        if latest_close > sma200:
+            trend_score += Decimal("0.85")
+        elif latest_close < sma200:
+            trend_score -= Decimal("0.85")
 
-    if latest_close > sma20 and sma20 >= sma50:
-        trend_label = "Tendencia alcista"
-    elif latest_close < sma20 and sma20 <= sma50:
-        trend_label = "Tendencia bajista"
+    if trend_score >= Decimal("3.00"):
+        trend_label = "Tendencia alcista confirmada"
+    elif trend_score >= Decimal("1.20"):
+        trend_label = "Sesgo alcista"
+    elif trend_score <= Decimal("-3.00"):
+        trend_label = "Tendencia bajista confirmada"
+    elif trend_score <= Decimal("-1.20"):
+        trend_label = "Sesgo bajista"
     else:
         trend_label = "Tendencia lateral"
 
     last_point = recent[-1]
-    last_open = last_point.open_price or last_point.close_price
-    last_high = last_point.high_price or max(last_open, last_point.close_price)
-    last_low = last_point.low_price or min(last_open, last_point.close_price)
-    body_size = abs(last_point.close_price - last_open)
-    candle_range = last_high - last_low
-    if candle_range and body_size <= candle_range * Decimal("0.15"):
-        last_candle_label = "Doji"
-    elif last_point.close_price >= last_open:
-        last_candle_label = "Vela alcista"
-    else:
-        last_candle_label = "Vela bajista"
+    latest_candle = normalize_candle_prices(last_point)
+    previous_candle = normalize_candle_prices(recent[-2]) if len(recent) >= 2 else None
+    last_candle_label = "Vela alcista" if latest_candle["close_price"] >= latest_candle["open_price"] else "Vela bajista"
+    if latest_candle["high_price"] > latest_candle["low_price"]:
+        body_size = abs(latest_candle["close_price"] - latest_candle["open_price"])
+        candle_range = latest_candle["high_price"] - latest_candle["low_price"]
+        if body_size <= candle_range * Decimal("0.15"):
+            last_candle_label = "Doji"
 
     range_percentages = []
     for point in recent[-20:]:
@@ -11767,13 +12088,157 @@ def build_candlestick_metrics(history) -> dict:
 
     support_level = min((point.low_price or point.close_price for point in recent[-20:]), default=None)
     resistance_level = max((point.high_price or point.close_price for point in recent[-20:]), default=None)
+    previous_window = recent[-21:-1] if len(recent) >= 21 else recent[:-1]
+    previous_support = min((point.low_price or point.close_price for point in previous_window), default=support_level)
+    previous_resistance = max((point.high_price or point.close_price for point in previous_window), default=resistance_level)
+    pattern = detect_candlestick_pattern(
+        previous_candle,
+        latest_candle,
+        support_level=support_level,
+        resistance_level=resistance_level,
+    )
+
+    short_return_pct = percentage_change(latest_close, closes[-6]) if len(closes) >= 6 else None
+    medium_return_pct = percentage_change(latest_close, closes[-21]) if len(closes) >= 21 else None
+    rsi_14 = calculate_rsi(closes, period=14)
+    momentum_score = ZERO
+    if short_return_pct is not None:
+        momentum_score += clamp_decimal(short_return_pct * Decimal("0.12"), Decimal("-1.10"), Decimal("1.10"))
+    if medium_return_pct is not None:
+        momentum_score += clamp_decimal(medium_return_pct * Decimal("0.07"), Decimal("-1.40"), Decimal("1.40"))
+    if rsi_14 is not None:
+        if rsi_14 >= Decimal("65.00"):
+            momentum_score += Decimal("0.80")
+            rsi_label = "Impulso alcista"
+        elif rsi_14 >= Decimal("55.00"):
+            momentum_score += Decimal("0.40")
+            rsi_label = "Momentum positivo"
+        elif rsi_14 <= Decimal("35.00"):
+            momentum_score -= Decimal("0.80")
+            rsi_label = "Impulso bajista"
+        elif rsi_14 <= Decimal("45.00"):
+            momentum_score -= Decimal("0.40")
+            rsi_label = "Momentum flojo"
+        else:
+            rsi_label = "Neutral"
+    else:
+        rsi_label = "Sin RSI"
+
+    if momentum_score >= Decimal("1.40"):
+        momentum_label = "Impulso comprador"
+    elif momentum_score >= Decimal("0.35"):
+        momentum_label = "Momento favorable"
+    elif momentum_score <= Decimal("-1.40"):
+        momentum_label = "Impulso vendedor"
+    elif momentum_score <= Decimal("-0.35"):
+        momentum_label = "Momento flojo"
+    else:
+        momentum_label = "Momento neutro"
+
+    distance_to_support_pct = percentage_change(latest_close, support_level) if support_level not in {None, ZERO} else None
+    distance_to_resistance_pct = percentage_change(resistance_level, latest_close) if resistance_level not in {None, ZERO} else None
+    breakout_score = ZERO
+    if previous_resistance not in {None, ZERO} and latest_close >= previous_resistance * Decimal("1.003"):
+        breakout_label = "Ruptura alcista"
+        breakout_score = Decimal("1.80")
+    elif previous_support not in {None, ZERO} and latest_close <= previous_support * Decimal("0.997"):
+        breakout_label = "Ruptura bajista"
+        breakout_score = Decimal("-1.80")
+    elif distance_to_support_pct is not None and distance_to_support_pct <= Decimal("3.00") and latest_candle["close_price"] >= latest_candle["open_price"]:
+        breakout_label = "Apoyo en soporte"
+        breakout_score = Decimal("0.45")
+    elif distance_to_resistance_pct is not None and distance_to_resistance_pct <= Decimal("3.00") and latest_candle["close_price"] < latest_candle["open_price"]:
+        breakout_label = "Freno en resistencia"
+        breakout_score = Decimal("-0.45")
+    else:
+        breakout_label = "Sin ruptura"
+
+    recent_range_avg = average_decimal(range_percentages[-10:]) or average_decimal(range_percentages) or ZERO
+    previous_range_avg = average_decimal(range_percentages[:-10]) or recent_range_avg
+    volatility_score = ZERO
+    if previous_range_avg not in {None, ZERO} and recent_range_avg <= previous_range_avg * Decimal("0.85"):
+        volatility_label = "Compresion"
+        volatility_score = Decimal("0.30") if breakout_score > ZERO else Decimal("-0.10") if breakout_score < ZERO else ZERO
+        band_multiplier = Decimal("0.96")
+    elif previous_range_avg not in {None, ZERO} and recent_range_avg >= previous_range_avg * Decimal("1.15"):
+        volatility_label = "Expansion"
+        volatility_score = Decimal("0.20") if breakout_score > ZERO else Decimal("-0.20") if breakout_score < ZERO else ZERO
+        band_multiplier = Decimal("1.08")
+    else:
+        volatility_label = "Normal"
+        band_multiplier = Decimal("1.00")
+
+    signal_score = clamp_decimal(
+        trend_score + momentum_score + pattern["score"] + breakout_score + volatility_score,
+        Decimal("-8.00"),
+        Decimal("8.00"),
+    )
+    if signal_score >= Decimal("3.20"):
+        signal_label = "Compra tecnica"
+    elif signal_score >= Decimal("1.40"):
+        signal_label = "Sesgo comprador"
+    elif signal_score <= Decimal("-3.20"):
+        signal_label = "Venta tecnica"
+    elif signal_score <= Decimal("-1.40"):
+        signal_label = "Sesgo vendedor"
+    else:
+        signal_label = "Neutral"
+
+    component_signs = [
+        value
+        for value in (trend_score, momentum_score, pattern["score"], breakout_score)
+        if abs(value) >= Decimal("0.35")
+    ]
+    aligned_positive = sum(1 for value in component_signs if value > ZERO)
+    aligned_negative = sum(1 for value in component_signs if value < ZERO)
+    alignment_bonus = Decimal(max(aligned_positive, aligned_negative)) * Decimal("4.00")
+    confidence_score = clamp_decimal(
+        Decimal("48.00") + (abs(signal_score) * Decimal("4.80")) + alignment_bonus,
+        Decimal("42.00"),
+        Decimal("86.00"),
+    )
+    confidence_label = resolve_projection_confidence_label(confidence_score)
+    return_adjustment_pct = clamp_decimal(
+        signal_score * (confidence_score / ONE_HUNDRED) * Decimal("0.48"),
+        Decimal("-2.40"),
+        Decimal("2.40"),
+    )
+
+    note_parts = [trend_label, momentum_label]
+    if breakout_label != "Sin ruptura":
+        note_parts.append(breakout_label)
+    if pattern["label"] not in {"Vela alcista", "Vela bajista"}:
+        note_parts.append(pattern["label"])
+    note = (
+        "Integra velas, medias, RSI, soportes/resistencias y volatilidad. "
+        f"Lectura {signal_label.lower()}: {', '.join(note_parts[:3]).lower()}."
+    )
 
     return {
+        "available": True,
         "trend_label": trend_label,
         "last_candle_label": last_candle_label,
         "average_range_pct": average_decimal(range_percentages),
         "support_level": support_level,
         "resistance_level": resistance_level,
+        "momentum_label": momentum_label,
+        "pattern_label": pattern["label"],
+        "pattern_note": pattern["note"],
+        "breakout_label": breakout_label,
+        "volatility_label": volatility_label,
+        "signal_label": signal_label,
+        "signal_score": quantize_decimal(signal_score),
+        "confidence_score": quantize_decimal(confidence_score),
+        "confidence_label": confidence_label,
+        "return_adjustment_pct": quantize_decimal(return_adjustment_pct),
+        "band_multiplier": quantize_decimal(band_multiplier, "0.01"),
+        "rsi_14": rsi_14,
+        "rsi_label": rsi_label,
+        "distance_to_support_pct": quantize_decimal(distance_to_support_pct),
+        "distance_to_resistance_pct": quantize_decimal(distance_to_resistance_pct),
+        "short_return_pct": quantize_decimal(short_return_pct),
+        "medium_return_pct": quantize_decimal(medium_return_pct),
+        "note": note,
         "candlestick_svg": build_candlestick_svg(recent),
     }
 
@@ -11912,6 +12377,13 @@ def build_equity_history_card(
             },
             "valuation": valuation,
             "fundamentals": fundamentals,
+            "technical_signal": {
+                "available": False,
+                "signal_label": "Sin senal",
+                "signal_score": None,
+                "confidence_label": "Baja",
+                "note": "",
+            },
             "reference_playbook": {"available": False, "candidates": []},
             "suggested_references": [],
             "historical_chart": {"available": False},
@@ -11957,7 +12429,15 @@ def build_equity_history_card(
         reference_profile=position.reference_profile,
     )
     cycle_metrics = build_cycle_metrics(history)
-    projection = build_one_year_projection(history, position, correlation, six_month_snapshot, cycle_metrics=cycle_metrics)
+    technical_signal = build_candlestick_metrics(history)
+    projection = build_one_year_projection(
+        history,
+        position,
+        correlation,
+        six_month_snapshot,
+        cycle_metrics=cycle_metrics,
+        technical_signal=technical_signal,
+    )
     valuation = build_equity_per_valuation(
         position,
         fundamentals,
@@ -12003,6 +12483,7 @@ def build_equity_history_card(
         six_month_snapshot,
         one_year_snapshot,
         valuation=valuation,
+        technical_signal=technical_signal,
     )
     analysis_value_amount = projection.get("analysis_value_amount") or ZERO
     annual_cost_used = projection.get("annual_cost_used", position.recurring_cost_used) or ZERO
@@ -12141,6 +12622,7 @@ def build_equity_history_card(
         "trade_alert": trade_alert,
         "valuation": valuation,
         "fundamentals": fundamentals,
+        "technical_signal": technical_signal,
         "suggested_references": suggested_references,
         "historical_chart": historical_chart,
         "best_correlation_chart": best_correlation_chart,
