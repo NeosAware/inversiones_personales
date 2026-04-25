@@ -10950,6 +10950,362 @@ def apply_news_context_adjustments_to_dashboard(dashboard: dict) -> dict:
     return dashboard["news_adjustment_summary"]
 
 
+def resolve_expert_consensus_alignment(
+    projected_return_pct: Decimal | None,
+    consensus_score: Decimal,
+) -> tuple[str, str]:
+    projected_return_pct = projected_return_pct or ZERO
+    if abs(consensus_score) < Decimal("0.85"):
+        return "mixed", "Mixto"
+    if abs(projected_return_pct) < Decimal("0.50"):
+        return "supportive", "De apoyo"
+    if consensus_score * projected_return_pct >= ZERO:
+        return "supportive", "De apoyo"
+    return "contradictory", "En conflicto"
+
+
+def apply_expert_consensus_adjustments_to_card(card: dict) -> dict:
+    projection = card.get("projection") or {}
+    expert_consensus = card.get("expert_consensus") or {}
+    if not projection.get("available") or not expert_consensus.get("available"):
+        return card
+    if (projection.get("expert_adjustment") or {}).get("applied"):
+        return card
+
+    position = card["position"]
+    cycle_projection = card.get("cycle_projection_5y") or {}
+    consensus_score = Decimal(str(expert_consensus.get("score") or ZERO))
+    quality_score = Decimal(str(expert_consensus.get("quality_score") or Decimal("56.00")))
+    items_count = int(expert_consensus.get("items_count") or 0)
+    if items_count <= 0:
+        return card
+
+    projected_return_pct = projection.get("price_return_pct") or ZERO
+    alignment_key, alignment_label = resolve_expert_consensus_alignment(projected_return_pct, consensus_score)
+    quality_factor = clamp_decimal(quality_score / ONE_HUNDRED, Decimal("0.42"), Decimal("0.92"))
+    conviction = clamp_decimal(
+        (abs(consensus_score) / Decimal("8.00")) + (Decimal(min(items_count, 6)) * Decimal("0.05")),
+        Decimal("0.18"),
+        Decimal("1.00"),
+    )
+    price_return_adjustment_pct = clamp_decimal(
+        consensus_score * (Decimal("0.12") + (quality_factor * Decimal("0.22"))),
+        Decimal("-3.20"),
+        Decimal("3.20"),
+    )
+    annual_return_adjustment_pct = clamp_decimal(
+        price_return_adjustment_pct * Decimal("0.24"),
+        Decimal("-1.20"),
+        Decimal("1.20"),
+    )
+    if alignment_key == "supportive":
+        reliability_shift = clamp_decimal(conviction * quality_factor * Decimal("4.80"), Decimal("0.80"), Decimal("4.80"))
+        confidence_shift = clamp_decimal(conviction * quality_factor * Decimal("3.20"), Decimal("0.50"), Decimal("3.20"))
+        safety_shift = clamp_decimal(conviction * quality_factor * Decimal("2.20"), Decimal("0.30"), Decimal("2.20"))
+        band_multiplier = clamp_decimal(
+            Decimal("1.00") - (conviction * quality_factor * Decimal("0.09")),
+            Decimal("0.90"),
+            Decimal("0.99"),
+        )
+        spread_multiplier = clamp_decimal(
+            Decimal("1.00") - (conviction * quality_factor * Decimal("0.08")),
+            Decimal("0.91"),
+            Decimal("0.99"),
+        )
+    elif alignment_key == "contradictory":
+        reliability_shift = -clamp_decimal(conviction * quality_factor * Decimal("5.60"), Decimal("1.00"), Decimal("5.60"))
+        confidence_shift = -clamp_decimal(conviction * quality_factor * Decimal("4.00"), Decimal("0.70"), Decimal("4.00"))
+        safety_shift = -clamp_decimal(conviction * quality_factor * Decimal("2.60"), Decimal("0.40"), Decimal("2.60"))
+        band_multiplier = clamp_decimal(
+            Decimal("1.00") + (conviction * quality_factor * Decimal("0.13")),
+            Decimal("1.02"),
+            Decimal("1.15"),
+        )
+        spread_multiplier = clamp_decimal(
+            Decimal("1.00") + (conviction * quality_factor * Decimal("0.14")),
+            Decimal("1.03"),
+            Decimal("1.18"),
+        )
+    else:
+        reliability_shift = -clamp_decimal(conviction * quality_factor * Decimal("2.20"), ZERO, Decimal("2.20"))
+        confidence_shift = -clamp_decimal(conviction * quality_factor * Decimal("1.40"), ZERO, Decimal("1.40"))
+        safety_shift = ZERO
+        band_multiplier = clamp_decimal(
+            Decimal("1.00") + (conviction * quality_factor * Decimal("0.05")),
+            Decimal("0.98"),
+            Decimal("1.08"),
+        )
+        spread_multiplier = clamp_decimal(
+            Decimal("1.00") + (conviction * quality_factor * Decimal("0.06")),
+            Decimal("0.98"),
+            Decimal("1.10"),
+        )
+
+    best_sources = [str(source).strip() for source in (expert_consensus.get("best_sources") or []) if str(source).strip()]
+    note = (
+        str(expert_consensus.get("note") or "").strip()
+        or "El consenso de expertos se integra como una senal adicional ponderada por su acierto historico."
+    )
+    if best_sources:
+        note = f"{note} Fuentes mejor rankeadas: {', '.join(best_sources[:3])}."
+
+    latest_price = position.current_price_per_share
+    latest_date = card.get("end_date") or position.latest_price_date
+    net_income_yield_pct = projection.get("net_income_yield_pct")
+    transaction_drag_pct = projection.get("transaction_drag_pct")
+    adjusted_price_return_pct = clamp_decimal(
+        (projection.get("price_return_pct") or ZERO) + price_return_adjustment_pct,
+        Decimal("-45.00"),
+        Decimal("45.00"),
+    )
+    adjusted_base_return_pct = adjusted_price_return_pct
+    if net_income_yield_pct is not None:
+        adjusted_base_return_pct += net_income_yield_pct
+    if transaction_drag_pct is not None:
+        adjusted_base_return_pct -= transaction_drag_pct
+    adjusted_base_return_pct = clamp_decimal(adjusted_base_return_pct, Decimal("-50.00"), Decimal("50.00"))
+    adjusted_band_pct = clamp_decimal(
+        (projection.get("band_pct") or Decimal("16.00")) * band_multiplier,
+        Decimal("9.00"),
+        Decimal("40.00"),
+    )
+    adjusted_low_return_pct = clamp_decimal(
+        adjusted_base_return_pct - adjusted_band_pct,
+        Decimal("-80.00"),
+        Decimal("120.00"),
+    )
+    adjusted_high_return_pct = clamp_decimal(
+        adjusted_base_return_pct + adjusted_band_pct,
+        Decimal("-80.00"),
+        Decimal("140.00"),
+    )
+    adjusted_price_low_return_pct = clamp_decimal(
+        adjusted_price_return_pct - adjusted_band_pct,
+        Decimal("-80.00"),
+        Decimal("120.00"),
+    )
+    adjusted_price_high_return_pct = clamp_decimal(
+        adjusted_price_return_pct + adjusted_band_pct,
+        Decimal("-80.00"),
+        Decimal("140.00"),
+    )
+    adjusted_confidence_score_pct = clamp_decimal(
+        (projection.get("confidence_score_pct") or projection_reliability_score(projection.get("confidence_label") or "Baja"))
+        + confidence_shift,
+        Decimal("18.00"),
+        Decimal("92.00"),
+    )
+    adjusted_confidence_label = confidence_label_from_score(adjusted_confidence_score_pct)
+    adjusted_safety_score = clamp_decimal(
+        (projection.get("safety_score") or Decimal("55.00")) + safety_shift,
+        Decimal("18.00"),
+        Decimal("92.00"),
+    )
+    adjusted_safety_label = safety_label_from_score(adjusted_safety_score)
+    benefit_risk_ratio = None
+    if adjusted_band_pct > ZERO:
+        benefit_risk_ratio = adjusted_base_return_pct / adjusted_band_pct
+    decision_score = (
+        adjusted_base_return_pct
+        * projection_confidence_multiplier(adjusted_confidence_label)
+        * (adjusted_safety_score / ONE_HUNDRED)
+    )
+    projection["price_return_pct"] = quantize_decimal(adjusted_price_return_pct)
+    projection["price_low_return_pct"] = quantize_decimal(adjusted_price_low_return_pct)
+    projection["price_high_return_pct"] = quantize_decimal(adjusted_price_high_return_pct)
+    projection["base_return_pct"] = quantize_decimal(adjusted_base_return_pct)
+    projection["band_pct"] = quantize_decimal(adjusted_band_pct)
+    projection["low_return_pct"] = quantize_decimal(adjusted_low_return_pct)
+    projection["high_return_pct"] = quantize_decimal(adjusted_high_return_pct)
+    projection["projected_price"] = project_price_from_return(latest_price, adjusted_price_return_pct)
+    projection["low_price"] = project_price_from_return(latest_price, adjusted_price_low_return_pct)
+    projection["high_price"] = project_price_from_return(latest_price, adjusted_price_high_return_pct)
+    projection["monthly_path"] = build_monthly_projection_path(
+        latest_price,
+        adjusted_price_return_pct,
+        anchor_date=latest_date,
+        cycle_phase=projection.get("cycle_phase") or "Transicion",
+    )
+    projection["quarterly_path"] = [
+        step
+        for step in projection["monthly_path"]
+        if step.get("label") in {"3M", "6M", "9M", "1A", "12M"}
+    ]
+    if not projection["quarterly_path"]:
+        projection["quarterly_path"] = build_projection_path(
+            latest_price,
+            adjusted_price_return_pct,
+            anchor_date=latest_date,
+            cycle_phase=projection.get("cycle_phase") or "Transicion",
+        )
+    projection["confidence_label"] = adjusted_confidence_label
+    projection["confidence_score_pct"] = quantize_decimal(adjusted_confidence_score_pct)
+    projection["confidence_note"] = (
+        f"{str(projection.get('confidence_note') or '').strip()} "
+        "La capa de consenso experto modula la confianza segun su track record reciente."
+    ).strip()
+    projection["safety_score"] = quantize_decimal(adjusted_safety_score)
+    projection["safety_label"] = adjusted_safety_label
+    projection["benefit_risk_ratio"] = quantize_decimal(benefit_risk_ratio)
+    projection["decision_score"] = quantize_decimal(decision_score)
+    projection["scenarios"] = build_one_year_projection_scenarios(
+        latest_price,
+        price_return_pct=adjusted_price_return_pct,
+        price_low_return_pct=adjusted_price_low_return_pct,
+        price_high_return_pct=adjusted_price_high_return_pct,
+        base_return_pct=adjusted_base_return_pct,
+        low_return_pct=adjusted_low_return_pct,
+        high_return_pct=adjusted_high_return_pct,
+        confidence_label=adjusted_confidence_label,
+    )
+    projection["expert_adjustment"] = {
+        "applied": True,
+        "aggregate_score": quantize_decimal(consensus_score, "0.01"),
+        "quality_score": quantize_decimal(quality_score),
+        "alignment_label": alignment_label,
+        "price_return_adjustment_pct": quantize_decimal(price_return_adjustment_pct),
+        "annual_return_adjustment_pct": quantize_decimal(annual_return_adjustment_pct),
+        "band_multiplier": quantize_decimal(band_multiplier, "0.01"),
+        "note": note,
+    }
+    projection["explanation"] = f"{str(projection.get('explanation') or '').strip()} {note}".strip()
+
+    reliability = card.get("projection_reliability") or {"label": "Baja", "score": Decimal("40.00")}
+    adjusted_reliability_score = clamp_decimal(
+        (reliability.get("score") or projection_reliability_score(reliability.get("label") or "Baja")) + reliability_shift,
+        Decimal("18.00"),
+        Decimal("92.00"),
+    )
+    reliability["score"] = quantize_decimal(adjusted_reliability_score)
+    reliability["label"] = confidence_label_from_score(adjusted_reliability_score)
+    reliability["expert_adjustment"] = {
+        "applied": True,
+        "quality_score": quantize_decimal(quality_score),
+        "alignment_label": alignment_label,
+        "reliability_shift_pct": quantize_decimal(reliability_shift),
+        "note": note,
+    }
+    card["projection_reliability"] = reliability
+
+    if cycle_projection.get("available"):
+        adjusted_annual_return_pct = clamp_decimal(
+            (cycle_projection.get("annual_return_pct") or ZERO) + annual_return_adjustment_pct,
+            Decimal("-12.00"),
+            Decimal("18.00"),
+        )
+        scenario_spread_annual_pct = clamp_decimal(
+            (cycle_projection.get("scenario_spread_annual_pct") or Decimal("3.50")) * spread_multiplier,
+            Decimal("2.00"),
+            Decimal("9.00"),
+        )
+        cycle_path, adjusted_steps, step_shift = build_cycle_projection_path_for_target(
+            latest_price,
+            annual_return_pct=adjusted_annual_return_pct,
+            step_return_pcts=[Decimal(str(value)) for value in (cycle_projection.get("step_return_pcts") or [])],
+            annualized_volatility_pct=cycle_projection.get("annualized_volatility_pct"),
+            current_drawdown_pct=cycle_projection.get("current_drawdown_pct"),
+            cycle_phase=cycle_projection.get("cycle_phase") or "Transicion",
+            anchor_date=cycle_projection.get("latest_date") or latest_date,
+            years=5,
+            step_months=6,
+        )
+        if cycle_path:
+            projected_price = cycle_path[-1]["projected_price"]
+            cycle_projection["annual_return_pct"] = quantize_decimal(adjusted_annual_return_pct)
+            cycle_projection["projected_price"] = projected_price
+            cycle_projection["five_year_return_pct"] = quantize_decimal(percentage_change(projected_price, latest_price))
+            cycle_projection["path"] = cycle_path
+            cycle_projection["step_return_pcts"] = [quantize_decimal(value) or ZERO for value in adjusted_steps]
+            cycle_projection["expert_step_shift"] = quantize_decimal(step_shift)
+            cycle_projection["scenario_spread_annual_pct"] = quantize_decimal(scenario_spread_annual_pct)
+            cycle_projection["scenarios"] = build_five_year_projection_scenarios(
+                latest_price,
+                latest_date=cycle_projection.get("latest_date") or latest_date,
+                annual_return_pct=adjusted_annual_return_pct,
+                scenario_spread_annual_pct=scenario_spread_annual_pct,
+                step_return_pcts=adjusted_steps,
+                annualized_volatility_pct=cycle_projection.get("annualized_volatility_pct"),
+                current_drawdown_pct=cycle_projection.get("current_drawdown_pct"),
+                cycle_phase=cycle_projection.get("cycle_phase") or "Transicion",
+                confidence_label=adjusted_confidence_label,
+            )
+            cycle_projection["expert_adjustment"] = {
+                "applied": True,
+                "aggregate_score": quantize_decimal(consensus_score, "0.01"),
+                "quality_score": quantize_decimal(quality_score),
+                "alignment_label": alignment_label,
+                "annual_return_adjustment_pct": quantize_decimal(annual_return_adjustment_pct),
+                "spread_multiplier": quantize_decimal(spread_multiplier, "0.01"),
+                "note": note,
+            }
+            cycle_projection["explanation"] = f"{str(cycle_projection.get('explanation') or '').strip()} {note}".strip()
+
+    one_year_snapshot = next(
+        (snapshot for snapshot in (card.get("period_snapshots") or []) if snapshot.get("label") == "1Y"),
+        {"available": False},
+    )
+    six_month_snapshot = card.get("six_month_snapshot") or {"available": False}
+    trade_alert = build_trade_alert(
+        position,
+        projection,
+        card.get("correlation") or {},
+        reliability,
+        card.get("relative_trend") or {},
+        six_month_snapshot,
+        one_year_snapshot,
+    )
+    trade_alert["note"] = f"{str(trade_alert.get('note') or '').strip()} {note}".strip()
+    card["trade_alert"] = trade_alert
+    return card
+
+
+def apply_expert_consensus_adjustments_to_dashboard(dashboard: dict) -> dict:
+    history_cards = list(dashboard.get("history_cards") or [])
+    ibex_cards = list(dashboard.get("ibex_universe_cards") or [])
+    cards = [*history_cards, *ibex_cards]
+    adjusted_cards_count = 0
+    strong_consensus_count = 0
+    for card in cards:
+        expert_consensus = card.get("expert_consensus") or {}
+        if abs(Decimal(str(expert_consensus.get("score") or ZERO))) >= Decimal("2.50"):
+            strong_consensus_count += 1
+        was_adjusted = bool(((card.get("projection") or {}).get("expert_adjustment") or {}).get("applied"))
+        apply_expert_consensus_adjustments_to_card(card)
+        is_adjusted = bool(((card.get("projection") or {}).get("expert_adjustment") or {}).get("applied"))
+        if is_adjusted and not was_adjusted:
+            adjusted_cards_count += 1
+
+    if history_cards:
+        dashboard["decision_rows"] = build_equity_decision_rows(history_cards)
+        dashboard["optimizer_cards"] = build_optimizer_master_cards(history_cards, ibex_cards)
+        positions = [*(dashboard.get("owned_positions") or []), *(dashboard.get("watchlist_positions") or [])]
+        if positions and dashboard.get("overview") is not None:
+            dashboard["overview"] = build_equity_analysis_overview(
+                positions,
+                history_cards,
+                dashboard["decision_rows"],
+                dashboard.get("ibex_universe_summary") or {},
+            )
+    if ibex_cards:
+        dashboard["ibex_universe_rows"] = build_equity_decision_rows(ibex_cards)
+        ibex_summary = dashboard.get("ibex_universe_summary") or {}
+        ibex_rows = dashboard["ibex_universe_rows"]
+        ibex_summary.update(
+            {
+                "buy_alert_count": sum(1 for row in ibex_rows if row.get("trade_alert_label") == "Comprar"),
+                "sell_alert_count": sum(1 for row in ibex_rows if row.get("trade_alert_label") == "Vender"),
+                "watch_alert_count": sum(1 for row in ibex_rows if row.get("trade_alert_label") == "Vigilar"),
+                "top_pick": ibex_rows[0] if ibex_rows else ibex_summary.get("top_pick"),
+            }
+        )
+        dashboard["ibex_universe_summary"] = ibex_summary
+    dashboard["expert_adjustment_summary"] = {
+        "adjusted_cards_count": adjusted_cards_count,
+        "strong_consensus_count": strong_consensus_count,
+    }
+    return dashboard["expert_adjustment_summary"]
+
+
 def build_decision_action_label(
     position: EquityPosition,
     projected_return_pct: Decimal | None,

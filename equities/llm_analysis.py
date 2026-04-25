@@ -223,6 +223,25 @@ def build_signal_context_payload(signal: dict) -> dict:
     }
 
 
+def build_expert_source_context_rows(rows, *, limit: int = 4) -> list[dict]:
+    items = []
+    for row in list(rows or [])[:limit]:
+        items.append(
+            {
+                "source": trim_text(row.get("source") or "", 60),
+                "quality_label": row.get("quality_label") or "",
+                "quality_score": json_ready_number(row.get("quality_score"), "0.01"),
+                "source_weight": json_ready_number(row.get("source_weight"), "0.01"),
+                "observations_count": int(row.get("observations_count") or 0),
+                "hit_rate_pct": json_ready_number(row.get("hit_rate_pct"), "0.01"),
+                "current_items_count": int(row.get("current_items_count") or 0),
+                "current_score": json_ready_number(row.get("current_score"), "0.01"),
+                "weighted_score": json_ready_number(row.get("weighted_score"), "0.01"),
+            }
+        )
+    return items
+
+
 def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> dict:
     position = card["position"]
     projection = card.get("projection") or {}
@@ -233,6 +252,7 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
     reliability = card.get("projection_reliability") or {}
     sale_preview = card.get("sale_preview") or {}
     news_context = card.get("news_context") or {}
+    expert_consensus = card.get("expert_consensus") or {}
     snapshots_by_label = {
         snapshot.get("label"): snapshot
         for snapshot in (card.get("period_snapshots") or [])
@@ -391,6 +411,23 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
             "market_signal": build_signal_context_payload(news_context.get("market_signal") or {}),
             "top_headlines": build_news_item_context_rows(news_context.get("top_items"), limit=4),
         },
+        "expert_consensus": {
+            "available": bool(expert_consensus.get("available")),
+            "label": expert_consensus.get("label") or "",
+            "aggregate_score": json_ready_number(expert_consensus.get("score"), "0.01"),
+            "quality_score": json_ready_number(expert_consensus.get("quality_score"), "0.01"),
+            "quality_label": expert_consensus.get("quality_label") or "",
+            "items_count": int(expert_consensus.get("items_count") or 0),
+            "best_sources": list(expert_consensus.get("best_sources") or [])[:4],
+            "captured_at_label": expert_consensus.get("captured_at_label") or "",
+            "note": trim_text(expert_consensus.get("note") or "", 220),
+            "company_signal": build_signal_context_payload(expert_consensus.get("company_signal") or {}),
+            "market_signal": build_signal_context_payload(expert_consensus.get("market_signal") or {}),
+            "wall_street_signal": build_signal_context_payload(expert_consensus.get("wall_street_signal") or {}),
+            "bridgewater_signal": build_signal_context_payload(expert_consensus.get("bridgewater_signal") or {}),
+            "source_rows": build_expert_source_context_rows(expert_consensus.get("source_rows"), limit=4),
+            "top_forecasts": build_news_item_context_rows(expert_consensus.get("top_items"), limit=4),
+        },
     }
     return context
 
@@ -398,16 +435,19 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
 def build_system_prompt() -> str:
     return (
         "Eres el analista nocturno de un dashboard de inversion en acciones. "
-        "Trabajas SOLO con el JSON que recibes; puede incluir bloque cuantitativo y bloque de noticias recientes obtenido de la web. "
+        "Trabajas SOLO con el JSON que recibes; puede incluir bloque cuantitativo, noticias recientes y consenso experto obtenido de la web. "
         "No inventes noticias, resultados, fundamentales ni eventos externos que no esten en ese JSON. "
         "Responde siempre en espanol y devuelve un JSON valido, sin markdown ni texto extra. "
         "La salida debe incluir: summary, action_label, action_note, confidence_label, drivers, risks, backtest_note, cycle_note y news_note. "
         "summary debe ser una sintesis clara de 2 a 4 frases. drivers y risks deben tener entre 1 y 3 elementos cada uno. "
         "action_label debe ser una de estas opciones: Comprar, Mantener, Vigilar, Reducir, Vender. "
         "confidence_label debe ser Alta, Media o Baja. "
-        "Distingue entre lo que viene del modelo cuantitativo y lo que viene del contexto web reciente. "
+        "Distingue entre lo que viene del modelo cuantitativo y lo que viene del contexto web reciente o del consenso experto. "
         "Si el JSON trae escenarios 12M o 5A, usalos para explicar rango y no solo el caso central. "
         "Si material_event es true, explicitalo y reduce la confianza si la tesis cuantitativa puede quedar temporalmente desfasada. "
+        "Si expert_consensus.available es true, explica si refuerza o cuestiona la tesis base y cita el sesgo agregado sin convertirlo en verdad absoluta. "
+        "Si aparece wall_street_signal, usalo como termometro de apetito o aversion al riesgo global. "
+        "Si aparece bridgewater_signal, usalo como lectura macro de los informes de Bridgewater, siempre como senal adicional y no como certeza. "
         "El objetivo es explicar de forma potente pero compacta el escenario 12M, la lectura 5A, la validacion historica del modelo y cualquier riesgo informativo reciente."
     )
 
@@ -416,9 +456,12 @@ def build_user_prompt(card_context: dict) -> str:
     payload = json.dumps(card_context, ensure_ascii=True, separators=(",", ":"))
     return (
         "Analiza esta empresa del IBEX o de la cartera usando exclusivamente este JSON estructurado. "
-        "Prioriza rentabilidad 12M, ciclo 5A, backtest, coherencia con la alerta cuantitativa y contexto web reciente si esta disponible. "
+        "Prioriza rentabilidad 12M, ciclo 5A, backtest, coherencia con la alerta cuantitativa, contexto web reciente y consenso experto si esta disponible. "
         "Si hay escenarios, explica cual parece mas probable y que haria cambiar de escenario. "
         "Si el bloque news_context detecta un evento material, explica si cambia el timing o la confianza aunque la tesis base siga igual. "
+        "Si el bloque expert_consensus existe, valora la calidad historica de las fuentes y si el consenso acompana o contradice al modelo. "
+        "Si wall_street_signal esta disponible, explica si Wall Street esta empujando o frenando el escenario. "
+        "Si bridgewater_signal esta disponible, explica si Bridgewater refuerza o enfria el escenario macro. "
         "Si la fiabilidad o el historico son flojos, dilo claramente. JSON de entrada: "
         f"{payload}"
     )

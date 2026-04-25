@@ -600,6 +600,68 @@
       </div>
     {% endif %}
 
+    {% if card.expert_consensus.available %}
+      <div class="equity-compact-note" style="margin-top:14px; border-color:#d9e2d4; background:#f7fbf5; color:#17384e;">
+        <strong style="display:block; color:#17384e; margin-bottom:6px;">Consenso de expertos</strong>
+        <p style="margin:0 0 10px;">{{ card.expert_consensus.note }}</p>
+        <div class="equity-meta-stack" style="margin-bottom:10px;">
+          <span>{{ card.expert_consensus.label }}</span>
+          <span>Score {{ card.expert_consensus.score|floatformat:2 }}</span>
+          <span>Calidad {{ card.expert_consensus.quality_label }}</span>
+          <span>{{ card.expert_consensus.items_count }} previsiones</span>
+          {% if card.expert_consensus.captured_at_label %}<span>{{ card.expert_consensus.captured_at_label }}</span>{% endif %}
+        </div>
+        <p style="margin:0 0 8px;"><strong>Empresa:</strong> {{ card.expert_consensus.company_signal.label }}{% if card.expert_consensus.company_signal.score is not None %} ({{ card.expert_consensus.company_signal.score|floatformat:2 }}){% endif %}</p>
+        <p style="margin:0 0 8px;"><strong>Mercado:</strong> {{ card.expert_consensus.market_signal.label }}{% if card.expert_consensus.market_signal.score is not None %} ({{ card.expert_consensus.market_signal.score|floatformat:2 }}){% endif %}</p>
+        {% if card.expert_consensus.wall_street_signal.available %}
+          <p style="margin:0 0 8px;"><strong>Wall Street:</strong> {{ card.expert_consensus.wall_street_signal.label }}{% if card.expert_consensus.wall_street_signal.score is not None %} ({{ card.expert_consensus.wall_street_signal.score|floatformat:2 }}){% endif %}</p>
+        {% endif %}
+        {% if card.expert_consensus.bridgewater_signal.available %}
+          <p style="margin:0 0 8px;"><strong>Bridgewater:</strong> {{ card.expert_consensus.bridgewater_signal.label }}{% if card.expert_consensus.bridgewater_signal.score is not None %} ({{ card.expert_consensus.bridgewater_signal.score|floatformat:2 }}){% endif %}</p>
+        {% endif %}
+        {% if card.projection.expert_adjustment.applied %}
+          <p style="margin:0 0 8px;">
+            <strong>Ajuste del modelo:</strong>
+            {{ card.projection.expert_adjustment.note }}
+            Rango 12M x{{ card.projection.expert_adjustment.band_multiplier|floatformat:2 }}
+            {% if card.cycle_projection_5y.expert_adjustment.spread_multiplier is not None %}
+              | spread 5A x{{ card.cycle_projection_5y.expert_adjustment.spread_multiplier|floatformat:2 }}
+            {% endif %}
+          </p>
+        {% endif %}
+        {% if card.expert_consensus.source_rows %}
+          <div class="equity-detail-grid" style="margin-top:10px;">
+            {% for row in card.expert_consensus.source_rows %}
+              <div class="equity-mini-stat">
+                <span>{{ row.quality_label }}{% if row.observations_count %} | {{ row.observations_count }} obs.{% endif %}</span>
+                <strong>{{ row.source }}</strong>
+                <small>
+                  Score actual {{ row.current_score|floatformat:2 }}
+                  {% if row.hit_rate_pct is not None %} | acierto {{ row.hit_rate_pct|floatformat:0 }} %{% endif %}
+                  {% if row.source_weight is not None %} | peso {{ row.source_weight|floatformat:2 }}{% endif %}
+                </small>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+        {% if card.expert_consensus.top_items %}
+          <div class="equity-detail-grid" style="margin-top:10px;">
+            {% for item in card.expert_consensus.top_items %}
+              <div class="equity-mini-stat">
+                <span>{{ item.published_label|default:item.expert_source|default:"Prevision" }}</span>
+                <strong>{{ item.title }}</strong>
+                <small>
+                  {% if item.expert_source %}{{ item.expert_source }}{% endif %}
+                  {% if item.source %}{% if item.expert_source %} | {% endif %}{{ item.source }}{% endif %}
+                  {% if item.quality_label %} | {{ item.quality_label }}{% endif %}
+                </small>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
     {% if card.ai_analysis.available %}
       <div class="equity-compact-note" style="margin-top:14px; border-color:#cfe0ea; background:#eff7fb; color:#17384e;">
         <strong style="display:block; color:#17384e; margin-bottom:6px;">Lectura IA nocturna</strong>

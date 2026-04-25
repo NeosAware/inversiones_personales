@@ -5,6 +5,7 @@ import tempfile
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -17,6 +18,7 @@ from django.utils import timezone
 
 from portfolio.ownership import AssetOwnershipCategory
 
+from .expert_consensus import attach_expert_consensus_to_dashboard, build_bridgewater_signal
 from .broker_costs import estimate_broker_costs
 from .llm_analysis import build_card_llm_context, enrich_dashboard_with_ai_analysis
 from .management.commands.import_monica_equity_positions import MONICA_EQUITY_POSITIONS
@@ -53,6 +55,7 @@ from .services import (
     SPAIN_GAS_CONSUMPTION_NAME,
     SPAIN_GAS_CONSUMPTION_SYMBOL,
     ZERO,
+    apply_expert_consensus_adjustments_to_dashboard,
     apply_news_context_adjustments_to_dashboard,
     build_equity_allocation_plan,
     build_equity_analysis_dashboard,
@@ -716,6 +719,299 @@ class EquitiesServicesTests(TestCase):
             adjusted_card["projection"]["scenarios"][0]["probability_pct"],
             adjusted_card["projection"]["scenarios"][-1]["probability_pct"],
         )
+
+    def test_attach_expert_consensus_weights_current_signal_by_historical_accuracy(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("34.0000"),
+            current_price_per_share=Decimal("34.0000"),
+            annual_dividend_income=Decimal("12.00"),
+            annual_maintenance_cost=Decimal("3.00"),
+        )
+        populate_position_history(position, growth=Decimal("1.0140"), benchmark_growth=Decimal("1.0060"), months=96)
+        dashboard = build_equity_analysis_dashboard([position])
+        history_card = dashboard["history_cards"][0]
+
+        run_a = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2025, 9, 1),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            completed_at=timezone.now(),
+        )
+        run_b = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2025, 9, 2),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            completed_at=timezone.now(),
+        )
+        EquityNightlyAnalysisSnapshot.objects.create(
+            run=run_a,
+            analysis_date=run_a.analysis_date,
+            scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
+            analysis_key="ibex:ACS:jpmorgan",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            company_name="ACS",
+            status_key="ibex",
+            sector_label="Infraestructuras",
+            agent_provider="core",
+            analysis_payload=serialize_cached_value(
+                {
+                    "expert_consensus": {
+                        "company_signal": {
+                            "items": [
+                                {
+                                    "title": "JPMorgan refuerza su recomendacion sobre ACS",
+                                    "expert_source": "JPMorgan",
+                                    "source_key": "jpmorgan",
+                                    "score": Decimal("2.40"),
+                                    "published_on": "2025-09-01",
+                                    "target_symbol": "ACS.MC",
+                                }
+                            ]
+                        }
+                    }
+                }
+            ),
+        )
+        EquityNightlyAnalysisSnapshot.objects.create(
+            run=run_b,
+            analysis_date=run_b.analysis_date,
+            scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
+            analysis_key="ibex:ACS:redburn",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            company_name="ACS",
+            status_key="ibex",
+            sector_label="Infraestructuras",
+            agent_provider="core",
+            analysis_payload=serialize_cached_value(
+                {
+                    "expert_consensus": {
+                        "company_signal": {
+                            "items": [
+                                {
+                                    "title": "Redburn se pone bajista con ACS",
+                                    "expert_source": "Redburn",
+                                    "source_key": "redburn",
+                                    "score": Decimal("-2.40"),
+                                    "published_on": "2025-09-02",
+                                    "target_symbol": "ACS.MC",
+                                }
+                            ]
+                        }
+                    }
+                }
+            ),
+        )
+
+        current_items = [
+            {
+                "title": "JPMorgan mantiene compra en ACS",
+                "description": "El banco mantiene una lectura positiva.",
+                "link": "https://example.com/jpmorgan-acs",
+                "source": "Reuters",
+                "expert_source": "JPMorgan",
+                "source_key": "jpmorgan",
+                "published_at": timezone.make_aware(datetime(2026, 4, 24, 9, 0)),
+                "published_label": "2026-04-24",
+                "published_on": "2026-04-24",
+                "captured_on": "2026-04-25",
+                "score": Decimal("2.40"),
+                "tone": "positive",
+                "target_symbol": "ACS.MC",
+                "target_label": "ACS",
+            },
+            {
+                "title": "Redburn insiste en vender ACS",
+                "description": "La firma mantiene una lectura mas defensiva.",
+                "link": "https://example.com/redburn-acs",
+                "source": "Bloomberg",
+                "expert_source": "Redburn",
+                "source_key": "redburn",
+                "published_at": timezone.make_aware(datetime(2026, 4, 24, 8, 0)),
+                "published_label": "2026-04-24",
+                "published_on": "2026-04-24",
+                "captured_on": "2026-04-25",
+                "score": Decimal("-2.40"),
+                "tone": "negative",
+                "target_symbol": "ACS.MC",
+                "target_label": "ACS",
+            },
+        ]
+
+        def fake_market_series(symbol: str, range_key: str = "max", interval: str = "1d"):
+            if symbol in {"^GSPC", "^IXIC"}:
+                return MarketSeries(
+                    symbol=symbol,
+                    name=symbol,
+                    latest_price=Decimal("5500.0000"),
+                    latest_date=date(2026, 4, 25),
+                    points=[
+                        {"date": date(2025, 4, 25), "close": Decimal("5000.0000")},
+                        {"date": date(2025, 10, 25), "close": Decimal("5200.0000")},
+                        {"date": date(2026, 1, 25), "close": Decimal("5300.0000")},
+                        {"date": date(2026, 4, 25), "close": Decimal("5500.0000")},
+                    ],
+                )
+            return MarketSeries(
+                symbol=symbol,
+                name=symbol,
+                latest_price=Decimal("12.2000"),
+                latest_date=date(2026, 1, 2),
+                points=[
+                    {"date": date(2025, 9, 1), "close": Decimal("10.0000")},
+                    {"date": date(2025, 9, 2), "close": Decimal("10.0500")},
+                    {"date": date(2025, 12, 30), "close": Decimal("12.1000")},
+                    {"date": date(2026, 1, 2), "close": Decimal("12.2000")},
+                ],
+            )
+
+        with (
+            patch("equities.expert_consensus.fetch_company_expert_items", return_value=current_items),
+            patch("equities.expert_consensus.fetch_market_expert_items", return_value=[]),
+            patch("equities.expert_consensus.fetch_market_series", side_effect=fake_market_series),
+            patch(
+                "equities.expert_consensus.build_bridgewater_signal",
+                return_value={
+                    "available": True,
+                    "label": "Bridgewater favorable",
+                    "score": Decimal("2.10"),
+                    "quality_score": Decimal("60.00"),
+                    "quality_label": "Media",
+                    "items_count": 1,
+                    "positive_count": 1,
+                    "negative_count": 0,
+                    "neutral_count": 0,
+                    "note": "Bridgewater ve un entorno de soft landing.",
+                    "items": [
+                        {
+                            "title": "Bridgewater Daily Observations",
+                            "expert_source": "Bridgewater",
+                            "source_key": "bridgewater",
+                            "score": Decimal("1.40"),
+                            "tone": "positive",
+                            "published_on": "2026-04-24",
+                            "target_symbol": "^IBEX",
+                        }
+                    ],
+                    "source_rows": [
+                        {
+                            "source": "Bridgewater",
+                            "source_key": "bridgewater",
+                            "quality_score": Decimal("60.00"),
+                            "quality_label": "Media",
+                            "source_weight": Decimal("0.98"),
+                            "observations_count": 0,
+                            "hit_rate_pct": None,
+                            "current_items_count": 1,
+                            "current_score": Decimal("1.40"),
+                            "weighted_score": Decimal("1.37"),
+                        }
+                    ],
+                },
+            ),
+        ):
+            summary = attach_expert_consensus_to_dashboard(dashboard)
+
+        self.assertEqual(summary["ranked_sources_count"], 2)
+        self.assertGreater(history_card["expert_consensus"]["score"], ZERO)
+        self.assertTrue(history_card["expert_consensus"]["wall_street_signal"]["available"])
+        self.assertGreater(history_card["expert_consensus"]["wall_street_signal"]["score"], ZERO)
+        self.assertTrue(history_card["expert_consensus"]["bridgewater_signal"]["available"])
+        self.assertEqual(history_card["expert_consensus"]["bridgewater_signal"]["label"], "Bridgewater favorable")
+        self.assertEqual(history_card["expert_consensus"]["source_rows"][0]["source"], "JPMorgan")
+        self.assertGreater(
+            history_card["expert_consensus"]["source_rows"][0]["quality_score"],
+            history_card["expert_consensus"]["source_rows"][1]["quality_score"],
+        )
+        self.assertIn("JPMorgan", history_card["expert_consensus"]["best_sources"])
+
+    def test_build_bridgewater_signal_reads_local_reports(self):
+        fd, pdf_path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        report_path = Path(pdf_path)
+        try:
+            with (
+                override_settings(
+                    EQUITIES_BRIDGEWATER_REPORT_PATHS=[str(report_path)],
+                    EQUITIES_BRIDGEWATER_REPORT_DIRS=[str(report_path.parent)],
+                    EQUITIES_BRIDGEWATER_SCAN_LIMIT=4,
+                ),
+                patch(
+                    "equities.expert_consensus.read_pdf_pages",
+                    return_value=[
+                        (
+                            "Bridgewater Daily Observations. "
+                            "U.S. equities remain attractive in a soft landing with disinflation. "
+                            "Wall Street risk assets could outperform if productivity stays firm."
+                        )
+                    ],
+                ),
+            ):
+                signal = build_bridgewater_signal()
+        finally:
+            report_path.unlink(missing_ok=True)
+
+        self.assertTrue(signal["available"])
+        self.assertEqual(signal["label"], "Bridgewater favorable")
+        self.assertEqual(signal["source_rows"][0]["source"], "Bridgewater")
+        self.assertEqual(signal["items"][0]["expert_source"], "Bridgewater")
+        self.assertGreater(signal["wall_street_score"], ZERO)
+
+    def test_expert_consensus_can_penalize_projection_when_it_conflicts_with_model(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="REP",
+            quote_symbol="REP.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Repsol",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("20.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position, growth=Decimal("1.0180"), benchmark_growth=Decimal("1.0070"), months=108)
+
+        dashboard = build_equity_analysis_dashboard([position])
+        card = dashboard["history_cards"][0]
+        original_price_return_pct = card["projection"]["price_return_pct"]
+        original_band_pct = card["projection"]["band_pct"]
+        original_reliability_score = card["projection_reliability"]["score"]
+        original_cycle_spread = card["cycle_projection_5y"]["scenario_spread_annual_pct"]
+
+        card["expert_consensus"] = {
+            "available": True,
+            "label": "Consenso experto adverso",
+            "score": Decimal("-4.10"),
+            "quality_score": Decimal("82.00"),
+            "quality_label": "Alta",
+            "items_count": 4,
+            "note": "Las fuentes con mejor track record siguen viendo un sesgo bajista.",
+            "best_sources": ["JPMorgan", "Morgan Stanley"],
+            "source_rows": [],
+            "company_signal": {"available": True, "label": "Empresa Consenso adverso", "score": Decimal("-4.30"), "items": []},
+            "market_signal": {"available": True, "label": "Mercado Consenso mixto", "score": Decimal("-2.20"), "items": []},
+            "top_items": [],
+            "captured_at_label": "2026-04-25 01:20",
+        }
+
+        summary = apply_expert_consensus_adjustments_to_dashboard(dashboard)
+        adjusted_card = dashboard["history_cards"][0]
+
+        self.assertEqual(summary["adjusted_cards_count"], 1)
+        self.assertTrue(adjusted_card["projection"]["expert_adjustment"]["applied"])
+        self.assertTrue(adjusted_card["cycle_projection_5y"]["expert_adjustment"]["applied"])
+        self.assertLess(adjusted_card["projection"]["price_return_pct"], original_price_return_pct)
+        self.assertGreater(adjusted_card["projection"]["band_pct"], original_band_pct)
+        self.assertLess(adjusted_card["projection_reliability"]["score"], original_reliability_score)
+        self.assertGreater(adjusted_card["cycle_projection_5y"]["scenario_spread_annual_pct"], original_cycle_spread)
 
     def test_build_reference_suggestions_for_iberdrola_prioritizes_electricity_demand(self):
         suggestions = build_reference_suggestions_for_equity("Iberdrola", "IBE")
@@ -5495,6 +5791,139 @@ class EquitiesServicesTests(TestCase):
                 }
             ],
         }
+        history_card["expert_consensus"] = {
+            "available": True,
+            "label": "Consenso experto favorable",
+            "score": Decimal("2.60"),
+            "quality_score": Decimal("78.00"),
+            "quality_label": "Alta",
+            "items_count": 2,
+            "best_sources": ["JPMorgan", "Goldman Sachs"],
+            "captured_at_label": "2026-04-18 01:35",
+            "note": "Las casas con mejor track record refuerzan una lectura positiva.",
+            "company_signal": {
+                "available": True,
+                "label": "Empresa Consenso favorable",
+                "score": Decimal("3.10"),
+                "items_count": 1,
+                "positive_count": 1,
+                "negative_count": 0,
+                "neutral_count": 0,
+                "note": "La empresa recibe apoyo de varias firmas.",
+                "items": [
+                    {
+                        "title": "JPMorgan mantiene compra sobre ACS",
+                        "source": "Reuters",
+                        "published_label": "2026-04-18",
+                        "tone": "positive",
+                        "score": Decimal("2.40"),
+                    }
+                ],
+            },
+            "market_signal": {
+                "available": True,
+                "label": "Mercado Consenso mixto",
+                "score": Decimal("1.10"),
+                "items_count": 1,
+                "positive_count": 1,
+                "negative_count": 0,
+                "neutral_count": 0,
+                "note": "El mercado acompana pero con menos conviccion.",
+                "items": [],
+            },
+            "wall_street_signal": {
+                "available": True,
+                "label": "Wall Street favorable",
+                "score": Decimal("2.40"),
+                "quality_score": Decimal("80.00"),
+                "quality_label": "Alta",
+                "items_count": 2,
+                "positive_count": 2,
+                "negative_count": 0,
+                "neutral_count": 0,
+                "note": "S&P 500 y Nasdaq acompanan el escenario.",
+                "items": [
+                    {
+                        "title": "S&P 500: 3M 4.20% | 12M 9.80%",
+                        "source": "Mercado USA",
+                        "published_label": "2026-04-18",
+                        "tone": "positive",
+                        "score": Decimal("1.10"),
+                    }
+                ],
+                "source_rows": [
+                    {
+                        "source": "S&P 500",
+                        "quality_label": "Alta",
+                        "quality_score": Decimal("80.00"),
+                        "source_weight": Decimal("1.10"),
+                        "observations_count": 0,
+                        "hit_rate_pct": None,
+                        "current_items_count": 1,
+                        "current_score": Decimal("1.10"),
+                        "weighted_score": Decimal("1.21"),
+                    }
+                ],
+            },
+            "bridgewater_signal": {
+                "available": True,
+                "label": "Bridgewater favorable",
+                "score": Decimal("1.90"),
+                "quality_score": Decimal("60.00"),
+                "quality_label": "Media",
+                "items_count": 1,
+                "positive_count": 1,
+                "negative_count": 0,
+                "neutral_count": 0,
+                "note": "Bridgewater mantiene una lectura macro constructiva.",
+                "items": [
+                    {
+                        "title": "Bridgewater Daily Observations",
+                        "source": "Informe local",
+                        "published_label": "2026-04-18",
+                        "tone": "positive",
+                        "score": Decimal("1.20"),
+                    }
+                ],
+                "source_rows": [
+                    {
+                        "source": "Bridgewater",
+                        "quality_label": "Media",
+                        "quality_score": Decimal("60.00"),
+                        "source_weight": Decimal("0.98"),
+                        "observations_count": 0,
+                        "hit_rate_pct": None,
+                        "current_items_count": 1,
+                        "current_score": Decimal("1.20"),
+                        "weighted_score": Decimal("1.18"),
+                    }
+                ],
+            },
+            "source_rows": [
+                {
+                    "source": "JPMorgan",
+                    "quality_label": "Alta",
+                    "quality_score": Decimal("81.00"),
+                    "source_weight": Decimal("1.11"),
+                    "observations_count": 6,
+                    "hit_rate_pct": Decimal("66.70"),
+                    "current_items_count": 1,
+                    "current_score": Decimal("2.40"),
+                    "weighted_score": Decimal("2.66"),
+                }
+            ],
+            "top_items": [
+                {
+                    "title": "JPMorgan mantiene compra sobre ACS",
+                    "source": "Reuters",
+                    "expert_source": "JPMorgan",
+                    "published_label": "2026-04-18",
+                    "tone": "positive",
+                    "score": Decimal("2.40"),
+                    "quality_label": "Alta",
+                }
+            ],
+        }
 
         context = build_card_llm_context(history_card, analysis_date=date(2026, 4, 18), scope="ibex")
 
@@ -5503,6 +5932,15 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(context["news_context"]["top_tags"][0], "geopolitica")
         self.assertEqual(context["news_context"]["company_signal"]["label"], "Empresa Adversa")
         self.assertEqual(context["news_context"]["top_headlines"][0]["title"], "ACS cae por tension geopolitica")
+        self.assertTrue(context["expert_consensus"]["available"])
+        self.assertEqual(context["expert_consensus"]["quality_label"], "Alta")
+        self.assertEqual(context["expert_consensus"]["best_sources"][0], "JPMorgan")
+        self.assertEqual(context["expert_consensus"]["source_rows"][0]["source"], "JPMorgan")
+        self.assertEqual(context["expert_consensus"]["top_forecasts"][0]["title"], "JPMorgan mantiene compra sobre ACS")
+        self.assertTrue(context["expert_consensus"]["wall_street_signal"]["available"])
+        self.assertEqual(context["expert_consensus"]["wall_street_signal"]["label"], "Wall Street favorable")
+        self.assertTrue(context["expert_consensus"]["bridgewater_signal"]["available"])
+        self.assertEqual(context["expert_consensus"]["bridgewater_signal"]["label"], "Bridgewater favorable")
 
     @override_settings(
         AI_LLM_PROVIDER="anthropic",
@@ -5781,6 +6219,104 @@ class EquitiesServicesTests(TestCase):
                 ticker="ACS",
             ).exists()
         )
+
+    def test_run_nightly_equity_analysis_persists_expert_consensus_and_adjustments(self):
+        analysis_day = date(2026, 4, 25)
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="REP",
+            quote_symbol="REP.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Repsol",
+            opened_on=date(2024, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position, growth=Decimal("1.0180"), benchmark_growth=Decimal("1.0070"), months=108)
+        dashboard = build_equity_analysis_dashboard([position])
+
+        def attach_expert_context(current_dashboard):
+            summary = {
+                "enabled": True,
+                "signals_count": 1,
+                "items_count": 3,
+                "ranked_sources_count": 2,
+                "strong_consensus_count": 1,
+            }
+            current_dashboard["history_cards"][0]["expert_consensus"] = {
+                "available": True,
+                "label": "Consenso experto adverso",
+                "score": Decimal("-3.80"),
+                "quality_score": Decimal("81.00"),
+                "quality_label": "Alta",
+                "items_count": 3,
+                "note": "Las firmas con mejor track record mantienen una lectura mas cauta.",
+                "best_sources": ["JPMorgan", "Goldman Sachs"],
+                "source_rows": [
+                    {
+                        "source": "JPMorgan",
+                        "quality_label": "Alta",
+                        "quality_score": Decimal("81.00"),
+                        "source_weight": Decimal("1.11"),
+                        "observations_count": 6,
+                        "hit_rate_pct": Decimal("66.70"),
+                        "current_items_count": 1,
+                        "current_score": Decimal("-2.30"),
+                        "weighted_score": Decimal("-2.55"),
+                    }
+                ],
+                "company_signal": {"available": True, "label": "Empresa Consenso adverso", "score": Decimal("-4.20"), "items": []},
+                "market_signal": {"available": True, "label": "Mercado Consenso mixto", "score": Decimal("-2.10"), "items": []},
+                "wall_street_signal": {"available": True, "label": "Wall Street adversa", "score": Decimal("-2.60"), "items": []},
+                "bridgewater_signal": {"available": True, "label": "Bridgewater mixta", "score": Decimal("-0.90"), "items": []},
+                "top_items": [],
+                "captured_at_label": "2026-04-25 01:10",
+            }
+            current_dashboard["expert_consensus_summary"] = summary
+            return summary
+
+        with (
+            patch("equities.nightly_analysis.sync_all_equities_market_data", return_value=[]),
+            patch("equities.nightly_analysis.build_equity_analysis_dashboard", return_value=dashboard),
+            patch(
+                "equities.nightly_analysis.attach_llm_news_context_to_dashboard",
+                return_value={"enabled": True, "signals_count": 1, "items_count": 0, "material_event_count": 0},
+            ),
+            patch("equities.nightly_analysis.attach_expert_consensus_to_dashboard", side_effect=attach_expert_context),
+            patch(
+                "equities.nightly_analysis.resolve_ai_provider_config",
+                return_value=type(
+                    "ProviderConfig",
+                    (),
+                    {
+                        "available": False,
+                        "provider": "core",
+                        "label": "Analista nocturno",
+                        "model": "",
+                        "reason": "disabled",
+                        "monthly_budget_usd": ZERO,
+                    },
+                )(),
+            ),
+        ):
+            run = run_nightly_equity_analysis(
+                analysis_date=analysis_day,
+                force=True,
+            )
+
+        self.assertIsNotNone(run)
+        self.assertEqual(run.summary_data["expert_consensus_summary"]["ranked_sources_count"], 2)
+        self.assertEqual(run.summary_data["llm"]["expert_strong_consensus_count"], 1)
+        snapshot = run.snapshots.get(scope=EquityNightlyAnalysisSnapshot.Scope.TRACKED, ticker="REP")
+        self.assertTrue(snapshot.analysis_payload["expert_consensus"]["available"])
+        self.assertTrue(snapshot.analysis_payload["projection"]["expert_adjustment"]["applied"])
+        self.assertTrue(snapshot.analysis_payload["cycle_projection_5y"]["expert_adjustment"]["applied"])
 
     @override_settings(
         AI_LLM_PROVIDER="anthropic",
