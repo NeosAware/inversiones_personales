@@ -1381,8 +1381,8 @@
         </aside>
       </div>
       <div class="equity-kpis">
-        <div class="equity-kpi"><span>Valor cartera</span><strong>{{ analysis_overview.current_value|floatformat:0 }} EUR</strong><small>Capital ya invertido.</small></div>
-        <div class="equity-kpi"><span>Rentabilidad neta</span><strong class="{% if analysis_overview.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.unrealized_return_pct|floatformat:1 }} %</strong><small>{{ analysis_overview.unrealized_gain_total|floatformat:0 }} EUR tras compra y costes anuales.</small></div>
+        <div class="equity-kpi"><span>Valor actual cartera</span><strong>{{ analysis_overview.current_value|floatformat:0 }} EUR</strong><small>Capital invertido {{ analysis_overview.invested_amount|floatformat:0 }} EUR.</small></div>
+        <div class="equity-kpi"><span>Rentabilidad neta</span><strong class="{% if analysis_overview.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.unrealized_return_pct|floatformat:1 }} %</strong><small>{{ analysis_overview.unrealized_gain_total|floatformat:0 }} EUR tras compra y costes anuales estimados.</small></div>
         <div class="equity-kpi"><span>Proyeccion cartera 12M</span><strong class="{% if analysis_overview.weighted_projected_return_12m >= 0 %}good{% else %}warn{% endif %}">{% if analysis_overview.weighted_projected_return_12m is not None %}{{ analysis_overview.weighted_projected_return_12m|floatformat:1 }} %{% else %}-{% endif %}</strong><small>Incluye dividendos netos y comisiones estimadas.</small></div>
         <div class="equity-kpi"><span>Seguridad media</span><strong>{% if analysis_overview.weighted_safety_score is not None %}{{ analysis_overview.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong><small>{% if auto_sync.attempted %}Auto-sync {{ auto_sync.updated_count }} OK{% else %}Auto-sync inactivo{% endif %}</small></div>
       </div>

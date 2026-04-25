@@ -9232,6 +9232,8 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         page = response.content.decode("utf-8")
         self.assertContains(response, "Seguimiento desde")
+        self.assertContains(response, "Valor actual cartera")
+        self.assertContains(response, "Capital invertido")
         self.assertContains(response, "Cartera reescalada vs IBEX")
         self.assertContains(response, "Rentabilidad neta 1A")
         self.assertContains(response, "Rentabilidad neta 5A")
