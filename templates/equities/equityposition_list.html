@@ -363,6 +363,45 @@
       color:var(--muted);
       line-height:1.5;
     }
+    .equity-kpi.horizon{
+      display:grid;
+      gap:12px;
+      align-content:start;
+    }
+    .equity-horizon-strip{
+      display:grid;
+      gap:10px;
+      grid-template-columns:repeat(4, minmax(0,1fr));
+    }
+    .equity-horizon-chip{
+      padding:12px 12px 10px;
+      border-radius:18px;
+      border:1px solid #d7e3ec;
+      background:rgba(255,255,255,.92);
+      box-shadow:0 8px 18px rgba(18,37,53,.04);
+    }
+    .equity-horizon-chip-label{
+      display:block;
+      font-size:10px;
+      letter-spacing:.14em;
+      text-transform:uppercase;
+      color:#6c8294;
+      font-weight:800;
+    }
+    .equity-horizon-chip strong{
+      display:block;
+      margin-top:6px;
+      font-size:22px;
+      line-height:1.1;
+      font-variant-numeric:tabular-nums;
+      color:var(--ink);
+    }
+    .equity-horizon-chip small{
+      display:block;
+      margin-top:6px;
+      color:var(--muted);
+      line-height:1.45;
+    }
     .equity-label-with-help{
       display:inline-flex !important;
       align-items:center;
@@ -1278,6 +1317,7 @@
     }
     @media (max-width: 1180px){
       .equity-hero-layout, .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-candidate-grid, .equity-chart-grid, .equity-progress-events, .equity-preview-columns, .equity-cost-strip{ grid-template-columns:1fr; }
+      .equity-horizon-strip{ grid-template-columns:repeat(2, minmax(0,1fr)); }
       .equity-hero-top, .equity-panel-head, .equity-toolbar, .equity-stock-summary, .equity-detail-head, .equity-section-head{ flex-direction:column; }
       .equity-chart-head{ flex-direction:column; }
       .equity-chart-note{ text-align:left; max-width:none; }
@@ -1383,7 +1423,19 @@
       <div class="equity-kpis">
         <div class="equity-kpi"><span>Valor actual cartera</span><strong>{{ analysis_overview.current_value|floatformat:0 }} EUR</strong><small>Capital invertido {{ analysis_overview.invested_amount|floatformat:0 }} EUR.</small></div>
         <div class="equity-kpi"><span>Rentabilidad neta</span><strong class="{% if analysis_overview.unrealized_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ analysis_overview.unrealized_return_pct|floatformat:1 }} %</strong><small>{{ analysis_overview.unrealized_gain_total|floatformat:0 }} EUR tras compra y costes anuales estimados.</small></div>
-        <div class="equity-kpi"><span>Proyeccion cartera 12M</span><strong class="{% if analysis_overview.weighted_projected_return_12m >= 0 %}good{% else %}warn{% endif %}">{% if analysis_overview.weighted_projected_return_12m is not None %}{{ analysis_overview.weighted_projected_return_12m|floatformat:1 }} %{% else %}-{% endif %}</strong><small>Incluye dividendos netos y comisiones estimadas.</small></div>
+        <div class="equity-kpi horizon">
+          <span>Proyeccion cartera</span>
+          <div class="equity-horizon-strip">
+            {% for horizon in analysis_overview.projection_horizons %}
+              <div class="equity-horizon-chip">
+                <span class="equity-horizon-chip-label">{{ horizon.label }}</span>
+                <strong class="{{ horizon.tone }}">{% if horizon.return_pct is not None %}{{ horizon.return_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+                <small>{% if horizon.projected_total_value is not None %}{{ horizon.projected_total_value|floatformat:0 }} EUR{% else %}Sin lectura{% endif %}</small>
+              </div>
+            {% endfor %}
+          </div>
+          <small>Lectura neta agregada por valor actual para 3M, 6M, 9M y 12M, incluyendo dividendos netos y costes estimados.</small>
+        </div>
         <div class="equity-kpi"><span>Seguridad media</span><strong>{% if analysis_overview.weighted_safety_score is not None %}{{ analysis_overview.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong><small>{% if auto_sync.attempted %}Auto-sync {{ auto_sync.updated_count }} OK{% else %}Auto-sync inactivo{% endif %}</small></div>
       </div>
     </section>

@@ -61,6 +61,12 @@ TRACKING_TARGET_MAX_ANNUAL_CAP_12M = Decimal("14.00")
 TRACKING_TARGET_MAX_ANNUAL_CAP_5Y = Decimal("10.50")
 TRACKING_TARGET_MIN_EXCESS_KEEP_RATIO = Decimal("0.18")
 TRACKING_TARGET_MAX_EXCESS_KEEP_RATIO = Decimal("0.44")
+PORTFOLIO_PROJECTION_HORIZONS = (
+    (3, "3M"),
+    (6, "6M"),
+    (9, "9M"),
+    (12, "12M"),
+)
 PORTFOLIO_CORRELATION_MIN_COMMON_PERIODS = 6
 DALIO_CORRELATION_RISK_POINTS = (
     (Decimal("0"), Decimal("11")),
@@ -13605,6 +13611,151 @@ def build_selected_period_label(
     return "Ultimos 90 dias"
 
 
+def resolve_projection_path_step(
+    projection: dict | None,
+    *,
+    months: int,
+    anchor_date: date | None = None,
+) -> dict | None:
+    projection = projection or {}
+    if months <= 0:
+        return None
+
+    exact_match = None
+    dated_candidates = []
+    for step in resolve_projection_tracking_path(projection):
+        step_price = step.get("projected_price")
+        if step_price in {None, ZERO}:
+            continue
+        months_offset = parse_projection_label_months(step.get("label"))
+        if months_offset == months:
+            exact_match = step
+            break
+        projected_date = step.get("projected_date")
+        if projected_date is not None and anchor_date is not None:
+            months_offset = max(
+                ((projected_date.year - anchor_date.year) * 12)
+                + (projected_date.month - anchor_date.month),
+                0,
+            )
+            dated_candidates.append((abs(months_offset - months), months_offset, step))
+    if exact_match is not None:
+        return exact_match
+    if dated_candidates:
+        dated_candidates.sort(key=lambda item: (item[0], item[1]))
+        return dated_candidates[0][2]
+    return None
+
+
+def build_projection_horizon_snapshot(card: dict, months: int) -> dict | None:
+    projection = card.get("projection") or {}
+    position = card["position"]
+    current_value = quantize_decimal(position.current_value, "0.01") or ZERO
+    if not projection.get("available") or current_value <= ZERO:
+        return None
+
+    current_price = quantize_decimal(
+        projection.get("latest_price") or position.current_price_per_share,
+        "0.0001",
+    )
+    anchor_date = projection.get("latest_date")
+    projection_step = resolve_projection_path_step(
+        projection,
+        months=months,
+        anchor_date=anchor_date,
+    )
+    projected_price = quantize_decimal(
+        projection_step.get("projected_price") if projection_step else None,
+        "0.0001",
+    )
+    if current_price in {None, ZERO} or projected_price in {None, ZERO}:
+        return None
+
+    price_return_pct = quantize_decimal(
+        percentage_change(projected_price, current_price),
+        "0.01",
+    )
+    if price_return_pct is None:
+        return None
+
+    months_ratio = Decimal(str(months / 12))
+    total_return_pct = price_return_pct
+    net_income_yield_pct = quantize_decimal(projection.get("net_income_yield_pct"), "0.01")
+    transaction_drag_pct = quantize_decimal(projection.get("transaction_drag_pct"), "0.01")
+    if net_income_yield_pct is not None:
+        total_return_pct += net_income_yield_pct * months_ratio
+    if transaction_drag_pct is not None:
+        total_return_pct -= transaction_drag_pct
+    total_return_pct = quantize_decimal(total_return_pct, "0.01")
+    if total_return_pct is None:
+        return None
+
+    projected_total_value = quantize_decimal(
+        current_value * (Decimal("1") + (total_return_pct / ONE_HUNDRED)),
+        "0.01",
+    )
+    projected_market_value = quantize_decimal(position.shares * projected_price, "0.01")
+    return {
+        "months": months,
+        "label": f"{months}M" if months < 12 else "12M",
+        "current_value": current_value,
+        "projected_total_value": projected_total_value,
+        "projected_market_value": projected_market_value,
+        "projected_price": projected_price,
+        "return_pct": total_return_pct,
+        "price_return_pct": price_return_pct,
+        "projected_date": projection_step.get("projected_date") if projection_step else None,
+    }
+
+
+def build_portfolio_projection_horizons(history_cards: list[dict]) -> list[dict]:
+    owned_projection_cards = [
+        card
+        for card in history_cards
+        if card["position"].is_owned and card.get("projection", {}).get("available")
+    ]
+    horizon_rows = []
+    for months, label in PORTFOLIO_PROJECTION_HORIZONS:
+        covered_positions = 0
+        current_value_total = ZERO
+        projected_total_value = ZERO
+        projected_market_value = ZERO
+        latest_projected_date = None
+        for card in owned_projection_cards:
+            snapshot = build_projection_horizon_snapshot(card, months)
+            if snapshot is None or snapshot.get("projected_total_value") is None:
+                continue
+            covered_positions += 1
+            current_value_total += snapshot["current_value"]
+            projected_total_value += snapshot["projected_total_value"]
+            projected_market_value += snapshot.get("projected_market_value") or ZERO
+            projected_date = snapshot.get("projected_date")
+            if projected_date is not None and (latest_projected_date is None or projected_date > latest_projected_date):
+                latest_projected_date = projected_date
+        horizon_return_pct = (
+            quantize_decimal(percentage_change(projected_total_value, current_value_total), "0.01")
+            if current_value_total > ZERO
+            else None
+        )
+        horizon_rows.append(
+            {
+                "label": label,
+                "months": months,
+                "return_pct": horizon_return_pct,
+                "projected_total_value": quantize_decimal(projected_total_value, "0.01") if current_value_total > ZERO else None,
+                "projected_market_value": quantize_decimal(projected_market_value, "0.01") if current_value_total > ZERO else None,
+                "positions_count": covered_positions,
+                "projection_end_date": latest_projected_date,
+                "tone": (
+                    "good"
+                    if horizon_return_pct is not None and horizon_return_pct >= ZERO
+                    else ("warn" if horizon_return_pct is not None else "")
+                ),
+            }
+        )
+    return horizon_rows
+
+
 def build_equity_analysis_overview(
     positions,
     history_cards: list[dict],
@@ -13668,7 +13819,15 @@ def build_equity_analysis_overview(
         if denominator:
             weighted_selected_return = numerator / denominator
 
-    weighted_projected_return_12m = None
+    projection_horizons = build_portfolio_projection_horizons(history_cards)
+    weighted_projected_return_12m = next(
+        (
+            item["return_pct"]
+            for item in projection_horizons
+            if item.get("months") == 12 and item.get("return_pct") is not None
+        ),
+        None,
+    )
     weighted_safety_score = None
     next_sale_recommendation = {"available": False}
     owned_projection_cards = [
@@ -13679,10 +13838,6 @@ def build_equity_analysis_overview(
     if owned_projection_cards:
         projection_weight_total = sum((card["position"].current_value for card in owned_projection_cards), ZERO)
         if projection_weight_total:
-            weighted_projected_return_12m = sum(
-                (card["projection"].get("base_return_pct") or ZERO) * card["position"].current_value
-                for card in owned_projection_cards
-            ) / projection_weight_total
             weighted_safety_score = sum(
                 (card["projection"].get("safety_score") or ZERO) * card["position"].current_value
                 for card in owned_projection_cards
@@ -13750,6 +13905,7 @@ def build_equity_analysis_overview(
         "latest_price_date": latest_price_date,
         "weighted_selected_return": weighted_selected_return,
         "weighted_periods": weighted_periods,
+        "projection_horizons": projection_horizons,
         "weighted_projected_return_12m": weighted_projected_return_12m,
         "weighted_safety_score": weighted_safety_score,
         "selected_period_label": build_selected_period_label(selected_start_date, selected_end_date),

@@ -2458,6 +2458,39 @@ class EquitiesServicesTests(TestCase):
         self.assertIsNotNone(comparable_summary["weighted_monthly_return_pct"])
         self.assertIsNotNone(comparable_summary["weighted_annual_return_pct"])
 
+    def test_dashboard_overview_exposes_projection_horizons_for_3m_6m_9m_12m(self):
+        owned = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+            annual_dividend_income=Decimal("12.00"),
+            annual_maintenance_cost=Decimal("3.00"),
+        )
+        populate_position_history(
+            owned,
+            growth=Decimal("1.0140"),
+            benchmark_growth=Decimal("1.0060"),
+            months=36,
+        )
+
+        dashboard = build_equity_analysis_dashboard(
+            list(EquityPosition.objects.prefetch_related("price_history"))
+        )
+
+        projection_horizons = dashboard["overview"]["projection_horizons"]
+        self.assertEqual([item["label"] for item in projection_horizons], ["3M", "6M", "9M", "12M"])
+        self.assertTrue(all(item["return_pct"] is not None for item in projection_horizons))
+        self.assertEqual(
+            dashboard["overview"]["weighted_projected_return_12m"],
+            next(item["return_pct"] for item in projection_horizons if item["label"] == "12M"),
+        )
+
     @override_settings(EQUITIES_REFERENCE_WORKBOOK="")
     def test_dashboard_builds_reference_guide_from_workbook(self):
         workbook_path = build_test_reference_workbook()
@@ -9234,6 +9267,10 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Seguimiento desde")
         self.assertContains(response, "Valor actual cartera")
         self.assertContains(response, "Capital invertido")
+        self.assertContains(response, "Proyeccion cartera")
+        self.assertContains(response, "3M")
+        self.assertContains(response, "6M")
+        self.assertContains(response, "9M")
         self.assertContains(response, "Cartera reescalada vs IBEX")
         self.assertContains(response, "Rentabilidad neta 1A")
         self.assertContains(response, "Rentabilidad neta 5A")
