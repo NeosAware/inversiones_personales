@@ -352,7 +352,7 @@
       display:grid;
       gap:16px;
     }
-    .equity-kpis{ grid-template-columns:repeat(4, minmax(0,1fr)); margin-top:22px; }
+    .equity-kpis{ grid-template-columns:repeat(auto-fit, minmax(240px,1fr)); margin-top:22px; }
     .equity-grid-2{ grid-template-columns:repeat(2, minmax(0,1fr)); }
     .equity-grid-4{ grid-template-columns:repeat(4, minmax(0,1fr)); }
     .equity-board{ grid-template-columns:repeat(2, minmax(0,1fr)); }
@@ -400,7 +400,7 @@
     .equity-horizon-strip{
       display:grid;
       gap:10px;
-      grid-template-columns:repeat(4, minmax(0,1fr));
+      grid-template-columns:repeat(auto-fit, minmax(92px,1fr));
     }
     .equity-horizon-chip{
       padding:12px 12px 10px;
@@ -1796,6 +1796,19 @@
             {% endfor %}
           </div>
           <small>Lectura neta agregada por valor actual para 3M, 6M, 9M y 12M, incluyendo dividendos netos y costes estimados.</small>
+        </div>
+        <div class="equity-kpi horizon">
+          <span>Esperanza cartera</span>
+          <div class="equity-horizon-strip">
+            {% for horizon in analysis_overview.expectation_horizons %}
+              <div class="equity-horizon-chip">
+                <span class="equity-horizon-chip-label">{{ horizon.label }}</span>
+                <strong class="{{ horizon.tone }}">{% if horizon.return_pct is not None %}{{ horizon.return_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+                <small>{% if horizon.projected_total_value is not None %}{{ horizon.projected_total_value|floatformat:0 }} EUR{% else %}Sin lectura{% endif %}</small>
+              </div>
+            {% endfor %}
+          </div>
+          <small>Media ponderada de escenarios por valor actual para 1A, 2A, 3A, 4A y 5A, siguiendo la misma esperanza usada en cada empresa.</small>
         </div>
         <div class="equity-kpi"><span>Seguridad media</span><strong>{% if analysis_overview.weighted_safety_score is not None %}{{ analysis_overview.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong><small>{% if auto_sync.attempted %}Auto-sync {{ auto_sync.updated_count }} OK{% else %}Auto-sync inactivo{% endif %}</small></div>
       </div>

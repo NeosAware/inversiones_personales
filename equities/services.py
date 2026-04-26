@@ -69,6 +69,13 @@ PORTFOLIO_PROJECTION_HORIZONS = (
     (9, "9M"),
     (12, "12M"),
 )
+PORTFOLIO_EXPECTATION_HORIZONS = (
+    (12, "1A", "expected_return_1y_pct"),
+    (24, "2A", "expected_return_2y_pct"),
+    (36, "3A", "expected_return_3y_pct"),
+    (48, "4A", "expected_return_4y_pct"),
+    (60, "5A", "expected_return_5y_pct"),
+)
 PORTFOLIO_CORRELATION_MIN_COMMON_PERIODS = 6
 DALIO_CORRELATION_RISK_POINTS = (
     (Decimal("0"), Decimal("11")),
@@ -15276,6 +15283,63 @@ def build_portfolio_projection_horizons(history_cards: list[dict]) -> list[dict]
     return horizon_rows
 
 
+def build_portfolio_expectation_horizons(
+    history_cards: list[dict],
+    decision_rows: list[dict],
+) -> list[dict]:
+    owned_cards = [
+        card
+        for card in history_cards
+        if card["position"].is_owned and (quantize_decimal(card["position"].current_value, "0.01") or ZERO) > ZERO
+    ]
+    decision_rows_by_ticker = {
+        str(row.get("ticker") or "").strip().upper(): row
+        for row in list(decision_rows or [])
+        if row.get("ticker")
+    }
+
+    horizon_rows = []
+    for months, label, row_key in PORTFOLIO_EXPECTATION_HORIZONS:
+        covered_positions = 0
+        current_value_total = ZERO
+        expected_total_value = ZERO
+        weighted_expected_return = ZERO
+        for card in owned_cards:
+            position = card["position"]
+            row = decision_rows_by_ticker.get((position.ticker or "").strip().upper())
+            if row is None:
+                continue
+            expected_return_pct = quantize_decimal(row.get(row_key), "0.01")
+            current_value = quantize_decimal(position.current_value, "0.01") or ZERO
+            if expected_return_pct is None or current_value <= ZERO:
+                continue
+            covered_positions += 1
+            current_value_total += current_value
+            weighted_expected_return += expected_return_pct * current_value
+            expected_total_value += current_value * (Decimal("1") + (expected_return_pct / ONE_HUNDRED))
+
+        horizon_return_pct = (
+            quantize_decimal(weighted_expected_return / current_value_total, "0.01")
+            if current_value_total > ZERO
+            else None
+        )
+        horizon_rows.append(
+            {
+                "label": label,
+                "months": months,
+                "return_pct": horizon_return_pct,
+                "projected_total_value": quantize_decimal(expected_total_value, "0.01") if current_value_total > ZERO else None,
+                "positions_count": covered_positions,
+                "tone": (
+                    "good"
+                    if horizon_return_pct is not None and horizon_return_pct >= ZERO
+                    else ("warn" if horizon_return_pct is not None else "")
+                ),
+            }
+        )
+    return horizon_rows
+
+
 def build_equity_analysis_overview(
     positions,
     history_cards: list[dict],
@@ -15340,6 +15404,7 @@ def build_equity_analysis_overview(
             weighted_selected_return = numerator / denominator
 
     projection_horizons = build_portfolio_projection_horizons(history_cards)
+    expectation_horizons = build_portfolio_expectation_horizons(history_cards, decision_rows)
     weighted_projected_return_12m = next(
         (
             item["return_pct"]
@@ -15426,6 +15491,7 @@ def build_equity_analysis_overview(
         "weighted_selected_return": weighted_selected_return,
         "weighted_periods": weighted_periods,
         "projection_horizons": projection_horizons,
+        "expectation_horizons": expectation_horizons,
         "weighted_projected_return_12m": weighted_projected_return_12m,
         "weighted_safety_score": weighted_safety_score,
         "selected_period_label": build_selected_period_label(selected_start_date, selected_end_date),

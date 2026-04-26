@@ -79,6 +79,7 @@ from .services import (
     build_ticket_expected_series,
     densify_projected_tracking_series,
     build_portfolio_correlation_context,
+    build_portfolio_expectation_horizons,
     build_tracking_rebased_comparison_series,
     build_value_tracking_chart,
     build_equity_optimizer_candidate,
@@ -2925,6 +2926,79 @@ class EquitiesServicesTests(TestCase):
             dashboard["overview"]["weighted_projected_return_12m"],
             next(item["return_pct"] for item in projection_horizons if item["label"] == "12M"),
         )
+
+    def test_portfolio_expectation_horizons_aggregate_company_expectations_by_current_value(self):
+        owned_ibe = EquityPosition(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+        )
+        owned_eng = EquityPosition(
+            broker="Interactive Brokers",
+            ticker="ENG",
+            quote_symbol="ENG.MC",
+            company_name="Enagas",
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("15.0000"),
+            current_price_per_share=Decimal("15.0000"),
+        )
+        watchlist = EquityPosition(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            broker="Interactive Brokers",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            company_name="ACS",
+            shares=ZERO,
+            average_cost_per_share=Decimal("45.0000"),
+            current_price_per_share=Decimal("45.0000"),
+        )
+        history_cards = [
+            {"position": owned_ibe},
+            {"position": owned_eng},
+            {"position": watchlist},
+        ]
+        decision_rows = [
+            {
+                "ticker": "IBE",
+                "expected_return_1y_pct": Decimal("10.00"),
+                "expected_return_2y_pct": Decimal("20.00"),
+                "expected_return_3y_pct": Decimal("30.00"),
+                "expected_return_4y_pct": Decimal("40.00"),
+                "expected_return_5y_pct": Decimal("50.00"),
+            },
+            {
+                "ticker": "ENG",
+                "expected_return_1y_pct": Decimal("20.00"),
+                "expected_return_2y_pct": Decimal("40.00"),
+                "expected_return_3y_pct": Decimal("50.00"),
+                "expected_return_4y_pct": Decimal("60.00"),
+                "expected_return_5y_pct": Decimal("70.00"),
+            },
+            {
+                "ticker": "ACS",
+                "expected_return_1y_pct": Decimal("99.00"),
+                "expected_return_2y_pct": Decimal("99.00"),
+                "expected_return_3y_pct": Decimal("99.00"),
+                "expected_return_4y_pct": Decimal("99.00"),
+                "expected_return_5y_pct": Decimal("99.00"),
+            },
+        ]
+
+        expectation_horizons = build_portfolio_expectation_horizons(history_cards, decision_rows)
+
+        self.assertEqual([item["label"] for item in expectation_horizons], ["1A", "2A", "3A", "4A", "5A"])
+        self.assertEqual(next(item["return_pct"] for item in expectation_horizons if item["label"] == "1A"), Decimal("17.50"))
+        self.assertEqual(next(item["return_pct"] for item in expectation_horizons if item["label"] == "2A"), Decimal("35.00"))
+        self.assertEqual(next(item["return_pct"] for item in expectation_horizons if item["label"] == "3A"), Decimal("45.00"))
+        self.assertEqual(next(item["return_pct"] for item in expectation_horizons if item["label"] == "4A"), Decimal("55.00"))
+        self.assertEqual(next(item["return_pct"] for item in expectation_horizons if item["label"] == "5A"), Decimal("65.00"))
+        one_year = next(item for item in expectation_horizons if item["label"] == "1A")
+        self.assertEqual(one_year["projected_total_value"], Decimal("470.00"))
+        self.assertEqual(one_year["positions_count"], 2)
 
     @override_settings(EQUITIES_REFERENCE_WORKBOOK="")
     def test_dashboard_builds_reference_guide_from_workbook(self):
@@ -11022,9 +11096,15 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Valor actual cartera")
         self.assertContains(response, "Capital invertido")
         self.assertContains(response, "Proyeccion cartera")
+        self.assertContains(response, "Esperanza cartera")
         self.assertContains(response, "3M")
         self.assertContains(response, "6M")
         self.assertContains(response, "9M")
+        self.assertContains(response, "1A")
+        self.assertContains(response, "2A")
+        self.assertContains(response, "3A")
+        self.assertContains(response, "4A")
+        self.assertContains(response, "5A")
         self.assertContains(response, "Cartera reescalada vs IBEX")
         self.assertContains(response, "Rentabilidad neta 1A")
         self.assertContains(response, "Rentabilidad neta 5A")
@@ -11038,9 +11118,6 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Prediccion frente a realidad")
         self.assertContains(response, "Ticket IBE")
         self.assertContains(response, "Ticket ENG")
-        self.assertContains(response, "Precio compra")
-        self.assertContains(response, "Precio actual")
-        self.assertContains(response, "Vs actual")
         self.assertContains(response, "Beneficio neto")
         self.assertContains(response, "Rentabilidad sobre base")
         self.assertContains(response, "Rentabilidad anualizada")
@@ -11048,9 +11125,10 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, 'aria-label="Tickets comprados"', html=False)
         self.assertContains(response, 'id="equity-portfolio-summary"', html=False)
         self.assertContains(response, 'id="equity-decision"', html=False)
-        self.assertNotContains(response, 'id="equity-analysis"', html=False)
+        self.assertContains(response, 'id="equity-analysis"', html=False)
         self.assertContains(response, 'href="#tracked-ticket-', html=False)
         self.assertLess(page.index('class="equity-hero"'), page.index('id="equity-ticket-tracking"'))
+        self.assertLess(page.index("Esperanza cartera"), page.index('id="equity-ticket-tracking"'))
         self.assertLess(page.index("Rentabilidad neta 1A"), page.index("Acciones compradas"))
         self.assertLess(page.index('id="equity-ticket-tracking"'), page.index('id="equity-portfolio-summary"'))
         self.assertLess(page.index('id="equity-portfolio-summary"'), page.index('id="equity-decision"'))
