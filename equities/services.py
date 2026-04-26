@@ -98,6 +98,10 @@ OPTIMIZER_CONSERVATIVE_MIN_WORST_RETURN_PCT = Decimal("-12.00")
 OPTIMIZER_CONSERVATIVE_MIN_STRESS_RETURN_PCT = Decimal("-10.00")
 OPTIMIZER_CONSERVATIVE_MAX_VOLATILITY_PCT = Decimal("22.00")
 OPTIMIZER_CONSERVATIVE_MAX_UNCERTAINTY_PENALTY_PCT = Decimal("3.25")
+OPTIMIZER_EXPECTATION_REVIEW_RECENT_POINTS = 6
+OPTIMIZER_EXPECTATION_REVIEW_STABLE_SPREAD_PCT = Decimal("10.00")
+OPTIMIZER_EXPECTATION_REVIEW_MAX_BONUS_PCT = Decimal("3.00")
+OPTIMIZER_EXPECTATION_REVIEW_MAX_PENALTY_PCT = Decimal("6.00")
 EXPECTATION_REVIEW_CORRECTION_MIN_POINTS = 3
 EXPECTATION_REVIEW_CORRECTION_MIN_ELAPSED_DAYS = 7
 REFERENCE_CYCLE_TEMPLATE_RECENT_MONTHS = 18
@@ -14891,6 +14895,13 @@ def build_optimizer_master_cards(history_cards: list[dict], ibex_cards: list[dic
         if position_keys & ibex_keys:
             continue
         cards.append(card)
+    expectation_signal_map = build_optimizer_expectation_review_signal_map(
+        [getattr(card.get("position"), "ticker", "") for card in cards]
+    )
+    for card in cards:
+        position = card.get("position")
+        ticker = clean_ticker(getattr(position, "ticker", ""))
+        card["expectation_review_signal"] = expectation_signal_map.get(ticker, {"available": False})
     return cards
 
 
@@ -15976,6 +15987,206 @@ def build_expectation_review_dashboard(as_of: date | None = None) -> dict:
     }
 
 
+def extract_expectation_review_return_pct(review: EquityExpectationReview, *, horizon_years: int) -> Decimal | None:
+    if horizon_years <= 1:
+        return quantize_decimal(
+            review.expected_return_pct_1y if review.expected_return_pct_1y is not None else review.projected_return_pct_1y,
+            "0.01",
+        )
+    if horizon_years >= 5:
+        accumulated_return_pct = quantize_decimal(
+            review.expected_return_pct_5y if review.expected_return_pct_5y is not None else review.projected_return_pct_5y,
+            "0.01",
+        )
+        if accumulated_return_pct is None:
+            return None
+        return quantize_decimal(annualize_return_pct(accumulated_return_pct, 60), "0.01")
+    return None
+
+
+def build_optimizer_expectation_review_horizon_signal(
+    reviews: list[EquityExpectationReview],
+    *,
+    horizon_years: int,
+) -> dict:
+    value_rows = []
+    for review in reviews[-OPTIMIZER_EXPECTATION_REVIEW_RECENT_POINTS:]:
+        expected_return_pct = extract_expectation_review_return_pct(review, horizon_years=horizon_years)
+        if expected_return_pct is None:
+            continue
+        value_rows.append(
+            {
+                "analysis_date": review.analysis_date,
+                "value": expected_return_pct,
+            }
+        )
+    if not value_rows:
+        return {
+            "available": False,
+            "sample_count": 0,
+            "latest_return_pct": None,
+            "average_return_pct": None,
+            "trend_return_pct": None,
+            "recent_delta_pct": None,
+            "spread_pct": None,
+        }
+
+    values = [Decimal(str(row["value"])) for row in value_rows]
+    latest_return_pct = quantize_decimal(values[-1], "0.01")
+    average_return_pct = quantize_decimal(average_decimal(values), "0.01")
+    trend_return_pct = quantize_decimal(values[-1] - values[0], "0.01") if len(values) >= 2 else None
+    recent_delta_pct = quantize_decimal(values[-1] - values[-2], "0.01") if len(values) >= 2 else None
+    spread_pct = quantize_decimal(max(values) - min(values), "0.01") if values else None
+    return {
+        "available": True,
+        "sample_count": len(value_rows),
+        "latest_return_pct": latest_return_pct,
+        "average_return_pct": average_return_pct,
+        "trend_return_pct": trend_return_pct,
+        "recent_delta_pct": recent_delta_pct,
+        "spread_pct": spread_pct,
+        "first_review_date": value_rows[0]["analysis_date"],
+        "latest_review_date": value_rows[-1]["analysis_date"],
+    }
+
+
+def build_optimizer_expectation_review_signal(reviews: list[EquityExpectationReview]) -> dict:
+    sorted_reviews = sorted(
+        list(reviews or []),
+        key=lambda row: (row.analysis_date, row.created_at, row.id or 0),
+    )
+    if not sorted_reviews:
+        return {"available": False}
+
+    scheduled_reviews = [row for row in sorted_reviews if row.review_kind == EquityExpectationReview.ReviewKind.SCHEDULED]
+    source_reviews = scheduled_reviews or sorted_reviews
+    source_label = "programadas" if scheduled_reviews else "historicas"
+    one_year_signal = build_optimizer_expectation_review_horizon_signal(source_reviews, horizon_years=1)
+    five_year_signal = build_optimizer_expectation_review_horizon_signal(source_reviews, horizon_years=5)
+    latest_review = source_reviews[-1]
+    return {
+        "available": bool(one_year_signal.get("available") or five_year_signal.get("available")),
+        "source_label": source_label,
+        "sample_count": max(int(one_year_signal.get("sample_count") or 0), int(five_year_signal.get("sample_count") or 0)),
+        "latest_analysis_date": latest_review.analysis_date,
+        "latest_analysis_date_label": latest_review.analysis_date.isoformat(),
+        "1y": one_year_signal,
+        "5y": five_year_signal,
+    }
+
+
+def build_optimizer_expectation_review_signal_map(tickers: list[str] | tuple[str, ...] | set[str]) -> dict[str, dict]:
+    normalized_tickers = sorted({clean_ticker(ticker) for ticker in tickers or [] if clean_ticker(ticker)})
+    if not normalized_tickers:
+        return {}
+
+    try:
+        review_rows = list(
+            EquityExpectationReview.objects.filter(ticker__in=normalized_tickers)
+            .order_by("ticker", "analysis_date", "id")
+        )
+    except (OperationalError, ProgrammingError):
+        return {}
+
+    grouped_reviews: dict[str, list[EquityExpectationReview]] = defaultdict(list)
+    for review in review_rows:
+        grouped_reviews[clean_ticker(review.ticker)].append(review)
+
+    return {
+        ticker: build_optimizer_expectation_review_signal(grouped_reviews.get(ticker, []))
+        for ticker in normalized_tickers
+    }
+
+
+def resolve_card_optimizer_expectation_review_signal(card: dict) -> dict:
+    signal = card.get("expectation_review_signal")
+    if isinstance(signal, dict):
+        return signal
+    position = card.get("position")
+    ticker = clean_ticker(getattr(position, "ticker", "") or card.get("ticker") or "")
+    if not ticker:
+        return {"available": False}
+    return build_optimizer_expectation_review_signal_map([ticker]).get(ticker, {"available": False})
+
+
+def apply_optimizer_expectation_review_adjustment(
+    raw_return_pct: Decimal | None,
+    horizon_signal: dict | None,
+) -> dict:
+    raw_return_pct = quantize_decimal(raw_return_pct, "0.01")
+    if raw_return_pct is None:
+        return {
+            "available": False,
+            "raw_return_pct": None,
+            "adjusted_return_pct": None,
+            "adjustment_pct": None,
+        }
+
+    signal = horizon_signal or {}
+    if not signal.get("available"):
+        return {
+            "available": False,
+            "raw_return_pct": raw_return_pct,
+            "adjusted_return_pct": raw_return_pct,
+            "adjustment_pct": ZERO,
+        }
+
+    sample_count = int(signal.get("sample_count") or 0)
+    latest_return_pct = quantize_decimal(signal.get("latest_return_pct"), "0.01")
+    average_return_pct = quantize_decimal(signal.get("average_return_pct"), "0.01")
+    trend_return_pct = quantize_decimal(signal.get("trend_return_pct"), "0.01") or ZERO
+    recent_delta_pct = quantize_decimal(signal.get("recent_delta_pct"), "0.01") or ZERO
+    spread_pct = quantize_decimal(signal.get("spread_pct"), "0.01") or ZERO
+    anchor_return_pct = quantize_decimal(
+        average_decimal([item for item in (latest_return_pct, average_return_pct) if item is not None]),
+        "0.01",
+    ) or latest_return_pct or average_return_pct or raw_return_pct
+    blend_weight = Decimal("0.18")
+    if sample_count >= 4:
+        blend_weight = Decimal("0.38")
+    elif sample_count >= 2:
+        blend_weight = Decimal("0.28")
+    anchor_adjustment_pct = (anchor_return_pct - raw_return_pct) * blend_weight
+    trend_adjustment_pct = (
+        max(trend_return_pct, ZERO) * Decimal("0.08")
+        + min(trend_return_pct, ZERO) * Decimal("0.16")
+        + max(recent_delta_pct, ZERO) * Decimal("0.05")
+        + min(recent_delta_pct, ZERO) * Decimal("0.10")
+    )
+    stability_penalty_pct = clamp_decimal(
+        max(spread_pct - OPTIMIZER_EXPECTATION_REVIEW_STABLE_SPREAD_PCT, ZERO) * Decimal("0.06"),
+        ZERO,
+        Decimal("1.80"),
+    )
+    adjustment_pct = clamp_decimal(
+        anchor_adjustment_pct + trend_adjustment_pct - stability_penalty_pct,
+        -OPTIMIZER_EXPECTATION_REVIEW_MAX_PENALTY_PCT,
+        OPTIMIZER_EXPECTATION_REVIEW_MAX_BONUS_PCT,
+    )
+    adjusted_return_pct = clamp_decimal(
+        raw_return_pct + adjustment_pct,
+        Decimal("-80.00"),
+        Decimal("140.00"),
+    )
+    return {
+        "available": True,
+        "sample_count": sample_count,
+        "raw_return_pct": raw_return_pct,
+        "anchor_return_pct": quantize_decimal(anchor_return_pct, "0.01"),
+        "latest_return_pct": latest_return_pct,
+        "average_return_pct": average_return_pct,
+        "trend_return_pct": quantize_decimal(trend_return_pct, "0.01"),
+        "recent_delta_pct": quantize_decimal(recent_delta_pct, "0.01"),
+        "spread_pct": quantize_decimal(spread_pct, "0.01"),
+        "blend_weight_pct": quantize_decimal(blend_weight * ONE_HUNDRED, "0.1"),
+        "anchor_adjustment_pct": quantize_decimal(anchor_adjustment_pct, "0.01"),
+        "trend_adjustment_pct": quantize_decimal(trend_adjustment_pct, "0.01"),
+        "stability_penalty_pct": quantize_decimal(stability_penalty_pct, "0.01"),
+        "adjustment_pct": quantize_decimal(adjustment_pct, "0.01"),
+        "adjusted_return_pct": quantize_decimal(adjusted_return_pct, "0.01"),
+    }
+
+
 def build_equity_analysis_dashboard(
     positions,
     selected_start_date: date | None = None,
@@ -16330,13 +16541,28 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         return_key="annual_return_pct",
         fallback_value=cycle_return_annual_pct,
     )
+    expectation_review_signal = resolve_card_optimizer_expectation_review_signal(card)
     uncertainty_profile = build_optimizer_uncertainty_profile(card, projection, cycle_projection, external_signal)
-    scenario_expected_return_pct = twelve_month_scenario.get("expected_return_pct") or base_return_pct
+    raw_scenario_expected_return_pct = twelve_month_scenario.get("expected_return_pct") or base_return_pct
+    scenario_expectation_review = apply_optimizer_expectation_review_adjustment(
+        raw_scenario_expected_return_pct,
+        (expectation_review_signal.get("1y") if expectation_review_signal.get("available") else None),
+    )
+    scenario_expected_return_pct = (
+        scenario_expectation_review.get("adjusted_return_pct")
+        if scenario_expectation_review.get("adjusted_return_pct") is not None
+        else raw_scenario_expected_return_pct
+    )
     downside_stress_return_pct = twelve_month_scenario.get("worst_return_pct")
     if downside_stress_return_pct is None:
         downside_stress_return_pct = low_return_pct if low_return_pct is not None else base_return_pct
     scenario_spread_pct = twelve_month_scenario.get("spread_pct") or ZERO
-    cycle_expected_annual_return_pct = five_year_scenario.get("expected_return_pct")
+    raw_cycle_expected_annual_return_pct = five_year_scenario.get("expected_return_pct")
+    cycle_expectation_review = apply_optimizer_expectation_review_adjustment(
+        raw_cycle_expected_annual_return_pct,
+        (expectation_review_signal.get("5y") if expectation_review_signal.get("available") else None),
+    )
+    cycle_expected_annual_return_pct = cycle_expectation_review.get("adjusted_return_pct")
     if cycle_expected_annual_return_pct is None:
         cycle_expected_annual_return_pct = cycle_return_annual_pct
     cycle_downside_stress_annual_pct = five_year_scenario.get("worst_return_pct")
@@ -16527,10 +16753,15 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         "safety_score": safety_score,
         "base_return_pct": base_return_pct,
         "low_return_pct": low_return_pct,
+        "expectation_review_signal": expectation_review_signal,
+        "raw_scenario_expected_return_pct": raw_scenario_expected_return_pct,
         "scenario_expected_return_pct": scenario_expected_return_pct,
+        "scenario_expectation_review": scenario_expectation_review,
         "downside_stress_return_pct": downside_stress_return_pct,
         "scenario_spread_pct": scenario_spread_pct,
+        "raw_cycle_expected_annual_return_pct": raw_cycle_expected_annual_return_pct,
         "cycle_expected_annual_return_pct": cycle_expected_annual_return_pct,
+        "cycle_expectation_review": cycle_expectation_review,
         "cycle_downside_stress_annual_pct": cycle_downside_stress_annual_pct,
         "cycle_scenario_spread_pct": cycle_scenario_spread_pct,
         "primary_signal_pct": primary_signal_pct,
@@ -17468,7 +17699,9 @@ def build_equity_allocation_plan(
                 "allocated_amount": allocated_amount,
                 "allocated_weight_pct": (allocated_amount / total_investment) * Decimal("100"),
                 "base_return_pct": candidate["base_return_pct"],
+                "raw_scenario_expected_return_pct": candidate.get("raw_scenario_expected_return_pct"),
                 "scenario_expected_return_pct": candidate.get("scenario_expected_return_pct"),
+                "scenario_expectation_review": candidate.get("scenario_expectation_review"),
                 "downside_stress_return_pct": candidate.get("downside_stress_return_pct"),
                 "scenario_spread_pct": candidate.get("scenario_spread_pct"),
                 "primary_signal_pct": candidate["primary_signal_pct"],
@@ -17508,7 +17741,9 @@ def build_equity_allocation_plan(
                 "cycle_projection_available": candidate["cycle_projection_available"],
                 "cycle_return_annual_pct": candidate["cycle_return_annual_pct"],
                 "cycle_return_5y_pct": candidate["cycle_return_5y_pct"],
+                "raw_cycle_expected_annual_return_pct": candidate.get("raw_cycle_expected_annual_return_pct"),
                 "cycle_expected_annual_return_pct": candidate.get("cycle_expected_annual_return_pct"),
+                "cycle_expectation_review": candidate.get("cycle_expectation_review"),
                 "cycle_downside_stress_annual_pct": candidate.get("cycle_downside_stress_annual_pct"),
                 "cycle_scenario_spread_pct": candidate.get("cycle_scenario_spread_pct"),
                 "holding_annualized_return_pct": candidate.get("holding_annualized_return_pct"),
