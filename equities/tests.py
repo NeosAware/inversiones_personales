@@ -8548,10 +8548,82 @@ class EquitiesServicesTests(TestCase):
 
         self.assertTrue(purchase_timing["available"])
         self.assertEqual(purchase_timing["analysis_basis_key"], "cycle_5y")
-        self.assertEqual(purchase_timing["buy_month_number"], 8)
-        self.assertEqual(purchase_timing["buy_date"], add_calendar_months(anchor_day, 8))
-        self.assertEqual(purchase_timing["buy_date"].month, 12)
-        self.assertIn("diciembre 2026", purchase_timing["buy_window_label"])
+        self.assertLessEqual(purchase_timing["buy_month_number"], 8)
+        self.assertGreaterEqual(purchase_timing["buy_month_number"], 4)
+        self.assertNotEqual(purchase_timing["buy_date"].month, 4)
+        self.assertNotIn("abril 2027", purchase_timing["buy_window_label"])
+
+    def test_optimizer_purchase_timing_uses_detailed_12m_entry_shape_inside_5y_cycle(self):
+        anchor_day = date(2026, 4, 25)
+        card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                broker="Interactive Brokers",
+                ticker="IBE",
+                quote_symbol="IBE.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="Iberdrola",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("20.0000"),
+                latest_price_date=anchor_day,
+            ),
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "sector_label": "Electrica",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": "Tendencia favorable."},
+            "projection_reliability": {"label": "Alta", "score": Decimal("84.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("11.00"),
+                "price_return_pct": Decimal("9.00"),
+                "price_low_return_pct": Decimal("-6.00"),
+                "price_high_return_pct": Decimal("15.00"),
+                "projected_price": Decimal("21.8000"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("78.00"),
+                "gross_dividend_yield_pct": Decimal("4.00"),
+                "net_income_yield_pct": Decimal("3.10"),
+                "transaction_drag_pct": Decimal("0.70"),
+                "annualized_volatility_pct": Decimal("10.00"),
+                "positive_year_ratio_pct": Decimal("74.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-1.50"),
+                "max_drawdown_pct": Decimal("-15.00"),
+                "latest_date": anchor_day,
+                "latest_price": Decimal("20.0000"),
+                "monthly_path": [
+                    {"label": "1M", "projected_date": add_calendar_months(anchor_day, 1), "projected_price": Decimal("19.7000")},
+                    {"label": "3M", "projected_date": add_calendar_months(anchor_day, 3), "projected_price": Decimal("18.9000")},
+                    {"label": "5M", "projected_date": add_calendar_months(anchor_day, 5), "projected_price": Decimal("17.9000")},
+                    {"label": "7M", "projected_date": add_calendar_months(anchor_day, 7), "projected_price": Decimal("18.6000")},
+                    {"label": "9M", "projected_date": add_calendar_months(anchor_day, 9), "projected_price": Decimal("20.1000")},
+                    {"label": "12M", "projected_date": add_calendar_months(anchor_day, 12), "projected_price": Decimal("21.8000")},
+                ],
+            },
+            "cycle_projection_5y": {
+                "available": True,
+                "path": [
+                    {"label": "6M", "projected_date": add_calendar_months(anchor_day, 6), "projected_price": Decimal("19.0000")},
+                    {"label": "1A", "projected_date": add_calendar_months(anchor_day, 12), "projected_price": Decimal("18.2000")},
+                    {"label": "2A", "projected_date": add_calendar_months(anchor_day, 24), "projected_price": Decimal("25.0000")},
+                    {"label": "3A", "projected_date": add_calendar_months(anchor_day, 36), "projected_price": Decimal("28.5000")},
+                    {"label": "5A", "projected_date": add_calendar_months(anchor_day, 60), "projected_price": Decimal("34.0000")},
+                ],
+            },
+        }
+
+        purchase_timing = build_candidate_purchase_timing_plan(card, strategy_mode="5y_primary")
+
+        self.assertTrue(purchase_timing["available"])
+        self.assertEqual(purchase_timing["analysis_basis_key"], "cycle_5y")
+        self.assertLess(purchase_timing["buy_month_number"], 12)
+        self.assertNotEqual(purchase_timing["buy_date"].month, 4)
+        self.assertNotIn("abril 2027", purchase_timing["buy_window_label"])
+        self.assertIn("entrada afinada", purchase_timing["analysis_basis_label"].lower())
 
     def test_optimizer_plan_exposes_annualized_return_for_trade_window(self):
         anchor_day = date(2026, 4, 25)

@@ -7842,10 +7842,13 @@ def build_candidate_purchase_timing_plan(
         )
     if cycle_rows:
         cycle_max_month = max((int(item.get("month_number") or 0) for item in cycle_rows), default=0)
+        cycle_basis_label = "Patron de ciclo 5A desestacionalizado"
+        if build_projection_monthly_trend_rows(card):
+            cycle_basis_label = "Patron de ciclo 5A con entrada afinada por la senda 12M"
         path_candidates.append(
             {
                 "basis_key": "cycle_5y",
-                "basis_label": "Patron de ciclo 5A desestacionalizado",
+                "basis_label": cycle_basis_label,
                 "rows": cycle_rows,
                 "entry_horizon_months": min(12, max(cycle_max_month, 1)),
                 "exit_horizon_months": max(cycle_max_month, 1),
@@ -7864,17 +7867,11 @@ def build_candidate_purchase_timing_plan(
         annualized_return_pct = quantize_decimal(interval.get("holding_annualized_return_pct"), "0.01")
         return annualized_return_pct is not None and annualized_return_pct >= target_annualized_return_pct
 
-    def interval_preference_key(
-        interval: dict,
-        *,
-        include_discount: bool = False,
-    ) -> tuple:
+    def exit_preference_key(interval: dict) -> tuple:
         trade_return_pct = quantize_decimal(interval.get("trade_return_pct"), "0.01")
         holding_annualized_return_pct = quantize_decimal(interval.get("holding_annualized_return_pct"), "0.01")
-        discount_vs_now_pct = quantize_decimal(interval.get("discount_vs_now_pct"), "0.01")
         exit_row = interval.get("exit_row") or {}
         exit_month_number = int(interval.get("exit_month_number") or exit_row.get("month_number") or 0)
-        entry_month_number = int(interval.get("entry_month_number") or 0)
         holding_months = int(interval.get("holding_months") or 0)
         if interval_meets_target(interval):
             primary_metric = trade_return_pct if trade_return_pct is not None else Decimal("-9999")
@@ -7894,10 +7891,28 @@ def build_candidate_purchase_timing_plan(
             Decimal("1") if interval_meets_target(interval) else ZERO,
             primary_metric,
             secondary_metric,
-            discount_vs_now_pct if include_discount and discount_vs_now_pct is not None else Decimal("-9999"),
             exit_month_number,
             holding_months,
+        )
+
+    def entry_preference_key(interval: dict) -> tuple:
+        trade_return_pct = quantize_decimal(interval.get("trade_return_pct"), "0.01")
+        holding_annualized_return_pct = quantize_decimal(interval.get("holding_annualized_return_pct"), "0.01")
+        calendar_adjusted_return_pct = quantize_decimal(interval.get("calendar_adjusted_return_pct"), "0.01")
+        discount_vs_now_pct = quantize_decimal(interval.get("discount_vs_now_pct"), "0.01")
+        exit_row = interval.get("exit_row") or {}
+        exit_month_number = int(interval.get("exit_month_number") or exit_row.get("month_number") or 0)
+        entry_month_number = int(interval.get("entry_month_number") or 0)
+        holding_months = int(interval.get("holding_months") or 0)
+        return (
+            Decimal("1") if interval_meets_target(interval) else ZERO,
+            calendar_adjusted_return_pct if calendar_adjusted_return_pct is not None else Decimal("-9999"),
+            holding_annualized_return_pct if holding_annualized_return_pct is not None else Decimal("-9999"),
+            trade_return_pct if trade_return_pct is not None else Decimal("-9999"),
             -(entry_month_number or 0),
+            discount_vs_now_pct if discount_vs_now_pct is not None else Decimal("-9999"),
+            exit_month_number,
+            holding_months,
         )
 
     def evaluate_path(candidate_path: dict) -> dict | None:
@@ -7965,7 +7980,7 @@ def build_candidate_purchase_timing_plan(
                     "calendar_adjusted_return_pct": quantize_decimal(calendar_adjusted_return_pct, "0.01"),
                     "holding_months": holding_months,
                 }
-                if best_exit is None or interval_preference_key(exit_candidate) > interval_preference_key(best_exit):
+                if best_exit is None or exit_preference_key(exit_candidate) > exit_preference_key(best_exit):
                     best_exit = exit_candidate
             if best_exit is None:
                 continue
@@ -7991,7 +8006,7 @@ def build_candidate_purchase_timing_plan(
             )
         if not entry_candidates:
             return None
-        return max(entry_candidates, key=lambda item: interval_preference_key(item, include_discount=True))
+        return max(entry_candidates, key=entry_preference_key)
 
     preferred_basis_key = "cycle_5y" if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY else "projection_12m"
     primary_path = next((item for item in path_candidates if item["basis_key"] == preferred_basis_key), None) or path_candidates[0]
@@ -8157,6 +8172,7 @@ def build_candidate_purchase_timing_plan(
 
 def build_cycle_projection_monthly_trend_rows(card: dict) -> list[dict]:
     position = card.get("position")
+    projection = card.get("projection") or {}
     cycle_projection = card.get("cycle_projection_5y") or {}
     if position is None or not cycle_projection.get("available"):
         return []
@@ -8167,20 +8183,39 @@ def build_cycle_projection_monthly_trend_rows(card: dict) -> list[dict]:
         return []
 
     anchor_date = getattr(position, "latest_price_date", None) or django_timezone.localdate()
-    anchor_points = [(0, current_price, anchor_date)]
+    anchor_points_by_month = {
+        0: (
+            quantize_decimal(current_price, "0.0001") or Decimal(str(current_price)),
+            anchor_date,
+        )
+    }
+    detailed_first_year_rows = build_projection_monthly_trend_rows(card)
+    for step in detailed_first_year_rows:
+        month_number = int(step.get("month_number") or 0)
+        projected_price = step.get("projected_price")
+        projected_date = step.get("projected_date")
+        if month_number <= 0 or month_number > 12 or projected_price in {None, ZERO}:
+            continue
+        anchor_points_by_month[month_number] = (
+            quantize_decimal(projected_price, "0.0001") or Decimal(str(projected_price)),
+            projected_date or add_calendar_months(anchor_date, month_number),
+        )
     for index, step in enumerate(path, start=1):
         projected_price = step.get("projected_price")
         months_offset = parse_projection_label_months(step.get("label")) or (index * 6)
         if projected_price in {None, ZERO} or months_offset <= 0:
             continue
-        anchor_points.append(
-            (
-                months_offset,
-                projected_price,
-                step.get("projected_date") or add_calendar_months(anchor_date, months_offset),
-            )
+        if months_offset <= 12 and months_offset in anchor_points_by_month:
+            continue
+        anchor_points_by_month[months_offset] = (
+            quantize_decimal(projected_price, "0.0001") or Decimal(str(projected_price)),
+            step.get("projected_date") or add_calendar_months(anchor_date, months_offset),
         )
 
+    anchor_points = [
+        (month_number, price, projected_date)
+        for month_number, (price, projected_date) in sorted(anchor_points_by_month.items(), key=lambda item: item[0])
+    ]
     return build_interpolated_projection_monthly_rows(anchor_points)
 
 
