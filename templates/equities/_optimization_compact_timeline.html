@@ -14,7 +14,10 @@
         </div>
         {% for row in timeline.rows %}
           <div class="equity-mini-optimization-row">
-            <span class="equity-mini-optimization-ticker">{{ row.ticker }}</span>
+            <div class="equity-mini-optimization-label">
+              <strong>{{ row.company_name }}</strong>
+              <span>{{ row.ticker }}</span>
+            </div>
             <div class="equity-mini-optimization-main">
               <div class="equity-mini-optimization-track">
                 <div class="equity-mini-optimization-entry-zone" style="width:{{ timeline.entry_horizon_pct }}%;"></div>
@@ -23,8 +26,12 @@
                 <div class="equity-mini-optimization-pin end {{ row.status_key }}" style="left:{{ row.exit_pin_left_pct }}%;"></div>
               </div>
               <div class="equity-mini-optimization-meta">
-                <span>E {{ row.entry_window_label|default:"-" }}</span>
-                <span>S {{ row.exit_window_label|default:"-" }}</span>
+                <span>E {{ row.entry_window_label|default:"-" }}{% if row.entry_price is not None %} @ {{ row.entry_price|floatformat:4 }} EUR{% endif %}</span>
+                <span>S {{ row.exit_window_label|default:"-" }}{% if row.exit_price is not None %} @ {{ row.exit_price|floatformat:4 }} EUR{% endif %}</span>
+              </div>
+              <div class="equity-mini-optimization-current">
+                <strong>Hoy {% if row.current_price is not None %}{{ row.current_price|floatformat:4 }} EUR{% else %}-{% endif %}</strong>
+                <small>{% if row.current_position_label %}{{ row.current_position_label }}{% endif %}{% if row.remaining_to_exit_pct is not None %} | {{ row.remaining_to_exit_pct|floatformat:1 }} % hasta salida{% endif %}</small>
               </div>
             </div>
             <span class="equity-mini-optimization-score">
@@ -40,7 +47,7 @@
         {% endfor %}
       </div>
       <div class="equity-mini-optimization-foot">
-        <small>E entrada | S salida</small>
+        <small>E entrada | S salida | Hoy precio actual</small>
         <small>{% if timeline.hidden_rows_count %}+{{ timeline.hidden_rows_count }} mas{% endif %}</small>
       </div>
     </div>

@@ -5705,7 +5705,32 @@ class EquitiesServicesTests(TestCase):
                     completed_at=timezone.make_aware(datetime.combine(analysis_day, datetime.min.time())),
                 )
 
-        context = build_scheduled_optimization_persistence_context(as_of=today)
+        context = build_scheduled_optimization_persistence_context(
+            as_of=today,
+            live_quote_map={
+                "ACS": {
+                    "ticker": "ACS",
+                    "company_name": "ACS, Actividades de Construccion y Servicios, S.A.",
+                    "current_price": Decimal("40.1000"),
+                    "current_price_date": today,
+                    "current_price_date_label": today.isoformat(),
+                },
+                "IBE": {
+                    "ticker": "IBE",
+                    "company_name": "Iberdrola, S.A.",
+                    "current_price": Decimal("11.0200"),
+                    "current_price_date": today,
+                    "current_price_date_label": today.isoformat(),
+                },
+                "REP": {
+                    "ticker": "REP",
+                    "company_name": "Repsol, S.A.",
+                    "current_price": Decimal("13.6200"),
+                    "current_price_date": today,
+                    "current_price_date_label": today.isoformat(),
+                },
+            },
+        )
 
         self.assertTrue(context["available"])
         self.assertEqual(context["runs_count_3m"], 6)
@@ -5734,6 +5759,10 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(top_row["average_interval_return_pct_3m"], Decimal("11.6"))
         self.assertEqual(top_row["average_annualized_return_pct_3m"], Decimal("12.7"))
         self.assertEqual(top_row["average_allocated_amount_3m"], Decimal("25000.00"))
+        self.assertEqual(top_row["current_price"], Decimal("11.0200"))
+        self.assertEqual(top_row["current_position_label"], "Dentro del tramo esperado")
+        self.assertIsNotNone(top_row["current_vs_entry_pct"])
+        self.assertIsNotNone(top_row["remaining_to_exit_pct"])
         self.assertEqual([item["ticker"] for item in context["rows"][:3]], ["ACS", "IBE", "REP"])
         self.assertEqual(
             [item["margin_pct"] for item in top_row["average_year_margins"]],
@@ -5744,6 +5773,8 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(context["top_non_owned_recommendation"]["sell_window_label"], f"noviembre {today.year}")
         self.assertEqual(context["top_non_owned_recommendation"]["interval_return_pct"], Decimal("10.8"))
         self.assertEqual(context["top_non_owned_recommendation"]["holding_annualized_return_pct"], Decimal("22.7664"))
+        self.assertEqual(context["top_non_owned_recommendation"]["current_price"], Decimal("40.1000"))
+        self.assertEqual(context["top_non_owned_recommendation"]["current_position_label"], "Dentro del tramo esperado")
 
     def test_dashboard_can_extend_optimizer_to_full_ibex_universe(self):
         acerinox = find_equity_company_profile("Acerinox")
@@ -9218,9 +9249,11 @@ class EquitiesViewTests(TestCase):
             allocations_data=[
                 {
                     "rank": 1,
-                    "company_name": "ACS",
+                    "company_name": "ACS, Actividades de Construccion y Servicios, S.A.",
                     "ticker": "ACS",
                     "allocated_weight_pct": 35.0,
+                    "current_price_per_share": 40.10,
+                    "latest_price_date": timezone.localdate().isoformat(),
                     "purchase_timing": {
                         "available": True,
                         "buy_date": (history_day + timedelta(days=12)).isoformat(),
@@ -9236,9 +9269,11 @@ class EquitiesViewTests(TestCase):
                 },
                 {
                     "rank": 2,
-                    "company_name": "Repsol",
+                    "company_name": "Repsol, S.A.",
                     "ticker": "REP",
                     "allocated_weight_pct": 25.0,
+                    "current_price_per_share": 13.40,
+                    "latest_price_date": timezone.localdate().isoformat(),
                     "purchase_timing": {
                         "available": True,
                         "buy_date": (history_day + timedelta(days=35)).isoformat(),
@@ -9259,8 +9294,10 @@ class EquitiesViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "equity-mini-optimization")
+        self.assertContains(response, "ACS, Actividades de Construccion y Servicios, S.A.")
         self.assertContains(response, "E mayo 2026")
         self.assertContains(response, "S noviembre 2026")
+        self.assertContains(response, "Hoy 40,1000 EUR")
         self.assertContains(response, "%/a")
 
     def test_equities_page_shows_purchase_recommendation_and_gantt_for_optimization(self):
@@ -9294,6 +9331,8 @@ class EquitiesViewTests(TestCase):
                     "ticker": "ACS",
                     "allocated_amount": 22000.0,
                     "allocated_weight_pct": 22.0,
+                    "current_price_per_share": 40.10,
+                    "latest_price_date": timezone.localdate().isoformat(),
                     "net_projected_return_pct": 8.0,
                     "cycle_return_5y_pct": 40.0,
                     "reliability_label": "Media",
@@ -9345,6 +9384,8 @@ class EquitiesViewTests(TestCase):
                     "rank": 1,
                     "company_name": "ACS",
                     "ticker": "ACS",
+                    "current_price_per_share": 40.10,
+                    "latest_price_date": timezone.localdate().isoformat(),
                     "status_label": "Radar IBEX",
                     "sector_label": "Infraestructuras",
                     "trade_alert_label": "Comprar",
@@ -9383,6 +9424,8 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "noviembre 2026")
         self.assertContains(response, "Entradas durante un ano, salidas cuando el tramo da mas")
         self.assertContains(response, "39,2500 EUR")
+        self.assertContains(response, "Hoy en mercado")
+        self.assertContains(response, "40,1000 EUR")
 
     def helper_equities_page_shows_scheduled_optimization_persistence_panel_legacy(self):
         today = timezone.localdate()

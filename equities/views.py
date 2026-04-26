@@ -33,10 +33,12 @@ from .nightly_analysis import (
     load_cached_ibex_card,
 )
 from .optimization_runs import (
+    build_optimizer_live_quote_map,
     build_fallback_report_pdf_html,
     build_optimization_compact_timeline,
     build_optimization_purchase_timeline,
     build_scheduled_optimization_persistence_context,
+    enrich_allocations_with_live_quote_data,
     launch_equity_optimization_run_pair,
     render_report_pdf,
     resume_equity_optimization_runs,
@@ -298,15 +300,24 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["round_plan"] = round_plan
         context["optimization_runs"] = optimization_runs
         context["active_optimization_runs"] = active_optimization_runs
+        live_quote_map = build_optimizer_live_quote_map(dashboard.get("optimizer_cards") or [])
         for run in optimization_runs:
-            run.compact_purchase_timeline = build_optimization_compact_timeline(run)
+            run.compact_purchase_timeline = build_optimization_compact_timeline(run, live_quote_map=live_quote_map)
         context["latest_completed_optimization"] = next(
             (run for run in optimization_runs if run.status == EquityOptimizationRun.Status.COMPLETED and run.summary_data),
             None,
         )
-        context["scheduled_optimization_persistence"] = build_scheduled_optimization_persistence_context()
+        context["scheduled_optimization_persistence"] = build_scheduled_optimization_persistence_context(
+            live_quote_map=live_quote_map
+        )
+        if context["latest_completed_optimization"] is not None:
+            context["latest_completed_optimization"].allocations_data = enrich_allocations_with_live_quote_data(
+                list(context["latest_completed_optimization"].allocations_data or []),
+                live_quote_map=live_quote_map,
+            )
         context["optimization_purchase_timeline"] = build_optimization_purchase_timeline(
-            context["latest_completed_optimization"]
+            context["latest_completed_optimization"],
+            live_quote_map=live_quote_map,
         )
         context["prefill_source_filename"] = kwargs.get("prefill_source_filename")
         context["equity_company_catalog"] = get_equity_company_catalog()

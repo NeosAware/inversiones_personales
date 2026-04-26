@@ -13,10 +13,10 @@
       <div class="equity-grid-4" style="margin-top:16px;">
         <div class="equity-box">
           <span>Proxima entrada</span>
-          <strong>{% if purchase_timeline.next_row %}{{ purchase_timeline.next_row.ticker }}{% else %}-{% endif %}</strong>
+          <strong>{% if purchase_timeline.next_row %}{{ purchase_timeline.next_row.company_name }}{% else %}-{% endif %}</strong>
           <small>
             {% if purchase_timeline.next_row %}
-              {{ purchase_timeline.next_row.entry_date|default:purchase_timeline.next_row.buy_date|date:"Y-m-d" }} | salida {{ purchase_timeline.next_row.exit_date|date:"Y-m-d" }}
+              {{ purchase_timeline.next_row.ticker }} | {{ purchase_timeline.next_row.entry_date|default:purchase_timeline.next_row.buy_date|date:"Y-m-d" }} | salida {{ purchase_timeline.next_row.exit_date|date:"Y-m-d" }}{% if purchase_timeline.next_row.entry_price is not None %} | E {{ purchase_timeline.next_row.entry_price|floatformat:4 }} EUR{% endif %}{% if purchase_timeline.next_row.current_price is not None %} | Hoy {{ purchase_timeline.next_row.current_price|floatformat:4 }} EUR{% endif %}
             {% else %}
               Sin ventana cerrada
             {% endif %}
@@ -41,21 +41,22 @@
 
       <div class="equity-sale-gantt-board">
         <div class="equity-sale-gantt-axis">
-          <div class="equity-sale-gantt-axis-label">Accion</div>
+          <div class="equity-sale-gantt-axis-label">Accion y referencia</div>
           <div class="equity-sale-gantt-axis-track">
             <div class="equity-sale-gantt-entry-zone" style="width:{{ purchase_timeline.entry_horizon_pct }}%;"></div>
             {% for marker in purchase_timeline.markers %}
               <span class="equity-sale-gantt-marker" style="left:{{ marker.left_pct }}%;">{{ marker.label }}</span>
             {% endfor %}
           </div>
-          <div class="equity-sale-gantt-axis-meta">Tramo e importe</div>
+          <div class="equity-sale-gantt-axis-meta">Plan, precios y situacion actual</div>
         </div>
 
         {% for row in purchase_timeline.rows %}
           <div class="equity-sale-gantt-row">
             <div class="equity-sale-gantt-label">
-              <strong>{{ row.ticker }}</strong>
-              <span>{{ row.company_name }}{% if row.extends_beyond_entry_window %} | salida larga{% endif %}</span>
+              <strong>{{ row.company_name }}</strong>
+              <span>{{ row.ticker }}{% if row.extends_beyond_entry_window %} | salida larga{% endif %}</span>
+              <span>{% if row.current_price is not None %}Hoy {{ row.current_price|floatformat:4 }} EUR{% if row.current_vs_entry_pct is not None %} | {{ row.current_vs_entry_pct|floatformat:1 }} % vs entrada{% endif %}{% if row.remaining_to_exit_pct is not None %} | {{ row.remaining_to_exit_pct|floatformat:1 }} % hasta salida{% endif %}{% endif %}</span>
             </div>
             <div class="equity-sale-gantt-track">
               <div class="equity-sale-gantt-entry-zone" style="width:{{ purchase_timeline.entry_horizon_pct }}%;"></div>
@@ -68,9 +69,10 @@
               <strong>
                 {% if row.allocated_amount is not None %}{{ row.allocated_amount|floatformat:0 }} EUR{% else %}-{% endif %}
               </strong>
-              <span>{{ row.entry_window_label|default:row.buy_window_label }} -> {{ row.exit_window_label }}</span>
+              <span>E {{ row.entry_window_label|default:row.buy_window_label }} @ {% if row.entry_price is not None %}{{ row.entry_price|floatformat:4 }} EUR{% elif row.buy_price is not None %}{{ row.buy_price|floatformat:4 }} EUR{% else %}-{% endif %}</span>
+              <span>S {{ row.exit_window_label }} @ {% if row.exit_price is not None %}{{ row.exit_price|floatformat:4 }} EUR{% else %}-{% endif %}</span>
+              <small>{% if row.current_price is not None %}Hoy {{ row.current_price|floatformat:4 }} EUR{% else %}Hoy -{% endif %}{% if row.current_position_label %} | {{ row.current_position_label }}{% endif %}</small>
               <small>{% if row.holding_annualized_return_pct is not None %}{{ row.holding_annualized_return_pct|floatformat:1 }} %/a{% elif row.interval_return_pct is not None %}{{ row.interval_return_pct|floatformat:1 }} %{% elif row.expected_trade_return_pct is not None %}{{ row.expected_trade_return_pct|floatformat:1 }} %{% else %}-{% endif %}{% if row.interval_return_pct is not None %} | total {{ row.interval_return_pct|floatformat:1 }} %{% elif row.expected_trade_return_pct is not None %} | total {{ row.expected_trade_return_pct|floatformat:1 }} %{% endif %}{% if row.holding_months %} | {{ row.holding_months }}M{% endif %} | {{ row.status_label }}</small>
-              <small>E {% if row.entry_price is not None %}{{ row.entry_price|floatformat:4 }} EUR{% elif row.buy_price is not None %}{{ row.buy_price|floatformat:4 }} EUR{% else %}-{% endif %} | S {% if row.exit_price is not None %}{{ row.exit_price|floatformat:4 }} EUR{% else %}-{% endif %}</small>
             </div>
           </div>
         {% endfor %}

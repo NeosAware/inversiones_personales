@@ -42,6 +42,7 @@ from .services import (
 
 
 ZERO = Decimal("0.00")
+ONE_HUNDRED = Decimal("100.00")
 SCHEDULED_OPTIMIZATION_MAX_COMPANY_PCT = Decimal("30.00")
 SCHEDULED_OPTIMIZATION_MAX_TOTAL_POSITIONS = 5
 SCHEDULED_OPTIMIZATION_MAX_SECTOR_POSITIONS = 2
@@ -292,6 +293,144 @@ def normalize_news_text(value: str) -> str:
 
 def clamp_decimal(value: Decimal, minimum: Decimal, maximum: Decimal) -> Decimal:
     return max(minimum, min(value, maximum))
+
+
+def normalize_price_value(value) -> Decimal | None:
+    if value in {None, ""}:
+        return None
+    try:
+        return quantize_decimal(Decimal(str(value)), "0.0001")
+    except Exception:
+        return None
+
+
+def normalize_date_value(value) -> date | None:
+    if isinstance(value, date):
+        return value
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+    try:
+        return date.fromisoformat(raw_value)
+    except ValueError:
+        return None
+
+
+def compute_trade_percent_delta(target_value, reference_value) -> Decimal | None:
+    target = normalize_price_value(target_value)
+    reference = normalize_price_value(reference_value)
+    if target in {None, ZERO} or reference in {None, ZERO}:
+        return None
+    return quantize_decimal(((target - reference) / reference) * ONE_HUNDRED, "0.01")
+
+
+def build_optimizer_live_quote_map(optimizer_cards: list[dict] | None) -> dict[str, dict]:
+    live_quote_map: dict[str, dict] = {}
+    for card in optimizer_cards or []:
+        position = card.get("position") if isinstance(card, dict) else None
+        if position is None:
+            continue
+        ticker = str(getattr(position, "ticker", "") or "").strip().upper()
+        if not ticker:
+            continue
+        current_price = normalize_price_value(getattr(position, "current_price_per_share", None))
+        current_price_date = getattr(position, "latest_price_date", None)
+        existing = live_quote_map.get(ticker)
+        if existing is not None:
+            existing_date = existing.get("current_price_date")
+            if current_price_date and existing_date and current_price_date < existing_date:
+                continue
+            if current_price_date == existing_date and existing.get("current_price") not in {None, ZERO} and current_price in {None, ZERO}:
+                continue
+        live_quote_map[ticker] = {
+            "ticker": ticker,
+            "company_name": str(getattr(position, "company_name", "") or ticker),
+            "quote_symbol": str(getattr(position, "quote_symbol", "") or ""),
+            "current_price": current_price,
+            "current_price_date": current_price_date,
+            "current_price_date_label": current_price_date.isoformat() if current_price_date else "",
+        }
+    return live_quote_map
+
+
+def attach_trade_progress_metrics(payload: dict, *, live_quote_map: dict[str, dict] | None = None) -> dict:
+    data = dict(payload or {})
+    ticker = str(data.get("ticker") or "").strip().upper()
+    live_quote = dict((live_quote_map or {}).get(ticker) or {})
+
+    current_price = live_quote.get("current_price")
+    if current_price in {None, ZERO}:
+        current_price = (
+            normalize_price_value(data.get("current_price"))
+            or normalize_price_value(data.get("current_price_per_share"))
+            or normalize_price_value(data.get("latest_current_price"))
+        )
+    current_price_date = live_quote.get("current_price_date") or normalize_date_value(
+        data.get("current_price_date") or data.get("current_price_date_label")
+    )
+    current_price_date_label = (
+        live_quote.get("current_price_date_label")
+        or data.get("current_price_date_label")
+        or (current_price_date.isoformat() if current_price_date else "")
+    )
+
+    entry_price = (
+        normalize_price_value(data.get("entry_price"))
+        or normalize_price_value(data.get("buy_price"))
+        or normalize_price_value(data.get("latest_buy_price"))
+        or normalize_price_value(data.get("average_buy_price"))
+    )
+    exit_price = (
+        normalize_price_value(data.get("exit_price"))
+        or normalize_price_value(data.get("sell_price"))
+        or normalize_price_value(data.get("latest_sell_price"))
+        or normalize_price_value(data.get("average_sell_price"))
+    )
+
+    current_vs_entry_pct = compute_trade_percent_delta(current_price, entry_price)
+    current_vs_exit_pct = compute_trade_percent_delta(current_price, exit_price)
+    remaining_to_exit_pct = compute_trade_percent_delta(exit_price, current_price)
+
+    current_position_label = "Sin precio actual"
+    current_position_tone = ""
+    if current_price not in {None, ZERO}:
+        if entry_price in {None, ZERO} and exit_price in {None, ZERO}:
+            current_position_label = "Sin referencias de tramo"
+        elif entry_price not in {None, ZERO} and current_vs_entry_pct is not None and current_vs_entry_pct < ZERO:
+            current_position_label = "Debajo de la entrada sugerida"
+            current_position_tone = "good"
+        elif exit_price not in {None, ZERO} and current_vs_exit_pct is not None and current_vs_exit_pct >= ZERO:
+            current_position_label = "Ya en zona de salida objetivo"
+            current_position_tone = "warn"
+        elif entry_price not in {None, ZERO} and exit_price not in {None, ZERO}:
+            current_position_label = "Dentro del tramo esperado"
+            current_position_tone = "neutral"
+        elif entry_price not in {None, ZERO}:
+            current_position_label = "Comparado con la entrada sugerida"
+            current_position_tone = "neutral"
+        elif exit_price not in {None, ZERO}:
+            current_position_label = "Comparado con la salida objetivo"
+            current_position_tone = "neutral"
+
+    data.update(
+        {
+            "ticker": ticker or data.get("ticker", ""),
+            "current_price": current_price,
+            "current_price_per_share": current_price,
+            "current_price_date": current_price_date,
+            "current_price_date_label": current_price_date_label,
+            "entry_price": entry_price or data.get("entry_price"),
+            "buy_price": entry_price or data.get("buy_price"),
+            "exit_price": exit_price or data.get("exit_price"),
+            "sell_price": exit_price or data.get("sell_price"),
+            "current_vs_entry_pct": current_vs_entry_pct,
+            "current_vs_exit_pct": current_vs_exit_pct,
+            "remaining_to_exit_pct": remaining_to_exit_pct,
+            "current_position_label": current_position_label,
+            "current_position_tone": current_position_tone,
+        }
+    )
+    return data
 
 
 def strip_html_tags(value: str) -> str:
@@ -861,6 +1000,9 @@ def serialize_allocations_data(plan: dict) -> list[dict]:
                 "rank": item["rank"],
                 "company_name": position.company_name,
                 "ticker": position.ticker,
+                "quote_symbol": position.quote_symbol,
+                "current_price_per_share": float(position.current_price_per_share) if getattr(position, "current_price_per_share", None) is not None else None,
+                "latest_price_date": position.latest_price_date.isoformat() if getattr(position, "latest_price_date", None) else "",
                 "sector_label": item["sector_label"],
                 "status_label": item["status_label"],
                 "status_key": item.get("status_key", ""),
@@ -933,6 +1075,52 @@ def serialize_allocations_data(plan: dict) -> list[dict]:
             }
         )
     return items
+
+
+def enrich_allocations_with_live_quote_data(
+    allocations: list[dict] | None,
+    *,
+    live_quote_map: dict[str, dict] | None = None,
+) -> list[dict]:
+    enriched_items = []
+    for raw_item in allocations or []:
+        item = dict(raw_item or {})
+        purchase_timing = dict(item.get("purchase_timing") or {})
+        metrics = attach_trade_progress_metrics(
+            {
+                "ticker": item.get("ticker"),
+                "current_price_per_share": item.get("current_price_per_share"),
+                "current_price_date_label": item.get("latest_price_date", ""),
+                "entry_price": purchase_timing.get("entry_price") or purchase_timing.get("buy_price"),
+                "buy_price": purchase_timing.get("buy_price"),
+                "exit_price": purchase_timing.get("exit_price") or purchase_timing.get("expected_exit_price"),
+                "sell_price": purchase_timing.get("exit_price") or purchase_timing.get("expected_exit_price"),
+            },
+            live_quote_map=live_quote_map,
+        )
+        item["current_price_per_share"] = metrics.get("current_price")
+        item["current_price_date"] = metrics.get("current_price_date")
+        item["current_price_date_label"] = metrics.get("current_price_date_label", "")
+        item["current_vs_entry_pct"] = metrics.get("current_vs_entry_pct")
+        item["current_vs_exit_pct"] = metrics.get("current_vs_exit_pct")
+        item["remaining_to_exit_pct"] = metrics.get("remaining_to_exit_pct")
+        item["current_position_label"] = metrics.get("current_position_label", "")
+        item["current_position_tone"] = metrics.get("current_position_tone", "")
+        purchase_timing.update(
+            {
+                "current_price": metrics.get("current_price"),
+                "current_price_date": metrics.get("current_price_date"),
+                "current_price_date_label": metrics.get("current_price_date_label", ""),
+                "current_vs_entry_pct": metrics.get("current_vs_entry_pct"),
+                "current_vs_exit_pct": metrics.get("current_vs_exit_pct"),
+                "remaining_to_exit_pct": metrics.get("remaining_to_exit_pct"),
+                "current_position_label": metrics.get("current_position_label", ""),
+                "current_position_tone": metrics.get("current_position_tone", ""),
+            }
+        )
+        item["purchase_timing"] = purchase_timing
+        enriched_items.append(item)
+    return enriched_items
 
 
 def build_optimization_comparison_context(runs: list[EquityOptimizationRun]) -> dict:
@@ -1020,6 +1208,7 @@ def build_optimization_purchase_timeline(
     run: EquityOptimizationRun | None,
     *,
     max_rows: int = 8,
+    live_quote_map: dict[str, dict] | None = None,
 ) -> dict:
     if run is None:
         return {"available": False, "rows": []}
@@ -1120,31 +1309,36 @@ def build_optimization_purchase_timeline(
             status_key = "scheduled"
             status_label = "Tramo programado"
         scheduled_rows.append(
-            {
-                "ticker": item.get("ticker", ""),
-                "company_name": item.get("company_name", ""),
-                "rank": int(item.get("rank") or 0),
-                "is_owned": bool(item.get("is_owned")),
-                "status_key": status_key,
-                "status_label": status_label,
-                "buy_date": buy_date,
-                "entry_date": buy_date,
-                "buy_window_label": purchase_timing.get("buy_window_label", "") or buy_date.isoformat(),
-                "entry_window_label": purchase_timing.get("entry_window_label", "") or purchase_timing.get("buy_window_label", "") or buy_date.isoformat(),
-                "buy_mode_label": purchase_timing.get("mode_label", "") or status_label,
-                "buy_price": Decimal(str(buy_price)) if buy_price is not None else None,
-                "entry_price": Decimal(str(buy_price)) if buy_price is not None else None,
-                "exit_date": exit_date,
-                "exit_window_label": purchase_timing.get("exit_window_label", "") or purchase_timing.get("expected_exit_window_label", "") or exit_date.isoformat(),
-                "exit_price": Decimal(str(exit_price)) if exit_price is not None else None,
-                "allocated_amount": Decimal(str(allocated_amount)) if allocated_amount is not None else None,
-                "allocated_weight_pct": Decimal(str(item.get("allocated_weight_pct"))) if item.get("allocated_weight_pct") is not None else None,
-                "holding_months": holding_months,
-                "interval_window_label": purchase_timing.get("interval_window_label", ""),
-                "interval_return_pct": interval_return_pct,
-                "expected_trade_return_pct": Decimal(str(purchase_timing["expected_trade_return_pct"])) if purchase_timing.get("expected_trade_return_pct") is not None else None,
-                "holding_annualized_return_pct": holding_annualized_return_pct,
-            }
+            attach_trade_progress_metrics(
+                {
+                    "ticker": item.get("ticker", ""),
+                    "company_name": item.get("company_name", ""),
+                    "rank": int(item.get("rank") or 0),
+                    "is_owned": bool(item.get("is_owned")),
+                    "status_key": status_key,
+                    "status_label": status_label,
+                    "buy_date": buy_date,
+                    "entry_date": buy_date,
+                    "buy_window_label": purchase_timing.get("buy_window_label", "") or buy_date.isoformat(),
+                    "entry_window_label": purchase_timing.get("entry_window_label", "") or purchase_timing.get("buy_window_label", "") or buy_date.isoformat(),
+                    "buy_mode_label": purchase_timing.get("mode_label", "") or status_label,
+                    "buy_price": Decimal(str(buy_price)) if buy_price is not None else None,
+                    "entry_price": Decimal(str(buy_price)) if buy_price is not None else None,
+                    "current_price_per_share": item.get("current_price_per_share"),
+                    "current_price_date_label": item.get("latest_price_date", ""),
+                    "exit_date": exit_date,
+                    "exit_window_label": purchase_timing.get("exit_window_label", "") or purchase_timing.get("expected_exit_window_label", "") or exit_date.isoformat(),
+                    "exit_price": Decimal(str(exit_price)) if exit_price is not None else None,
+                    "allocated_amount": Decimal(str(allocated_amount)) if allocated_amount is not None else None,
+                    "allocated_weight_pct": Decimal(str(item.get("allocated_weight_pct"))) if item.get("allocated_weight_pct") is not None else None,
+                    "holding_months": holding_months,
+                    "interval_window_label": purchase_timing.get("interval_window_label", ""),
+                    "interval_return_pct": interval_return_pct,
+                    "expected_trade_return_pct": Decimal(str(purchase_timing["expected_trade_return_pct"])) if purchase_timing.get("expected_trade_return_pct") is not None else None,
+                    "holding_annualized_return_pct": holding_annualized_return_pct,
+                },
+                live_quote_map=live_quote_map,
+            )
         )
 
     if not scheduled_rows:
@@ -1241,8 +1435,9 @@ def build_optimization_compact_timeline(
     run: EquityOptimizationRun | None,
     *,
     max_rows: int = 5,
+    live_quote_map: dict[str, dict] | None = None,
 ) -> dict:
-    timeline = build_optimization_purchase_timeline(run, max_rows=max_rows)
+    timeline = build_optimization_purchase_timeline(run, max_rows=max_rows, live_quote_map=live_quote_map)
     if not timeline.get("available"):
         return {"available": False, "rows": []}
 
@@ -1260,9 +1455,16 @@ def build_optimization_compact_timeline(
                 "extends_beyond_entry_window": bool(row.get("extends_beyond_entry_window")),
                 "holding_months": row.get("holding_months"),
                 "entry_window_label": row.get("entry_window_label", "") or row.get("buy_window_label", ""),
+                "entry_price": row.get("entry_price") or row.get("buy_price"),
                 "exit_window_label": row.get("exit_window_label", ""),
+                "exit_price": row.get("exit_price"),
                 "holding_annualized_return_pct": row.get("holding_annualized_return_pct"),
                 "interval_return_pct": row.get("interval_return_pct") or row.get("expected_trade_return_pct"),
+                "current_price": row.get("current_price"),
+                "current_vs_entry_pct": row.get("current_vs_entry_pct"),
+                "remaining_to_exit_pct": row.get("remaining_to_exit_pct"),
+                "current_position_label": row.get("current_position_label", ""),
+                "current_position_tone": row.get("current_position_tone", ""),
             }
         )
 
@@ -1282,6 +1484,7 @@ def build_scheduled_optimization_persistence_context(
     *,
     as_of: date | None = None,
     max_rows: int = 12,
+    live_quote_map: dict[str, dict] | None = None,
 ) -> dict:
     as_of = as_of or timezone.localdate()
     cutoff_date = scheduled_optimization_retention_cutoff(as_of)
@@ -1398,6 +1601,8 @@ def build_scheduled_optimization_persistence_context(
                     "latest_buy_date": None,
                     "latest_buy_window_label": "",
                     "latest_buy_price": None,
+                    "latest_current_price": None,
+                    "latest_current_price_date": None,
                     "latest_sell_date": None,
                     "latest_sell_window_label": "",
                     "latest_sell_price": None,
@@ -1472,6 +1677,8 @@ def build_scheduled_optimization_persistence_context(
             if buy_price is not None:
                 stats["buy_price_total_3m"] += Decimal(str(buy_price))
                 stats["buy_price_count_3m"] += 1
+            current_price = item.get("current_price_per_share")
+            current_price_date = normalize_date_value(item.get("latest_price_date"))
             sell_price = purchase_timing.get("exit_price") or purchase_timing.get("expected_exit_price")
             if sell_price is not None:
                 stats["sell_price_total_3m"] += Decimal(str(sell_price))
@@ -1502,6 +1709,8 @@ def build_scheduled_optimization_persistence_context(
                 stats["latest_buy_date"] = buy_date
                 stats["latest_buy_window_label"] = buy_window_label
                 stats["latest_buy_price"] = Decimal(str(buy_price)) if buy_price is not None else None
+                stats["latest_current_price"] = normalize_price_value(current_price)
+                stats["latest_current_price_date"] = current_price_date
                 stats["latest_sell_date"] = sell_date
                 stats["latest_sell_window_label"] = sell_window_label
                 stats["latest_sell_price"] = Decimal(str(sell_price)) if sell_price is not None else None
@@ -1650,64 +1859,70 @@ def build_scheduled_optimization_persistence_context(
         else:
             persistence_label = "Puntual"
         rows.append(
-            {
-                "ticker": stats["ticker"],
-                "company_name": stats["company_name"],
-                "appearances_3m": stats["appearances_3m"],
-                "presence_pct_3m": presence_pct,
-                "distinct_days_3m": distinct_days_count,
-                "day_presence_pct_3m": day_presence_pct,
-                "top3_3m": stats["top3_3m"],
-                "top3_pct_3m": top3_pct,
-                "average_rank_3m": average_rank,
-                "average_return_12m_3m": average_return_12m,
-                "average_return_5y_3m": average_return_5y,
-                "average_year_margins": average_year_margins,
-                "average_reliability_score_3m": average_reliability_score,
-                "average_reliability_label_3m": reliability_label_from_score(average_reliability_score),
-                "persistence_label": persistence_label,
-                "strategy_labels_3m": sorted(stats["strategy_labels_3m"]),
-                "strategy_labels_3m_label": ", ".join(sorted(stats["strategy_labels_3m"])) or "-",
-                "latest_day_strategy_count": latest_strategy_count,
-                "latest_day_strategy_label": ", ".join(sorted(latest_strategies)) or "-",
-                "currently_owned": stats["ticker"] in currently_owned_tickers,
-                "buy_recommendation_available": latest_buy_date is not None,
-                "latest_buy_date": latest_buy_date,
-                "latest_buy_date_label": latest_buy_date.isoformat() if latest_buy_date else "",
-                "latest_buy_window_label": latest_buy_window_label,
-                "latest_buy_price": stats["latest_buy_price"],
-                "latest_sell_date": latest_sell_date,
-                "latest_sell_date_label": latest_sell_date.isoformat() if latest_sell_date else "",
-                "latest_sell_window_label": latest_sell_window_label,
-                "latest_sell_price": stats["latest_sell_price"],
-                "latest_interval_window_label": stats["latest_interval_window_label"],
-                "latest_interval_return_pct": stats["latest_interval_return_pct"],
-                "latest_annualized_return_pct": stats["latest_annualized_return_pct"],
-                "latest_holding_months": stats["latest_holding_months"],
-                "latest_allocated_amount": stats["latest_allocated_amount"],
-                "latest_allocated_weight_pct": stats["latest_allocated_weight_pct"],
-                "average_buy_price_3m": average_buy_price,
-                "average_sell_price_3m": average_sell_price,
-                "average_allocated_amount_3m": average_allocated_amount,
-                "average_allocated_weight_pct_3m": average_allocated_weight_pct,
-                "average_interval_return_pct_3m": average_interval_return_pct,
-                "average_annualized_return_pct_3m": average_annualized_return_pct,
-                "average_holding_months_3m": average_holding_months,
-                "buy_dates_count_3m": len(sorted_buy_dates),
-                "buy_dates_sample_label": buy_dates_sample_label,
-                "sell_dates_count_3m": len(sorted_sell_dates),
-                "sell_dates_sample_label": sell_dates_sample_label,
-                "buy_window_labels_3m": sorted(stats["buy_window_labels_3m"]),
-                "buy_window_labels_3m_label": ", ".join(sorted(stats["buy_window_labels_3m"])) or "-",
-                "sell_window_labels_3m": sorted(stats["sell_window_labels_3m"]),
-                "sell_window_labels_3m_label": ", ".join(sorted(stats["sell_window_labels_3m"])) or "-",
-                "interval_window_labels_3m": sorted(stats["interval_window_labels_3m"]),
-                "interval_window_labels_3m_label": ", ".join(sorted(stats["interval_window_labels_3m"])) or "-",
-                "buy_modes_3m": sorted(stats["buy_modes_3m"]),
-                "buy_modes_3m_label": ", ".join(sorted(stats["buy_modes_3m"])) or "-",
-                "last_seen_on": stats["last_seen_on"],
-                "last_seen_on_label": stats["last_seen_on"].isoformat(),
-            }
+            attach_trade_progress_metrics(
+                {
+                    "ticker": stats["ticker"],
+                    "company_name": stats["company_name"],
+                    "appearances_3m": stats["appearances_3m"],
+                    "presence_pct_3m": presence_pct,
+                    "distinct_days_3m": distinct_days_count,
+                    "day_presence_pct_3m": day_presence_pct,
+                    "top3_3m": stats["top3_3m"],
+                    "top3_pct_3m": top3_pct,
+                    "average_rank_3m": average_rank,
+                    "average_return_12m_3m": average_return_12m,
+                    "average_return_5y_3m": average_return_5y,
+                    "average_year_margins": average_year_margins,
+                    "average_reliability_score_3m": average_reliability_score,
+                    "average_reliability_label_3m": reliability_label_from_score(average_reliability_score),
+                    "persistence_label": persistence_label,
+                    "strategy_labels_3m": sorted(stats["strategy_labels_3m"]),
+                    "strategy_labels_3m_label": ", ".join(sorted(stats["strategy_labels_3m"])) or "-",
+                    "latest_day_strategy_count": latest_strategy_count,
+                    "latest_day_strategy_label": ", ".join(sorted(latest_strategies)) or "-",
+                    "currently_owned": stats["ticker"] in currently_owned_tickers,
+                    "buy_recommendation_available": latest_buy_date is not None,
+                    "latest_buy_date": latest_buy_date,
+                    "latest_buy_date_label": latest_buy_date.isoformat() if latest_buy_date else "",
+                    "latest_buy_window_label": latest_buy_window_label,
+                    "latest_buy_price": stats["latest_buy_price"],
+                    "latest_current_price": stats["latest_current_price"],
+                    "current_price_date": stats["latest_current_price_date"],
+                    "current_price_date_label": stats["latest_current_price_date"].isoformat() if stats["latest_current_price_date"] else "",
+                    "latest_sell_date": latest_sell_date,
+                    "latest_sell_date_label": latest_sell_date.isoformat() if latest_sell_date else "",
+                    "latest_sell_window_label": latest_sell_window_label,
+                    "latest_sell_price": stats["latest_sell_price"],
+                    "latest_interval_window_label": stats["latest_interval_window_label"],
+                    "latest_interval_return_pct": stats["latest_interval_return_pct"],
+                    "latest_annualized_return_pct": stats["latest_annualized_return_pct"],
+                    "latest_holding_months": stats["latest_holding_months"],
+                    "latest_allocated_amount": stats["latest_allocated_amount"],
+                    "latest_allocated_weight_pct": stats["latest_allocated_weight_pct"],
+                    "average_buy_price_3m": average_buy_price,
+                    "average_sell_price_3m": average_sell_price,
+                    "average_allocated_amount_3m": average_allocated_amount,
+                    "average_allocated_weight_pct_3m": average_allocated_weight_pct,
+                    "average_interval_return_pct_3m": average_interval_return_pct,
+                    "average_annualized_return_pct_3m": average_annualized_return_pct,
+                    "average_holding_months_3m": average_holding_months,
+                    "buy_dates_count_3m": len(sorted_buy_dates),
+                    "buy_dates_sample_label": buy_dates_sample_label,
+                    "sell_dates_count_3m": len(sorted_sell_dates),
+                    "sell_dates_sample_label": sell_dates_sample_label,
+                    "buy_window_labels_3m": sorted(stats["buy_window_labels_3m"]),
+                    "buy_window_labels_3m_label": ", ".join(sorted(stats["buy_window_labels_3m"])) or "-",
+                    "sell_window_labels_3m": sorted(stats["sell_window_labels_3m"]),
+                    "sell_window_labels_3m_label": ", ".join(sorted(stats["sell_window_labels_3m"])) or "-",
+                    "interval_window_labels_3m": sorted(stats["interval_window_labels_3m"]),
+                    "interval_window_labels_3m_label": ", ".join(sorted(stats["interval_window_labels_3m"])) or "-",
+                    "buy_modes_3m": sorted(stats["buy_modes_3m"]),
+                    "buy_modes_3m_label": ", ".join(sorted(stats["buy_modes_3m"])) or "-",
+                    "last_seen_on": stats["last_seen_on"],
+                    "last_seen_on_label": stats["last_seen_on"].isoformat(),
+                },
+                live_quote_map=live_quote_map,
+            )
         )
 
     rows.sort(
@@ -1749,6 +1964,15 @@ def build_scheduled_optimization_persistence_context(
                 "buy_window_label": row.get("latest_buy_window_label", ""),
                 "buy_price": row.get("latest_buy_price"),
                 "average_buy_price": row.get("average_buy_price_3m"),
+                "current_price": row.get("current_price"),
+                "current_price_per_share": row.get("current_price"),
+                "current_price_date": row.get("current_price_date"),
+                "current_price_date_label": row.get("current_price_date_label", ""),
+                "current_vs_entry_pct": row.get("current_vs_entry_pct"),
+                "current_vs_exit_pct": row.get("current_vs_exit_pct"),
+                "remaining_to_exit_pct": row.get("remaining_to_exit_pct"),
+                "current_position_label": row.get("current_position_label", ""),
+                "current_position_tone": row.get("current_position_tone", ""),
                 "exit_date": row.get("latest_sell_date"),
                 "exit_date_label": row.get("latest_sell_date_label", ""),
                 "exit_window_label": row.get("latest_sell_window_label", ""),
