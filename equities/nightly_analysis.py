@@ -494,12 +494,13 @@ def build_current_dashboard_llm_summary(
     current_cost = Decimal(str(estimated_cost_usd or "0"))
     monthly_cost_after = (monthly_cost_before + current_cost).quantize(Decimal("0.0001"))
 
+    llm_enabled = bool(config.available and cards)
     return {
-        "enabled": bool(cards),
+        "enabled": llm_enabled,
         "provider": config.provider,
         "label": config.label,
         "model": config.model,
-        "reason": "",
+        "reason": "" if llm_enabled else str(getattr(config, "reason", "") or ""),
         "total_count": len(cards),
         "completed_count": completed_count,
         "failed_count": failed_count,
@@ -514,7 +515,7 @@ def build_current_dashboard_llm_summary(
         "monthly_cost_before_run_usd": str(monthly_cost_before.quantize(Decimal("0.0001"))),
         "monthly_cost_after_run_usd": str(monthly_cost_after),
         "failures": failures,
-        "reused": bool(not refresh_performed or retained_previous_count),
+        "reused": bool(llm_enabled and (not refresh_performed or retained_previous_count)),
         "refresh_performed": refresh_performed,
         "source_analysis_date": source_analysis_date,
         "source_analysis_date_label": source_analysis_date,
@@ -977,8 +978,14 @@ def build_dashboard_from_nightly_cache(
 
 
 def build_nightly_completion_note(llm_summary: dict | None) -> str:
+    def _truncate_note(note: str) -> str:
+        normalized = str(note or "").strip()
+        if len(normalized) <= 255:
+            return normalized
+        return normalized[:252].rstrip() + "..."
+
     if not llm_summary or not llm_summary.get("enabled"):
-        return "Analisis nocturno completado con motor cuantitativo."
+        return _truncate_note("Analisis nocturno completado con motor cuantitativo.")
 
     if llm_summary.get("reused") and not llm_summary.get("refresh_performed"):
         note = (
@@ -992,7 +999,7 @@ def build_nightly_completion_note(llm_summary: dict | None) -> str:
         if llm_summary.get("news_enabled") and llm_summary.get("news_items_count"):
             note += f" Contexto web actualizado con {int(llm_summary.get('news_items_count') or 0)} titular(es)."
         note += f" Coste estimado {llm_summary.get('estimated_cost_usd') or '0'} USD."
-        return note
+        return _truncate_note(note)
 
     total_count = int(llm_summary.get("total_count") or 0)
     completed_count = int(llm_summary.get("completed_count") or 0)
@@ -1019,9 +1026,7 @@ def build_nightly_completion_note(llm_summary: dict | None) -> str:
         note += f" Proxima actualizacion programada {llm_summary['next_refresh_date_label']}."
     if llm_summary.get("news_enabled") and llm_summary.get("news_items_count"):
         note += f" Prensa integrada: {int(llm_summary.get('news_items_count') or 0)} titular(es)."
-    if len(note) > 255:
-        return note[:252].rstrip() + "..."
-    return note
+    return _truncate_note(note)
 
 
 def load_cached_ibex_card(

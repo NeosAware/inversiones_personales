@@ -6,6 +6,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -36,7 +37,9 @@ from .models import (
 from .nightly_analysis import (
     build_positions_analysis_signature,
     build_dashboard_from_nightly_cache,
+    build_current_dashboard_llm_summary,
     build_ibex_recommendation_date_map,
+    build_nightly_completion_note,
     capture_purchase_forecast_baseline,
     load_cached_ibex_card,
     persist_nightly_analysis_dashboard,
@@ -2926,6 +2929,64 @@ class EquitiesServicesTests(TestCase):
             dashboard["overview"]["weighted_projected_return_12m"],
             next(item["return_pct"] for item in projection_horizons if item["label"] == "12M"),
         )
+
+    def test_build_current_dashboard_llm_summary_disables_llm_when_provider_is_unavailable(self):
+        position = EquityPosition(
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        dashboard = {
+            "history_cards": [{"position": position, "ai_analysis": {}}],
+            "ibex_universe_cards": [],
+        }
+        config = SimpleNamespace(
+            provider="off",
+            label="Analista cuantitativo",
+            model="",
+            monthly_budget_usd=ZERO,
+            available=False,
+            reason="Proveedor desactivado.",
+        )
+
+        summary = build_current_dashboard_llm_summary(
+            dashboard,
+            config=config,
+            analysis_date=date(2026, 4, 26),
+            estimated_cost_usd="0",
+            latest_llm_run=None,
+            refresh_performed=False,
+            news_summary={},
+            expert_summary={},
+        )
+
+        self.assertFalse(summary["enabled"])
+        self.assertFalse(summary["reused"])
+        self.assertEqual(summary["reason"], "Proveedor desactivado.")
+
+    def test_build_nightly_completion_note_truncates_reused_ai_status_note(self):
+        llm_summary = {
+            "enabled": True,
+            "reused": True,
+            "refresh_performed": False,
+            "label": "Claude Sonnet 4 muy largo para status note",
+            "completed_count": 37,
+            "total_count": 37,
+            "source_analysis_date_label": "2026-04-22",
+            "next_refresh_date_label": "2026-04-29",
+            "news_enabled": True,
+            "news_items_count": 14,
+            "estimated_cost_usd": "12.3456",
+        }
+
+        note = build_nightly_completion_note(llm_summary)
+
+        self.assertLessEqual(len(note), 255)
+        self.assertTrue(note.endswith("..."))
 
     def test_portfolio_expectation_horizons_aggregate_company_expectations_by_current_value(self):
         owned_ibe = EquityPosition(
