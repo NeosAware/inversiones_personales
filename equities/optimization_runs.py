@@ -27,6 +27,7 @@ from .models import EquityOptimizationRun, EquityPosition
 from .services import (
     OPTIMIZER_STRATEGY_12M_PRIMARY,
     OPTIMIZER_STRATEGY_5Y_PRIMARY,
+    annualize_return_pct,
     build_equity_allocation_plan,
     build_equity_analysis_dashboard,
     build_equity_optimizer_candidate,
@@ -35,6 +36,7 @@ from .services import (
     find_ibex_universe_company,
     get_optimizer_strategy_config,
     projection_reliability_score,
+    quantize_decimal,
     sync_all_equities_market_data,
 )
 
@@ -832,6 +834,7 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "top_pick_exit_price": float(top_pick_purchase_timing["exit_price"]) if top_pick_purchase_timing.get("exit_price") is not None else None,
         "top_pick_interval_window_label": top_pick_purchase_timing.get("interval_window_label", ""),
         "top_pick_interval_return_pct": float(top_pick_purchase_timing["interval_return_pct"]) if top_pick_purchase_timing.get("interval_return_pct") is not None else None,
+        "top_pick_holding_annualized_return_pct": float(top_pick_purchase_timing["holding_annualized_return_pct"]) if top_pick_purchase_timing.get("holding_annualized_return_pct") is not None else None,
         "top_pick_buy_mode_label": top_pick_purchase_timing.get("mode_label", ""),
         "top_pick_allocated_amount": float(top_pick.get("allocated_amount", 0) or 0) if top_pick else None,
         "news_signals_count": news_overview["signals_count"],
@@ -1087,6 +1090,25 @@ def build_optimization_purchase_timeline(
         buy_price = purchase_timing.get("buy_price")
         exit_price = purchase_timing.get("exit_price") or purchase_timing.get("expected_exit_price")
         allocated_amount = item.get("allocated_amount")
+        holding_months = int(
+            purchase_timing.get("holding_months")
+            or purchase_timing.get("expected_holding_months")
+            or 0
+        ) or None
+        interval_return_pct = (
+            Decimal(str(purchase_timing["interval_return_pct"]))
+            if purchase_timing.get("interval_return_pct") is not None
+            else (
+                Decimal(str(purchase_timing["expected_trade_return_pct"]))
+                if purchase_timing.get("expected_trade_return_pct") is not None
+                else None
+            )
+        )
+        holding_annualized_return_pct = (
+            Decimal(str(purchase_timing["holding_annualized_return_pct"]))
+            if purchase_timing.get("holding_annualized_return_pct") is not None
+            else quantize_decimal(annualize_return_pct(interval_return_pct, holding_months or 0), "0.01")
+        )
         days_until_buy = max((buy_date - reference_date).days, 0)
         if days_until_buy <= 14:
             status_key = "urgent"
@@ -1117,14 +1139,11 @@ def build_optimization_purchase_timeline(
                 "exit_price": Decimal(str(exit_price)) if exit_price is not None else None,
                 "allocated_amount": Decimal(str(allocated_amount)) if allocated_amount is not None else None,
                 "allocated_weight_pct": Decimal(str(item.get("allocated_weight_pct"))) if item.get("allocated_weight_pct") is not None else None,
-                "holding_months": int(
-                    purchase_timing.get("holding_months")
-                    or purchase_timing.get("expected_holding_months")
-                    or 0
-                ) or None,
+                "holding_months": holding_months,
                 "interval_window_label": purchase_timing.get("interval_window_label", ""),
-                "interval_return_pct": Decimal(str(purchase_timing["interval_return_pct"])) if purchase_timing.get("interval_return_pct") is not None else None,
+                "interval_return_pct": interval_return_pct,
                 "expected_trade_return_pct": Decimal(str(purchase_timing["expected_trade_return_pct"])) if purchase_timing.get("expected_trade_return_pct") is not None else None,
+                "holding_annualized_return_pct": holding_annualized_return_pct,
             }
         )
 
@@ -1202,6 +1221,8 @@ def build_optimization_purchase_timeline(
         "horizon_end": horizon_end,
         "horizon_months": horizon_months,
         "horizon_is_extended": horizon_end > entry_horizon_end,
+        "total_scheduled_count": len(scheduled_rows),
+        "hidden_scheduled_count": max(len(scheduled_rows) - len(visible_rows), 0),
         "scheduled_count": len(visible_rows),
         "unscheduled_count": len(unscheduled_rows),
         "planned_amount_total": planned_amount_total.quantize(Decimal("0.01")),
@@ -1213,6 +1234,47 @@ def build_optimization_purchase_timeline(
         "next_row": next_row,
         "next_new_row": next_new_row,
         "unscheduled_rows": unscheduled_rows[:max_rows],
+    }
+
+
+def build_optimization_compact_timeline(
+    run: EquityOptimizationRun | None,
+    *,
+    max_rows: int = 5,
+) -> dict:
+    timeline = build_optimization_purchase_timeline(run, max_rows=max_rows)
+    if not timeline.get("available"):
+        return {"available": False, "rows": []}
+
+    rows = []
+    for row in timeline.get("rows", []):
+        rows.append(
+            {
+                "ticker": row.get("ticker", ""),
+                "company_name": row.get("company_name", ""),
+                "status_key": row.get("status_key", "scheduled"),
+                "entry_pin_left_pct": row.get("entry_pin_left_pct", "0"),
+                "exit_pin_left_pct": row.get("exit_pin_left_pct", "0"),
+                "bar_left_pct": row.get("bar_left_pct", "0"),
+                "bar_width_pct": row.get("bar_width_pct", "0"),
+                "extends_beyond_entry_window": bool(row.get("extends_beyond_entry_window")),
+                "holding_months": row.get("holding_months"),
+                "entry_window_label": row.get("entry_window_label", "") or row.get("buy_window_label", ""),
+                "exit_window_label": row.get("exit_window_label", ""),
+                "holding_annualized_return_pct": row.get("holding_annualized_return_pct"),
+                "interval_return_pct": row.get("interval_return_pct") or row.get("expected_trade_return_pct"),
+            }
+        )
+
+    return {
+        "available": True,
+        "rows": rows,
+        "entry_horizon_pct": timeline.get("entry_horizon_pct", "100"),
+        "entry_horizon_end": timeline.get("entry_horizon_end"),
+        "horizon_end": timeline.get("horizon_end"),
+        "horizon_is_extended": bool(timeline.get("horizon_is_extended")),
+        "hidden_rows_count": timeline.get("hidden_scheduled_count", 0),
+        "scheduled_count": timeline.get("total_scheduled_count", len(rows)),
     }
 
 
@@ -1329,6 +1391,8 @@ def build_scheduled_optimization_persistence_context(
                     "allocated_weight_count_3m": 0,
                     "interval_return_total_3m": Decimal("0"),
                     "interval_return_count_3m": 0,
+                    "annualized_return_total_3m": Decimal("0"),
+                    "annualized_return_count_3m": 0,
                     "holding_months_total_3m": Decimal("0"),
                     "holding_months_count_3m": 0,
                     "latest_buy_date": None,
@@ -1339,6 +1403,7 @@ def build_scheduled_optimization_persistence_context(
                     "latest_sell_price": None,
                     "latest_interval_window_label": "",
                     "latest_interval_return_pct": None,
+                    "latest_annualized_return_pct": None,
                     "latest_holding_months": None,
                     "latest_allocated_amount": None,
                     "latest_allocated_weight_pct": None,
@@ -1416,6 +1481,12 @@ def build_scheduled_optimization_persistence_context(
                 stats["interval_return_total_3m"] += Decimal(str(interval_return_pct))
                 stats["interval_return_count_3m"] += 1
             holding_months = purchase_timing.get("holding_months") or purchase_timing.get("expected_holding_months")
+            annualized_return_pct = purchase_timing.get("holding_annualized_return_pct")
+            if annualized_return_pct is None and interval_return_pct is not None and holding_months is not None:
+                annualized_return_pct = annualize_return_pct(Decimal(str(interval_return_pct)), int(holding_months))
+            if annualized_return_pct is not None:
+                stats["annualized_return_total_3m"] += Decimal(str(annualized_return_pct))
+                stats["annualized_return_count_3m"] += 1
             if holding_months is not None:
                 stats["holding_months_total_3m"] += Decimal(str(holding_months))
                 stats["holding_months_count_3m"] += 1
@@ -1436,6 +1507,7 @@ def build_scheduled_optimization_persistence_context(
                 stats["latest_sell_price"] = Decimal(str(sell_price)) if sell_price is not None else None
                 stats["latest_interval_window_label"] = interval_window_label
                 stats["latest_interval_return_pct"] = Decimal(str(interval_return_pct)) if interval_return_pct is not None else None
+                stats["latest_annualized_return_pct"] = Decimal(str(annualized_return_pct)) if annualized_return_pct is not None else None
                 stats["latest_holding_months"] = int(holding_months) if holding_months is not None else None
                 stats["latest_allocated_amount"] = Decimal(str(allocated_amount)) if allocated_amount is not None else None
                 stats["latest_allocated_weight_pct"] = Decimal(str(allocated_weight_pct)) if allocated_weight_pct is not None else None
@@ -1513,6 +1585,11 @@ def build_scheduled_optimization_persistence_context(
         if stats["interval_return_count_3m"]:
             average_interval_return_pct = (
                 stats["interval_return_total_3m"] / Decimal(str(stats["interval_return_count_3m"]))
+            ).quantize(Decimal("0.1"))
+        average_annualized_return_pct = None
+        if stats["annualized_return_count_3m"]:
+            average_annualized_return_pct = (
+                stats["annualized_return_total_3m"] / Decimal(str(stats["annualized_return_count_3m"]))
             ).quantize(Decimal("0.1"))
         average_holding_months = None
         if stats["holding_months_count_3m"]:
@@ -1605,6 +1682,7 @@ def build_scheduled_optimization_persistence_context(
                 "latest_sell_price": stats["latest_sell_price"],
                 "latest_interval_window_label": stats["latest_interval_window_label"],
                 "latest_interval_return_pct": stats["latest_interval_return_pct"],
+                "latest_annualized_return_pct": stats["latest_annualized_return_pct"],
                 "latest_holding_months": stats["latest_holding_months"],
                 "latest_allocated_amount": stats["latest_allocated_amount"],
                 "latest_allocated_weight_pct": stats["latest_allocated_weight_pct"],
@@ -1613,6 +1691,7 @@ def build_scheduled_optimization_persistence_context(
                 "average_allocated_amount_3m": average_allocated_amount,
                 "average_allocated_weight_pct_3m": average_allocated_weight_pct,
                 "average_interval_return_pct_3m": average_interval_return_pct,
+                "average_annualized_return_pct_3m": average_annualized_return_pct,
                 "average_holding_months_3m": average_holding_months,
                 "buy_dates_count_3m": len(sorted_buy_dates),
                 "buy_dates_sample_label": buy_dates_sample_label,
@@ -1634,6 +1713,11 @@ def build_scheduled_optimization_persistence_context(
     rows.sort(
         key=lambda item: (
             -item["appearances_3m"],
+            -(
+                item["average_annualized_return_pct_3m"]
+                if item["average_annualized_return_pct_3m"] is not None
+                else Decimal("-9999")
+            ),
             -(
                 item["average_return_12m_3m"]
                 if item["average_return_12m_3m"] is not None
@@ -1677,6 +1761,8 @@ def build_scheduled_optimization_persistence_context(
                 "interval_window_label": row.get("latest_interval_window_label", ""),
                 "interval_return_pct": row.get("latest_interval_return_pct"),
                 "average_interval_return_pct": row.get("average_interval_return_pct_3m"),
+                "holding_annualized_return_pct": row.get("latest_annualized_return_pct"),
+                "average_holding_annualized_return_pct": row.get("average_annualized_return_pct_3m"),
                 "holding_months": row.get("latest_holding_months"),
                 "average_holding_months": row.get("average_holding_months_3m"),
                 "allocated_amount": row.get("latest_allocated_amount"),
@@ -1690,7 +1776,7 @@ def build_scheduled_optimization_persistence_context(
                     f"programadas y el ultimo tramo 12M propone entrar en "
                     f"{(row.get('latest_buy_window_label') or row.get('latest_buy_date_label') or '').lower()} "
                     f"y salir en {(row.get('latest_sell_window_label') or row.get('latest_sell_date_label') or '').lower()}"
-                    f"{(' con %.1f %% estimado' % row.get('latest_interval_return_pct')) if row.get('latest_interval_return_pct') is not None else ''}."
+                    f"{(' con %.1f %% anualizado' % row.get('latest_annualized_return_pct')) if row.get('latest_annualized_return_pct') is not None else ''}."
                 ),
             }
             for row in rows

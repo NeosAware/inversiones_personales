@@ -1,0 +1,50 @@
+{% with timeline=run.compact_purchase_timeline %}
+  {% if timeline.available %}
+    <div class="equity-mini-optimization">
+      <div class="equity-mini-optimization-head">
+        <strong>{{ timeline.scheduled_count }} tramo{{ timeline.scheduled_count|pluralize }}</strong>
+        <small>{% if timeline.horizon_is_extended %}salidas mas alla de 12M{% else %}todo dentro del 1A{% endif %}</small>
+      </div>
+      <div class="equity-mini-optimization-board">
+        <div class="equity-mini-optimization-axis">
+          <div class="equity-mini-optimization-entry-zone" style="width:{{ timeline.entry_horizon_pct }}%;"></div>
+          <span class="equity-mini-optimization-marker start">Hoy</span>
+          <span class="equity-mini-optimization-marker" style="left:{{ timeline.entry_horizon_pct }}%;">12M</span>
+          <span class="equity-mini-optimization-marker end">Salida</span>
+        </div>
+        {% for row in timeline.rows %}
+          <div class="equity-mini-optimization-row">
+            <span class="equity-mini-optimization-ticker">{{ row.ticker }}</span>
+            <div class="equity-mini-optimization-main">
+              <div class="equity-mini-optimization-track">
+                <div class="equity-mini-optimization-entry-zone" style="width:{{ timeline.entry_horizon_pct }}%;"></div>
+                <div class="equity-mini-optimization-bar {{ row.status_key }}" style="left:{{ row.bar_left_pct }}%; width:{{ row.bar_width_pct }}%;"></div>
+                <div class="equity-mini-optimization-pin {{ row.status_key }}" style="left:{{ row.entry_pin_left_pct }}%;"></div>
+                <div class="equity-mini-optimization-pin end {{ row.status_key }}" style="left:{{ row.exit_pin_left_pct }}%;"></div>
+              </div>
+              <div class="equity-mini-optimization-meta">
+                <span>E {{ row.entry_window_label|default:"-" }}</span>
+                <span>S {{ row.exit_window_label|default:"-" }}</span>
+              </div>
+            </div>
+            <span class="equity-mini-optimization-score">
+              {% if row.holding_annualized_return_pct is not None %}
+                {{ row.holding_annualized_return_pct|floatformat:1 }} %/a
+              {% elif row.interval_return_pct is not None %}
+                {{ row.interval_return_pct|floatformat:1 }} %
+              {% else %}
+                -
+              {% endif %}
+            </span>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="equity-mini-optimization-foot">
+        <small>E entrada | S salida</small>
+        <small>{% if timeline.hidden_rows_count %}+{{ timeline.hidden_rows_count }} mas{% endif %}</small>
+      </div>
+    </div>
+  {% else %}
+    <span class="metric-sub">Sin grafico temporal disponible para esta ejecucion.</span>
+  {% endif %}
+{% endwith %}

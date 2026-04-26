@@ -6987,7 +6987,8 @@ def build_candidate_purchase_timing_plan(
     summary = (
         f"Con entrada acotada a los proximos {entry_horizon_months} meses, el mejor tramo sale entrando en {chosen_plan['buy_window_label'].lower()} alrededor de "
         f"{buy_price:.4f} EUR y saliendo en {format_projection_month_window(expected_exit_date, exit_month_number).lower()} "
-        f"cerca de {expected_exit_price:.4f} EUR. Ese intervalo deja {chosen_plan['trade_return_pct']:.2f} % neto."
+        f"cerca de {expected_exit_price:.4f} EUR. Ese intervalo deja {chosen_plan['trade_return_pct']:.2f} % neto"
+        f" y {chosen_plan['holding_annualized_return_pct']:.2f} % anualizado."
     )
     if exit_month_number > entry_horizon_months:
         summary += (

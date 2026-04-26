@@ -810,6 +810,144 @@
       background:var(--surface-soft);
       box-shadow:inset 0 -1px 0 var(--line);
     }
+    .equity-mini-optimization{
+      display:grid;
+      gap:8px;
+      min-width:280px;
+    }
+    .equity-mini-optimization-head,
+    .equity-mini-optimization-foot{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+    }
+    .equity-mini-optimization-head strong{
+      font-size:12px;
+      color:#17384e;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+    }
+    .equity-mini-optimization-head small,
+    .equity-mini-optimization-foot small{
+      color:var(--muted);
+      line-height:1.35;
+      font-size:12px;
+    }
+    .equity-mini-optimization-board{
+      display:grid;
+      gap:6px;
+      padding:10px 12px;
+      border-radius:16px;
+      border:1px solid #d9e5ed;
+      background:#fff;
+    }
+    .equity-mini-optimization-axis{
+      position:relative;
+      height:16px;
+      border-bottom:1px solid #d9e5ed;
+    }
+    .equity-mini-optimization-entry-zone{
+      position:absolute;
+      top:0;
+      bottom:0;
+      left:0;
+      border-radius:12px;
+      background:linear-gradient(90deg, rgba(75,124,168,.14) 0%, rgba(110,156,195,.08) 100%);
+    }
+    .equity-mini-optimization-marker{
+      position:absolute;
+      bottom:-8px;
+      font-size:10px;
+      font-weight:800;
+      color:#6c7f8e;
+      white-space:nowrap;
+      transform:translateX(-50%);
+    }
+    .equity-mini-optimization-marker.start{
+      left:0;
+      transform:none;
+    }
+    .equity-mini-optimization-marker.end{
+      right:0;
+      left:auto;
+      transform:none;
+    }
+    .equity-mini-optimization-row{
+      display:grid;
+      grid-template-columns:42px minmax(190px, 1fr) 90px;
+      gap:8px;
+      align-items:center;
+    }
+    .equity-mini-optimization-main{
+      display:grid;
+      gap:4px;
+      min-width:0;
+    }
+    .equity-mini-optimization-ticker{
+      font-size:12px;
+      font-weight:800;
+      color:#17384e;
+      letter-spacing:.04em;
+      text-transform:uppercase;
+    }
+    .equity-mini-optimization-track{
+      position:relative;
+      height:18px;
+      border-radius:999px;
+      background:#f4f8fb;
+      border:1px solid #e3edf4;
+      overflow:hidden;
+    }
+    .equity-mini-optimization-bar{
+      position:absolute;
+      top:3px;
+      height:10px;
+      border-radius:999px;
+      box-shadow:inset 0 0 0 1px rgba(255,255,255,.38);
+    }
+    .equity-mini-optimization-bar.scheduled{ background:linear-gradient(90deg, #5c7fa2 0%, #86a7c1 100%); }
+    .equity-mini-optimization-bar.watch{ background:linear-gradient(90deg, #5f8ca6 0%, #8fb3c5 100%); }
+    .equity-mini-optimization-bar.soon{ background:linear-gradient(90deg, #cb8b2a 0%, #ebb455 100%); }
+    .equity-mini-optimization-bar.urgent{ background:linear-gradient(90deg, #cf5e52 0%, #eb887a 100%); }
+    .equity-mini-optimization-pin{
+      position:absolute;
+      top:1px;
+      width:2px;
+      height:14px;
+      margin-left:-1px;
+      background:#17384e;
+      box-shadow:0 0 0 2px rgba(255,255,255,.92);
+    }
+    .equity-mini-optimization-pin.end{
+      width:3px;
+      margin-left:-1.5px;
+    }
+    .equity-mini-optimization-pin.scheduled, .equity-mini-optimization-pin.watch{ color:#17384e; }
+    .equity-mini-optimization-pin.soon{ color:#b26b12; }
+    .equity-mini-optimization-pin.urgent{ color:#bb4338; }
+    .equity-mini-optimization-score{
+      text-align:right;
+      font-size:12px;
+      font-weight:800;
+      color:#17384e;
+      font-variant-numeric:tabular-nums;
+    }
+    .equity-mini-optimization-meta{
+      display:flex;
+      justify-content:space-between;
+      gap:8px;
+      color:var(--muted);
+      font-size:11px;
+      line-height:1.3;
+      font-variant-numeric:tabular-nums;
+      white-space:nowrap;
+    }
+    .equity-mini-optimization-meta span:last-child{
+      text-align:right;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
     .equity-action-stack{
       display:grid;
       gap:8px;
@@ -1494,7 +1632,7 @@
                 <div class="equity-sale-metric">
                   <span>Salida prevista</span>
                   <strong>{% if next_purchase_recommendation.sell_price is not None %}{{ next_purchase_recommendation.sell_price|floatformat:4 }} EUR{% elif next_purchase_recommendation.exit_price is not None %}{{ next_purchase_recommendation.exit_price|floatformat:4 }} EUR{% else %}-{% endif %}</strong>
-                  <small>{{ next_purchase_recommendation.sell_window_label|default:next_purchase_recommendation.exit_window_label|default:next_purchase_recommendation.sell_date_label|default:next_purchase_recommendation.exit_date_label }}.{% if next_purchase_recommendation.interval_return_pct is not None %} Tramo {{ next_purchase_recommendation.interval_return_pct|floatformat:1 }} %.{% elif next_purchase_recommendation.average_interval_return_pct is not None %} Media {{ next_purchase_recommendation.average_interval_return_pct|floatformat:1 }} %.{% endif %}</small>
+                  <small>{{ next_purchase_recommendation.sell_window_label|default:next_purchase_recommendation.exit_window_label|default:next_purchase_recommendation.sell_date_label|default:next_purchase_recommendation.exit_date_label }}.{% if next_purchase_recommendation.holding_annualized_return_pct is not None %} {{ next_purchase_recommendation.holding_annualized_return_pct|floatformat:1 }} %/a.{% elif next_purchase_recommendation.average_holding_annualized_return_pct is not None %} Media {{ next_purchase_recommendation.average_holding_annualized_return_pct|floatformat:1 }} %/a.{% elif next_purchase_recommendation.interval_return_pct is not None %} Tramo {{ next_purchase_recommendation.interval_return_pct|floatformat:1 }} %.{% endif %}</small>
                 </div>
                 <div class="equity-sale-metric">
                   <span>Importe sugerido</span>
@@ -2012,14 +2150,7 @@
                         </td>
                         <td>
                           {% if run.allocations_data %}
-                            {% for item in run.allocations_data|slice:":6" %}
-                              <span class="metric-sub">
-                                {% if item.company_name %}{{ item.company_name }}{% elif item.ticker %}{{ item.ticker }}{% else %}Valor sin nombre{% endif %}
-                                {% if item.allocated_weight_pct or item.allocated_weight_pct == 0 %} {{ item.allocated_weight_pct|floatformat:1 }} %{% endif %}
-                                {% if item.purchase_timing.available %}<br>Entrada {{ item.purchase_timing.buy_window_label|default:item.purchase_timing.buy_date }}{% if item.purchase_timing.buy_price is not None %} | {{ item.purchase_timing.buy_price|floatformat:4 }} EUR{% endif %}{% if item.purchase_timing.exit_window_label or item.purchase_timing.expected_exit_window_label or item.purchase_timing.exit_date or item.purchase_timing.expected_exit_date %}<br>Salida {% if item.purchase_timing.exit_window_label %}{{ item.purchase_timing.exit_window_label }}{% elif item.purchase_timing.expected_exit_window_label %}{{ item.purchase_timing.expected_exit_window_label }}{% elif item.purchase_timing.exit_date %}{{ item.purchase_timing.exit_date }}{% elif item.purchase_timing.expected_exit_date %}{{ item.purchase_timing.expected_exit_date }}{% endif %}{% endif %}{% endif %}
-                              </span>{% if not forloop.last %}<br>{% endif %}
-                            {% endfor %}
-                            {% if run.allocations_data|length > 6 %}<br><span class="metric-sub">+{{ run.allocations_data|length|add:"-6" }} valor(es) adicionales</span>{% endif %}
+                            {% include "equities/_optimization_compact_timeline.html" %}
                           {% elif run.summary_data.available %}
                             <span class="metric-sub">Composicion pendiente de mostrar</span>
                           {% else %}
@@ -2166,11 +2297,11 @@
                 </div>
               </div>
               <div class="equity-compact-note" style="margin-top:16px;">
-                Se mantiene una ventana rotativa desde {{ scheduled_optimization_persistence.cutoff_date_label }}. La tabla se ordena primero por presencia y despues por rentabilidad media a 12 meses.
+                Se mantiene una ventana rotativa desde {{ scheduled_optimization_persistence.cutoff_date_label }}. La tabla se ordena primero por presencia y despues por rentabilidad anualizada media del tramo sugerido.
               </div>
               <div class="equity-table-wrap equity-persistence-wrap" style="margin-top:18px;">
                 <table class="equity-persistence-table">
-                  <thead><tr><th>Empresa</th><th>Presencia 3 meses</th><th>Plan 12M sugerido</th><th>Rentabilidad media</th><th>Margenes medios A&Ntilde;O 1-5</th><th>Fiabilidad</th><th>Gestion</th></tr></thead>
+                  <thead><tr><th>Empresa</th><th>Presencia 3 meses</th><th>Plan 12M sugerido</th><th>Rentabilidad anualizada</th><th>Margenes medios A&Ntilde;O 1-5</th><th>Fiabilidad</th><th>Gestion</th></tr></thead>
                   <tbody>
                     {% for row in scheduled_optimization_persistence.rows %}
                       <tr>
@@ -2209,8 +2340,8 @@
                             </div>
                             <div class="equity-persistence-returns">
                               <span>Tramo</span>
-                              <strong>{% if row.latest_interval_return_pct is not None %}{{ row.latest_interval_return_pct|floatformat:1 }} %{% elif row.average_interval_return_pct_3m is not None %}{{ row.average_interval_return_pct_3m|floatformat:1 }} %{% else %}-{% endif %}</strong>
-                              <span class="metric-sub">{% if row.latest_interval_window_label %}{{ row.latest_interval_window_label }}{% elif row.interval_window_labels_3m_label %}{{ row.interval_window_labels_3m_label }}{% else %}Sin tramo repetido{% endif %}</span>
+                              <strong>{% if row.latest_annualized_return_pct is not None %}{{ row.latest_annualized_return_pct|floatformat:1 }} %/a{% elif row.average_annualized_return_pct_3m is not None %}{{ row.average_annualized_return_pct_3m|floatformat:1 }} %/a{% else %}-{% endif %}</strong>
+                              <span class="metric-sub">{% if row.latest_interval_window_label %}{{ row.latest_interval_window_label }}{% elif row.interval_window_labels_3m_label %}{{ row.interval_window_labels_3m_label }}{% else %}Sin tramo repetido{% endif %}{% if row.latest_interval_return_pct is not None %} | total {{ row.latest_interval_return_pct|floatformat:1 }} %{% elif row.average_interval_return_pct_3m is not None %} | media {{ row.average_interval_return_pct_3m|floatformat:1 }} %{% endif %}</span>
                             </div>
                             <span class="metric-sub">Historico entradas {{ row.buy_dates_sample_label }} | salidas {{ row.sell_dates_sample_label }}.</span>
                           </div>
@@ -2284,7 +2415,7 @@
               {% if latest_completed_optimization.summary_data.methodology_note %}
                 <div class="equity-compact-note" style="margin-top:16px;">
                   {{ latest_completed_optimization.summary_data.methodology_note }}
-                  {% if latest_completed_optimization.summary_data.top_pick_name %} La mejor idea de la ultima ejecucion fue <strong>{{ latest_completed_optimization.summary_data.top_pick_name }}</strong>{% if latest_completed_optimization.summary_data.top_pick_buy_window_label %}, con entrada sugerida en <strong>{{ latest_completed_optimization.summary_data.top_pick_buy_window_label }}</strong>{% endif %}{% if latest_completed_optimization.summary_data.top_pick_exit_window_label %} y salida en <strong>{{ latest_completed_optimization.summary_data.top_pick_exit_window_label }}</strong>{% endif %}{% if latest_completed_optimization.summary_data.top_pick_interval_return_pct is not None %}, dejando un tramo estimado de <strong>{{ latest_completed_optimization.summary_data.top_pick_interval_return_pct|floatformat:1 }} %</strong>{% endif %}.{% endif %}
+                  {% if latest_completed_optimization.summary_data.top_pick_name %} La mejor idea de la ultima ejecucion fue <strong>{{ latest_completed_optimization.summary_data.top_pick_name }}</strong>{% if latest_completed_optimization.summary_data.top_pick_buy_window_label %}, con entrada sugerida en <strong>{{ latest_completed_optimization.summary_data.top_pick_buy_window_label }}</strong>{% endif %}{% if latest_completed_optimization.summary_data.top_pick_exit_window_label %} y salida en <strong>{{ latest_completed_optimization.summary_data.top_pick_exit_window_label }}</strong>{% endif %}{% if latest_completed_optimization.summary_data.top_pick_holding_annualized_return_pct is not None %}, dejando una rentabilidad anualizada estimada de <strong>{{ latest_completed_optimization.summary_data.top_pick_holding_annualized_return_pct|floatformat:1 }} %/a</strong>{% elif latest_completed_optimization.summary_data.top_pick_interval_return_pct is not None %}, dejando un tramo estimado de <strong>{{ latest_completed_optimization.summary_data.top_pick_interval_return_pct|floatformat:1 }} %</strong>{% endif %}.{% endif %}
                 </div>
               {% endif %}
               {% include "equities/_optimization_purchase_timeline.html" %}
@@ -2328,7 +2459,7 @@
                               <strong>{{ item.purchase_timing.buy_window_label|default:item.purchase_timing.buy_date }}</strong>
                               <br><span class="metric-sub">Entrada {% if item.purchase_timing.buy_price is not None %}{{ item.purchase_timing.buy_price|floatformat:4 }} EUR{% else %}Sin precio{% endif %}</span>
                               <br><span class="metric-sub">Salida {% if item.purchase_timing.exit_window_label %}{{ item.purchase_timing.exit_window_label }}{% elif item.purchase_timing.expected_exit_window_label %}{{ item.purchase_timing.expected_exit_window_label }}{% elif item.purchase_timing.exit_date %}{{ item.purchase_timing.exit_date }}{% elif item.purchase_timing.expected_exit_date %}{{ item.purchase_timing.expected_exit_date }}{% else %}-{% endif %}{% if item.purchase_timing.exit_price is not None %} | {{ item.purchase_timing.exit_price|floatformat:4 }} EUR{% elif item.purchase_timing.expected_exit_price is not None %} | {{ item.purchase_timing.expected_exit_price|floatformat:4 }} EUR{% endif %}</span>
-                              <br><span class="metric-sub">{{ item.purchase_timing.mode_label }}{% if item.purchase_timing.interval_return_pct is not None %} | {{ item.purchase_timing.interval_return_pct|floatformat:1 }} %{% elif item.purchase_timing.expected_trade_return_pct is not None %} | {{ item.purchase_timing.expected_trade_return_pct|floatformat:1 }} %{% endif %}{% if item.purchase_timing.holding_months %} | {{ item.purchase_timing.holding_months }}M{% elif item.purchase_timing.expected_holding_months %} | {{ item.purchase_timing.expected_holding_months }}M{% endif %}</span>
+                              <br><span class="metric-sub">{{ item.purchase_timing.mode_label }}{% if item.purchase_timing.holding_annualized_return_pct is not None %} | {{ item.purchase_timing.holding_annualized_return_pct|floatformat:1 }} %/a{% elif item.purchase_timing.interval_return_pct is not None %} | {{ item.purchase_timing.interval_return_pct|floatformat:1 }} %{% elif item.purchase_timing.expected_trade_return_pct is not None %} | {{ item.purchase_timing.expected_trade_return_pct|floatformat:1 }} %{% endif %}{% if item.purchase_timing.interval_return_pct is not None %} | total {{ item.purchase_timing.interval_return_pct|floatformat:1 }} %{% elif item.purchase_timing.expected_trade_return_pct is not None %} | total {{ item.purchase_timing.expected_trade_return_pct|floatformat:1 }} %{% endif %}{% if item.purchase_timing.holding_months %} | {{ item.purchase_timing.holding_months }}M{% elif item.purchase_timing.expected_holding_months %} | {{ item.purchase_timing.expected_holding_months }}M{% endif %}</span>
                             {% else %}
                               <span class="metric-sub">Sin ventana clara</span>
                             {% endif %}

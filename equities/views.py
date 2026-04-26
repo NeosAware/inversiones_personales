@@ -34,6 +34,7 @@ from .nightly_analysis import (
 )
 from .optimization_runs import (
     build_fallback_report_pdf_html,
+    build_optimization_compact_timeline,
     build_optimization_purchase_timeline,
     build_scheduled_optimization_persistence_context,
     launch_equity_optimization_run_pair,
@@ -297,6 +298,8 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["round_plan"] = round_plan
         context["optimization_runs"] = optimization_runs
         context["active_optimization_runs"] = active_optimization_runs
+        for run in optimization_runs:
+            run.compact_purchase_timeline = build_optimization_compact_timeline(run)
         context["latest_completed_optimization"] = next(
             (run for run in optimization_runs if run.status == EquityOptimizationRun.Status.COMPLETED and run.summary_data),
             None,
@@ -340,10 +343,15 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 "exit_date_label": next_new_row.get("exit_date").isoformat() if next_new_row.get("exit_date") else "",
                 "exit_window_label": next_new_row.get("exit_window_label", ""),
                 "exit_price": next_new_row.get("exit_price"),
+                "sell_date": next_new_row.get("exit_date"),
+                "sell_date_label": next_new_row.get("exit_date").isoformat() if next_new_row.get("exit_date") else "",
+                "sell_window_label": next_new_row.get("exit_window_label", ""),
+                "sell_price": next_new_row.get("exit_price"),
                 "allocated_amount": next_new_row.get("allocated_amount"),
                 "allocated_weight_pct": next_new_row.get("allocated_weight_pct"),
                 "interval_window_label": next_new_row.get("interval_window_label", ""),
                 "interval_return_pct": next_new_row.get("interval_return_pct") or next_new_row.get("expected_trade_return_pct"),
+                "holding_annualized_return_pct": next_new_row.get("holding_annualized_return_pct"),
                 "holding_months": next_new_row.get("holding_months"),
                 "presence_pct_3m": None,
                 "strategy_labels_3m_label": (
@@ -354,7 +362,8 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 "summary": (
                     f"La ultima optimizacion propone abrir {next_new_row['company_name']} en "
                     f"{str(next_new_row.get('buy_window_label') or '').lower()} "
-                    f"y cerrar el tramo en {str(next_new_row.get('exit_window_label') or '').lower()}."
+                    f"y cerrar el tramo en {str(next_new_row.get('exit_window_label') or '').lower()}"
+                    f"{(' con %.1f %%/a estimado' % next_new_row.get('holding_annualized_return_pct')) if next_new_row.get('holding_annualized_return_pct') is not None else ''}."
                 ),
                 "detail_url": reverse("equities:ibex_detail", kwargs={"ticker": next_new_row["ticker"]}),
             }

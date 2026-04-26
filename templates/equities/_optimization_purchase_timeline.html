@@ -69,7 +69,7 @@
                 {% if row.allocated_amount is not None %}{{ row.allocated_amount|floatformat:0 }} EUR{% else %}-{% endif %}
               </strong>
               <span>{{ row.entry_window_label|default:row.buy_window_label }} -> {{ row.exit_window_label }}</span>
-              <small>{% if row.interval_return_pct is not None %}{{ row.interval_return_pct|floatformat:1 }} %{% elif row.expected_trade_return_pct is not None %}{{ row.expected_trade_return_pct|floatformat:1 }} %{% else %}-{% endif %}{% if row.holding_months %} | {{ row.holding_months }}M{% endif %} | {{ row.status_label }}</small>
+              <small>{% if row.holding_annualized_return_pct is not None %}{{ row.holding_annualized_return_pct|floatformat:1 }} %/a{% elif row.interval_return_pct is not None %}{{ row.interval_return_pct|floatformat:1 }} %{% elif row.expected_trade_return_pct is not None %}{{ row.expected_trade_return_pct|floatformat:1 }} %{% else %}-{% endif %}{% if row.interval_return_pct is not None %} | total {{ row.interval_return_pct|floatformat:1 }} %{% elif row.expected_trade_return_pct is not None %} | total {{ row.expected_trade_return_pct|floatformat:1 }} %{% endif %}{% if row.holding_months %} | {{ row.holding_months }}M{% endif %} | {{ row.status_label }}</small>
               <small>E {% if row.entry_price is not None %}{{ row.entry_price|floatformat:4 }} EUR{% elif row.buy_price is not None %}{{ row.buy_price|floatformat:4 }} EUR{% else %}-{% endif %} | S {% if row.exit_price is not None %}{{ row.exit_price|floatformat:4 }} EUR{% else %}-{% endif %}</small>
             </div>
           </div>
