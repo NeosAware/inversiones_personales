@@ -7681,6 +7681,10 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(company["chart"]["expected_line"])
         self.assertTrue(company["chart"]["has_expected_series"])
         self.assertFalse(company["chart"]["has_actual_series"])
+        self.assertEqual(
+            [marker["label"] for marker in company["chart"]["x_markers"]],
+            ["Hoy", "1A", "2A", "3A", "4A", "5A"],
+        )
         self.assertIn("ultima esperanza guardada", company["preview_note"])
 
     @override_settings(

@@ -119,41 +119,47 @@
                   {% endif %}
                 </div>
                 <svg viewBox="0 0 640 220" aria-label="Grafico de bondad {{ company.company_name }}">
+                  <rect x="18" y="18" width="604" height="184" rx="14" fill="#fbfdff" stroke="#edf3f7" />
                   <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
                   <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
                   {% if company.chart.zero_y %}
                     <line x1="18" y1="{{ company.chart.zero_y }}" x2="622" y2="{{ company.chart.zero_y }}" stroke="#d8e0e8" stroke-width="1" stroke-dasharray="5 5" />
                   {% endif %}
                   {% for marker in company.chart.grid_markers %}
-                    <line x1="{{ marker.x }}" y1="{{ marker.grid_y1 }}" x2="{{ marker.x }}" y2="{{ marker.grid_y2 }}" stroke="#edf2f6" stroke-width="1" />
+                    <line x1="{{ marker.x }}" y1="{{ marker.grid_y1|default:'18' }}" x2="{{ marker.x }}" y2="{{ marker.grid_y2|default:'202' }}" stroke="{% if marker.is_major %}#cad8e4{% else %}#e7eef4{% endif %}" stroke-width="{% if marker.is_major %}1.2{% else %}1{% endif %}" stroke-dasharray="{% if marker.is_major %}0{% else %}3 5{% endif %}" />
                   {% endfor %}
                   {% if company.chart.benchmark_line %}
-                    <polyline fill="none" stroke="#6c7a86" stroke-width="3" points="{{ company.chart.benchmark_line }}" />
+                    <polyline fill="none" stroke="#ffffff" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round" points="{{ company.chart.benchmark_line }}" />
+                    <polyline fill="none" stroke="#6c7a86" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" points="{{ company.chart.benchmark_line }}" />
                   {% endif %}
                   {% if company.chart.expected_line %}
-                    <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ company.chart.expected_line }}" />
+                    <polyline fill="none" stroke="#ffffff" stroke-width="7.0" stroke-linecap="round" stroke-linejoin="round" points="{{ company.chart.expected_line }}" />
+                    <polyline fill="none" stroke="#c4572a" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="8 6" points="{{ company.chart.expected_line }}" />
                   {% endif %}
                   {% if company.chart.actual_line %}
-                    <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ company.chart.actual_line }}" />
+                    <polyline fill="none" stroke="#ffffff" stroke-width="7.8" stroke-linecap="round" stroke-linejoin="round" points="{{ company.chart.actual_line }}" />
+                    <polyline fill="none" stroke="#0b5f8c" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" points="{{ company.chart.actual_line }}" />
                   {% endif %}
                   {% for point in company.chart.benchmark_display_points %}
-                    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#6c7a86">
+                    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{% if point.is_latest %}4.9{% else %}4.0{% endif %}" fill="#ffffff" stroke="#6c7a86" stroke-width="2">
                       <title>{{ point.tooltip }}</title>
                     </circle>
                   {% endfor %}
                   {% for point in company.chart.expected_display_points %}
-                    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#b7642d">
+                    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius|default:'3.6' }}" fill="#ffffff" stroke="#c4572a" stroke-width="{% if point.is_latest_expected %}2.2{% else %}1.6{% endif %}">
                       <title>{{ point.tooltip }}</title>
                     </circle>
                   {% endfor %}
                   {% for point in company.chart.actual_display_points %}
-                    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#0d5d78" {% if point.cluster_size > 1 or point.is_latest %}stroke="#ffffff" stroke-width="1.4"{% endif %}>
+                    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#0b5f8c" {% if point.cluster_size > 1 or point.is_latest %}stroke="#ffffff" stroke-width="1.8"{% endif %}>
                       <title>{{ point.tooltip }}</title>
                     </circle>
                   {% endfor %}
                   {% for marker in company.chart.x_markers %}
                     <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
-                    <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                    {% if marker.show_label|default_if_none:True %}
+                      <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="{{ marker.anchor|default:'middle' }}" fill="#627380">{{ marker.label }}</text>
+                    {% endif %}
                   {% endfor %}
                   <text x="8" y="20" font-size="12" fill="#17384e">{{ company.chart.max_label }}</text>
                   <text x="8" y="214" font-size="12" fill="#17384e">{{ company.chart.min_label }}</text>

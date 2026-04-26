@@ -15613,6 +15613,31 @@ def build_expectation_review_company_context(
         (48, "4A", "expected_return_pct_4y"),
         (60, "5A", "expected_return_pct_5y"),
     )
+
+    def build_preview_horizon_markers(chart: dict) -> list[dict]:
+        point_rows = list(chart.get("expected_points") or [])
+        if not point_rows:
+            return []
+        markers = []
+        total_points = len(point_rows)
+        for index, point in enumerate(point_rows):
+            markers.append(
+                {
+                    "x": point["x"],
+                    "label": str(point.get("label") or point.get("date_label") or "").strip(),
+                    "date": point.get("date_label") or "",
+                    "y1": "202",
+                    "y2": "208",
+                    "text_y": "218",
+                    "grid_y1": "18",
+                    "grid_y2": "202",
+                    "draw_grid": 0 < index < total_points - 1,
+                    "show_label": True,
+                    "is_major": index in {0, total_points - 1},
+                    "anchor": "start" if index == 0 else ("end" if index == total_points - 1 else "middle"),
+                }
+            )
+        return markers
     sorted_reviews = sorted(
         list(reviews or []),
         key=lambda row: (row.analysis_date, row.created_at, row.id or 0),
@@ -15771,12 +15796,15 @@ def build_expectation_review_company_context(
             preview_corrected_series,
             value_suffix="%",
             axis_formatter=format_percentage_axis_value,
-            time_marker_mode="month",
-            grid_marker_mode="month",
+            time_marker_mode="auto",
+            grid_marker_mode="none",
             allow_expected_only=True,
         )
         preview_mode = bool(chart.get("available"))
         if preview_mode:
+            chart["x_markers"] = build_preview_horizon_markers(chart)
+            chart["grid_markers"] = [marker for marker in chart["x_markers"] if marker.get("draw_grid")]
+            chart["scale_note"] = "Hitos directos desde la ultima revision guardada."
             preview_note = (
                 "Todavia no hay realidad suficiente para comparar la bondad. "
                 "Se muestra la ultima esperanza guardada con sus hitos 1A..5A."
