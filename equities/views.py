@@ -324,12 +324,27 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 "available": True,
                 "ticker": next_new_row["ticker"],
                 "company_name": next_new_row["company_name"],
+                "entry_date": next_new_row.get("entry_date") or next_new_row.get("buy_date"),
+                "entry_date_label": (
+                    (next_new_row.get("entry_date") or next_new_row.get("buy_date")).isoformat()
+                    if (next_new_row.get("entry_date") or next_new_row.get("buy_date"))
+                    else ""
+                ),
+                "entry_window_label": next_new_row.get("entry_window_label", "") or next_new_row.get("buy_window_label", ""),
+                "entry_price": next_new_row.get("entry_price") or next_new_row.get("buy_price"),
                 "buy_date": next_new_row.get("buy_date"),
                 "buy_date_label": next_new_row.get("buy_date").isoformat() if next_new_row.get("buy_date") else "",
                 "buy_window_label": next_new_row.get("buy_window_label", ""),
                 "buy_price": next_new_row.get("buy_price"),
+                "exit_date": next_new_row.get("exit_date"),
+                "exit_date_label": next_new_row.get("exit_date").isoformat() if next_new_row.get("exit_date") else "",
+                "exit_window_label": next_new_row.get("exit_window_label", ""),
+                "exit_price": next_new_row.get("exit_price"),
                 "allocated_amount": next_new_row.get("allocated_amount"),
                 "allocated_weight_pct": next_new_row.get("allocated_weight_pct"),
+                "interval_window_label": next_new_row.get("interval_window_label", ""),
+                "interval_return_pct": next_new_row.get("interval_return_pct") or next_new_row.get("expected_trade_return_pct"),
+                "holding_months": next_new_row.get("holding_months"),
                 "presence_pct_3m": None,
                 "strategy_labels_3m_label": (
                     context["latest_completed_optimization"].summary_data.get("strategy_label", "")
@@ -338,7 +353,8 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
                 ),
                 "summary": (
                     f"La ultima optimizacion propone abrir {next_new_row['company_name']} en "
-                    f"{str(next_new_row.get('buy_window_label') or '').lower()}."
+                    f"{str(next_new_row.get('buy_window_label') or '').lower()} "
+                    f"y cerrar el tramo en {str(next_new_row.get('exit_window_label') or '').lower()}."
                 ),
                 "detail_url": reverse("equities:ibex_detail", kwargs={"ticker": next_new_row["ticker"]}),
             }

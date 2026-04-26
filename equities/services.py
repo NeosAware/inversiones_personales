@@ -6768,21 +6768,25 @@ def build_candidate_purchase_timing_plan(
 
     path_candidates = []
     if twelve_month_rows:
+        twelve_month_max_month = max((int(item.get("month_number") or 0) for item in twelve_month_rows), default=0)
         path_candidates.append(
             {
                 "basis_key": "projection_12m",
                 "basis_label": "Senda 12M neta del modelo",
                 "rows": twelve_month_rows,
-                "entry_search_months": min(12, max((twelve_month_rows[-1]["month_number"] or 0) - 1, 0)),
+                "entry_horizon_months": min(12, max(twelve_month_max_month, 1)),
+                "exit_horizon_months": max(twelve_month_max_month, 1),
             }
         )
     if cycle_rows:
+        cycle_max_month = max((int(item.get("month_number") or 0) for item in cycle_rows), default=0)
         path_candidates.append(
             {
                 "basis_key": "cycle_5y",
                 "basis_label": "Patron de ciclo 5A desestacionalizado",
                 "rows": cycle_rows,
-                "entry_search_months": min(18, max((cycle_rows[-1]["month_number"] or 0) - 1, 0)),
+                "entry_horizon_months": min(12, max(cycle_max_month, 1)),
+                "exit_horizon_months": max(cycle_max_month, 1),
             }
         )
     if not path_candidates:
@@ -6799,20 +6803,25 @@ def build_candidate_purchase_timing_plan(
         current_price = current_row.get("projected_price")
         if current_price in {None, ZERO}:
             return None
-        search_limit = candidate_path.get("entry_search_months") or 0
+        entry_horizon_months = int(candidate_path.get("entry_horizon_months") or 12)
+        exit_horizon_months = int(candidate_path.get("exit_horizon_months") or entry_horizon_months)
         entry_candidates = []
         for entry_row in rows:
             entry_month_number = int(entry_row.get("month_number") or 0)
             entry_price = entry_row.get("projected_price")
             if entry_price in {None, ZERO}:
                 continue
-            if entry_month_number > search_limit:
+            if entry_month_number > entry_horizon_months or entry_month_number >= exit_horizon_months:
                 continue
             best_exit = None
             for exit_row in rows:
                 exit_month_number = int(exit_row.get("month_number") or 0)
                 exit_price = exit_row.get("projected_price")
-                if exit_month_number <= entry_month_number or exit_price in {None, ZERO}:
+                if (
+                    exit_month_number <= entry_month_number
+                    or exit_price in {None, ZERO}
+                    or exit_month_number > exit_horizon_months
+                ):
                     continue
                 holding_months = exit_month_number - entry_month_number
                 if holding_months <= 0:
@@ -6833,6 +6842,10 @@ def build_candidate_purchase_timing_plan(
                 )
                 if trade_return_pct is None:
                     continue
+                holding_annualized_return_pct = annualize_return_pct(
+                    trade_return_pct,
+                    holding_months,
+                )
                 calendar_adjusted_return_pct = annualize_return_pct(
                     trade_return_pct,
                     max(exit_month_number, 1),
@@ -6842,26 +6855,33 @@ def build_candidate_purchase_timing_plan(
                     "price_return_pct": price_return_pct,
                     "income_support_pct": income_support_pct,
                     "trade_return_pct": trade_return_pct,
+                    "holding_annualized_return_pct": quantize_decimal(holding_annualized_return_pct, "0.01"),
                     "calendar_adjusted_return_pct": quantize_decimal(calendar_adjusted_return_pct, "0.01"),
                     "holding_months": holding_months,
                 }
                 if best_exit is None:
                     best_exit = exit_candidate
                     continue
-                current_score = exit_candidate.get("calendar_adjusted_return_pct")
-                best_score = best_exit.get("calendar_adjusted_return_pct")
+                current_trade_return = exit_candidate.get("trade_return_pct")
+                best_trade_return = best_exit.get("trade_return_pct")
+                current_holding_annualized = exit_candidate.get("holding_annualized_return_pct")
+                best_holding_annualized = best_exit.get("holding_annualized_return_pct")
                 if (
-                    current_score is not None
+                    current_trade_return is not None
                     and (
-                        best_score is None
-                        or current_score > best_score
+                        best_trade_return is None
+                        or current_trade_return > best_trade_return
                         or (
-                            current_score == best_score
+                            current_trade_return == best_trade_return
                             and (
-                                exit_candidate["trade_return_pct"] > best_exit["trade_return_pct"]
-                                or (
-                                    exit_candidate["trade_return_pct"] == best_exit["trade_return_pct"]
-                                    and exit_month_number < int(best_exit["exit_row"].get("month_number") or 999)
+                                current_holding_annualized is not None
+                                and (
+                                    best_holding_annualized is None
+                                    or current_holding_annualized > best_holding_annualized
+                                    or (
+                                        current_holding_annualized == best_holding_annualized
+                                        and exit_month_number < int(best_exit["exit_row"].get("month_number") or 999)
+                                    )
                                 )
                             )
                         )
@@ -6895,14 +6915,17 @@ def build_candidate_purchase_timing_plan(
         return max(
             entry_candidates,
             key=lambda item: (
-                item.get("calendar_adjusted_return_pct")
-                if item.get("calendar_adjusted_return_pct") is not None
+                item.get("trade_return_pct")
+                if item.get("trade_return_pct") is not None
                 else Decimal("-9999"),
-                item["trade_return_pct"],
+                item.get("holding_annualized_return_pct")
+                if item.get("holding_annualized_return_pct") is not None
+                else Decimal("-9999"),
                 item.get("discount_vs_now_pct")
                 if item.get("discount_vs_now_pct") is not None
                 else Decimal("-9999"),
                 -(item["entry_month_number"] or 0),
+                -int(item.get("holding_months") or 0),
             ),
         )
 
@@ -6913,6 +6936,32 @@ def build_candidate_purchase_timing_plan(
     secondary_plan = evaluate_path(secondary_path) if secondary_path else None
     chosen_plan = primary_plan or secondary_plan
     chosen_path = primary_path if primary_plan else secondary_path
+    if primary_plan is not None and primary_path is not None and secondary_plan is not None and secondary_path is not None:
+        primary_trade_return = primary_plan.get("trade_return_pct")
+        secondary_trade_return = secondary_plan.get("trade_return_pct")
+        primary_holding_annualized = primary_plan.get("holding_annualized_return_pct")
+        secondary_holding_annualized = secondary_plan.get("holding_annualized_return_pct")
+        improvement_threshold = Decimal("1.50") if strategy["mode"] == OPTIMIZER_STRATEGY_12M_PRIMARY else Decimal("1.00")
+        annualized_threshold = Decimal("2.00")
+        secondary_is_materially_better = (
+            secondary_trade_return is not None
+            and (
+                primary_trade_return is None
+                or secondary_trade_return >= (primary_trade_return + improvement_threshold)
+                or (
+                    primary_trade_return is not None
+                    and secondary_trade_return == primary_trade_return
+                    and secondary_holding_annualized is not None
+                    and (
+                        primary_holding_annualized is None
+                        or secondary_holding_annualized >= (primary_holding_annualized + annualized_threshold)
+                    )
+                )
+            )
+        )
+        if secondary_is_materially_better:
+            chosen_plan = secondary_plan
+            chosen_path = secondary_path
     if chosen_plan is None or chosen_path is None:
         return {"available": False}
 
@@ -6933,16 +6982,26 @@ def build_candidate_purchase_timing_plan(
         mode = "entrada_gradual"
         mode_label = "Entrada gradual"
 
+    entry_horizon_months = int(chosen_path.get("entry_horizon_months") or 12)
+    exit_horizon_months = int(chosen_path.get("exit_horizon_months") or entry_horizon_months)
     summary = (
-        f"La mejor ventana de entrada sale en {chosen_plan['buy_window_label'].lower()} alrededor de "
-        f"{buy_price:.4f} EUR. Desde ahi la senda apunta a {chosen_plan['trade_return_pct']:.2f} % neto "
-        f"hasta {format_projection_month_window(expected_exit_date, exit_month_number).lower()}."
+        f"Con entrada acotada a los proximos {entry_horizon_months} meses, el mejor tramo sale entrando en {chosen_plan['buy_window_label'].lower()} alrededor de "
+        f"{buy_price:.4f} EUR y saliendo en {format_projection_month_window(expected_exit_date, exit_month_number).lower()} "
+        f"cerca de {expected_exit_price:.4f} EUR. Ese intervalo deja {chosen_plan['trade_return_pct']:.2f} % neto."
     )
+    if exit_month_number > entry_horizon_months:
+        summary += (
+            f" La salida se deja correr mas alla del ano de entrada porque el tramo mejora hasta el mes {exit_month_number}."
+        )
     if secondary_plan is not None and secondary_path is not None and secondary_plan.get("buy_window_label"):
         secondary_delta = abs(
             int(secondary_plan.get("entry_month_number") or 0) - int(chosen_plan.get("entry_month_number") or 0)
         )
-        if secondary_delta <= 2:
+        if chosen_path["basis_key"] == secondary_path["basis_key"]:
+            summary += (
+                f" El contraste {secondary_path['basis_label'].lower()} mejora materialmente el recorrido y por eso se usa como base del tramo."
+            )
+        elif secondary_delta <= 2:
             summary += (
                 f" El contraste {secondary_path['basis_label'].lower()} confirma una ventana similar en "
                 f"{secondary_plan['buy_window_label'].lower()}."
@@ -6957,24 +7016,43 @@ def build_candidate_purchase_timing_plan(
         "available": True,
         "mode": mode,
         "mode_label": mode_label,
+        "plan_horizon_months": entry_horizon_months,
+        "entry_horizon_months": entry_horizon_months,
+        "exit_horizon_months": exit_horizon_months,
         "analysis_basis_key": chosen_path["basis_key"],
         "analysis_basis_label": chosen_path["basis_label"],
+        "entry_month_number": buy_month_number,
+        "entry_date": buy_date,
+        "entry_date_label": buy_date.isoformat() if buy_date else "",
+        "entry_window_label": chosen_plan.get("buy_window_label") or "",
+        "entry_price": buy_price,
         "buy_month_number": buy_month_number,
         "buy_date": buy_date,
         "buy_date_label": buy_date.isoformat() if buy_date else "",
         "buy_window_label": chosen_plan.get("buy_window_label") or "",
         "buy_price": buy_price,
         "discount_vs_now_pct": chosen_plan.get("discount_vs_now_pct"),
+        "exit_month_number": exit_month_number,
+        "exit_date": expected_exit_date,
+        "exit_date_label": expected_exit_date.isoformat() if expected_exit_date else "",
+        "exit_window_label": format_projection_month_window(expected_exit_date, exit_month_number),
+        "exit_price": expected_exit_price,
         "expected_exit_month_number": exit_month_number,
         "expected_exit_date": expected_exit_date,
         "expected_exit_date_label": expected_exit_date.isoformat() if expected_exit_date else "",
         "expected_exit_window_label": format_projection_month_window(expected_exit_date, exit_month_number),
         "expected_exit_price": expected_exit_price,
         "expected_holding_months": chosen_plan.get("holding_months"),
+        "holding_months": chosen_plan.get("holding_months"),
         "price_return_pct": chosen_plan.get("price_return_pct"),
         "income_support_pct": chosen_plan.get("income_support_pct"),
+        "interval_return_pct": chosen_plan.get("trade_return_pct"),
         "expected_trade_return_pct": chosen_plan.get("trade_return_pct"),
+        "holding_annualized_return_pct": chosen_plan.get("holding_annualized_return_pct"),
         "calendar_adjusted_return_pct": chosen_plan.get("calendar_adjusted_return_pct"),
+        "interval_window_label": (
+            f"{chosen_plan.get('buy_window_label') or ''} -> {format_projection_month_window(expected_exit_date, exit_month_number)}"
+        ).strip(" ->"),
         "summary": summary,
         "primary_basis_label": primary_path.get("basis_label") if primary_path else "",
         "secondary_basis_label": secondary_path.get("basis_label") if secondary_path else "",

@@ -827,6 +827,11 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "top_pick_buy_window_label": top_pick_purchase_timing.get("buy_window_label", ""),
         "top_pick_buy_date": top_pick_purchase_timing.get("buy_date_label", ""),
         "top_pick_buy_price": float(top_pick_purchase_timing["buy_price"]) if top_pick_purchase_timing.get("buy_price") is not None else None,
+        "top_pick_exit_window_label": top_pick_purchase_timing.get("exit_window_label", ""),
+        "top_pick_exit_date": top_pick_purchase_timing.get("exit_date_label", ""),
+        "top_pick_exit_price": float(top_pick_purchase_timing["exit_price"]) if top_pick_purchase_timing.get("exit_price") is not None else None,
+        "top_pick_interval_window_label": top_pick_purchase_timing.get("interval_window_label", ""),
+        "top_pick_interval_return_pct": float(top_pick_purchase_timing["interval_return_pct"]) if top_pick_purchase_timing.get("interval_return_pct") is not None else None,
         "top_pick_buy_mode_label": top_pick_purchase_timing.get("mode_label", ""),
         "top_pick_allocated_amount": float(top_pick.get("allocated_amount", 0) or 0) if top_pick else None,
         "news_signals_count": news_overview["signals_count"],
@@ -885,18 +890,31 @@ def serialize_allocations_data(plan: dict) -> list[dict]:
                     "available": bool(purchase_timing.get("available")),
                     "mode": purchase_timing.get("mode", ""),
                     "mode_label": purchase_timing.get("mode_label", ""),
+                    "plan_horizon_months": int(purchase_timing.get("plan_horizon_months", 0) or 0) if purchase_timing.get("plan_horizon_months") is not None else None,
                     "analysis_basis_label": purchase_timing.get("analysis_basis_label", ""),
+                    "entry_month_number": int(purchase_timing.get("entry_month_number", 0) or 0) if purchase_timing.get("entry_month_number") is not None else None,
+                    "entry_date": purchase_timing.get("entry_date_label", ""),
+                    "entry_window_label": purchase_timing.get("entry_window_label", ""),
+                    "entry_price": float(purchase_timing["entry_price"]) if purchase_timing.get("entry_price") is not None else None,
                     "buy_month_number": int(purchase_timing.get("buy_month_number", 0) or 0) if purchase_timing.get("buy_month_number") is not None else None,
                     "buy_date": purchase_timing.get("buy_date_label", ""),
                     "buy_window_label": purchase_timing.get("buy_window_label", ""),
                     "buy_price": float(purchase_timing["buy_price"]) if purchase_timing.get("buy_price") is not None else None,
                     "discount_vs_now_pct": float(purchase_timing["discount_vs_now_pct"]) if purchase_timing.get("discount_vs_now_pct") is not None else None,
+                    "exit_month_number": int(purchase_timing.get("exit_month_number", 0) or 0) if purchase_timing.get("exit_month_number") is not None else None,
+                    "exit_date": purchase_timing.get("exit_date_label", ""),
+                    "exit_window_label": purchase_timing.get("exit_window_label", ""),
+                    "exit_price": float(purchase_timing["exit_price"]) if purchase_timing.get("exit_price") is not None else None,
                     "expected_exit_month_number": int(purchase_timing.get("expected_exit_month_number", 0) or 0) if purchase_timing.get("expected_exit_month_number") is not None else None,
                     "expected_exit_date": purchase_timing.get("expected_exit_date_label", ""),
                     "expected_exit_window_label": purchase_timing.get("expected_exit_window_label", ""),
                     "expected_exit_price": float(purchase_timing["expected_exit_price"]) if purchase_timing.get("expected_exit_price") is not None else None,
                     "expected_holding_months": int(purchase_timing.get("expected_holding_months", 0) or 0) if purchase_timing.get("expected_holding_months") is not None else None,
+                    "holding_months": int(purchase_timing.get("holding_months", 0) or 0) if purchase_timing.get("holding_months") is not None else None,
+                    "interval_window_label": purchase_timing.get("interval_window_label", ""),
+                    "interval_return_pct": float(purchase_timing["interval_return_pct"]) if purchase_timing.get("interval_return_pct") is not None else None,
                     "expected_trade_return_pct": float(purchase_timing["expected_trade_return_pct"]) if purchase_timing.get("expected_trade_return_pct") is not None else None,
+                    "holding_annualized_return_pct": float(purchase_timing["holding_annualized_return_pct"]) if purchase_timing.get("holding_annualized_return_pct") is not None else None,
                     "calendar_adjusted_return_pct": float(purchase_timing["calendar_adjusted_return_pct"]) if purchase_timing.get("calendar_adjusted_return_pct") is not None else None,
                     "summary": purchase_timing.get("summary", ""),
                 },
@@ -1039,6 +1057,15 @@ def build_optimization_purchase_timeline(
             buy_date = date.fromisoformat(buy_date_label) if buy_date_label else None
         except ValueError:
             buy_date = None
+        exit_date_label = str(
+            purchase_timing.get("exit_date")
+            or purchase_timing.get("expected_exit_date")
+            or ""
+        ).strip()
+        try:
+            exit_date = date.fromisoformat(exit_date_label) if exit_date_label else None
+        except ValueError:
+            exit_date = None
         if buy_date is None:
             unscheduled_rows.append(
                 {
@@ -1048,18 +1075,28 @@ def build_optimization_purchase_timeline(
                 }
             )
             continue
+        if exit_date is None or exit_date <= buy_date:
+            unscheduled_rows.append(
+                {
+                    "ticker": item.get("ticker", ""),
+                    "company_name": item.get("company_name", ""),
+                    "reason": "Fecha de salida no disponible",
+                }
+            )
+            continue
         buy_price = purchase_timing.get("buy_price")
+        exit_price = purchase_timing.get("exit_price") or purchase_timing.get("expected_exit_price")
         allocated_amount = item.get("allocated_amount")
         days_until_buy = max((buy_date - reference_date).days, 0)
         if days_until_buy <= 14:
             status_key = "urgent"
-            status_label = "Comprar ya"
+            status_label = "Entrada inmediata"
         elif days_until_buy <= 90:
             status_key = "soon"
-            status_label = "Proxima ventana"
+            status_label = "Entrada proxima"
         else:
             status_key = "scheduled"
-            status_label = "Compra programada"
+            status_label = "Tramo programado"
         scheduled_rows.append(
             {
                 "ticker": item.get("ticker", ""),
@@ -1069,11 +1106,24 @@ def build_optimization_purchase_timeline(
                 "status_key": status_key,
                 "status_label": status_label,
                 "buy_date": buy_date,
+                "entry_date": buy_date,
                 "buy_window_label": purchase_timing.get("buy_window_label", "") or buy_date.isoformat(),
+                "entry_window_label": purchase_timing.get("entry_window_label", "") or purchase_timing.get("buy_window_label", "") or buy_date.isoformat(),
                 "buy_mode_label": purchase_timing.get("mode_label", "") or status_label,
                 "buy_price": Decimal(str(buy_price)) if buy_price is not None else None,
+                "entry_price": Decimal(str(buy_price)) if buy_price is not None else None,
+                "exit_date": exit_date,
+                "exit_window_label": purchase_timing.get("exit_window_label", "") or purchase_timing.get("expected_exit_window_label", "") or exit_date.isoformat(),
+                "exit_price": Decimal(str(exit_price)) if exit_price is not None else None,
                 "allocated_amount": Decimal(str(allocated_amount)) if allocated_amount is not None else None,
                 "allocated_weight_pct": Decimal(str(item.get("allocated_weight_pct"))) if item.get("allocated_weight_pct") is not None else None,
+                "holding_months": int(
+                    purchase_timing.get("holding_months")
+                    or purchase_timing.get("expected_holding_months")
+                    or 0
+                ) or None,
+                "interval_window_label": purchase_timing.get("interval_window_label", ""),
+                "interval_return_pct": Decimal(str(purchase_timing["interval_return_pct"])) if purchase_timing.get("interval_return_pct") is not None else None,
                 "expected_trade_return_pct": Decimal(str(purchase_timing["expected_trade_return_pct"])) if purchase_timing.get("expected_trade_return_pct") is not None else None,
             }
         )
@@ -1088,14 +1138,23 @@ def build_optimization_purchase_timeline(
 
     scheduled_rows.sort(key=lambda item: (item["buy_date"], item["rank"], item["ticker"]))
     visible_rows = scheduled_rows[:max_rows]
-    horizon_end = max(shift_date_by_months(reference_date, 12), max(item["buy_date"] for item in visible_rows))
+    entry_horizon_end = shift_date_by_months(reference_date, 12)
+    horizon_end = max(
+        entry_horizon_end,
+        max(item["exit_date"] for item in visible_rows),
+    )
     horizon_days = max((horizon_end - reference_date).days, 1)
     horizon_months = max(
         ((horizon_end.year - reference_date.year) * 12) + (horizon_end.month - reference_date.month),
         1,
     )
     markers = []
-    marker_months = sorted({0, 3, 6, 9, 12, horizon_months})
+    marker_months = {0, 3, 6, 9, 12, horizon_months}
+    yearly_marker = 24
+    while yearly_marker < horizon_months:
+        marker_months.add(yearly_marker)
+        yearly_marker += 12
+    marker_months = sorted(marker_months)
     for month_offset in marker_months:
         marker_date = shift_date_by_months(reference_date, month_offset)
         left_pct = min(max(((marker_date - reference_date).days / horizon_days) * 100, 0), 100)
@@ -1108,15 +1167,28 @@ def build_optimization_purchase_timeline(
 
     planned_amount_total = ZERO
     immediate_count = 0
+    exit_within_horizon_count = 0
+    long_exit_count = 0
     for row in visible_rows:
         if row.get("allocated_amount") is not None:
             planned_amount_total += row["allocated_amount"]
         if row["status_key"] == "urgent":
             immediate_count += 1
-        pin_left_pct = min(max((((row["buy_date"] - reference_date).days) / horizon_days) * 100, 0), 100)
-        row["pin_left_pct"] = f"{pin_left_pct:.2f}"
-        row["bar_left_pct"] = "0.00"
-        row["bar_width_pct"] = f"{max(pin_left_pct, 2.6):.2f}"
+        if row.get("exit_date") is not None and row["exit_date"] <= horizon_end:
+            exit_within_horizon_count += 1
+        if row.get("exit_date") is not None and row["exit_date"] > entry_horizon_end:
+            long_exit_count += 1
+            row["extends_beyond_entry_window"] = True
+        else:
+            row["extends_beyond_entry_window"] = False
+        entry_left_pct = min(max((((row["buy_date"] - reference_date).days) / horizon_days) * 100, 0), 100)
+        exit_left_pct = min(max((((row["exit_date"] - reference_date).days) / horizon_days) * 100, 0), 100)
+        row["entry_pin_left_pct"] = f"{entry_left_pct:.2f}"
+        row["exit_pin_left_pct"] = f"{exit_left_pct:.2f}"
+        row["pin_left_pct"] = row["entry_pin_left_pct"]
+        row["bar_left_pct"] = f"{entry_left_pct:.2f}"
+        row["bar_width_pct"] = f"{max(exit_left_pct - entry_left_pct, 2.6):.2f}"
+    entry_horizon_pct = min(max(((entry_horizon_end - reference_date).days / horizon_days) * 100, 0), 100)
     next_row = visible_rows[0]
     next_new_row = next((row for row in visible_rows if not row.get("is_owned")), None)
     return {
@@ -1124,12 +1196,18 @@ def build_optimization_purchase_timeline(
         "rows": visible_rows,
         "markers": markers,
         "reference_date": reference_date,
+        "entry_horizon_end": entry_horizon_end,
+        "entry_horizon_months": 12,
+        "entry_horizon_pct": f"{entry_horizon_pct:.2f}",
         "horizon_end": horizon_end,
         "horizon_months": horizon_months,
+        "horizon_is_extended": horizon_end > entry_horizon_end,
         "scheduled_count": len(visible_rows),
         "unscheduled_count": len(unscheduled_rows),
         "planned_amount_total": planned_amount_total.quantize(Decimal("0.01")),
         "immediate_count": immediate_count,
+        "exit_within_horizon_count": exit_within_horizon_count,
+        "long_exit_count": long_exit_count,
         "new_positions_count": sum(1 for row in visible_rows if not row.get("is_owned")),
         "top_up_count": sum(1 for row in visible_rows if row.get("is_owned")),
         "next_row": next_row,
@@ -1236,17 +1314,32 @@ def build_scheduled_optimization_persistence_context(
                     "year_margin_counts": {year_number: 0 for year_number in range(1, 6)},
                     "daily_strategies": {},
                     "buy_dates_3m": [],
+                    "sell_dates_3m": [],
                     "buy_window_labels_3m": set(),
+                    "sell_window_labels_3m": set(),
+                    "interval_window_labels_3m": set(),
                     "buy_modes_3m": set(),
                     "buy_price_total_3m": Decimal("0"),
                     "buy_price_count_3m": 0,
+                    "sell_price_total_3m": Decimal("0"),
+                    "sell_price_count_3m": 0,
                     "allocated_amount_total_3m": Decimal("0"),
                     "allocated_amount_count_3m": 0,
                     "allocated_weight_total_3m": Decimal("0"),
                     "allocated_weight_count_3m": 0,
+                    "interval_return_total_3m": Decimal("0"),
+                    "interval_return_count_3m": 0,
+                    "holding_months_total_3m": Decimal("0"),
+                    "holding_months_count_3m": 0,
                     "latest_buy_date": None,
                     "latest_buy_window_label": "",
                     "latest_buy_price": None,
+                    "latest_sell_date": None,
+                    "latest_sell_window_label": "",
+                    "latest_sell_price": None,
+                    "latest_interval_window_label": "",
+                    "latest_interval_return_pct": None,
+                    "latest_holding_months": None,
                     "latest_allocated_amount": None,
                     "latest_allocated_weight_pct": None,
                 },
@@ -1284,6 +1377,29 @@ def build_scheduled_optimization_persistence_context(
             buy_window_label = str(purchase_timing.get("buy_window_label") or "").strip()
             if buy_window_label:
                 stats["buy_window_labels_3m"].add(buy_window_label)
+            sell_date = None
+            sell_date_value = str(
+                purchase_timing.get("exit_date")
+                or purchase_timing.get("expected_exit_date")
+                or ""
+            ).strip()
+            if sell_date_value:
+                try:
+                    sell_date = date.fromisoformat(sell_date_value)
+                except ValueError:
+                    sell_date = None
+            if sell_date is not None:
+                stats["sell_dates_3m"].append(sell_date)
+            sell_window_label = str(
+                purchase_timing.get("exit_window_label")
+                or purchase_timing.get("expected_exit_window_label")
+                or ""
+            ).strip()
+            if sell_window_label:
+                stats["sell_window_labels_3m"].add(sell_window_label)
+            interval_window_label = str(purchase_timing.get("interval_window_label") or "").strip()
+            if interval_window_label:
+                stats["interval_window_labels_3m"].add(interval_window_label)
             buy_mode_label = str(purchase_timing.get("mode_label") or "").strip()
             if buy_mode_label:
                 stats["buy_modes_3m"].add(buy_mode_label)
@@ -1291,6 +1407,18 @@ def build_scheduled_optimization_persistence_context(
             if buy_price is not None:
                 stats["buy_price_total_3m"] += Decimal(str(buy_price))
                 stats["buy_price_count_3m"] += 1
+            sell_price = purchase_timing.get("exit_price") or purchase_timing.get("expected_exit_price")
+            if sell_price is not None:
+                stats["sell_price_total_3m"] += Decimal(str(sell_price))
+                stats["sell_price_count_3m"] += 1
+            interval_return_pct = purchase_timing.get("interval_return_pct") or purchase_timing.get("expected_trade_return_pct")
+            if interval_return_pct is not None:
+                stats["interval_return_total_3m"] += Decimal(str(interval_return_pct))
+                stats["interval_return_count_3m"] += 1
+            holding_months = purchase_timing.get("holding_months") or purchase_timing.get("expected_holding_months")
+            if holding_months is not None:
+                stats["holding_months_total_3m"] += Decimal(str(holding_months))
+                stats["holding_months_count_3m"] += 1
             allocated_amount = item.get("allocated_amount")
             if allocated_amount is not None:
                 stats["allocated_amount_total_3m"] += Decimal(str(allocated_amount))
@@ -1303,6 +1431,12 @@ def build_scheduled_optimization_persistence_context(
                 stats["latest_buy_date"] = buy_date
                 stats["latest_buy_window_label"] = buy_window_label
                 stats["latest_buy_price"] = Decimal(str(buy_price)) if buy_price is not None else None
+                stats["latest_sell_date"] = sell_date
+                stats["latest_sell_window_label"] = sell_window_label
+                stats["latest_sell_price"] = Decimal(str(sell_price)) if sell_price is not None else None
+                stats["latest_interval_window_label"] = interval_window_label
+                stats["latest_interval_return_pct"] = Decimal(str(interval_return_pct)) if interval_return_pct is not None else None
+                stats["latest_holding_months"] = int(holding_months) if holding_months is not None else None
                 stats["latest_allocated_amount"] = Decimal(str(allocated_amount)) if allocated_amount is not None else None
                 stats["latest_allocated_weight_pct"] = Decimal(str(allocated_weight_pct)) if allocated_weight_pct is not None else None
             for year_item in item.get("cycle_yearly_margins") or []:
@@ -1360,6 +1494,11 @@ def build_scheduled_optimization_persistence_context(
             average_buy_price = (
                 stats["buy_price_total_3m"] / Decimal(str(stats["buy_price_count_3m"]))
             ).quantize(Decimal("0.0001"))
+        average_sell_price = None
+        if stats["sell_price_count_3m"]:
+            average_sell_price = (
+                stats["sell_price_total_3m"] / Decimal(str(stats["sell_price_count_3m"]))
+            ).quantize(Decimal("0.0001"))
         average_allocated_amount = None
         if stats["allocated_amount_count_3m"]:
             average_allocated_amount = (
@@ -1369,6 +1508,16 @@ def build_scheduled_optimization_persistence_context(
         if stats["allocated_weight_count_3m"]:
             average_allocated_weight_pct = (
                 stats["allocated_weight_total_3m"] / Decimal(str(stats["allocated_weight_count_3m"]))
+            ).quantize(Decimal("0.1"))
+        average_interval_return_pct = None
+        if stats["interval_return_count_3m"]:
+            average_interval_return_pct = (
+                stats["interval_return_total_3m"] / Decimal(str(stats["interval_return_count_3m"]))
+            ).quantize(Decimal("0.1"))
+        average_holding_months = None
+        if stats["holding_months_count_3m"]:
+            average_holding_months = (
+                stats["holding_months_total_3m"] / Decimal(str(stats["holding_months_count_3m"]))
             ).quantize(Decimal("0.1"))
         average_year_margins = []
         for year_number in range(1, 6):
@@ -1390,6 +1539,7 @@ def build_scheduled_optimization_persistence_context(
         top3_pct = ratio_percent(stats["top3_3m"], stats["appearances_3m"])
         latest_strategy_count = len(latest_strategies)
         sorted_buy_dates = sorted(set(stats["buy_dates_3m"]))
+        sorted_sell_dates = sorted(set(stats["sell_dates_3m"]))
         buy_dates_sample_label = "-"
         if sorted_buy_dates:
             if len(sorted_buy_dates) <= 3:
@@ -1399,9 +1549,22 @@ def build_scheduled_optimization_persistence_context(
                     f"{sorted_buy_dates[0].isoformat()} a {sorted_buy_dates[-1].isoformat()} "
                     f"(+{len(sorted_buy_dates) - 2})"
                 )
+        sell_dates_sample_label = "-"
+        if sorted_sell_dates:
+            if len(sorted_sell_dates) <= 3:
+                sell_dates_sample_label = ", ".join(item.isoformat() for item in sorted_sell_dates)
+            else:
+                sell_dates_sample_label = (
+                    f"{sorted_sell_dates[0].isoformat()} a {sorted_sell_dates[-1].isoformat()} "
+                    f"(+{len(sorted_sell_dates) - 2})"
+                )
         latest_buy_date = stats["latest_buy_date"]
         latest_buy_window_label = stats["latest_buy_window_label"] or (
             format(latest_buy_date, "%Y-%m-%d") if latest_buy_date else ""
+        )
+        latest_sell_date = stats["latest_sell_date"]
+        latest_sell_window_label = stats["latest_sell_window_label"] or (
+            format(latest_sell_date, "%Y-%m-%d") if latest_sell_date else ""
         )
         if distinct_days_count >= 4 and latest_strategy_count >= 2:
             persistence_label = "Alta"
@@ -1436,15 +1599,31 @@ def build_scheduled_optimization_persistence_context(
                 "latest_buy_date_label": latest_buy_date.isoformat() if latest_buy_date else "",
                 "latest_buy_window_label": latest_buy_window_label,
                 "latest_buy_price": stats["latest_buy_price"],
+                "latest_sell_date": latest_sell_date,
+                "latest_sell_date_label": latest_sell_date.isoformat() if latest_sell_date else "",
+                "latest_sell_window_label": latest_sell_window_label,
+                "latest_sell_price": stats["latest_sell_price"],
+                "latest_interval_window_label": stats["latest_interval_window_label"],
+                "latest_interval_return_pct": stats["latest_interval_return_pct"],
+                "latest_holding_months": stats["latest_holding_months"],
                 "latest_allocated_amount": stats["latest_allocated_amount"],
                 "latest_allocated_weight_pct": stats["latest_allocated_weight_pct"],
                 "average_buy_price_3m": average_buy_price,
+                "average_sell_price_3m": average_sell_price,
                 "average_allocated_amount_3m": average_allocated_amount,
                 "average_allocated_weight_pct_3m": average_allocated_weight_pct,
+                "average_interval_return_pct_3m": average_interval_return_pct,
+                "average_holding_months_3m": average_holding_months,
                 "buy_dates_count_3m": len(sorted_buy_dates),
                 "buy_dates_sample_label": buy_dates_sample_label,
+                "sell_dates_count_3m": len(sorted_sell_dates),
+                "sell_dates_sample_label": sell_dates_sample_label,
                 "buy_window_labels_3m": sorted(stats["buy_window_labels_3m"]),
                 "buy_window_labels_3m_label": ", ".join(sorted(stats["buy_window_labels_3m"])) or "-",
+                "sell_window_labels_3m": sorted(stats["sell_window_labels_3m"]),
+                "sell_window_labels_3m_label": ", ".join(sorted(stats["sell_window_labels_3m"])) or "-",
+                "interval_window_labels_3m": sorted(stats["interval_window_labels_3m"]),
+                "interval_window_labels_3m_label": ", ".join(sorted(stats["interval_window_labels_3m"])) or "-",
                 "buy_modes_3m": sorted(stats["buy_modes_3m"]),
                 "buy_modes_3m_label": ", ".join(sorted(stats["buy_modes_3m"])) or "-",
                 "last_seen_on": stats["last_seen_on"],
@@ -1477,11 +1656,29 @@ def build_scheduled_optimization_persistence_context(
                 "available": True,
                 "ticker": row["ticker"],
                 "company_name": row["company_name"],
+                "entry_date": row.get("latest_buy_date"),
+                "entry_date_label": row.get("latest_buy_date_label", ""),
+                "entry_window_label": row.get("latest_buy_window_label", ""),
+                "entry_price": row.get("latest_buy_price"),
                 "buy_date": row.get("latest_buy_date"),
                 "buy_date_label": row.get("latest_buy_date_label", ""),
                 "buy_window_label": row.get("latest_buy_window_label", ""),
                 "buy_price": row.get("latest_buy_price"),
                 "average_buy_price": row.get("average_buy_price_3m"),
+                "exit_date": row.get("latest_sell_date"),
+                "exit_date_label": row.get("latest_sell_date_label", ""),
+                "exit_window_label": row.get("latest_sell_window_label", ""),
+                "exit_price": row.get("latest_sell_price"),
+                "sell_date": row.get("latest_sell_date"),
+                "sell_date_label": row.get("latest_sell_date_label", ""),
+                "sell_window_label": row.get("latest_sell_window_label", ""),
+                "sell_price": row.get("latest_sell_price"),
+                "average_sell_price": row.get("average_sell_price_3m"),
+                "interval_window_label": row.get("latest_interval_window_label", ""),
+                "interval_return_pct": row.get("latest_interval_return_pct"),
+                "average_interval_return_pct": row.get("average_interval_return_pct_3m"),
+                "holding_months": row.get("latest_holding_months"),
+                "average_holding_months": row.get("average_holding_months_3m"),
                 "allocated_amount": row.get("latest_allocated_amount"),
                 "average_allocated_amount": row.get("average_allocated_amount_3m"),
                 "allocated_weight_pct": row.get("latest_allocated_weight_pct"),
@@ -1490,8 +1687,10 @@ def build_scheduled_optimization_persistence_context(
                 "strategy_labels_3m_label": row.get("strategy_labels_3m_label", ""),
                 "summary": (
                     f"Aparece en {row.get('presence_pct_3m') or Decimal('0'):.0f} % de las optimizaciones "
-                    f"programadas y la ultima ventana de compra sale en "
-                    f"{(row.get('latest_buy_window_label') or row.get('latest_buy_date_label') or '').lower()}."
+                    f"programadas y el ultimo tramo 12M propone entrar en "
+                    f"{(row.get('latest_buy_window_label') or row.get('latest_buy_date_label') or '').lower()} "
+                    f"y salir en {(row.get('latest_sell_window_label') or row.get('latest_sell_date_label') or '').lower()}"
+                    f"{(' con %.1f %% estimado' % row.get('latest_interval_return_pct')) if row.get('latest_interval_return_pct') is not None else ''}."
                 ),
             }
             for row in rows

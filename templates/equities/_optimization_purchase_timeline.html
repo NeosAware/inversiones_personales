@@ -3,39 +3,39 @@
     <section class="equity-sale-gantt-shell" style="margin-top:18px;">
       <div class="equity-section-head">
         <div>
-          <p class="section-title">Agenda de compras {{ purchase_timeline.horizon_months }}M</p>
-          <h3 style="margin:0;">Gantt tactico de entradas e importe recomendado</h3>
-          <p style="margin:6px 0 0; color:#627380;">Cada barra marca la espera hasta la ventana de compra sugerida para la cartera optimizada. El pin fija la fecha estimada y el bloque final muestra el importe y el precio objetivo de entrada.</p>
+          <p class="section-title">Agenda visual de entradas 12M</p>
+          <h3 style="margin:0;">Entradas durante un ano, salidas cuando el tramo da mas</h3>
+          <p style="margin:6px 0 0; color:#627380;">La zona azul marca el ano de entradas. Si una barra sale de esa zona, la compra sigue siendo anual pero la venta objetivo se deja correr porque el recorrido esperado mejora.</p>
         </div>
-        <span class="pill">{{ purchase_timeline.scheduled_count }} compras | base {{ purchase_timeline.reference_date|date:"Y-m-d" }} a {{ purchase_timeline.horizon_end|date:"Y-m-d" }}</span>
+        <span class="pill">{{ purchase_timeline.scheduled_count }} ideas | entradas hasta {{ purchase_timeline.entry_horizon_end|date:"Y-m-d" }} | salidas hasta {{ purchase_timeline.horizon_end|date:"Y-m-d" }}</span>
       </div>
 
       <div class="equity-grid-4" style="margin-top:16px;">
         <div class="equity-box">
-          <span>Proxima compra</span>
+          <span>Proxima entrada</span>
           <strong>{% if purchase_timeline.next_row %}{{ purchase_timeline.next_row.ticker }}{% else %}-{% endif %}</strong>
           <small>
             {% if purchase_timeline.next_row %}
-              {{ purchase_timeline.next_row.buy_date|date:"Y-m-d" }} | {{ purchase_timeline.next_row.status_label }}
+              {{ purchase_timeline.next_row.entry_date|default:purchase_timeline.next_row.buy_date|date:"Y-m-d" }} | salida {{ purchase_timeline.next_row.exit_date|date:"Y-m-d" }}
             {% else %}
               Sin ventana cerrada
             {% endif %}
           </small>
         </div>
         <div class="equity-box">
-          <span>Compras <= 14 dias</span>
+          <span>Entradas <= 14 dias</span>
           <strong class="{% if purchase_timeline.immediate_count %}warn{% endif %}">{{ purchase_timeline.immediate_count }}</strong>
-          <small>{% if purchase_timeline.immediate_count %}Hay entradas para preparar ya.{% else %}No hay compras inmediatas por ahora.{% endif %}</small>
+          <small>{% if purchase_timeline.immediate_count %}Hay entradas para preparar ya.{% else %}No hay entradas inmediatas por ahora.{% endif %}</small>
         </div>
         <div class="equity-box">
-          <span>Capital planificado</span>
+          <span>Salidas > 12M</span>
+          <strong>{{ purchase_timeline.long_exit_count }}</strong>
+          <small>{% if purchase_timeline.long_exit_count %}Se dejan correr porque mejoran el tramo total.{% else %}Todas las salidas visibles caen dentro del primer ano.{% endif %}</small>
+        </div>
+        <div class="equity-box">
+          <span>Capital sugerido</span>
           <strong>{{ purchase_timeline.planned_amount_total|floatformat:0 }} EUR</strong>
-          <small>Suma visible de las compras con fecha propuesta.</small>
-        </div>
-        <div class="equity-box">
-          <span>Nuevas / ampliaciones</span>
-          <strong>{{ purchase_timeline.new_positions_count }} / {{ purchase_timeline.top_up_count }}</strong>
-          <small>Nuevas posiciones frente a compras sobre valores ya tenidos.</small>
+          <small>{{ purchase_timeline.new_positions_count }} nuevas y {{ purchase_timeline.top_up_count }} ampliaciones con tramo completo.</small>
         </div>
       </div>
 
@@ -43,30 +43,34 @@
         <div class="equity-sale-gantt-axis">
           <div class="equity-sale-gantt-axis-label">Accion</div>
           <div class="equity-sale-gantt-axis-track">
+            <div class="equity-sale-gantt-entry-zone" style="width:{{ purchase_timeline.entry_horizon_pct }}%;"></div>
             {% for marker in purchase_timeline.markers %}
               <span class="equity-sale-gantt-marker" style="left:{{ marker.left_pct }}%;">{{ marker.label }}</span>
             {% endfor %}
           </div>
-          <div class="equity-sale-gantt-axis-meta">Compra y valor</div>
+          <div class="equity-sale-gantt-axis-meta">Tramo e importe</div>
         </div>
 
         {% for row in purchase_timeline.rows %}
           <div class="equity-sale-gantt-row">
             <div class="equity-sale-gantt-label">
               <strong>{{ row.ticker }}</strong>
-              <span>{{ row.company_name }}</span>
+              <span>{{ row.company_name }}{% if row.extends_beyond_entry_window %} | salida larga{% endif %}</span>
             </div>
             <div class="equity-sale-gantt-track">
+              <div class="equity-sale-gantt-entry-zone" style="width:{{ purchase_timeline.entry_horizon_pct }}%;"></div>
               <div class="equity-sale-gantt-grid"></div>
               <div class="equity-sale-gantt-bar {{ row.status_key }}" style="left:{{ row.bar_left_pct }}%; width:{{ row.bar_width_pct }}%;"></div>
-              <div class="equity-sale-gantt-pin {{ row.status_key }}" style="left:{{ row.pin_left_pct }}%;"></div>
+              <div class="equity-sale-gantt-pin {{ row.status_key }}" style="left:{{ row.entry_pin_left_pct }}%;"></div>
+              <div class="equity-sale-gantt-pin end {{ row.status_key }}" style="left:{{ row.exit_pin_left_pct }}%;"></div>
             </div>
             <div class="equity-sale-gantt-meta">
               <strong>
                 {% if row.allocated_amount is not None %}{{ row.allocated_amount|floatformat:0 }} EUR{% else %}-{% endif %}
               </strong>
-              <span>{{ row.buy_window_label }}</span>
-              <small>{% if row.buy_price is not None %}{{ row.buy_price|floatformat:4 }} EUR{% else %}-{% endif %} | {{ row.buy_date|date:"Y-m-d" }}</small>
+              <span>{{ row.entry_window_label|default:row.buy_window_label }} -> {{ row.exit_window_label }}</span>
+              <small>{% if row.interval_return_pct is not None %}{{ row.interval_return_pct|floatformat:1 }} %{% elif row.expected_trade_return_pct is not None %}{{ row.expected_trade_return_pct|floatformat:1 }} %{% else %}-{% endif %}{% if row.holding_months %} | {{ row.holding_months }}M{% endif %} | {{ row.status_label }}</small>
+              <small>E {% if row.entry_price is not None %}{{ row.entry_price|floatformat:4 }} EUR{% elif row.buy_price is not None %}{{ row.buy_price|floatformat:4 }} EUR{% else %}-{% endif %} | S {% if row.exit_price is not None %}{{ row.exit_price|floatformat:4 }} EUR{% else %}-{% endif %}</small>
             </div>
           </div>
         {% endfor %}

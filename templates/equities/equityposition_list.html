@@ -1126,6 +1126,14 @@
       height:20px;
       border-bottom:1px solid #d9e5ed;
     }
+    .equity-sale-gantt-entry-zone{
+      position:absolute;
+      top:0;
+      bottom:0;
+      left:0;
+      border-radius:14px;
+      background:linear-gradient(90deg, rgba(75, 124, 168, .14) 0%, rgba(110, 156, 195, .08) 100%);
+    }
     .equity-sale-gantt-axis-label, .equity-sale-gantt-axis-meta{
       align-self:end;
     }
@@ -1207,12 +1215,25 @@
       border-radius:999px;
       background:currentColor;
     }
+    .equity-sale-gantt-pin.end{
+      top:6px;
+      height:20px;
+      width:3px;
+      margin-left:-1.5px;
+      box-shadow:0 0 0 2px rgba(255,255,255,.92);
+    }
+    .equity-sale-gantt-pin.end::after{
+      top:16px;
+      width:9px;
+      height:9px;
+      margin-left:-4.5px;
+    }
     .equity-sale-gantt-pin.scheduled, .equity-sale-gantt-pin.watch{ color:#17384e; }
     .equity-sale-gantt-pin.soon{ color:#b26b12; }
     .equity-sale-gantt-pin.urgent{ color:#bb4338; }
     .equity-sale-gantt-meta{
       display:grid;
-      gap:3px;
+      gap:2px;
       justify-items:end;
       text-align:right;
     }
@@ -1383,7 +1404,7 @@
                 <span class="equity-chip">Primera venta {{ analysis_overview.next_sale_recommendation.ticker }} {{ analysis_overview.next_sale_recommendation.sale_window_label }}</span>
               {% endif %}
               {% if next_purchase_recommendation.available %}
-                <span class="equity-chip">Primera compra {{ next_purchase_recommendation.ticker }} {{ next_purchase_recommendation.buy_window_label|default:next_purchase_recommendation.buy_date_label }}</span>
+                <span class="equity-chip">Primer tramo {{ next_purchase_recommendation.ticker }} {{ next_purchase_recommendation.buy_window_label|default:next_purchase_recommendation.buy_date_label }} -> {{ next_purchase_recommendation.sell_window_label|default:next_purchase_recommendation.exit_window_label|default:next_purchase_recommendation.sell_date_label|default:next_purchase_recommendation.exit_date_label }}</span>
               {% endif %}
               {% if nightly_analysis.available %}
                 <span class="equity-chip">Analisis exhaustivo {{ nightly_analysis.status_badge }}</span>
@@ -1420,7 +1441,7 @@
               La primera salida tactica sugerida hoy seria {{ analysis_overview.next_sale_recommendation.company_name }} en {{ analysis_overview.next_sale_recommendation.sale_window_label }}.
             {% endif %}
             {% if next_purchase_recommendation.available %}
-              La entrada nueva mas repetida ahora mismo es {{ next_purchase_recommendation.company_name }} con compra sugerida en {{ next_purchase_recommendation.buy_window_label|default:next_purchase_recommendation.buy_date_label }}.
+              La entrada nueva mas repetida ahora mismo es {{ next_purchase_recommendation.company_name }}: entrar en {{ next_purchase_recommendation.buy_window_label|default:next_purchase_recommendation.buy_date_label }} y salir en {{ next_purchase_recommendation.sell_window_label|default:next_purchase_recommendation.exit_window_label|default:next_purchase_recommendation.sell_date_label|default:next_purchase_recommendation.exit_date_label }}.
             {% endif %}
           </p>
         </div>
@@ -1456,32 +1477,37 @@
             {% endif %}
           </aside>
           <aside class="equity-sale-focus buy-mode {% if not next_purchase_recommendation.available %}empty{% endif %}">
-            <p class="section-title">{% if next_purchase_recommendation.available %}Primera compra tactica{% else %}Compra tactica{% endif %}</p>
+            <p class="section-title">{% if next_purchase_recommendation.available %}Primer tramo tactico{% else %}Plan tactico{% endif %}</p>
             {% if next_purchase_recommendation.available %}
               <h2 class="equity-sale-company">{{ next_purchase_recommendation.company_name }}</h2>
-              <div class="equity-sale-window">{{ next_purchase_recommendation.buy_window_label|default:next_purchase_recommendation.buy_date_label }}</div>
-              <div class="equity-sale-caption">{{ next_purchase_recommendation.ticker }} | mejor ventana para abrir o ampliar</div>
+              <div class="equity-sale-window">{{ next_purchase_recommendation.buy_window_label|default:next_purchase_recommendation.buy_date_label }} -> {{ next_purchase_recommendation.sell_window_label|default:next_purchase_recommendation.exit_window_label|default:next_purchase_recommendation.sell_date_label|default:next_purchase_recommendation.exit_date_label }}</div>
+              <div class="equity-sale-caption">{{ next_purchase_recommendation.ticker }} | mejor tramo anual para abrir o ampliar</div>
               <p class="equity-sale-summary">
-                {{ next_purchase_recommendation.summary|default:"La optimizacion esta concentrando nuevas compras en esta ventana para maximizar el retorno esperado." }}
+                {{ next_purchase_recommendation.summary|default:"La optimizacion esta concentrando nuevas compras en el tramo que mejor relacion entrada, salida y retorno esperado deja dentro del proximo ano." }}
               </p>
               <div class="equity-sale-meta">
                 <div class="equity-sale-metric">
-                  <span>Precio sugerido</span>
+                  <span>Entrada sugerida</span>
                   <strong>{% if next_purchase_recommendation.buy_price is not None %}{{ next_purchase_recommendation.buy_price|floatformat:4 }} EUR{% else %}-{% endif %}</strong>
-                  <small>{% if next_purchase_recommendation.presence_pct_3m is not None %}Presencia {{ next_purchase_recommendation.presence_pct_3m|floatformat:0 }} % en programadas.{% else %}Lectura de la ultima optimizacion guardada.{% endif %}</small>
+                  <small>{{ next_purchase_recommendation.buy_window_label|default:next_purchase_recommendation.buy_date_label }}.{% if next_purchase_recommendation.presence_pct_3m is not None %} Presencia {{ next_purchase_recommendation.presence_pct_3m|floatformat:0 }} % en programadas.{% else %} Lectura de la ultima optimizacion guardada.{% endif %}</small>
+                </div>
+                <div class="equity-sale-metric">
+                  <span>Salida prevista</span>
+                  <strong>{% if next_purchase_recommendation.sell_price is not None %}{{ next_purchase_recommendation.sell_price|floatformat:4 }} EUR{% elif next_purchase_recommendation.exit_price is not None %}{{ next_purchase_recommendation.exit_price|floatformat:4 }} EUR{% else %}-{% endif %}</strong>
+                  <small>{{ next_purchase_recommendation.sell_window_label|default:next_purchase_recommendation.exit_window_label|default:next_purchase_recommendation.sell_date_label|default:next_purchase_recommendation.exit_date_label }}.{% if next_purchase_recommendation.interval_return_pct is not None %} Tramo {{ next_purchase_recommendation.interval_return_pct|floatformat:1 }} %.{% elif next_purchase_recommendation.average_interval_return_pct is not None %} Media {{ next_purchase_recommendation.average_interval_return_pct|floatformat:1 }} %.{% endif %}</small>
                 </div>
                 <div class="equity-sale-metric">
                   <span>Importe sugerido</span>
-                  <strong>{% if next_purchase_recommendation.allocated_amount is not None %}{{ next_purchase_recommendation.allocated_amount|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-                  <small>{% if next_purchase_recommendation.allocated_weight_pct is not None %}Peso {{ next_purchase_recommendation.allocated_weight_pct|floatformat:1 }} %{% elif next_purchase_recommendation.strategy_labels_3m_label %}{{ next_purchase_recommendation.strategy_labels_3m_label }}{% else %}Se recalcula con cada optimizacion{% endif %}</small>
+                  <strong>{% if next_purchase_recommendation.allocated_amount is not None %}{{ next_purchase_recommendation.allocated_amount|floatformat:0 }} EUR{% elif next_purchase_recommendation.average_allocated_amount is not None %}{{ next_purchase_recommendation.average_allocated_amount|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
+                  <small>{% if next_purchase_recommendation.allocated_weight_pct is not None %}Peso {{ next_purchase_recommendation.allocated_weight_pct|floatformat:1 }} %{% elif next_purchase_recommendation.average_allocated_weight_pct is not None %}Peso medio {{ next_purchase_recommendation.average_allocated_weight_pct|floatformat:1 }} %{% elif next_purchase_recommendation.strategy_labels_3m_label %}{{ next_purchase_recommendation.strategy_labels_3m_label }}{% else %}Se recalcula con cada optimizacion{% endif %}{% if next_purchase_recommendation.holding_months %} | {{ next_purchase_recommendation.holding_months }}M{% elif next_purchase_recommendation.average_holding_months %} | {{ next_purchase_recommendation.average_holding_months|floatformat:1 }}M media{% endif %}</small>
                 </div>
               </div>
             {% else %}
-              <h2 class="equity-sale-company">Sin compra nueva prioritaria</h2>
+              <h2 class="equity-sale-company">Sin tramo nuevo prioritario</h2>
               <div class="equity-sale-window">Esperar siguiente optimizacion</div>
-              <div class="equity-sale-caption">No hay una entrada nueva con recurrencia suficiente</div>
+              <div class="equity-sale-caption">No hay un plan anual de entrada y salida con recurrencia suficiente</div>
               <p class="equity-sale-summary">
-                En cuanto una accion externa a la cartera empiece a repetirse en las optimizaciones y quede una fecha de compra clara, aparecera aqui con precio e importe.
+                En cuanto una accion externa a la cartera empiece a repetirse en las optimizaciones y quede un tramo anual claro, aparecera aqui con entrada, salida, precio e importe.
               </p>
             {% endif %}
           </aside>
@@ -1969,7 +1995,7 @@
               </div>
               <div class="equity-table-wrap equity-optimization-history" style="margin-top:18px;">
                 <table>
-                  <thead><tr><th>Referencia</th><th>Fecha</th><th>Estado</th><th>Restricciones</th><th>Ticket propuesto</th><th>Resultado</th><th>Acciones</th></tr></thead>
+                  <thead><tr><th>Referencia</th><th>Fecha</th><th>Estado</th><th>Restricciones</th><th>Plan propuesto</th><th>Resultado</th><th>Acciones</th></tr></thead>
                   <tbody>
                     {% for run in optimization_runs %}
                       <tr>
@@ -1990,7 +2016,7 @@
                               <span class="metric-sub">
                                 {% if item.company_name %}{{ item.company_name }}{% elif item.ticker %}{{ item.ticker }}{% else %}Valor sin nombre{% endif %}
                                 {% if item.allocated_weight_pct or item.allocated_weight_pct == 0 %} {{ item.allocated_weight_pct|floatformat:1 }} %{% endif %}
-                                {% if item.purchase_timing.available %}<br>Compra {{ item.purchase_timing.buy_window_label|default:item.purchase_timing.buy_date }}{% if item.purchase_timing.buy_price is not None %} | {{ item.purchase_timing.buy_price|floatformat:4 }} EUR{% endif %}{% endif %}
+                                {% if item.purchase_timing.available %}<br>Entrada {{ item.purchase_timing.buy_window_label|default:item.purchase_timing.buy_date }}{% if item.purchase_timing.buy_price is not None %} | {{ item.purchase_timing.buy_price|floatformat:4 }} EUR{% endif %}{% if item.purchase_timing.exit_window_label or item.purchase_timing.expected_exit_window_label or item.purchase_timing.exit_date or item.purchase_timing.expected_exit_date %}<br>Salida {% if item.purchase_timing.exit_window_label %}{{ item.purchase_timing.exit_window_label }}{% elif item.purchase_timing.expected_exit_window_label %}{{ item.purchase_timing.expected_exit_window_label }}{% elif item.purchase_timing.exit_date %}{{ item.purchase_timing.exit_date }}{% elif item.purchase_timing.expected_exit_date %}{{ item.purchase_timing.expected_exit_date }}{% endif %}{% endif %}{% endif %}
                               </span>{% if not forloop.last %}<br>{% endif %}
                             {% endfor %}
                             {% if run.allocations_data|length > 6 %}<br><span class="metric-sub">+{{ run.allocations_data|length|add:"-6" }} valor(es) adicionales</span>{% endif %}
@@ -2144,7 +2170,7 @@
               </div>
               <div class="equity-table-wrap equity-persistence-wrap" style="margin-top:18px;">
                 <table class="equity-persistence-table">
-                  <thead><tr><th>Empresa</th><th>Presencia 3 meses</th><th>Compra sugerida</th><th>Rentabilidad media</th><th>Margenes medios A&Ntilde;O 1-5</th><th>Fiabilidad</th><th>Gestion</th></tr></thead>
+                  <thead><tr><th>Empresa</th><th>Presencia 3 meses</th><th>Plan 12M sugerido</th><th>Rentabilidad media</th><th>Margenes medios A&Ntilde;O 1-5</th><th>Fiabilidad</th><th>Gestion</th></tr></thead>
                   <tbody>
                     {% for row in scheduled_optimization_persistence.rows %}
                       <tr>
@@ -2172,15 +2198,21 @@
                         <td>
                           <div class="equity-persistence-returns-grid">
                             <div class="equity-persistence-returns">
-                              <span>Ultima ventana</span>
+                              <span>Entrada</span>
                               <strong class="{% if row.currently_owned %}warn{% else %}good{% endif %}">{% if row.latest_buy_window_label %}{{ row.latest_buy_window_label }}{% elif row.latest_buy_date_label %}{{ row.latest_buy_date_label }}{% else %}-{% endif %}</strong>
+                              <span class="metric-sub">{% if row.latest_buy_price is not None %}{{ row.latest_buy_price|floatformat:4 }} EUR{% else %}-{% endif %}{% if row.latest_allocated_amount is not None %} | {{ row.latest_allocated_amount|floatformat:0 }} EUR{% elif row.average_allocated_amount_3m is not None %} | Media {{ row.average_allocated_amount_3m|floatformat:0 }} EUR{% endif %}</span>
                             </div>
                             <div class="equity-persistence-returns">
-                              <span>Precio / importe</span>
-                              <strong>{% if row.latest_buy_price is not None %}{{ row.latest_buy_price|floatformat:4 }} EUR{% else %}-{% endif %}</strong>
-                              <span class="metric-sub">{% if row.latest_allocated_amount is not None %}{{ row.latest_allocated_amount|floatformat:0 }} EUR{% elif row.average_allocated_amount_3m is not None %}Media {{ row.average_allocated_amount_3m|floatformat:0 }} EUR{% else %}Sin importe{% endif %}</span>
+                              <span>Salida</span>
+                              <strong>{% if row.latest_sell_window_label %}{{ row.latest_sell_window_label }}{% elif row.latest_sell_date_label %}{{ row.latest_sell_date_label }}{% else %}-{% endif %}</strong>
+                              <span class="metric-sub">{% if row.latest_sell_price is not None %}{{ row.latest_sell_price|floatformat:4 }} EUR{% else %}-{% endif %}{% if row.latest_holding_months %} | {{ row.latest_holding_months }}M{% elif row.average_holding_months_3m is not None %} | {{ row.average_holding_months_3m|floatformat:1 }}M media{% endif %}</span>
                             </div>
-                            <span class="metric-sub">Historico {{ row.buy_dates_sample_label }}.</span>
+                            <div class="equity-persistence-returns">
+                              <span>Tramo</span>
+                              <strong>{% if row.latest_interval_return_pct is not None %}{{ row.latest_interval_return_pct|floatformat:1 }} %{% elif row.average_interval_return_pct_3m is not None %}{{ row.average_interval_return_pct_3m|floatformat:1 }} %{% else %}-{% endif %}</strong>
+                              <span class="metric-sub">{% if row.latest_interval_window_label %}{{ row.latest_interval_window_label }}{% elif row.interval_window_labels_3m_label %}{{ row.interval_window_labels_3m_label }}{% else %}Sin tramo repetido{% endif %}</span>
+                            </div>
+                            <span class="metric-sub">Historico entradas {{ row.buy_dates_sample_label }} | salidas {{ row.sell_dates_sample_label }}.</span>
                           </div>
                         </td>
                         <td>
@@ -2252,7 +2284,7 @@
               {% if latest_completed_optimization.summary_data.methodology_note %}
                 <div class="equity-compact-note" style="margin-top:16px;">
                   {{ latest_completed_optimization.summary_data.methodology_note }}
-                  {% if latest_completed_optimization.summary_data.top_pick_name %} La mejor idea de la ultima ejecucion fue <strong>{{ latest_completed_optimization.summary_data.top_pick_name }}</strong>{% if latest_completed_optimization.summary_data.top_pick_buy_window_label %}, con entrada sugerida en <strong>{{ latest_completed_optimization.summary_data.top_pick_buy_window_label }}</strong>{% endif %}.{% endif %}
+                  {% if latest_completed_optimization.summary_data.top_pick_name %} La mejor idea de la ultima ejecucion fue <strong>{{ latest_completed_optimization.summary_data.top_pick_name }}</strong>{% if latest_completed_optimization.summary_data.top_pick_buy_window_label %}, con entrada sugerida en <strong>{{ latest_completed_optimization.summary_data.top_pick_buy_window_label }}</strong>{% endif %}{% if latest_completed_optimization.summary_data.top_pick_exit_window_label %} y salida en <strong>{{ latest_completed_optimization.summary_data.top_pick_exit_window_label }}</strong>{% endif %}{% if latest_completed_optimization.summary_data.top_pick_interval_return_pct is not None %}, dejando un tramo estimado de <strong>{{ latest_completed_optimization.summary_data.top_pick_interval_return_pct|floatformat:1 }} %</strong>{% endif %}.{% endif %}
                 </div>
               {% endif %}
               {% include "equities/_optimization_purchase_timeline.html" %}
@@ -2281,7 +2313,7 @@
               {% if latest_completed_optimization.allocations_data %}
                 <div class="equity-table-wrap" style="margin-top:18px;">
                   <table>
-                    <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Referencia</th><th>Compra sugerida</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
+                    <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Plan 12M</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
                     <tbody>
                       {% for item in latest_completed_optimization.allocations_data %}
                         <tr>
@@ -2294,8 +2326,9 @@
                           <td>
                             {% if item.purchase_timing.available %}
                               <strong>{{ item.purchase_timing.buy_window_label|default:item.purchase_timing.buy_date }}</strong>
-                              <br><span class="metric-sub">{% if item.purchase_timing.buy_price is not None %}{{ item.purchase_timing.buy_price|floatformat:4 }} EUR{% else %}Sin precio{% endif %}</span>
-                              <br><span class="metric-sub">{{ item.purchase_timing.mode_label }}{% if item.purchase_timing.expected_trade_return_pct is not None %} | {{ item.purchase_timing.expected_trade_return_pct|floatformat:1 }} %{% endif %}</span>
+                              <br><span class="metric-sub">Entrada {% if item.purchase_timing.buy_price is not None %}{{ item.purchase_timing.buy_price|floatformat:4 }} EUR{% else %}Sin precio{% endif %}</span>
+                              <br><span class="metric-sub">Salida {% if item.purchase_timing.exit_window_label %}{{ item.purchase_timing.exit_window_label }}{% elif item.purchase_timing.expected_exit_window_label %}{{ item.purchase_timing.expected_exit_window_label }}{% elif item.purchase_timing.exit_date %}{{ item.purchase_timing.exit_date }}{% elif item.purchase_timing.expected_exit_date %}{{ item.purchase_timing.expected_exit_date }}{% else %}-{% endif %}{% if item.purchase_timing.exit_price is not None %} | {{ item.purchase_timing.exit_price|floatformat:4 }} EUR{% elif item.purchase_timing.expected_exit_price is not None %} | {{ item.purchase_timing.expected_exit_price|floatformat:4 }} EUR{% endif %}</span>
+                              <br><span class="metric-sub">{{ item.purchase_timing.mode_label }}{% if item.purchase_timing.interval_return_pct is not None %} | {{ item.purchase_timing.interval_return_pct|floatformat:1 }} %{% elif item.purchase_timing.expected_trade_return_pct is not None %} | {{ item.purchase_timing.expected_trade_return_pct|floatformat:1 }} %{% endif %}{% if item.purchase_timing.holding_months %} | {{ item.purchase_timing.holding_months }}M{% elif item.purchase_timing.expected_holding_months %} | {{ item.purchase_timing.expected_holding_months }}M{% endif %}</span>
                             {% else %}
                               <span class="metric-sub">Sin ventana clara</span>
                             {% endif %}

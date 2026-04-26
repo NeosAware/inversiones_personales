@@ -5361,10 +5361,16 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(run.summary_data["top_pick_name"], "Iberdrola")
         self.assertTrue(run.summary_data["top_pick_buy_window_label"])
         self.assertIsNotNone(run.summary_data["top_pick_buy_price"])
+        self.assertTrue(run.summary_data["top_pick_exit_window_label"])
+        self.assertIsNotNone(run.summary_data["top_pick_exit_price"])
+        self.assertIsNotNone(run.summary_data["top_pick_interval_return_pct"])
         self.assertIsNone(run.summary_data["weighted_cycle_return_annual_pct"])
         self.assertTrue(run.allocations_data[0]["purchase_timing"]["available"])
         self.assertTrue(run.allocations_data[0]["purchase_timing"]["buy_window_label"])
         self.assertIsNotNone(run.allocations_data[0]["purchase_timing"]["buy_price"])
+        self.assertTrue(run.allocations_data[0]["purchase_timing"]["exit_window_label"])
+        self.assertIsNotNone(run.allocations_data[0]["purchase_timing"]["exit_price"])
+        self.assertIsNotNone(run.allocations_data[0]["purchase_timing"]["interval_return_pct"])
         self.assertEqual(run.progress_data["percent"], 100)
         self.assertEqual(run.progress_data["note"], "Optimizacion completada")
         self.assertEqual(run.progress_data["stage_key"], "report")
@@ -5618,6 +5624,12 @@ class EquitiesServicesTests(TestCase):
                                 "buy_date": (analysis_day + timedelta(days=30)).isoformat(),
                                 "buy_window_label": f"mayo {analysis_day.year}",
                                 "buy_price": 10.45,
+                                "exit_date": (analysis_day + timedelta(days=365)).isoformat(),
+                                "exit_window_label": f"abril {analysis_day.year + 1}",
+                                "exit_price": 11.68,
+                                "interval_window_label": f"mayo {analysis_day.year} -> abril {analysis_day.year + 1}",
+                                "interval_return_pct": 11.6,
+                                "holding_months": 11,
                                 "mode_label": "Esperar correccion",
                             },
                             "cycle_yearly_margins": [
@@ -5643,6 +5655,12 @@ class EquitiesServicesTests(TestCase):
                                 "buy_date": (analysis_day + timedelta(days=18)).isoformat(),
                                 "buy_window_label": f"mayo {analysis_day.year}",
                                 "buy_price": 13.10,
+                                "exit_date": (analysis_day + timedelta(days=300)).isoformat(),
+                                "exit_window_label": f"febrero {analysis_day.year + 1}",
+                                "exit_price": 14.25,
+                                "interval_window_label": f"mayo {analysis_day.year} -> febrero {analysis_day.year + 1}",
+                                "interval_return_pct": 7.4,
+                                "holding_months": 9,
                                 "mode_label": "Comprar ya",
                             },
                             "cycle_yearly_margins": [
@@ -5665,6 +5683,12 @@ class EquitiesServicesTests(TestCase):
                                 "buy_date": (analysis_day + timedelta(days=12)).isoformat(),
                                 "buy_window_label": f"mayo {analysis_day.year}",
                                 "buy_price": 39.25,
+                                "exit_date": (analysis_day + timedelta(days=210)).isoformat(),
+                                "exit_window_label": f"noviembre {analysis_day.year}",
+                                "exit_price": 43.50,
+                                "interval_window_label": f"mayo {analysis_day.year} -> noviembre {analysis_day.year}",
+                                "interval_return_pct": 10.8,
+                                "holding_months": 6,
                                 "mode_label": "Comprar ya",
                             },
                             "cycle_yearly_margins": [
@@ -5703,6 +5727,9 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(top_row["average_reliability_score_3m"], Decimal("80.0"))
         self.assertTrue(top_row["buy_recommendation_available"])
         self.assertEqual(top_row["average_buy_price_3m"], Decimal("10.4500"))
+        self.assertEqual(top_row["average_sell_price_3m"], Decimal("11.6800"))
+        self.assertEqual(top_row["latest_sell_window_label"], f"abril {today.year + 1}")
+        self.assertEqual(top_row["average_interval_return_pct_3m"], Decimal("11.6"))
         self.assertEqual(top_row["average_allocated_amount_3m"], Decimal("25000.00"))
         self.assertEqual([item["ticker"] for item in context["rows"][:3]], ["IBE", "ACS", "REP"])
         self.assertEqual(
@@ -5711,6 +5738,8 @@ class EquitiesServicesTests(TestCase):
         )
         self.assertTrue(context["top_non_owned_recommendation"]["available"])
         self.assertEqual(context["top_non_owned_recommendation"]["ticker"], "ACS")
+        self.assertEqual(context["top_non_owned_recommendation"]["sell_window_label"], f"noviembre {today.year}")
+        self.assertEqual(context["top_non_owned_recommendation"]["interval_return_pct"], Decimal("10.8"))
 
     def test_dashboard_can_extend_optimizer_to_full_ibex_universe(self):
         acerinox = find_equity_company_profile("Acerinox")
@@ -7528,10 +7557,90 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(len(plan["allocations"]), 1)
         purchase_timing = plan["allocations"][0]["purchase_timing"]
         self.assertTrue(purchase_timing["available"])
-        self.assertGreaterEqual(purchase_timing["buy_month_number"], 1)
+        self.assertEqual(purchase_timing["buy_month_number"], 3)
         self.assertTrue(purchase_timing["buy_window_label"])
         self.assertIsNotNone(purchase_timing["buy_price"])
+        self.assertEqual(purchase_timing["exit_month_number"], 12)
+        self.assertTrue(purchase_timing["exit_window_label"])
+        self.assertIsNotNone(purchase_timing["exit_price"])
+        self.assertEqual(purchase_timing["holding_months"], 9)
+        self.assertIsNotNone(purchase_timing["interval_return_pct"])
         self.assertEqual(plan["top_pick_purchase_timing"]["buy_window_label"], purchase_timing["buy_window_label"])
+        self.assertEqual(plan["top_pick_purchase_timing"]["exit_window_label"], purchase_timing["exit_window_label"])
+
+    def test_optimizer_plan_keeps_entry_within_12m_and_allows_later_exit_when_cycle_improves(self):
+        anchor_day = date(2026, 4, 25)
+        card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                broker="Interactive Brokers",
+                ticker="ACS",
+                quote_symbol="ACS.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="ACS",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("40.0000"),
+                latest_price_date=anchor_day,
+            ),
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "sector_label": "Infraestructuras",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": "Tendencia favorable."},
+            "projection_reliability": {"label": "Alta", "score": Decimal("84.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("14.50"),
+                "price_return_pct": Decimal("11.00"),
+                "price_low_return_pct": Decimal("-3.00"),
+                "price_high_return_pct": Decimal("18.00"),
+                "projected_price": Decimal("46.2000"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("76.00"),
+                "gross_dividend_yield_pct": Decimal("3.00"),
+                "net_income_yield_pct": Decimal("2.40"),
+                "transaction_drag_pct": Decimal("0.80"),
+                "annualized_volatility_pct": Decimal("12.00"),
+                "positive_year_ratio_pct": Decimal("70.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.50"),
+                "max_drawdown_pct": Decimal("-18.00"),
+                "latest_date": anchor_day,
+                "latest_price": Decimal("40.0000"),
+                "monthly_path": [
+                    {"label": "1M", "projected_date": anchor_day + timedelta(days=30), "projected_price": Decimal("39.1000")},
+                    {"label": "3M", "projected_date": anchor_day + timedelta(days=90), "projected_price": Decimal("37.8000")},
+                    {"label": "6M", "projected_date": anchor_day + timedelta(days=180), "projected_price": Decimal("42.9000")},
+                    {"label": "9M", "projected_date": anchor_day + timedelta(days=270), "projected_price": Decimal("44.8000")},
+                    {"label": "12M", "projected_date": anchor_day + timedelta(days=365), "projected_price": Decimal("46.2000")},
+                ],
+            },
+            "cycle_projection_5y": {
+                "available": True,
+                "path": [
+                    {"label": "6M", "projected_date": anchor_day + timedelta(days=180), "projected_price": Decimal("38.4000")},
+                    {"label": "12M", "projected_date": anchor_day + timedelta(days=365), "projected_price": Decimal("42.5000")},
+                    {"label": "24M", "projected_date": anchor_day + timedelta(days=730), "projected_price": Decimal("56.5000")},
+                    {"label": "36M", "projected_date": anchor_day + timedelta(days=1095), "projected_price": Decimal("61.0000")},
+                ],
+            },
+        }
+
+        plan = build_equity_allocation_plan([card], Decimal("80000"), Decimal("40"))
+
+        self.assertTrue(plan["available"])
+        purchase_timing = plan["allocations"][0]["purchase_timing"]
+        self.assertTrue(purchase_timing["available"])
+        self.assertLessEqual(purchase_timing["entry_month_number"], 12)
+        self.assertGreater(purchase_timing["exit_month_number"], 12)
+        self.assertEqual(purchase_timing["analysis_basis_key"], "cycle_5y")
+        self.assertEqual(purchase_timing["plan_horizon_months"], 12)
+        self.assertEqual(purchase_timing["entry_horizon_months"], 12)
+        self.assertGreaterEqual(purchase_timing["exit_horizon_months"], purchase_timing["exit_month_number"])
+        self.assertIn("mas alla del ano de entrada", purchase_timing["summary"])
 
 @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=False, EQUITIES_IBEX_UNIVERSE_ANALYSIS=False)
 @override_settings(EQUITIES_FETCH_FUNDAMENTALS=False)
@@ -9017,7 +9126,7 @@ class EquitiesViewTests(TestCase):
         response = self.client.get(reverse("equities:list"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Ticket propuesto")
+        self.assertContains(response, "Plan propuesto")
         self.assertContains(response, "Iberdrola")
         self.assertContains(response, "35,0 %")
         self.assertContains(response, "Repsol")
@@ -9063,6 +9172,12 @@ class EquitiesViewTests(TestCase):
                         "buy_date": (scheduled_day + timedelta(days=12)).isoformat(),
                         "buy_window_label": "mayo 2026",
                         "buy_price": 39.25,
+                        "exit_date": (scheduled_day + timedelta(days=220)).isoformat(),
+                        "exit_window_label": "noviembre 2026",
+                        "exit_price": 43.80,
+                        "interval_window_label": "mayo 2026 -> noviembre 2026",
+                        "interval_return_pct": 11.6,
+                        "holding_months": 7,
                         "mode_label": "Comprar ya",
                     },
                     "cycle_yearly_margins": [
@@ -9090,6 +9205,9 @@ class EquitiesViewTests(TestCase):
                 "top_pick_name": "ACS",
                 "top_pick_buy_window_label": "mayo 2026",
                 "top_pick_buy_price": 39.25,
+                "top_pick_exit_window_label": "noviembre 2026",
+                "top_pick_exit_price": 43.80,
+                "top_pick_interval_return_pct": 11.6,
             },
             allocations_data=[
                 {
@@ -9113,6 +9231,12 @@ class EquitiesViewTests(TestCase):
                         "buy_date": (timezone.localdate() + timedelta(days=10)).isoformat(),
                         "buy_window_label": "mayo 2026",
                         "buy_price": 39.25,
+                        "exit_date": (timezone.localdate() + timedelta(days=220)).isoformat(),
+                        "exit_window_label": "noviembre 2026",
+                        "exit_price": 43.80,
+                        "interval_window_label": "mayo 2026 -> noviembre 2026",
+                        "interval_return_pct": 11.6,
+                        "holding_months": 7,
                         "mode_label": "Comprar ya",
                         "expected_trade_return_pct": 11.4,
                     },
@@ -9123,9 +9247,10 @@ class EquitiesViewTests(TestCase):
         response = self.client.get(reverse("equities:list"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Primera compra tactica")
+        self.assertContains(response, "Primer tramo tactico")
         self.assertContains(response, "mayo 2026")
-        self.assertContains(response, "Gantt tactico de entradas e importe recomendado")
+        self.assertContains(response, "noviembre 2026")
+        self.assertContains(response, "Entradas durante un ano, salidas cuando el tramo da mas")
         self.assertContains(response, "39,2500 EUR")
 
     def helper_equities_page_shows_scheduled_optimization_persistence_panel_legacy(self):

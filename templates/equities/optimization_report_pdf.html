@@ -56,7 +56,7 @@
         <td><strong>Max peso por empresa</strong><br>{{ plan.max_company_pct|floatformat:1 }} %</td>
         <td><strong>Max total de empresas</strong><br>{% if plan.max_total_positions %}{{ plan.max_total_positions }}{% else %}Sin limite{% endif %}</td>
         <td><strong>Max por sector</strong><br>{% if plan.max_sector_positions %}{{ plan.max_sector_positions }}{% else %}Sin limite{% endif %}</td>
-        <td><strong>Valores elegidos</strong><br>{{ plan.allocations|length }}<br><span class="small">{{ dashboard.ibex_universe_summary.analyzed_count }} del IBEX analizados{% if plan.top_pick_purchase_timing.buy_window_label %}. Top pick compra {{ plan.top_pick_purchase_timing.buy_window_label }}{% endif %}</span></td>
+        <td><strong>Valores elegidos</strong><br>{{ plan.allocations|length }}<br><span class="small">{{ dashboard.ibex_universe_summary.analyzed_count }} del IBEX analizados{% if plan.top_pick_purchase_timing.buy_window_label %}. Top pick entra {{ plan.top_pick_purchase_timing.buy_window_label }}{% endif %}{% if plan.top_pick_purchase_timing.exit_window_label %} y sale {{ plan.top_pick_purchase_timing.exit_window_label }}{% endif %}</span></td>
       </tr>
       <tr>
         <td colspan="4"><strong>Sectores permitidos</strong><br>{% if plan.selected_sectors %}{{ plan.selected_sectors|join:", " }}{% else %}Todos los sectores del IBEX{% endif %}</td>
@@ -105,7 +105,7 @@
           <th>Orden</th>
           <th>Empresa</th>
           <th>Sector</th>
-          <th>Compra sugerida</th>
+          <th>Plan 12M</th>
           <th>Peso</th>
           <th>Importe</th>
           <th>Retorno neto</th>
@@ -119,7 +119,7 @@
             <td>{{ item.rank }}</td>
             <td><strong>{{ item.position.company_name }}</strong><br><span class="muted">{{ item.position.ticker }} | {{ item.trade_alert_label }}{% if item.cycle_return_annual_pct is not None %} | 5A anual {{ item.cycle_return_annual_pct|floatformat:2 }} %{% endif %}</span></td>
             <td>{{ item.sector_label }}</td>
-            <td>{% if item.purchase_timing.available %}{% if item.purchase_timing.buy_window_label %}{{ item.purchase_timing.buy_window_label }}{% elif item.purchase_timing.buy_date %}{{ item.purchase_timing.buy_date|date:"Y-m-d" }}{% else %}-{% endif %}<br><span class="small">{% if item.purchase_timing.buy_price is not None %}{{ item.purchase_timing.buy_price|floatformat:4 }} EUR{% endif %}</span>{% else %}-{% endif %}</td>
+            <td>{% if item.purchase_timing.available %}{% if item.purchase_timing.buy_window_label %}{{ item.purchase_timing.buy_window_label }}{% elif item.purchase_timing.buy_date %}{{ item.purchase_timing.buy_date|date:"Y-m-d" }}{% else %}-{% endif %}<br><span class="small">E {% if item.purchase_timing.buy_price is not None %}{{ item.purchase_timing.buy_price|floatformat:4 }} EUR{% endif %}</span><br><span class="small">S {% if item.purchase_timing.exit_window_label %}{{ item.purchase_timing.exit_window_label }}{% elif item.purchase_timing.expected_exit_window_label %}{{ item.purchase_timing.expected_exit_window_label }}{% elif item.purchase_timing.exit_date %}{{ item.purchase_timing.exit_date }}{% elif item.purchase_timing.expected_exit_date %}{{ item.purchase_timing.expected_exit_date }}{% else %}-{% endif %}{% if item.purchase_timing.exit_price is not None %} | {{ item.purchase_timing.exit_price|floatformat:4 }} EUR{% elif item.purchase_timing.expected_exit_price is not None %} | {{ item.purchase_timing.expected_exit_price|floatformat:4 }} EUR{% endif %}</span>{% else %}-{% endif %}</td>
             <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>
             <td>{{ item.allocated_amount|floatformat:0 }} EUR</td>
             <td class="{% if item.net_projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ item.net_projected_return_pct|floatformat:2 }} %</td>
@@ -140,7 +140,7 @@
         <table class="metric-grid">
           <tr>
             <td><span class="metric-label">Peso sugerido</span><span class="metric-value">{{ entry.allocation.allocated_weight_pct|floatformat:1 }} %</span><span class="small">{{ entry.allocation.allocated_amount|floatformat:0 }} EUR</span></td>
-            <td><span class="metric-label">Compra sugerida</span><span class="metric-value">{% if entry.allocation.purchase_timing.available %}{% if entry.allocation.purchase_timing.buy_window_label %}{{ entry.allocation.purchase_timing.buy_window_label }}{% elif entry.allocation.purchase_timing.buy_date %}{{ entry.allocation.purchase_timing.buy_date|date:"Y-m-d" }}{% else %}-{% endif %}{% else %}-{% endif %}</span><span class="small">{% if entry.allocation.purchase_timing.buy_price is not None %}{{ entry.allocation.purchase_timing.buy_price|floatformat:4 }} EUR{% endif %}</span></td>
+            <td><span class="metric-label">Plan 12M</span><span class="metric-value">{% if entry.allocation.purchase_timing.available %}{% if entry.allocation.purchase_timing.buy_window_label %}{{ entry.allocation.purchase_timing.buy_window_label }}{% elif entry.allocation.purchase_timing.buy_date %}{{ entry.allocation.purchase_timing.buy_date|date:"Y-m-d" }}{% else %}-{% endif %}{% else %}-{% endif %}</span><span class="small">{% if entry.allocation.purchase_timing.buy_price is not None %}{{ entry.allocation.purchase_timing.buy_price|floatformat:4 }} EUR{% endif %}{% if entry.allocation.purchase_timing.exit_window_label %} | salida {{ entry.allocation.purchase_timing.exit_window_label }}{% elif entry.allocation.purchase_timing.expected_exit_window_label %} | salida {{ entry.allocation.purchase_timing.expected_exit_window_label }}{% endif %}</span></td>
             <td><span class="metric-label">Retorno neto 12M</span><span class="metric-value {% if entry.allocation.net_projected_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ entry.allocation.net_projected_return_pct|floatformat:2 }} %</span><span class="small">Peor escenario {{ entry.allocation.low_return_pct|floatformat:2 }} %</span></td>
             <td><span class="metric-label">Dividendos netos</span><span class="metric-value">{{ entry.allocation.expected_net_dividend_income|floatformat:0 }} EUR</span><span class="small">Coste anual {{ entry.allocation.annual_cost_used|floatformat:0 }} EUR</span></td>
             <td><span class="metric-label">Seguridad / fiabilidad</span><span class="metric-value">{{ entry.allocation.safety_score|floatformat:0 }}/100</span><span class="small">{{ entry.allocation.reliability_label }}{% if entry.allocation.cycle_return_annual_pct is not None %} | Ciclo 5A {{ entry.allocation.cycle_return_annual_pct|floatformat:2 }} % anual{% endif %}</span></td>
