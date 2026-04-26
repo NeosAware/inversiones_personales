@@ -10367,6 +10367,30 @@ class EquitiesViewTests(TestCase):
         self.assertNotContains(response, f'id="stock-tab-{owned.id}"', html=False)
         self.assertIn(f'href="#tracked-ticket-{owned.id}"', page)
 
+    def test_equities_page_groups_major_sections_into_page_tabs(self):
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-equity-page-tabs', html=False)
+        self.assertContains(response, 'id="equity-page-tab-cartera"', html=False)
+        self.assertContains(response, 'id="equity-page-tab-mercado"', html=False)
+        self.assertContains(response, 'id="equity-page-tab-optimizacion"', html=False)
+        self.assertContains(response, 'id="equity-page-tab-seguimiento"', html=False)
+        self.assertContains(response, 'id="equity-page-tab-operativa"', html=False)
+        self.assertContains(response, 'id="equity-view-cartera"', html=False)
+        self.assertContains(response, 'id="equity-view-mercado"', html=False)
+        self.assertContains(response, 'id="equity-view-optimizacion"', html=False)
+        self.assertContains(response, 'id="equity-view-seguimiento"', html=False)
+        self.assertContains(response, 'id="equity-view-operativa"', html=False)
+        self.assertContains(response, 'id="equity-decision"', html=False)
+        self.assertContains(response, 'id="equity-optimizer"', html=False)
+        self.assertContains(response, 'id="equity-ops"', html=False)
+        self.assertContains(response, "Cartera")
+        self.assertContains(response, "Mercado")
+        self.assertContains(response, "Optimizacion")
+        self.assertContains(response, "Seguimiento")
+        self.assertContains(response, "Operativa")
+
     def test_equities_page_renders_investment_journey_section(self):
         active = EquityPosition.objects.create(
             ownership_category=AssetOwnershipCategory.JOINT,

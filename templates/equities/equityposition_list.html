@@ -1089,6 +1089,73 @@
     .equity-fold summary::-webkit-details-marker, .equity-inline-fold summary::-webkit-details-marker{ display:none; }
     .equity-fold-body{ padding:0 22px 22px; display:grid; gap:18px; }
     .equity-stock-list{ display:grid; gap:18px; }
+    .equity-page-tabs-shell{
+      display:grid;
+      gap:20px;
+    }
+    .equity-page-tabs{
+      position:sticky;
+      top:16px;
+      z-index:14;
+      display:grid;
+      grid-template-columns:repeat(5, minmax(0, 1fr));
+      gap:12px;
+      padding:14px;
+      border-radius:26px;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.92);
+      backdrop-filter:blur(14px);
+      box-shadow:0 18px 34px rgba(18,37,53,.08);
+    }
+    .equity-page-tab{
+      padding:14px 16px;
+      border-radius:18px;
+      border:1px solid var(--line);
+      background:linear-gradient(180deg, #ffffff 0%, #f7fafc 100%);
+      color:var(--ink);
+      text-align:left;
+      cursor:pointer;
+      display:grid;
+      gap:6px;
+      box-shadow:0 10px 22px rgba(18,37,53,.04);
+      transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+    }
+    .equity-page-tab:hover{
+      transform:translateY(-1px);
+      box-shadow:0 14px 28px rgba(18,37,53,.08);
+    }
+    .equity-page-tab:focus-visible{
+      outline:2px solid #7aa8c7;
+      outline-offset:2px;
+    }
+    .equity-page-tab[aria-selected="true"]{
+      border-color:#b9d3e4;
+      background:linear-gradient(180deg, #ffffff 0%, #eef6fd 100%);
+      box-shadow:0 18px 34px rgba(16,56,77,.08);
+    }
+    .equity-page-tab strong{
+      display:block;
+      font-size:17px;
+      line-height:1.1;
+    }
+    .equity-page-tab span{
+      display:block;
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.35;
+    }
+    .equity-page-panels{
+      display:grid;
+      gap:24px;
+    }
+    .equity-page-panel{
+      display:grid;
+      gap:24px;
+      scroll-margin-top:120px;
+    }
+    .equity-page-panel[hidden]{
+      display:none;
+    }
     .equity-stock-tabs-shell{ display:grid; gap:18px; }
     .equity-stock-panels{ display:grid; gap:18px; }
     .equity-stock-tabs{
@@ -1505,6 +1572,7 @@
     }
     @media (max-width: 1180px){
       .equity-hero-layout, .equity-kpis, .equity-grid-2, .equity-grid-4, .equity-board, .equity-detail-grid, .equity-candidate-grid, .equity-chart-grid, .equity-progress-events, .equity-preview-columns, .equity-cost-strip{ grid-template-columns:1fr; }
+      .equity-page-tabs{ grid-template-columns:repeat(2, minmax(0,1fr)); top:12px; }
       .equity-horizon-strip{ grid-template-columns:repeat(2, minmax(0,1fr)); }
       .equity-hero-top, .equity-panel-head, .equity-toolbar, .equity-stock-summary, .equity-detail-head, .equity-section-head{ flex-direction:column; }
       .equity-chart-head{ flex-direction:column; }
@@ -1518,6 +1586,9 @@
         justify-items:start;
         text-align:left;
       }
+    }
+    @media (max-width: 760px){
+      .equity-page-tabs{ grid-template-columns:1fr; }
     }
   </style>
 
@@ -1671,15 +1742,97 @@
       </div>
     </section>
 
-    {% if ticket_tracking.available %}
-      {% include "equities/_ticket_tracking_panel.html" %}
-    {% endif %}
+    <div class="equity-page-tabs-shell" data-equity-page-tabs>
+      <div class="equity-page-tabs" role="tablist" aria-label="Areas de acciones">
+        <button
+          type="button"
+          class="equity-page-tab"
+          id="equity-page-tab-cartera"
+          data-page-tab="cartera"
+          role="tab"
+          aria-selected="true"
+          aria-controls="equity-view-cartera"
+        >
+          <strong>Cartera</strong>
+          <span>Graficos clave, negocio, tickets y riesgo conjunto.</span>
+        </button>
+        <button
+          type="button"
+          class="equity-page-tab"
+          id="equity-page-tab-mercado"
+          data-page-tab="mercado"
+          role="tab"
+          aria-selected="false"
+          aria-controls="equity-view-mercado"
+        >
+          <strong>Mercado</strong>
+          <span>Mesa de decision y radar completo del IBEX.</span>
+        </button>
+        <button
+          type="button"
+          class="equity-page-tab"
+          id="equity-page-tab-optimizacion"
+          data-page-tab="optimizacion"
+          role="tab"
+          aria-selected="false"
+          aria-controls="equity-view-optimizacion"
+        >
+          <strong>Optimizacion</strong>
+          <span>Agenda de compras, historico y simulaciones.</span>
+        </button>
+        <button
+          type="button"
+          class="equity-page-tab"
+          id="equity-page-tab-seguimiento"
+          data-page-tab="seguimiento"
+          role="tab"
+          aria-selected="false"
+          aria-controls="equity-view-seguimiento"
+        >
+          <strong>Seguimiento</strong>
+          <span>Analisis completos de valores aun no comprados.</span>
+        </button>
+        <button
+          type="button"
+          class="equity-page-tab"
+          id="equity-page-tab-operativa"
+          data-page-tab="operativa"
+          role="tab"
+          aria-selected="false"
+          aria-controls="equity-view-operativa"
+        >
+          <strong>Operativa</strong>
+          <span>Guia, importacion, altas y sincronizacion.</span>
+        </button>
+      </div>
+      <div class="equity-page-panels">
+        <section
+          class="equity-page-panel"
+          id="equity-view-cartera"
+          data-page-panel="cartera"
+          role="tabpanel"
+          aria-labelledby="equity-page-tab-cartera"
+        >
 
-    {% if portfolio_correlation.available %}
-      {% include "equities/_portfolio_correlation_panel.html" %}
-    {% endif %}
+          {% if ticket_tracking.available %}
+            {% include "equities/_ticket_tracking_panel.html" %}
+          {% endif %}
 
-    {% include "equities/_portfolio_focus_stack.html" %}
+          {% if portfolio_correlation.available %}
+            {% include "equities/_portfolio_correlation_panel.html" %}
+          {% endif %}
+
+          {% include "equities/_portfolio_focus_stack.html" %}
+        </section>
+
+        <section
+          class="equity-page-panel"
+          id="equity-view-mercado"
+          data-page-panel="mercado"
+          role="tabpanel"
+          aria-labelledby="equity-page-tab-mercado"
+          hidden
+        >
 
     <section class="equity-panel" id="equity-decision">
       <div class="equity-panel-head">
@@ -1932,6 +2085,17 @@
         {% endif %}
       {% endif %}
     </section>
+
+        </section>
+
+        <section
+          class="equity-page-panel"
+          id="equity-view-optimizacion"
+          data-page-panel="optimizacion"
+          role="tabpanel"
+          aria-labelledby="equity-page-tab-optimizacion"
+          hidden
+        >
 
     <details class="equity-fold" id="equity-optimizer" open>
       <summary>Optimizador 12M + 5A</summary>
@@ -2617,6 +2781,28 @@
       </div>
     </details>
 
+        </section>
+
+        <section
+          class="equity-page-panel"
+          id="equity-view-seguimiento"
+          data-page-panel="seguimiento"
+          role="tabpanel"
+          aria-labelledby="equity-page-tab-seguimiento"
+          hidden
+        >
+          {% include "equities/_watchlist_analysis_panel.html" %}
+        </section>
+
+        <section
+          class="equity-page-panel"
+          id="equity-view-operativa"
+          data-page-panel="operativa"
+          role="tabpanel"
+          aria-labelledby="equity-page-tab-operativa"
+          hidden
+        >
+
     {% if reference_guide_summary.workbook_loaded and reference_guide_rows %}
       <details class="equity-fold">
         <summary>Guia completa IBEX del Excel</summary>
@@ -2715,6 +2901,9 @@
         </section>
       </div>
     </details>
+        </section>
+      </div>
+    </div>
   </div>
 
   {{ equity_company_catalog|json_script:"equity-company-catalog" }}
@@ -2891,6 +3080,141 @@
           openRow(row);
         });
       });
+    })();
+  </script>
+  <script>
+    (() => {
+      const pageShells = Array.from(document.querySelectorAll("[data-equity-page-tabs]"));
+      if (!pageShells.length) {
+        return;
+      }
+
+      const findPageTabByPanelId = (container, panelId) => Array.from(container.querySelectorAll("[data-page-tab]")).find(
+        (tab) => tab.getAttribute("aria-controls") === panelId
+      );
+
+      const activatePageTab = (container, panelKey, options = {}) => {
+        const { focus = false, updateHash = false } = options;
+        const tabs = Array.from(container.querySelectorAll("[data-page-tab]"));
+        const panels = Array.from(container.querySelectorAll("[data-page-panel]"));
+        if (!tabs.length || !panels.length) {
+          return;
+        }
+
+        const nextTab = tabs.find((tab) => tab.dataset.pageTab === panelKey) || tabs[0];
+        const nextKey = nextTab.dataset.pageTab;
+        tabs.forEach((tab) => {
+          const isActive = tab.dataset.pageTab === nextKey;
+          tab.setAttribute("aria-selected", isActive ? "true" : "false");
+          tab.tabIndex = isActive ? 0 : -1;
+        });
+        panels.forEach((panel) => {
+          panel.hidden = panel.dataset.pagePanel !== nextKey;
+        });
+
+        if (focus) {
+          nextTab.focus();
+        }
+        if (updateHash && window.history?.replaceState) {
+          const panelId = nextTab.getAttribute("aria-controls");
+          if (panelId) {
+            window.history.replaceState(null, "", `#${panelId}`);
+          }
+        }
+      };
+
+      const revealPageHashTarget = (targetId) => {
+        if (!targetId) {
+          return;
+        }
+        const targetElement = document.getElementById(targetId);
+        if (!targetElement) {
+          return;
+        }
+        window.requestAnimationFrame(() => {
+          targetElement.scrollIntoView({ block: "start", behavior: "smooth" });
+        });
+      };
+
+      const activatePagePanelForHash = (targetId) => {
+        if (!targetId) {
+          return false;
+        }
+
+        let activated = false;
+        pageShells.forEach((container) => {
+          let targetTab = findPageTabByPanelId(container, targetId);
+          if (!targetTab) {
+            const targetElement = document.getElementById(targetId);
+            const parentPanel = targetElement ? targetElement.closest("[data-page-panel]") : null;
+            if (parentPanel && container.contains(parentPanel)) {
+              targetTab = findPageTabByPanelId(container, parentPanel.id);
+            }
+          }
+          if (targetTab) {
+            activatePageTab(container, targetTab.dataset.pageTab);
+            activated = true;
+          }
+        });
+        return activated;
+      };
+
+      const syncPageTabsFromHash = () => {
+        const hash = window.location.hash || "";
+        if (!hash || hash === "#") {
+          return;
+        }
+        const targetId = hash.slice(1);
+        if (activatePagePanelForHash(targetId)) {
+          revealPageHashTarget(targetId);
+        }
+      };
+
+      pageShells.forEach((container) => {
+        const tabs = Array.from(container.querySelectorAll("[data-page-tab]"));
+        if (!tabs.length) {
+          return;
+        }
+
+        tabs.forEach((tab) => {
+          tab.addEventListener("click", () => {
+            activatePageTab(container, tab.dataset.pageTab, { updateHash: true });
+          });
+          tab.addEventListener("keydown", (event) => {
+            const currentIndex = tabs.indexOf(tab);
+            if (currentIndex === -1) {
+              return;
+            }
+
+            let nextIndex = null;
+            if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+              nextIndex = (currentIndex + 1) % tabs.length;
+            } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+              nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+            } else if (event.key === "Home") {
+              nextIndex = 0;
+            } else if (event.key === "End") {
+              nextIndex = tabs.length - 1;
+            }
+
+            if (nextIndex === null) {
+              return;
+            }
+
+            event.preventDefault();
+            activatePageTab(container, tabs[nextIndex].dataset.pageTab, { focus: true, updateHash: true });
+          });
+        });
+
+        const targetPanelId = (window.location.hash || "").replace(/^#/, "");
+        if (!targetPanelId || !activatePagePanelForHash(targetPanelId)) {
+          activatePageTab(container, tabs[0].dataset.pageTab);
+        } else {
+          revealPageHashTarget(targetPanelId);
+        }
+      });
+
+      window.addEventListener("hashchange", syncPageTabsFromHash);
     })();
   </script>
   <script>
