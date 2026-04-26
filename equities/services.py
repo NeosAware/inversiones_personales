@@ -3959,6 +3959,75 @@ def build_scenario_expectation_table(
     }
 
 
+def resolve_cycle_scenario_return_pct_for_months(
+    scenario: dict | None,
+    *,
+    current_price: Decimal | None,
+    months: int,
+) -> Decimal | None:
+    scenario = scenario or {}
+    key_map = {
+        12: "year_1_return_pct",
+        24: "year_2_return_pct",
+        36: "year_3_return_pct",
+        48: "year_4_return_pct",
+        60: "year_5_return_pct",
+    }
+    direct_key = key_map.get(months)
+    direct_return_pct = quantize_decimal(scenario.get(direct_key), "0.01") if direct_key else None
+    if direct_return_pct is None and months == 60:
+        direct_return_pct = quantize_decimal(scenario.get("five_year_return_pct"), "0.01")
+    if direct_return_pct is not None:
+        return direct_return_pct
+
+    current_price = quantize_decimal(current_price, "0.0001")
+    for point in list(scenario.get("path") or []):
+        if parse_projection_label_months(point.get("label")) != months:
+            continue
+        projected_price = quantize_decimal(point.get("projected_price"), "0.0001")
+        if projected_price is not None and current_price not in {None, ZERO}:
+            return quantize_decimal(percentage_change(projected_price, current_price), "0.01")
+
+    annual_return_pct = quantize_decimal(scenario.get("annual_return_pct"), "0.01")
+    if annual_return_pct is None:
+        return None
+    base = 1 + (float(annual_return_pct) / 100)
+    if base <= 0:
+        return Decimal("-100.00")
+    years = months / 12
+    cumulative_return_pct = (base**years - 1) * 100
+    return Decimal(str(round(cumulative_return_pct, 4))).quantize(Decimal("0.01"))
+
+
+def build_cycle_horizon_expectation_map(
+    scenarios: list[dict] | None,
+    *,
+    current_price: Decimal | None,
+) -> dict[int, Decimal]:
+    normalized_rows = list(scenarios or [])
+    if not normalized_rows:
+        return {}
+
+    expectations = {}
+    for months in (24, 36, 48, 60):
+        weighted_sum = ZERO
+        available_probability_pct = ZERO
+        for row in normalized_rows:
+            probability_pct = Decimal(str(row.get("probability_pct") or "0"))
+            return_pct = resolve_cycle_scenario_return_pct_for_months(
+                row,
+                current_price=current_price,
+                months=months,
+            )
+            if return_pct is None or probability_pct <= ZERO:
+                continue
+            weighted_sum += return_pct * probability_pct
+            available_probability_pct += probability_pct
+        if available_probability_pct > ZERO:
+            expectations[months] = quantize_decimal(weighted_sum / available_probability_pct, "0.01")
+    return expectations
+
+
 def build_card_scenario_tables(card: dict) -> dict:
     projection = card.get("projection") or {}
     cycle_projection = card.get("cycle_projection_5y") or {}
@@ -11913,6 +11982,13 @@ def build_five_year_projection_scenarios(
     shock_adjusted: bool = False,
     sentiment_score: Decimal | None = None,
 ) -> list[dict]:
+    def extract_horizon_return_pct(path: list[dict], months: int) -> Decimal | None:
+        for step in path:
+            if parse_projection_label_months(step.get("label")) != months:
+                continue
+            return quantize_decimal(percentage_change(step.get("projected_price"), current_price), "0.01")
+        return None
+
     probability_weights = build_scenario_probability_weights(
         confidence_label,
         shock_adjusted=shock_adjusted,
@@ -11953,6 +12029,11 @@ def build_five_year_projection_scenarios(
                 "label": label,
                 "probability_pct": probability_pct,
                 "annual_return_pct": quantize_decimal(scenario_annual_return_pct),
+                "year_1_return_pct": extract_horizon_return_pct(scenario_path, 12),
+                "year_2_return_pct": extract_horizon_return_pct(scenario_path, 24),
+                "year_3_return_pct": extract_horizon_return_pct(scenario_path, 36),
+                "year_4_return_pct": extract_horizon_return_pct(scenario_path, 48),
+                "year_5_return_pct": extract_horizon_return_pct(scenario_path, 60),
                 "five_year_return_pct": quantize_decimal(percentage_change(projected_price, current_price)),
                 "projected_price": quantize_decimal(projected_price, "0.0001"),
                 "step_shift": quantize_decimal(step_shift),
@@ -13501,6 +13582,11 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
         coefficient_alert = card.get("coefficient_alert", {})
         valuation = card.get("valuation") or {}
         cycle_projection = card.get("cycle_projection_5y") or {}
+        scenario_tables = card.get("scenario_tables") or build_card_scenario_tables(card)
+        cycle_horizon_expectations = build_cycle_horizon_expectation_map(
+            cycle_projection.get("scenarios"),
+            current_price=position.current_price_per_share,
+        )
         cycle_return_profile = build_cycle_projection_return_profile(
             position.current_price_per_share,
             cycle_projection,
@@ -13523,6 +13609,12 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
                 "years_covered": projection.get("years_covered"),
                 "projected_return_pct": projected_return_pct,
                 "projected_price": effective_projection.get("projected_price"),
+                "expected_return_1y_pct": (scenario_tables.get("projection_12m") or {}).get("expected_return_pct"),
+                "expected_return_2y_pct": cycle_horizon_expectations.get(24),
+                "expected_return_3y_pct": cycle_horizon_expectations.get(36),
+                "expected_return_4y_pct": cycle_horizon_expectations.get(48),
+                "expected_return_5y_pct": cycle_horizon_expectations.get(60)
+                or (scenario_tables.get("cycle_5y") or {}).get("expected_return_pct"),
                 "cycle_return_5y_pct": cycle_return_profile["five_year_return_pct"],
                 "cycle_return_annual_pct": cycle_return_profile["five_year_annualized_return_pct"],
                 "cycle_yearly_margins": cycle_return_profile["yearly_margins"],

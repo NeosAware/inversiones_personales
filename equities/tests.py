@@ -1823,6 +1823,11 @@ class EquitiesServicesTests(TestCase):
                         "base_return_pct": Decimal("12.50"),
                         "projected_price": Decimal("112.5000"),
                         "years_covered": Decimal("10.00"),
+                        "scenarios": [
+                            {"key": "bear", "label": "Bajista", "probability_pct": Decimal("50.0"), "total_return_pct": Decimal("-10.0")},
+                            {"key": "base", "label": "Base", "probability_pct": Decimal("30.0"), "total_return_pct": Decimal("12.5")},
+                            {"key": "bull", "label": "Alcista", "probability_pct": Decimal("20.0"), "total_return_pct": Decimal("30.0")},
+                        ],
                         "safety_score": Decimal("68.00"),
                         "safety_label": "Alta",
                         "benefit_risk_ratio": Decimal("1.90"),
@@ -1847,6 +1852,41 @@ class EquitiesServicesTests(TestCase):
                         "available": True,
                         "cycle_phase": "Expansion",
                         "five_year_return_pct": Decimal("61.0510"),
+                        "scenarios": [
+                            {
+                                "key": "bear",
+                                "label": "Bajista",
+                                "probability_pct": Decimal("30.0"),
+                                "annual_return_pct": Decimal("1.93"),
+                                "year_2_return_pct": Decimal("4.0"),
+                                "year_3_return_pct": Decimal("6.0"),
+                                "year_4_return_pct": Decimal("8.0"),
+                                "year_5_return_pct": Decimal("10.0"),
+                                "five_year_return_pct": Decimal("10.0"),
+                            },
+                            {
+                                "key": "base",
+                                "label": "Base",
+                                "probability_pct": Decimal("40.0"),
+                                "annual_return_pct": Decimal("10.00"),
+                                "year_2_return_pct": Decimal("21.0"),
+                                "year_3_return_pct": Decimal("34.0"),
+                                "year_4_return_pct": Decimal("47.0"),
+                                "year_5_return_pct": Decimal("61.0510"),
+                                "five_year_return_pct": Decimal("61.0510"),
+                            },
+                            {
+                                "key": "bull",
+                                "label": "Alcista",
+                                "probability_pct": Decimal("30.0"),
+                                "annual_return_pct": Decimal("13.68"),
+                                "year_2_return_pct": Decimal("32.0"),
+                                "year_3_return_pct": Decimal("50.0"),
+                                "year_4_return_pct": Decimal("69.0"),
+                                "year_5_return_pct": Decimal("90.0"),
+                                "five_year_return_pct": Decimal("90.0"),
+                            },
+                        ],
                         "path": [
                             {"label": "6M", "projected_price": Decimal("104.8809")},
                             {"label": "1A", "projected_price": Decimal("110.0000")},
@@ -1866,6 +1906,11 @@ class EquitiesServicesTests(TestCase):
 
         self.assertEqual(row["cycle_return_5y_pct"], Decimal("61.05"))
         self.assertEqual(row["cycle_return_annual_pct"], Decimal("10.00"))
+        self.assertEqual(row["expected_return_1y_pct"], Decimal("4.75"))
+        self.assertEqual(row["expected_return_2y_pct"], Decimal("19.20"))
+        self.assertEqual(row["expected_return_3y_pct"], Decimal("30.40"))
+        self.assertEqual(row["expected_return_4y_pct"], Decimal("41.90"))
+        self.assertEqual(row["expected_return_5y_pct"], Decimal("54.42"))
         self.assertEqual(
             [item["label"] for item in row["cycle_yearly_margins"]],
             ["AÑO 1", "AÑO 2", "AÑO 3", "AÑO 4", "AÑO 5"],
@@ -11591,7 +11636,12 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Relacion entre precio y beneficio")
         self.assertContains(response, "Valoracion")
+        self.assertContains(response, "Esperanza 1A")
+        self.assertContains(response, "Esperanza 2A")
+        self.assertContains(response, "Esperanza 3A")
+        self.assertContains(response, "Esperanza 4A")
         self.assertContains(response, "Pred. 5 AÑOS")
+        self.assertContains(response, "Esperanza 5A")
         self.assertContains(response, "Márgenes por AÑO")
         self.assertContains(response, "AÑO 1")
         self.assertContains(response, "AÑO 5")
