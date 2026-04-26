@@ -1,4 +1,8 @@
+from pathlib import Path
+
+from django.conf import settings
 from django import forms
+from django.core.exceptions import ValidationError
 
 from portfolio.ownership import AssetOwnershipCategory
 
@@ -17,6 +21,31 @@ ROBOT_BANK_SUGGESTIONS = (
     "EVO Banco",
     "Bankinter",
 )
+
+ALLOWED_STATEMENT_EXTENSIONS = {".xls", ".xlsx"}
+
+
+def validate_statement_upload_batch(files):
+    uploaded_files = [item for item in list(files or []) if item]
+    if not uploaded_files:
+        raise ValidationError("No se ha enviado ningun fichero.")
+
+    max_files = max(int(getattr(settings, "BANK_STATEMENT_MAX_FILES_PER_REQUEST", 8) or 8), 1)
+    if len(uploaded_files) > max_files:
+        raise ValidationError(f"Solo puedes subir hasta {max_files} fichero(s) por importacion.")
+
+    max_file_bytes = max(int(getattr(settings, "BANK_STATEMENT_MAX_FILE_BYTES", 8 * 1024 * 1024) or 0), 1024)
+    max_file_mb = max_file_bytes / (1024 * 1024)
+    for uploaded_file in uploaded_files:
+        suffix = Path(str(getattr(uploaded_file, "name", "") or "")).suffix.lower()
+        if suffix not in ALLOWED_STATEMENT_EXTENSIONS:
+            raise ValidationError("Solo se admiten extractos XLS o XLSX.")
+        file_size = getattr(uploaded_file, "size", None)
+        if file_size is not None and int(file_size) > max_file_bytes:
+            raise ValidationError(
+                f"{uploaded_file.name} supera el limite de {max_file_mb:.1f} MB por fichero."
+            )
+    return uploaded_files
 
 
 class MultipleFileInput(forms.ClearableFileInput):
@@ -39,8 +68,10 @@ class MultipleFileField(forms.FileField):
     def clean(self, data, initial=None):
         single_file_clean = super().clean
         if isinstance(data, (list, tuple)):
-            return [single_file_clean(item, initial) for item in data]
-        return [single_file_clean(data, initial)]
+            cleaned_files = [single_file_clean(item, initial) for item in data]
+        else:
+            cleaned_files = [single_file_clean(data, initial)]
+        return validate_statement_upload_batch(cleaned_files)
 
 
 class StatementUploadForm(forms.Form):

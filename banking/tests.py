@@ -10,10 +10,12 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.http import Http404
+from django.test import RequestFactory, TestCase
 from django.test.utils import override_settings
 from django.urls import reverse
 
+from config.views import secure_media_download_view
 from config.storage import ENCRYPTION_MARKER
 from portfolio.ownership import AssetOwnershipCategory
 
@@ -1419,6 +1421,9 @@ class BankingViewTests(TestCase):
             username="banking-editor",
             password="secret123",
         )
+        self.user.is_staff = True
+        self.user.is_superuser = True
+        self.user.save(update_fields=["is_staff", "is_superuser"])
         self.client.force_login(self.user)
 
     def _card_statement_html(self, holder_name: str = "Monica") -> str:
@@ -1630,6 +1635,93 @@ class BankingViewTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertFalse(BankStatementImport.objects.filter(source_filename="robot-cuenta.xls").exists())
 
+    @override_settings(BANK_ROBOT_IMPORT_TOKEN="robot-token", BANK_STATEMENT_MAX_FILE_BYTES=64)
+    def test_robot_upload_endpoint_rejects_files_that_exceed_size_limit(self):
+        self.client.logout()
+        document = SimpleUploadedFile(
+            "robot-oversized.xls",
+            self._legacy_card_statement_html().encode("utf-8"),
+            content_type="application/vnd.ms-excel",
+        )
+
+        response = self.client.post(
+            reverse("banking:robot_upload"),
+            {
+                "statement_kind": BankStatementImport.StatementKind.CARD,
+                "files": document,
+            },
+            HTTP_X_BANK_ROBOT_TOKEN="robot-token",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("supera el limite", response.json()["error"])
+        self.assertFalse(BankStatementImport.objects.filter(source_filename="robot-oversized.xls").exists())
+
+    @override_settings(BANK_STATEMENT_MAX_FILES_PER_REQUEST=1)
+    def test_local_robot_import_endpoint_rejects_too_many_files(self):
+        first = SimpleUploadedFile(
+            "robot-local-a.xls",
+            self._legacy_card_statement_html().encode("utf-8"),
+            content_type="application/vnd.ms-excel",
+        )
+        second = SimpleUploadedFile(
+            "robot-local-b.xls",
+            self._legacy_card_statement_html().encode("utf-8"),
+            content_type="application/vnd.ms-excel",
+        )
+
+        response = self.client.post(
+            reverse("banking:robot_local_import"),
+            {
+                "statement_kind": BankStatementImport.StatementKind.CARD,
+                "files": [first, second],
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("hasta 1 fichero", response.json()["error"])
+
+    def test_non_admin_cannot_import_statements_from_web_or_local_bridge(self):
+        viewer = get_user_model().objects.create_user(
+            username="banking-viewer",
+            password="secret123",
+        )
+        self.client.force_login(viewer)
+        document = SimpleUploadedFile(
+            "visa.xls",
+            self._card_statement_html(holder_name="Monica").encode("utf-8"),
+            content_type="application/vnd.ms-excel",
+        )
+
+        web_response = self.client.post(
+            reverse("banking:list"),
+            {
+                "action": "import",
+                "statement_kind": BankStatementImport.StatementKind.CARD,
+                "files": document,
+            },
+            follow=True,
+        )
+        bridge_response = self.client.post(
+            reverse("banking:robot_local_import"),
+            {
+                "statement_kind": BankStatementImport.StatementKind.CARD,
+                "files": [
+                    SimpleUploadedFile(
+                        "bridge.xls",
+                        self._legacy_card_statement_html().encode("utf-8"),
+                        content_type="application/vnd.ms-excel",
+                    )
+                ],
+            },
+        )
+
+        self.assertEqual(web_response.status_code, 200)
+        self.assertContains(web_response, "Solo un administrador puede importar extractos o modificar la banca.")
+        self.assertEqual(bridge_response.status_code, 403)
+        self.assertIn("Solo un administrador", bridge_response.json()["error"])
+        self.assertEqual(BankStatementImport.objects.count(), 0)
+
     def test_can_create_bank_account_with_selected_owner(self):
         response = self.client.post(
             reverse("banking:list"),
@@ -1831,6 +1923,7 @@ class EncryptedMediaTests(TestCase):
             username="secure-media-user",
             password="secret123",
         )
+        self.factory = RequestFactory()
 
     def _statement_html(self):
         return """
@@ -1914,4 +2007,12 @@ class EncryptedMediaTests(TestCase):
                 response = self.client.get(statement.source_file.url)
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("no-store", response.headers.get("Cache-Control", ""))
+        self.assertEqual(response.headers.get("Cross-Origin-Resource-Policy"), "same-origin")
         self.assertEqual(b"".join(response.streaming_content), payload)
+
+    def test_secure_media_download_returns_404_on_path_traversal_attempt(self):
+        request = self.factory.get("/secure-media/../secrets.txt")
+        request.user = self.user
+        with self.assertRaisesMessage(Http404, "Documento no encontrado."):
+            secure_media_download_view(request, "../secrets.txt")

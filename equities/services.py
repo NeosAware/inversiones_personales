@@ -79,6 +79,16 @@ COMPARABLE_MONTH_DAYS = Decimal("30.4375")
 OPTIMIZER_MAX_ENTRY_DRAG_PCT = Decimal("1.00")
 OPTIMIZER_MAX_ROUNDTRIP_DRAG_PCT = Decimal("2.00")
 OPTIMIZER_MIN_GAIN_TO_ROUNDTRIP_MULTIPLE = Decimal("1.80")
+OPTIMIZER_TARGET_HOLDING_ANNUALIZED_RETURN_PCT = Decimal("20.00")
+OPTIMIZER_TARGET_SHORTFALL_PENALTY_MULTIPLE = Decimal("0.50")
+OPTIMIZER_TARGET_EXCESS_BONUS_MULTIPLE = Decimal("0.12")
+OPTIMIZER_RISK_PROFILE_LABEL = "Adverso al riesgo"
+OPTIMIZER_CONSERVATIVE_MIN_SAFETY_SCORE = Decimal("68.00")
+OPTIMIZER_CONSERVATIVE_MIN_RELIABILITY_SCORE = Decimal("64.00")
+OPTIMIZER_CONSERVATIVE_MIN_WORST_RETURN_PCT = Decimal("-12.00")
+OPTIMIZER_CONSERVATIVE_MIN_STRESS_RETURN_PCT = Decimal("-10.00")
+OPTIMIZER_CONSERVATIVE_MAX_VOLATILITY_PCT = Decimal("22.00")
+OPTIMIZER_CONSERVATIVE_MAX_UNCERTAINTY_PENALTY_PCT = Decimal("3.25")
 REFERENCE_CYCLE_TEMPLATE_RECENT_MONTHS = 18
 REFERENCE_CYCLE_TEMPLATE_MAX_MATCHES = 12
 
@@ -3188,6 +3198,34 @@ def build_projection_presentation_summary(card: dict) -> dict:
         (visible_price_return_pct or ZERO) + net_income_yield_pct - transaction_drag_pct,
         "0.01",
     )
+    raw_base_return_pct = quantize_decimal(projection.get("base_return_pct"), "0.01")
+    base_shift_pct = (
+        quantize_decimal(visible_total_return_pct - raw_base_return_pct, "0.01")
+        if raw_base_return_pct is not None and visible_total_return_pct is not None
+        else ZERO
+    )
+    scenario_low_return_pct = quantize_decimal(projection.get("low_return_pct"), "0.01")
+    if scenario_low_return_pct is not None and raw_base_return_pct is not None and visible_total_return_pct is not None:
+        scenario_low_return_pct = quantize_decimal(scenario_low_return_pct + base_shift_pct, "0.01")
+    if scenario_low_return_pct is None:
+        scenario_low_return_pct = visible_total_return_pct
+    scenario_high_return_pct = quantize_decimal(projection.get("high_return_pct"), "0.01")
+    if scenario_high_return_pct is not None and raw_base_return_pct is not None and visible_total_return_pct is not None:
+        scenario_high_return_pct = quantize_decimal(scenario_high_return_pct + base_shift_pct, "0.01")
+    if scenario_high_return_pct is None:
+        scenario_high_return_pct = visible_total_return_pct
+    scenario_low_price = derive_projected_price_from_total_return(
+        current_price,
+        scenario_low_return_pct,
+        net_income_yield_pct=net_income_yield_pct,
+        transaction_drag_pct=transaction_drag_pct,
+    ) or quantize_decimal(projection.get("low_price"), "0.0001")
+    scenario_high_price = derive_projected_price_from_total_return(
+        current_price,
+        scenario_high_return_pct,
+        net_income_yield_pct=net_income_yield_pct,
+        transaction_drag_pct=transaction_drag_pct,
+    ) or quantize_decimal(projection.get("high_price"), "0.0001")
 
     future_prices = [quantize_decimal(row.get("projected_price"), "0.0001") or ZERO for row in future_rows]
     is_non_decreasing = all(current >= previous for previous, current in zip(future_prices, future_prices[1:]))
@@ -3323,10 +3361,10 @@ def build_projection_presentation_summary(card: dict) -> dict:
         ),
         "visible_price_return_pct": visible_price_return_pct,
         "visible_total_return_pct": visible_total_return_pct,
-        "scenario_low_return_pct": quantize_decimal(projection.get("low_return_pct"), "0.01"),
-        "scenario_high_return_pct": quantize_decimal(projection.get("high_return_pct"), "0.01"),
-        "scenario_low_price": quantize_decimal(projection.get("low_price"), "0.0001"),
-        "scenario_high_price": quantize_decimal(projection.get("high_price"), "0.0001"),
+        "scenario_low_return_pct": scenario_low_return_pct,
+        "scenario_high_return_pct": scenario_high_return_pct,
+        "scenario_low_price": scenario_low_price,
+        "scenario_high_price": scenario_high_price,
         "key_level_label": key_level_label,
         "key_level_price": key_level_price,
         "key_level_date": key_level_row.get("projected_date") if key_level_row else None,
@@ -3346,6 +3384,198 @@ def build_projection_presentation_summary(card: dict) -> dict:
         "raw_projected_price": raw_projected_price,
         "raw_gap_pct": raw_gap_pct,
     }
+
+
+def get_card_presentation_projection(card: dict) -> dict:
+    presentation_projection = card.get("presentation_projection") or {}
+    if presentation_projection.get("available"):
+        return presentation_projection
+    position = card.get("position")
+    projection = card.get("projection") or {}
+    if position is None or not projection.get("available"):
+        return {"available": False}
+    presentation_projection = build_projection_presentation_summary(card)
+    card["presentation_projection"] = presentation_projection
+    return presentation_projection
+
+
+def derive_projected_price_from_total_return(
+    current_price: Decimal | None,
+    total_return_pct: Decimal | None,
+    *,
+    net_income_yield_pct: Decimal | None = None,
+    transaction_drag_pct: Decimal | None = None,
+) -> Decimal | None:
+    current_price = quantize_decimal(current_price, "0.0001")
+    total_return_pct = quantize_decimal(total_return_pct, "0.01")
+    net_income_yield_pct = quantize_decimal(net_income_yield_pct, "0.01") or ZERO
+    transaction_drag_pct = quantize_decimal(transaction_drag_pct, "0.01") or ZERO
+    if current_price in {None, ZERO} or total_return_pct is None:
+        return None
+    price_return_pct = quantize_decimal(
+        total_return_pct - net_income_yield_pct + transaction_drag_pct,
+        "0.01",
+    )
+    return quantize_decimal(
+        current_price * (Decimal("1") + ((price_return_pct or ZERO) / ONE_HUNDRED)),
+        "0.0001",
+    )
+
+
+def resolve_effective_projection_metrics(card: dict) -> dict:
+    position = card.get("position")
+    projection = card.get("projection") or {}
+    if position is None or not projection.get("available"):
+        return {"available": False}
+
+    net_income_yield_pct = quantize_decimal(projection.get("net_income_yield_pct"), "0.01") or ZERO
+    transaction_drag_pct = quantize_decimal(projection.get("transaction_drag_pct"), "0.01") or ZERO
+    current_price = quantize_decimal(
+        projection.get("latest_price") or getattr(position, "current_price_per_share", None),
+        "0.0001",
+    )
+    raw_base_return_pct = quantize_decimal(projection.get("base_return_pct"), "0.01")
+    raw_price_return_pct = quantize_decimal(projection.get("price_return_pct"), "0.01")
+    if raw_price_return_pct is None and raw_base_return_pct is not None:
+        raw_price_return_pct = quantize_decimal(
+            raw_base_return_pct - net_income_yield_pct + transaction_drag_pct,
+            "0.01",
+        )
+
+    presentation_projection = get_card_presentation_projection(card)
+    visible_total_return_pct = (
+        quantize_decimal(presentation_projection.get("visible_total_return_pct"), "0.01")
+        if presentation_projection.get("available")
+        else None
+    )
+    visible_price_return_pct = (
+        quantize_decimal(presentation_projection.get("visible_price_return_pct"), "0.01")
+        if presentation_projection.get("available")
+        else None
+    )
+    effective_base_return_pct = visible_total_return_pct if visible_total_return_pct is not None else raw_base_return_pct
+    effective_price_return_pct = visible_price_return_pct if visible_price_return_pct is not None else raw_price_return_pct
+    base_shift_pct = (
+        quantize_decimal(effective_base_return_pct - raw_base_return_pct, "0.01")
+        if effective_base_return_pct is not None and raw_base_return_pct is not None
+        else ZERO
+    )
+
+    raw_low_return_pct = quantize_decimal(projection.get("low_return_pct"), "0.01")
+    raw_high_return_pct = quantize_decimal(projection.get("high_return_pct"), "0.01")
+    raw_price_low_return_pct = quantize_decimal(projection.get("price_low_return_pct"), "0.01")
+    raw_price_high_return_pct = quantize_decimal(projection.get("price_high_return_pct"), "0.01")
+    if raw_low_return_pct is None and raw_price_low_return_pct is not None:
+        raw_low_return_pct = quantize_decimal(
+            raw_price_low_return_pct + net_income_yield_pct - transaction_drag_pct,
+            "0.01",
+        )
+    if raw_high_return_pct is None and raw_price_high_return_pct is not None:
+        raw_high_return_pct = quantize_decimal(
+            raw_price_high_return_pct + net_income_yield_pct - transaction_drag_pct,
+            "0.01",
+        )
+    effective_low_return_pct = (
+        quantize_decimal(raw_low_return_pct + base_shift_pct, "0.01")
+        if raw_low_return_pct is not None and raw_base_return_pct is not None and effective_base_return_pct is not None
+        else raw_low_return_pct
+    )
+    effective_high_return_pct = (
+        quantize_decimal(raw_high_return_pct + base_shift_pct, "0.01")
+        if raw_high_return_pct is not None and raw_base_return_pct is not None and effective_base_return_pct is not None
+        else raw_high_return_pct
+    )
+    if effective_low_return_pct is None:
+        effective_low_return_pct = effective_base_return_pct
+    if effective_high_return_pct is None:
+        effective_high_return_pct = effective_base_return_pct
+
+    effective_projected_price = (
+        quantize_decimal(presentation_projection.get("visible_projected_price"), "0.0001")
+        if presentation_projection.get("available")
+        else None
+    )
+    if effective_projected_price is None:
+        effective_projected_price = quantize_decimal(projection.get("projected_price"), "0.0001")
+    if effective_projected_price is None and current_price not in {None, ZERO} and effective_price_return_pct is not None:
+        effective_projected_price = quantize_decimal(
+            current_price * (Decimal("1") + (effective_price_return_pct / ONE_HUNDRED)),
+            "0.0001",
+        )
+
+    price_low_return_pct = (
+        quantize_decimal(effective_low_return_pct - net_income_yield_pct + transaction_drag_pct, "0.01")
+        if effective_low_return_pct is not None
+        else quantize_decimal(projection.get("price_low_return_pct"), "0.01")
+    )
+    price_high_return_pct = (
+        quantize_decimal(effective_high_return_pct - net_income_yield_pct + transaction_drag_pct, "0.01")
+        if effective_high_return_pct is not None
+        else quantize_decimal(projection.get("price_high_return_pct"), "0.01")
+    )
+
+    return {
+        "available": True,
+        "current_price": current_price,
+        "net_income_yield_pct": net_income_yield_pct,
+        "transaction_drag_pct": transaction_drag_pct,
+        "raw_base_return_pct": raw_base_return_pct,
+        "base_shift_pct": base_shift_pct,
+        "base_return_pct": effective_base_return_pct,
+        "price_return_pct": effective_price_return_pct,
+        "projected_price": effective_projected_price,
+        "low_return_pct": effective_low_return_pct,
+        "high_return_pct": effective_high_return_pct,
+        "price_low_return_pct": price_low_return_pct,
+        "price_high_return_pct": price_high_return_pct,
+        "low_price": derive_projected_price_from_total_return(
+            current_price,
+            effective_low_return_pct,
+            net_income_yield_pct=net_income_yield_pct,
+            transaction_drag_pct=transaction_drag_pct,
+        ) or quantize_decimal(projection.get("low_price"), "0.0001"),
+        "high_price": derive_projected_price_from_total_return(
+            current_price,
+            effective_high_return_pct,
+            net_income_yield_pct=net_income_yield_pct,
+            transaction_drag_pct=transaction_drag_pct,
+        ) or quantize_decimal(projection.get("high_price"), "0.0001"),
+    }
+
+
+def build_effective_projection_scenarios(
+    card: dict,
+    *,
+    effective_metrics: dict | None = None,
+) -> list[dict]:
+    projection = card.get("projection") or {}
+    effective_metrics = effective_metrics or resolve_effective_projection_metrics(card)
+    scenarios = []
+    base_shift_pct = quantize_decimal(effective_metrics.get("base_shift_pct"), "0.01") or ZERO
+    current_price = quantize_decimal(effective_metrics.get("current_price"), "0.0001")
+    net_income_yield_pct = quantize_decimal(effective_metrics.get("net_income_yield_pct"), "0.01") or ZERO
+    transaction_drag_pct = quantize_decimal(effective_metrics.get("transaction_drag_pct"), "0.01") or ZERO
+
+    for row in list(projection.get("scenarios") or []):
+        adjusted_row = dict(row)
+        total_return_pct = row.get("total_return_pct")
+        adjusted_total_return_pct = (
+            quantize_decimal(Decimal(str(total_return_pct)) + base_shift_pct, "0.01")
+            if total_return_pct is not None
+            else None
+        )
+        if adjusted_total_return_pct is not None:
+            adjusted_row["total_return_pct"] = adjusted_total_return_pct
+            adjusted_projected_price = derive_projected_price_from_total_return(
+                current_price,
+                adjusted_total_return_pct,
+                net_income_yield_pct=net_income_yield_pct,
+                transaction_drag_pct=transaction_drag_pct,
+            )
+            if adjusted_projected_price is not None:
+                adjusted_row["projected_price"] = adjusted_projected_price
+        scenarios.append(adjusted_row)
+    return scenarios
 
 
 INFORMATION_THEME_LABELS = {
@@ -3629,6 +3859,125 @@ def build_information_basis_summary(card: dict) -> dict:
     }
 
 
+def build_scenario_expectation_table(
+    scenarios: list[dict] | None,
+    *,
+    return_key: str,
+    fallback_value: Decimal | None = None,
+    projected_price_key: str = "projected_price",
+    secondary_return_key: str | None = None,
+) -> dict:
+    normalized_rows = []
+    for row in list(scenarios or []):
+        return_pct = row.get(return_key)
+        if return_pct is None:
+            continue
+        normalized_rows.append(
+            {
+                "key": str(row.get("key") or "").strip().lower(),
+                "label": str(row.get("label") or "").strip() or "Escenario",
+                "return_pct": Decimal(str(return_pct)),
+                "raw_probability_pct": Decimal(str(row.get("probability_pct") or "0")),
+                "projected_price": quantize_decimal(row.get(projected_price_key), "0.0001"),
+                "secondary_return_pct": (
+                    quantize_decimal(row.get(secondary_return_key), "0.01")
+                    if secondary_return_key
+                    else None
+                ),
+            }
+        )
+
+    if not normalized_rows:
+        return {
+            "available": False,
+            "rows": [],
+            "expected_return_pct": fallback_value,
+            "expected_projected_price": None,
+            "expected_secondary_return_pct": None,
+        }
+
+    total_probability_pct = sum((item["raw_probability_pct"] for item in normalized_rows), ZERO)
+    if total_probability_pct <= ZERO:
+        total_probability_pct = ONE_HUNDRED
+
+    summary = build_optimizer_scenario_summary(
+        scenarios,
+        return_key=return_key,
+        fallback_value=fallback_value,
+    )
+    rows = []
+    expected_projected_price = ZERO
+    has_projected_price = False
+    expected_secondary_return_pct = ZERO
+    has_secondary_return = False
+    for item in normalized_rows:
+        effective_probability_pct = quantize_decimal(
+            (item["raw_probability_pct"] * ONE_HUNDRED) / total_probability_pct,
+            "0.1",
+        ) or ZERO
+        contribution_return_pct = quantize_decimal(
+            (item["return_pct"] * item["raw_probability_pct"]) / total_probability_pct,
+            "0.01",
+        )
+        projected_price = item["projected_price"]
+        if projected_price is not None:
+            expected_projected_price += (projected_price * item["raw_probability_pct"]) / total_probability_pct
+            has_projected_price = True
+        secondary_return_pct = item["secondary_return_pct"]
+        if secondary_return_pct is not None:
+            expected_secondary_return_pct += (secondary_return_pct * item["raw_probability_pct"]) / total_probability_pct
+            has_secondary_return = True
+        rows.append(
+            {
+                "key": item["key"],
+                "label": item["label"],
+                "probability_pct": effective_probability_pct,
+                "return_pct": quantize_decimal(item["return_pct"], "0.01"),
+                "contribution_return_pct": contribution_return_pct,
+                "projected_price": projected_price,
+                "secondary_return_pct": secondary_return_pct,
+            }
+        )
+
+    expected_return_pct = quantize_decimal(summary.get("expected_return_pct"), "0.01")
+    if rows and expected_return_pct is not None:
+        accumulated_contribution = sum(
+            (row["contribution_return_pct"] for row in rows[:-1] if row.get("contribution_return_pct") is not None),
+            ZERO,
+        )
+        rows[-1]["contribution_return_pct"] = quantize_decimal(
+            expected_return_pct - accumulated_contribution,
+            "0.01",
+        )
+
+    return {
+        **summary,
+        "available": True,
+        "rows": rows,
+        "expected_projected_price": quantize_decimal(expected_projected_price, "0.0001") if has_projected_price else None,
+        "expected_secondary_return_pct": quantize_decimal(expected_secondary_return_pct, "0.01") if has_secondary_return else None,
+    }
+
+
+def build_card_scenario_tables(card: dict) -> dict:
+    projection = card.get("projection") or {}
+    cycle_projection = card.get("cycle_projection_5y") or {}
+    effective_projection = resolve_effective_projection_metrics(card)
+    return {
+        "projection_12m": build_scenario_expectation_table(
+            build_effective_projection_scenarios(card, effective_metrics=effective_projection),
+            return_key="total_return_pct",
+            fallback_value=quantize_decimal(effective_projection.get("base_return_pct"), "0.01"),
+        ),
+        "cycle_5y": build_scenario_expectation_table(
+            cycle_projection.get("scenarios"),
+            return_key="five_year_return_pct",
+            fallback_value=quantize_decimal(cycle_projection.get("five_year_return_pct"), "0.01"),
+            secondary_return_key="annual_return_pct",
+        ),
+    }
+
+
 def reconcile_trade_alert_with_visible_projection(trade_alert: dict, presentation_projection: dict) -> dict:
     if not trade_alert or not presentation_projection.get("available"):
         return trade_alert
@@ -3692,6 +4041,10 @@ def refresh_card_projection_visuals(card: dict, history=None) -> dict:
     if position is None:
         card["presentation_projection"] = {"available": False}
         card["information_basis"] = {"available": False, "rows": []}
+        card["scenario_tables"] = {
+            "projection_12m": {"available": False, "rows": []},
+            "cycle_5y": {"available": False, "rows": []},
+        }
         return card
 
     if history is None:
@@ -3706,6 +4059,7 @@ def refresh_card_projection_visuals(card: dict, history=None) -> dict:
         card["presentation_projection"],
     )
     card["information_basis"] = build_information_basis_summary(card)
+    card["scenario_tables"] = build_card_scenario_tables(card)
     return card
 
 
@@ -4674,15 +5028,15 @@ def build_cycle_projection_5y_chart(history, cycle_projection: dict) -> dict:
 
 def build_ticket_snapshot_projection_values(card: dict) -> dict:
     position = card["position"]
-    projection = card.get("projection", {})
-    projected_price = projection.get("projected_price")
+    effective_projection = resolve_effective_projection_metrics(card)
+    projected_price = effective_projection.get("projected_price")
     projected_market_value_12m = None
     projected_total_value_12m = None
     if projected_price is not None:
         projected_market_value_12m = quantize_decimal(position.shares * projected_price, "0.01")
-    if projection.get("base_return_pct") is not None:
+    if effective_projection.get("base_return_pct") is not None:
         projected_total_value_12m = quantize_decimal(
-            position.current_value * (Decimal("1") + (projection["base_return_pct"] / ONE_HUNDRED)),
+            position.current_value * (Decimal("1") + (effective_projection["base_return_pct"] / ONE_HUNDRED)),
             "0.01",
         )
     if projected_total_value_12m is None:
@@ -7370,6 +7724,49 @@ def build_candidate_purchase_timing_plan(
 
     net_income_yield_pct = quantize_decimal(projection.get("net_income_yield_pct"), "0.01") or ZERO
     transaction_drag_pct = quantize_decimal(projection.get("transaction_drag_pct"), "0.01") or ZERO
+    target_annualized_return_pct = OPTIMIZER_TARGET_HOLDING_ANNUALIZED_RETURN_PCT
+
+    def interval_meets_target(interval: dict | None) -> bool:
+        if not interval:
+            return False
+        annualized_return_pct = quantize_decimal(interval.get("holding_annualized_return_pct"), "0.01")
+        return annualized_return_pct is not None and annualized_return_pct >= target_annualized_return_pct
+
+    def interval_preference_key(
+        interval: dict,
+        *,
+        include_discount: bool = False,
+    ) -> tuple:
+        trade_return_pct = quantize_decimal(interval.get("trade_return_pct"), "0.01")
+        holding_annualized_return_pct = quantize_decimal(interval.get("holding_annualized_return_pct"), "0.01")
+        discount_vs_now_pct = quantize_decimal(interval.get("discount_vs_now_pct"), "0.01")
+        exit_row = interval.get("exit_row") or {}
+        exit_month_number = int(interval.get("exit_month_number") or exit_row.get("month_number") or 0)
+        entry_month_number = int(interval.get("entry_month_number") or 0)
+        holding_months = int(interval.get("holding_months") or 0)
+        if interval_meets_target(interval):
+            primary_metric = trade_return_pct if trade_return_pct is not None else Decimal("-9999")
+            secondary_metric = (
+                holding_annualized_return_pct
+                if holding_annualized_return_pct is not None
+                else Decimal("-9999")
+            )
+        else:
+            primary_metric = (
+                holding_annualized_return_pct
+                if holding_annualized_return_pct is not None
+                else Decimal("-9999")
+            )
+            secondary_metric = trade_return_pct if trade_return_pct is not None else Decimal("-9999")
+        return (
+            Decimal("1") if interval_meets_target(interval) else ZERO,
+            primary_metric,
+            secondary_metric,
+            discount_vs_now_pct if include_discount and discount_vs_now_pct is not None else Decimal("-9999"),
+            exit_month_number,
+            holding_months,
+            -(entry_month_number or 0),
+        )
 
     def evaluate_path(candidate_path: dict) -> dict | None:
         rows = candidate_path["rows"]
@@ -7428,6 +7825,7 @@ def build_candidate_purchase_timing_plan(
                 )
                 exit_candidate = {
                     "exit_row": exit_row,
+                    "exit_month_number": exit_month_number,
                     "price_return_pct": price_return_pct,
                     "income_support_pct": income_support_pct,
                     "trade_return_pct": trade_return_pct,
@@ -7435,34 +7833,7 @@ def build_candidate_purchase_timing_plan(
                     "calendar_adjusted_return_pct": quantize_decimal(calendar_adjusted_return_pct, "0.01"),
                     "holding_months": holding_months,
                 }
-                if best_exit is None:
-                    best_exit = exit_candidate
-                    continue
-                current_trade_return = exit_candidate.get("trade_return_pct")
-                best_trade_return = best_exit.get("trade_return_pct")
-                current_holding_annualized = exit_candidate.get("holding_annualized_return_pct")
-                best_holding_annualized = best_exit.get("holding_annualized_return_pct")
-                if (
-                    current_trade_return is not None
-                    and (
-                        best_trade_return is None
-                        or current_trade_return > best_trade_return
-                        or (
-                            current_trade_return == best_trade_return
-                            and (
-                                current_holding_annualized is not None
-                                and (
-                                    best_holding_annualized is None
-                                    or current_holding_annualized > best_holding_annualized
-                                    or (
-                                        current_holding_annualized == best_holding_annualized
-                                        and exit_month_number < int(best_exit["exit_row"].get("month_number") or 999)
-                                    )
-                                )
-                            )
-                        )
-                    )
-                ):
+                if best_exit is None or interval_preference_key(exit_candidate) > interval_preference_key(best_exit):
                     best_exit = exit_candidate
             if best_exit is None:
                 continue
@@ -7488,22 +7859,7 @@ def build_candidate_purchase_timing_plan(
             )
         if not entry_candidates:
             return None
-        return max(
-            entry_candidates,
-            key=lambda item: (
-                item.get("trade_return_pct")
-                if item.get("trade_return_pct") is not None
-                else Decimal("-9999"),
-                item.get("holding_annualized_return_pct")
-                if item.get("holding_annualized_return_pct") is not None
-                else Decimal("-9999"),
-                item.get("discount_vs_now_pct")
-                if item.get("discount_vs_now_pct") is not None
-                else Decimal("-9999"),
-                -(item["entry_month_number"] or 0),
-                -int(item.get("holding_months") or 0),
-            ),
-        )
+        return max(entry_candidates, key=lambda item: interval_preference_key(item, include_discount=True))
 
     preferred_basis_key = "cycle_5y" if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY else "projection_12m"
     primary_path = next((item for item in path_candidates if item["basis_key"] == preferred_basis_key), None) or path_candidates[0]
@@ -7517,24 +7873,45 @@ def build_candidate_purchase_timing_plan(
         secondary_trade_return = secondary_plan.get("trade_return_pct")
         primary_holding_annualized = primary_plan.get("holding_annualized_return_pct")
         secondary_holding_annualized = secondary_plan.get("holding_annualized_return_pct")
+        primary_meets_target = interval_meets_target(primary_plan)
+        secondary_meets_target = interval_meets_target(secondary_plan)
         improvement_threshold = Decimal("1.50") if strategy["mode"] == OPTIMIZER_STRATEGY_12M_PRIMARY else Decimal("1.00")
         annualized_threshold = Decimal("2.00")
-        secondary_is_materially_better = (
-            secondary_trade_return is not None
-            and (
-                primary_trade_return is None
-                or secondary_trade_return >= (primary_trade_return + improvement_threshold)
-                or (
-                    primary_trade_return is not None
-                    and secondary_trade_return == primary_trade_return
-                    and secondary_holding_annualized is not None
-                    and (
-                        primary_holding_annualized is None
-                        or secondary_holding_annualized >= (primary_holding_annualized + annualized_threshold)
+        secondary_is_materially_better = False
+        if secondary_meets_target and not primary_meets_target:
+            secondary_is_materially_better = True
+        elif secondary_meets_target and primary_meets_target:
+            secondary_is_materially_better = (
+                secondary_trade_return is not None
+                and (
+                    primary_trade_return is None
+                    or secondary_trade_return >= (primary_trade_return + improvement_threshold)
+                    or (
+                        secondary_trade_return == primary_trade_return
+                        and secondary_holding_annualized is not None
+                        and (
+                            primary_holding_annualized is None
+                            or secondary_holding_annualized >= (primary_holding_annualized + annualized_threshold)
+                        )
                     )
                 )
             )
-        )
+        elif (
+            secondary_holding_annualized is not None
+            and (
+                primary_holding_annualized is None
+                or secondary_holding_annualized >= (primary_holding_annualized + annualized_threshold)
+                or (
+                    secondary_holding_annualized == primary_holding_annualized
+                    and secondary_trade_return is not None
+                    and (
+                        primary_trade_return is None
+                        or secondary_trade_return >= (primary_trade_return + improvement_threshold)
+                    )
+                )
+            )
+        ):
+            secondary_is_materially_better = True
         if secondary_is_materially_better:
             chosen_plan = secondary_plan
             chosen_path = secondary_path
@@ -7566,6 +7943,16 @@ def build_candidate_purchase_timing_plan(
         f"cerca de {expected_exit_price:.4f} EUR. Ese intervalo deja {chosen_plan['trade_return_pct']:.2f} % neto"
         f" y {chosen_plan['holding_annualized_return_pct']:.2f} % anualizado."
     )
+    if chosen_plan.get("holding_annualized_return_pct") is not None:
+        if interval_meets_target(chosen_plan):
+            summary += (
+                f" Cumple el objetivo minimo del {target_annualized_return_pct:.0f} %/a exigido por el optimizador."
+            )
+        else:
+            summary += (
+                f" No alcanza el objetivo minimo del {target_annualized_return_pct:.0f} %/a,"
+                " asi que solo sirve como referencia tactica y no entraria en la cartera propuesta."
+            )
     if exit_month_number > entry_horizon_months:
         summary += (
             f" La salida se deja correr mas alla del ano de entrada porque el tramo mejora hasta el mes {exit_month_number}."
@@ -13108,7 +13495,8 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
             continue
         reliability = card.get("projection_reliability", {"label": "Baja", "score": Decimal("40.00")})
         best_candidate = card.get("reference_playbook", {}).get("best_candidate")
-        projected_return_pct = projection.get("base_return_pct")
+        effective_projection = resolve_effective_projection_metrics(card)
+        projected_return_pct = effective_projection.get("base_return_pct")
         trade_alert = card.get("trade_alert", {})
         coefficient_alert = card.get("coefficient_alert", {})
         valuation = card.get("valuation") or {}
@@ -13116,7 +13504,7 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
         cycle_return_profile = build_cycle_projection_return_profile(
             position.current_price_per_share,
             cycle_projection,
-            first_year_projected_price=projection.get("projected_price"),
+            first_year_projected_price=effective_projection.get("projected_price"),
             first_year_return_pct=projected_return_pct,
         )
         rows.append(
@@ -13134,7 +13522,7 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
                 "correlation": card.get("correlation", {}).get("coefficient"),
                 "years_covered": projection.get("years_covered"),
                 "projected_return_pct": projected_return_pct,
-                "projected_price": projection.get("projected_price"),
+                "projected_price": effective_projection.get("projected_price"),
                 "cycle_return_5y_pct": cycle_return_profile["five_year_return_pct"],
                 "cycle_return_annual_pct": cycle_return_profile["five_year_annualized_return_pct"],
                 "cycle_yearly_margins": cycle_return_profile["yearly_margins"],
@@ -15146,10 +15534,11 @@ def build_optimizer_uncertainty_profile(
 
 def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_STRATEGY_12M_PRIMARY) -> dict | None:
     projection = card.get("projection") or {}
-    if not projection.get("available") or projection.get("projected_price") is None:
+    effective_projection = resolve_effective_projection_metrics(card)
+    if not projection.get("available") or effective_projection.get("projected_price") is None:
         return None
 
-    base_return_pct = projection.get("base_return_pct")
+    base_return_pct = effective_projection.get("base_return_pct")
     if base_return_pct is None:
         return None
 
@@ -15161,7 +15550,7 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
     years_covered = projection.get("years_covered") or ZERO
     positive_year_ratio_pct = projection.get("positive_year_ratio_pct") or Decimal("50.00")
     annualized_volatility_pct = projection.get("annualized_volatility_pct") or Decimal("18.00")
-    low_return_pct = projection.get("low_return_pct")
+    low_return_pct = effective_projection.get("low_return_pct")
     current_drawdown_pct = projection.get("current_drawdown_pct") or ZERO
     max_drawdown_pct = projection.get("max_drawdown_pct") or ZERO
     net_income_yield_pct = projection.get("net_income_yield_pct") or ZERO
@@ -15177,7 +15566,7 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
     external_signal_label = external_signal.get("label") or "Sin prensa reciente"
     decision_action_label = build_decision_action_label(
         card["position"],
-        projection.get("base_return_pct"),
+        base_return_pct,
         safety_score,
         reliability_score,
         (card.get("valuation") or {}).get("score"),
@@ -15198,7 +15587,7 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         Decimal("2.50"),
     )
     twelve_month_scenario = build_optimizer_scenario_summary(
-        projection.get("scenarios"),
+        build_effective_projection_scenarios(card, effective_metrics=effective_projection),
         return_key="total_return_pct",
         fallback_value=base_return_pct,
     )
@@ -15316,6 +15705,47 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
     )
     strategy = get_optimizer_strategy_config(strategy_mode)
     purchase_timing = build_candidate_purchase_timing_plan(card, strategy["mode"])
+    holding_annualized_return_pct = quantize_decimal(
+        purchase_timing.get("holding_annualized_return_pct"),
+        "0.01",
+    ) if purchase_timing.get("available") else None
+    annualized_target_return_pct = OPTIMIZER_TARGET_HOLDING_ANNUALIZED_RETURN_PCT
+    annualized_target_gap_pct = (
+        quantize_decimal(holding_annualized_return_pct - annualized_target_return_pct, "0.01")
+        if holding_annualized_return_pct is not None
+        else None
+    )
+    annualized_target_penalty_pct = clamp_decimal(
+        max(annualized_target_return_pct - (holding_annualized_return_pct or ZERO), ZERO)
+        * OPTIMIZER_TARGET_SHORTFALL_PENALTY_MULTIPLE,
+        ZERO,
+        Decimal("10.00"),
+    ) if holding_annualized_return_pct is not None else ZERO
+    annualized_target_bonus_pct = clamp_decimal(
+        max((holding_annualized_return_pct or ZERO) - annualized_target_return_pct, ZERO)
+        * OPTIMIZER_TARGET_EXCESS_BONUS_MULTIPLE,
+        ZERO,
+        Decimal("3.00"),
+    ) if holding_annualized_return_pct is not None else ZERO
+    conservative_risk_penalty_pct = clamp_decimal(
+        (abs(min(low_return_pct or ZERO, ZERO)) * Decimal("0.16"))
+        + (abs(min(downside_stress_return_pct or ZERO, ZERO)) * Decimal("0.22"))
+        + (annualized_volatility_pct * Decimal("0.05"))
+        + (uncertainty_penalty_pct * Decimal("0.45")),
+        ZERO,
+        Decimal("10.00"),
+    )
+    conservative_quality_bonus_pct = clamp_decimal(
+        (max(safety_score - Decimal("70.00"), ZERO) * Decimal("0.05"))
+        + (max(reliability_score - Decimal("70.00"), ZERO) * Decimal("0.04")),
+        ZERO,
+        Decimal("3.50"),
+    )
+    meets_target_annualized_return = (
+        holding_annualized_return_pct >= annualized_target_return_pct
+        if holding_annualized_return_pct is not None
+        else False
+    )
     if strategy["mode"] == OPTIMIZER_STRATEGY_5Y_PRIMARY:
         primary_signal_pct = robust_cycle_support_score
         secondary_signal_pct = robust_return_signal_pct
@@ -15330,16 +15760,21 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         blended_return_signal_pct
         + income_support_bonus_pct
         - cost_efficiency_penalty_pct
+        + annualized_target_bonus_pct
+        - annualized_target_penalty_pct
+        + conservative_quality_bonus_pct
+        - conservative_risk_penalty_pct
         + trade_signal_adjustment
         + external_signal_adjustment
         + (quality_adjustments.get("decision_action_adjustment") or ZERO)
         - (quality_adjustments.get("quality_floor_penalty_pct") or ZERO)
     )
 
-    return {
+    candidate = {
         "card": card,
         "position": card["position"],
         "projection": projection,
+        "effective_projection_metrics": effective_projection,
         "status_key": card.get("status_key") or ("owned" if card["position"].is_owned else "watchlist"),
         "status_label": card.get("status_label") or card["position"].get_position_kind_display(),
         "sector_label": card.get("sector_label") or resolve_equity_sector_label(
@@ -15357,6 +15792,7 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         "reliability_score": reliability_score,
         "safety_score": safety_score,
         "base_return_pct": base_return_pct,
+        "low_return_pct": low_return_pct,
         "scenario_expected_return_pct": scenario_expected_return_pct,
         "downside_stress_return_pct": downside_stress_return_pct,
         "scenario_spread_pct": scenario_spread_pct,
@@ -15398,6 +15834,15 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         "reliability_floor_penalty_pct": quality_adjustments.get("reliability_floor_penalty_pct") or ZERO,
         "quality_floor_penalty_pct": quality_adjustments.get("quality_floor_penalty_pct") or ZERO,
         "trade_signal_adjustment": trade_signal_adjustment,
+        "holding_annualized_return_pct": holding_annualized_return_pct,
+        "annualized_target_return_pct": annualized_target_return_pct,
+        "annualized_target_gap_pct": annualized_target_gap_pct,
+        "annualized_target_penalty_pct": annualized_target_penalty_pct,
+        "annualized_target_bonus_pct": annualized_target_bonus_pct,
+        "annualized_target_applicable": holding_annualized_return_pct is not None,
+        "meets_target_annualized_return": meets_target_annualized_return,
+        "conservative_risk_penalty_pct": conservative_risk_penalty_pct,
+        "conservative_quality_bonus_pct": conservative_quality_bonus_pct,
         "external_signal_label": external_signal_label,
         "external_signal_score": external_signal_score,
         "external_signal_adjustment": external_signal_adjustment,
@@ -15410,6 +15855,73 @@ def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_
         "coverage_penalty_pct": uncertainty_profile.get("coverage_penalty_pct") or ZERO,
         "purchase_timing": purchase_timing,
     }
+    conservative_profile_review = build_optimizer_conservative_profile_review(candidate)
+    candidate["risk_profile_label"] = OPTIMIZER_RISK_PROFILE_LABEL
+    candidate["conservative_profile_review"] = conservative_profile_review
+    candidate["passes_conservative_profile"] = conservative_profile_review["passes"]
+    candidate["conservative_profile_summary"] = conservative_profile_review["summary"]
+    candidate["conservative_profile_failures"] = conservative_profile_review["failures"]
+    return candidate
+
+
+def candidate_meets_target_annualized_return(candidate: dict) -> bool:
+    annualized_return_pct = quantize_decimal(candidate.get("holding_annualized_return_pct"), "0.01")
+    if annualized_return_pct is None:
+        return True
+    target_return_pct = quantize_decimal(
+        candidate.get("annualized_target_return_pct"),
+        "0.01",
+    ) or OPTIMIZER_TARGET_HOLDING_ANNUALIZED_RETURN_PCT
+    return annualized_return_pct >= target_return_pct
+
+
+def build_optimizer_conservative_profile_review(candidate: dict) -> dict:
+    safety_score = quantize_decimal(candidate.get("safety_score"), "0.01") or ZERO
+    reliability_score = quantize_decimal(candidate.get("reliability_score"), "0.01") or ZERO
+    worst_return_pct = quantize_decimal(candidate.get("low_return_pct"), "0.01")
+    stress_return_pct = quantize_decimal(candidate.get("downside_stress_return_pct"), "0.01")
+    annualized_volatility_pct = quantize_decimal(candidate.get("annualized_volatility_pct"), "0.01") or ZERO
+    uncertainty_penalty_pct = quantize_decimal(candidate.get("uncertainty_penalty_pct"), "0.01") or ZERO
+    trade_alert_label = str(candidate.get("trade_alert_label") or "").strip()
+
+    failures = []
+    if trade_alert_label != "Comprar":
+        failures.append("alerta de compra")
+    if safety_score < OPTIMIZER_CONSERVATIVE_MIN_SAFETY_SCORE:
+        failures.append("seguridad")
+    if reliability_score < OPTIMIZER_CONSERVATIVE_MIN_RELIABILITY_SCORE:
+        failures.append("fiabilidad")
+    if worst_return_pct is None or worst_return_pct < OPTIMIZER_CONSERVATIVE_MIN_WORST_RETURN_PCT:
+        failures.append("peor escenario")
+    if stress_return_pct is None or stress_return_pct < OPTIMIZER_CONSERVATIVE_MIN_STRESS_RETURN_PCT:
+        failures.append("estres")
+    if annualized_volatility_pct > OPTIMIZER_CONSERVATIVE_MAX_VOLATILITY_PCT:
+        failures.append("volatilidad")
+    if uncertainty_penalty_pct > OPTIMIZER_CONSERVATIVE_MAX_UNCERTAINTY_PENALTY_PCT:
+        failures.append("incertidumbre")
+
+    summary = (
+        f"Perfil {OPTIMIZER_RISK_PROFILE_LABEL.lower()}: solo entran ideas con alerta Comprar, "
+        f"seguridad >= {OPTIMIZER_CONSERVATIVE_MIN_SAFETY_SCORE:.0f}, "
+        f"fiabilidad >= {OPTIMIZER_CONSERVATIVE_MIN_RELIABILITY_SCORE:.0f}, "
+        f"peor escenario >= {OPTIMIZER_CONSERVATIVE_MIN_WORST_RETURN_PCT:.0f} %, "
+        f"estres >= {OPTIMIZER_CONSERVATIVE_MIN_STRESS_RETURN_PCT:.0f} %, "
+        f"volatilidad <= {OPTIMIZER_CONSERVATIVE_MAX_VOLATILITY_PCT:.0f} % "
+        f"e incertidumbre <= {OPTIMIZER_CONSERVATIVE_MAX_UNCERTAINTY_PENALTY_PCT:.2f} pts."
+    )
+    if failures:
+        summary += " Esta idea no pasa por: " + ", ".join(failures) + "."
+
+    return {
+        "passes": not failures,
+        "failures": failures,
+        "summary": summary,
+    }
+
+
+def candidate_passes_conservative_profile(candidate: dict) -> bool:
+    profile_review = candidate.get("conservative_profile_review") or build_optimizer_conservative_profile_review(candidate)
+    return bool(profile_review.get("passes"))
 
 
 def filter_positive_optimizer_candidates(
@@ -15423,6 +15935,8 @@ def filter_positive_optimizer_candidates(
             for item in candidates
             if item["optimization_score"] > ZERO
             and item.get("robust_cycle_support_score", item["cycle_support_score"]) > ZERO
+            and candidate_meets_target_annualized_return(item)
+            and candidate_passes_conservative_profile(item)
             and item["trade_alert_label"] != "Vender"
         ]
     return [
@@ -15430,6 +15944,8 @@ def filter_positive_optimizer_candidates(
         for item in candidates
         if item["optimization_score"] > ZERO
         and item.get("robust_return_signal_pct", item["base_return_pct"]) > ZERO
+        and candidate_meets_target_annualized_return(item)
+        and candidate_passes_conservative_profile(item)
         and item["trade_alert_label"] != "Vender"
     ]
 
@@ -15439,6 +15955,12 @@ def rank_optimizer_candidates(candidates: list[dict]) -> list[dict]:
         candidates,
         key=lambda item: (
             item["optimization_score"],
+            item["safety_score"],
+            item["reliability_score"],
+            item.get("downside_stress_return_pct") if item.get("downside_stress_return_pct") is not None else Decimal("-9999"),
+            item.get("low_return_pct") if item.get("low_return_pct") is not None else Decimal("-9999"),
+            -(item.get("annualized_volatility_pct") or Decimal("9999")),
+            -(item.get("uncertainty_penalty_pct") or Decimal("9999")),
             item["primary_signal_pct"],
             item["secondary_signal_pct"],
             item.get("scenario_expected_return_pct") if item.get("scenario_expected_return_pct") is not None else Decimal("-9999"),
@@ -15530,6 +16052,7 @@ def distribute_optimizer_amounts(
 def build_optimizer_allocation_scenario(candidate: dict, allocated_amount: Decimal) -> dict:
     position = candidate["position"]
     projection = candidate["projection"]
+    effective_projection = candidate.get("effective_projection_metrics") or resolve_effective_projection_metrics(candidate.get("card") or {})
     if allocated_amount <= ZERO:
         return {
             "gross_dividend_income": ZERO,
@@ -15567,20 +16090,20 @@ def build_optimizer_allocation_scenario(candidate: dict, allocated_amount: Decim
         if allocated_amount
         else ZERO
     )
-    price_return_pct = projection.get("price_return_pct")
+    price_return_pct = effective_projection.get("price_return_pct")
     if price_return_pct is None:
         fallback_base_return_pct = projection.get("base_return_pct") or ZERO
         fallback_net_income_yield_pct = projection.get("net_income_yield_pct") or ZERO
         fallback_transaction_drag_pct = projection.get("transaction_drag_pct") or ZERO
         price_return_pct = fallback_base_return_pct - fallback_net_income_yield_pct + fallback_transaction_drag_pct
-    price_low_return_pct = projection.get("price_low_return_pct")
+    price_low_return_pct = effective_projection.get("price_low_return_pct")
     if price_low_return_pct is None:
-        price_low_return_pct = projection.get("low_return_pct")
+        price_low_return_pct = effective_projection.get("low_return_pct")
     if price_low_return_pct is None:
         price_low_return_pct = price_return_pct
-    price_high_return_pct = projection.get("price_high_return_pct")
+    price_high_return_pct = effective_projection.get("price_high_return_pct")
     if price_high_return_pct is None:
-        price_high_return_pct = projection.get("high_return_pct")
+        price_high_return_pct = effective_projection.get("high_return_pct")
     if price_high_return_pct is None:
         price_high_return_pct = price_return_pct
     net_projected_return_pct = clamp_decimal(
@@ -15802,10 +16325,38 @@ def build_equity_round_investment_plan(
     positive_candidates = rank_optimizer_candidates(
         filter_positive_optimizer_candidates(candidate_pool, strategy["mode"])
     )
+    annualized_target_excluded_count = sum(
+        1
+        for candidate in candidate_pool
+        if candidate["optimization_score"] > ZERO
+        and candidate.get("trade_alert_label") != "Vender"
+        and candidate.get("holding_annualized_return_pct") is not None
+        and not candidate_meets_target_annualized_return(candidate)
+    )
+    conservative_profile_excluded_count = sum(
+        1
+        for candidate in candidate_pool
+        if candidate["optimization_score"] > ZERO
+        and candidate.get("trade_alert_label") != "Vender"
+        and candidate_meets_target_annualized_return(candidate)
+        and not candidate_passes_conservative_profile(candidate)
+    )
     if not positive_candidates:
         return {
             "available": False,
-            "reason": "Ahora mismo no hay candidatas con retorno neto positivo suficiente para abrir rondas nuevas.",
+            "reason": (
+                "Ahora mismo no hay candidatas con retorno neto positivo suficiente para abrir rondas nuevas."
+                + (
+                    f" Las ideas tacticas detectadas tampoco alcanzan el objetivo minimo de {OPTIMIZER_TARGET_HOLDING_ANNUALIZED_RETURN_PCT:.0f} %/a."
+                    if annualized_target_excluded_count
+                    else ""
+                )
+                + (
+                    f" Ademas, el perfil {OPTIMIZER_RISK_PROFILE_LABEL.lower()} deja fuera {conservative_profile_excluded_count} candidata(s) por riesgo excesivo."
+                    if conservative_profile_excluded_count
+                    else ""
+                )
+            ),
             "strategy_label": strategy["label"],
         }
 
@@ -15952,12 +16503,42 @@ def build_equity_allocation_plan(
         }
 
     positive_candidates = filter_positive_optimizer_candidates(candidates, strategy["mode"])
+    annualized_target_excluded_candidates = [
+        item
+        for item in candidates
+        if item["optimization_score"] > ZERO
+        and item.get("trade_alert_label") != "Vender"
+        and item.get("holding_annualized_return_pct") is not None
+        and not candidate_meets_target_annualized_return(item)
+    ]
+    conservative_profile_excluded_candidates = [
+        item
+        for item in candidates
+        if item["optimization_score"] > ZERO
+        and item.get("trade_alert_label") != "Vender"
+        and candidate_meets_target_annualized_return(item)
+        and not candidate_passes_conservative_profile(item)
+    ]
     if not positive_candidates:
+        annualized_target_reason = ""
+        if annualized_target_excluded_candidates:
+            annualized_target_reason = (
+                f" Ademas, {len(annualized_target_excluded_candidates)} candidata(s) con tramo tactico claro no alcanzan "
+                f"el objetivo minimo de {OPTIMIZER_TARGET_HOLDING_ANNUALIZED_RETURN_PCT:.0f} % anualizado."
+            )
+        conservative_profile_reason = ""
+        if conservative_profile_excluded_candidates:
+            conservative_profile_reason = (
+                f" El perfil {OPTIMIZER_RISK_PROFILE_LABEL.lower()} tambien aparta {len(conservative_profile_excluded_candidates)} candidata(s) "
+                "porque el peor escenario, la volatilidad, la incertidumbre o la seguridad no son lo bastante defensivos."
+            )
         return {
             "available": False,
             "reason": (
                 "Ahora mismo ninguna accion ofrece retorno robusto positivo "
                 f"con prioridad en {strategy['primary_horizon_label']} despues de descontar riesgo, costes y penalizaciones de incertidumbre."
+                + annualized_target_reason
+                + conservative_profile_reason
             ),
             "strategy_mode": strategy["mode"],
             "strategy_label": strategy["label"],
@@ -16196,10 +16777,15 @@ def build_equity_allocation_plan(
                 "cycle_expected_annual_return_pct": candidate.get("cycle_expected_annual_return_pct"),
                 "cycle_downside_stress_annual_pct": candidate.get("cycle_downside_stress_annual_pct"),
                 "cycle_scenario_spread_pct": candidate.get("cycle_scenario_spread_pct"),
+                "holding_annualized_return_pct": candidate.get("holding_annualized_return_pct"),
+                "annualized_target_return_pct": candidate.get("annualized_target_return_pct"),
+                "annualized_target_gap_pct": candidate.get("annualized_target_gap_pct"),
+                "meets_target_annualized_return": candidate.get("meets_target_annualized_return"),
+                "passes_conservative_profile": candidate.get("passes_conservative_profile"),
                 "cycle_yearly_margins": build_cycle_projection_yearly_margins(
                     candidate["position"].current_price_per_share,
                     candidate["card"].get("cycle_projection_5y") or {},
-                    first_year_projected_price=candidate["projection"].get("projected_price"),
+                    first_year_projected_price=(candidate.get("effective_projection_metrics") or {}).get("projected_price"),
                     first_year_return_pct=candidate["base_return_pct"],
                 ),
                 "cycle_support_score": candidate["cycle_support_score"],
@@ -16301,6 +16887,36 @@ def build_equity_allocation_plan(
         if allocated_amount_total
         else None
     )
+    target_annualized_allocated_amount_total = sum(
+        (
+            item["allocated_amount"]
+            for item in allocations
+            if (item.get("purchase_timing") or {}).get("holding_annualized_return_pct") is not None
+        ),
+        ZERO,
+    )
+    weighted_holding_annualized_return_pct = (
+        sum(
+            (
+                (item["purchase_timing"]["holding_annualized_return_pct"] * item["allocated_amount"])
+                for item in allocations
+                if (item.get("purchase_timing") or {}).get("holding_annualized_return_pct") is not None
+            ),
+            ZERO,
+        )
+        / target_annualized_allocated_amount_total
+        if target_annualized_allocated_amount_total
+        else None
+    )
+    target_holding_annualized_return_pct = OPTIMIZER_TARGET_HOLDING_ANNUALIZED_RETURN_PCT
+    weighted_holding_annualized_target_gap_pct = (
+        quantize_decimal(
+            weighted_holding_annualized_return_pct - target_holding_annualized_return_pct,
+            "0.01",
+        )
+        if weighted_holding_annualized_return_pct is not None
+        else None
+    )
     net_dividend_income_total = sum((item["expected_net_dividend_income"] for item in allocations), ZERO)
     annual_cost_total = sum((item["annual_cost_used"] for item in allocations), ZERO)
     roundtrip_cost_total = sum((item["roundtrip_total_cost"] for item in allocations), ZERO)
@@ -16315,12 +16931,74 @@ def build_equity_allocation_plan(
     external_signal_used_count = sum(1 for item in allocations if item.get("external_signal_items_count"))
     material_event_allocations_count = sum(1 for item in allocations if item.get("material_event"))
     shock_adjusted_allocations_count = sum(1 for item in allocations if (item.get("uncertainty_penalty_pct") or ZERO) > ZERO)
+    allocations_with_timing_count = sum(
+        1
+        for item in allocations
+        if (item.get("purchase_timing") or {}).get("holding_annualized_return_pct") is not None
+    )
+    allocations_meeting_target_count = sum(
+        1
+        for item in allocations
+        if (
+            (item.get("purchase_timing") or {}).get("holding_annualized_return_pct") is not None
+            and (item["purchase_timing"]["holding_annualized_return_pct"] >= target_holding_annualized_return_pct)
+        )
+    )
+    weighted_target_compliance_pct = (
+        quantize_decimal(
+            (
+                sum(
+                    (
+                        item["allocated_amount"]
+                        for item in allocations
+                        if (
+                            (item.get("purchase_timing") or {}).get("holding_annualized_return_pct") is not None
+                            and item["purchase_timing"]["holding_annualized_return_pct"] >= target_holding_annualized_return_pct
+                        )
+                    ),
+                    ZERO,
+                )
+                / allocated_amount_total
+            ) * ONE_HUNDRED,
+            "0.01",
+        )
+        if allocated_amount_total
+        else None
+    )
+    weighted_conservative_profile_compliance_pct = (
+        quantize_decimal(
+            (
+                sum(
+                    (
+                        item["allocated_amount"]
+                        for item in allocations
+                        if candidate_passes_conservative_profile(item)
+                    ),
+                    ZERO,
+                )
+                / allocated_amount_total
+            ) * ONE_HUNDRED,
+            "0.01",
+        )
+        if allocated_amount_total
+        else None
+    )
 
     if remaining_amount > ZERO:
         reserve_reason = (
             "Queda caja en reserva porque el filtro de riesgo/rentabilidad solo deja pasar las ideas con retorno robusto positivo, "
             "riesgo asumible y costes razonables."
         )
+        if annualized_target_excluded_candidates:
+            reserve_reason += (
+                f" Tambien se reserva capital porque {len(annualized_target_excluded_candidates)} candidata(s) no llegan "
+                f"al objetivo de {target_holding_annualized_return_pct:.0f} %/a."
+            )
+        if conservative_profile_excluded_candidates:
+            reserve_reason += (
+                f" El perfil {OPTIMIZER_RISK_PROFILE_LABEL.lower()} deja ademas fuera {len(conservative_profile_excluded_candidates)} candidata(s) "
+                "por no ofrecer suficiente proteccion en peor escenario, volatilidad, incertidumbre o calidad del modelo."
+            )
         if max_total_positions > 0 and (company_cap_amount * Decimal(str(max_total_positions))) < total_investment:
             reserve_reason += (
                 " Ademas, el maximo total de empresas combinado con el peso maximo por empresa impide asignar todo el capital sin saltarse tus propios limites."
@@ -16373,12 +17051,34 @@ def build_equity_allocation_plan(
             sector_limit_note += f" {len(sector_excluded_candidates)} candidata(s) han quedado fuera por diversificacion sectorial."
     else:
         sector_limit_note = ""
+    if annualized_target_excluded_candidates:
+        annualized_target_note = (
+            f"Se han dejado fuera {len(annualized_target_excluded_candidates)} candidata(s) cuyo mejor tramo tactico no alcanza "
+            f"el objetivo minimo de {target_holding_annualized_return_pct:.0f} % anualizado."
+        )
+    else:
+        annualized_target_note = (
+            f"El optimizador exige, cuando existe plan tactico de entrada y salida, un objetivo minimo de "
+            f"{target_holding_annualized_return_pct:.0f} % anualizado por compra."
+        )
+    conservative_profile_note = (
+        f"Perfil {OPTIMIZER_RISK_PROFILE_LABEL.lower()}: solo entran ideas con alerta Comprar, seguridad >= "
+        f"{OPTIMIZER_CONSERVATIVE_MIN_SAFETY_SCORE:.0f}, fiabilidad >= {OPTIMIZER_CONSERVATIVE_MIN_RELIABILITY_SCORE:.0f}, "
+        f"peor escenario >= {OPTIMIZER_CONSERVATIVE_MIN_WORST_RETURN_PCT:.0f} %, estres >= {OPTIMIZER_CONSERVATIVE_MIN_STRESS_RETURN_PCT:.0f} %, "
+        f"volatilidad <= {OPTIMIZER_CONSERVATIVE_MAX_VOLATILITY_PCT:.0f} % e incertidumbre <= {OPTIMIZER_CONSERVATIVE_MAX_UNCERTAINTY_PENALTY_PCT:.2f} pts."
+    )
     reason = ""
     if not allocations:
         reason = (
-            ticket_filter_note
+            (
+                annualized_target_note
+                if annualized_target_excluded_candidates
+                else ""
+            )
+            or ticket_filter_note
             or position_limit_note
             or sector_limit_note
+            or conservative_profile_note
             or "Con las tarifas actuales del broker, las compras que caben por peso maximo no compensan el coste fijo+variable por operacion."
         )
 
@@ -16414,6 +17114,13 @@ def build_equity_allocation_plan(
         "weighted_reliability_score": weighted_reliability_score,
         "weighted_cycle_return_annual_pct": weighted_cycle_return_annual_pct,
         "weighted_cycle_return_5y_pct": weighted_cycle_return_5y_pct,
+        "target_holding_annualized_return_pct": target_holding_annualized_return_pct,
+        "weighted_holding_annualized_return_pct": weighted_holding_annualized_return_pct,
+        "weighted_holding_annualized_target_gap_pct": weighted_holding_annualized_target_gap_pct,
+        "allocations_with_timing_count": allocations_with_timing_count,
+        "allocations_meeting_target_count": allocations_meeting_target_count,
+        "weighted_target_compliance_pct": weighted_target_compliance_pct,
+        "weighted_conservative_profile_compliance_pct": weighted_conservative_profile_compliance_pct,
         "weighted_volatility_pct": weighted_volatility_pct,
         "weighted_uncertainty_penalty_pct": weighted_uncertainty_penalty_pct,
         "net_dividend_income_total": net_dividend_income_total,
@@ -16432,6 +17139,11 @@ def build_equity_allocation_plan(
         "shock_adjusted_allocations_count": shock_adjusted_allocations_count,
         "sector_filtered_count": len(sector_excluded_candidates),
         "sector_filter_note": sector_limit_note,
+        "annualized_target_filtered_count": len(annualized_target_excluded_candidates),
+        "annualized_target_note": annualized_target_note,
+        "risk_profile_label": OPTIMIZER_RISK_PROFILE_LABEL,
+        "conservative_profile_filtered_count": len(conservative_profile_excluded_candidates),
+        "conservative_profile_note": conservative_profile_note,
         "selected_owned_ticker_filtered_count": len(selected_owned_ticker_excluded_candidates),
         "ticket_filtered_count": ticket_filtered_count,
         "ticket_filter_reasons": ticket_filter_reasons,
@@ -16443,7 +17155,10 @@ def build_equity_allocation_plan(
             f"Esta ejecucion usa la estrategia {strategy['label']}: "
             f"prioriza la lectura de {strategy['primary_horizon_label']} y deja {strategy['secondary_horizon_label']} como contraste secundario para reforzar o penalizar la jerarquia final. "
             "La jerarquia ya no depende solo del caso central: combina retorno esperado por escenarios, peor caso, dispersion entre escenarios, seguridad, fiabilidad del modelo, alertas de tendencia, senal externa reciente de prensa y castigo automatico por shocks informativos. "
+            f"Como perfil {OPTIMIZER_RISK_PROFILE_LABEL.lower()}, el ranking prioriza preservar capital: favorece mejor peor escenario, menor volatilidad, menos incertidumbre y mayor seguridad/fiabilidad antes de apurar retorno. "
             f"La seguridad ({int(OPTIMIZER_MIN_SAFETY_SCORE)} como referencia), la fiabilidad ({int(OPTIMIZER_MIN_RELIABILITY_SCORE)} como referencia) y la lectura de la ficha ya no expulsan por un corte fijo: penalizan el score de forma progresiva para que el optimizador siga priorizando rentabilidad, pero no ignore el riesgo. "
+            f"Ademas, cuando hay plan tactico de compra, se exige un objetivo minimo de {target_holding_annualized_return_pct:.0f} % anualizado; si una idea no llega, se deja fuera y el capital queda en reserva. "
+            f"Sobre ese objetivo, el filtro conservador exige alerta Comprar, seguridad >= {OPTIMIZER_CONSERVATIVE_MIN_SAFETY_SCORE:.0f}, fiabilidad >= {OPTIMIZER_CONSERVATIVE_MIN_RELIABILITY_SCORE:.0f}, peor escenario >= {OPTIMIZER_CONSERVATIVE_MIN_WORST_RETURN_PCT:.0f} %, estres >= {OPTIMIZER_CONSERVATIVE_MIN_STRESS_RETURN_PCT:.0f} %, volatilidad <= {OPTIMIZER_CONSERVATIVE_MAX_VOLATILITY_PCT:.0f} % e incertidumbre <= {OPTIMIZER_CONSERVATIVE_MAX_UNCERTAINTY_PENALTY_PCT:.2f} pts. "
             "Las cifras monetarias del informe siguen expresadas a 12 meses para mantener comparables dividendos, costes, caja y peor escenario, aunque la jerarquia de seleccion pueda priorizar 5 anos. "
             "eficiencia real del ticket de compra y, si lo marcas, un maximo total de empresas y diversificacion maxima por sector. En la version robusta se "
             "analiza siempre todo el IBEX, no solo los valores que ya tienes en seguimiento."

@@ -40,7 +40,12 @@
       <td colspan="2"><strong>Sectores permitidos</strong><br>{% if summary.selected_sectors %}{{ summary.selected_sectors|join:", " }}{% else %}Todos los sectores{% endif %}{% if summary.top_pick_buy_window_label %}<br>Top pick entra {{ summary.top_pick_buy_window_label }}{% endif %}{% if summary.top_pick_exit_window_label %} y sale {{ summary.top_pick_exit_window_label }}{% endif %}{% if summary.top_pick_holding_annualized_return_pct is not None %} | {{ summary.top_pick_holding_annualized_return_pct|floatformat:1 }} %/a{% endif %}</td>
     </tr>
     <tr>
-      <td colspan="4"><strong>Metodo</strong><br>{{ summary.methodology_note }}</td>
+      <td><strong>Media compra</strong><br>{% if summary.weighted_holding_annualized_return_pct is not None %}{{ summary.weighted_holding_annualized_return_pct|floatformat:2 }} %/a{% else %}-{% endif %}</td>
+      <td><strong>Objetivo</strong><br>{% if summary.target_holding_annualized_return_pct is not None %}{{ summary.target_holding_annualized_return_pct|floatformat:0 }} %/a{% else %}-{% endif %}</td>
+      <td colspan="2"><strong>Compras que cumplen</strong><br>{{ summary.allocations_meeting_target_count|default:0 }}/{{ summary.allocations_with_timing_count|default:0 }}{% if summary.weighted_target_compliance_pct is not None %} | {{ summary.weighted_target_compliance_pct|floatformat:0 }} % del capital{% endif %}</td>
+    </tr>
+    <tr>
+      <td colspan="4"><strong>Metodo</strong><br>{{ summary.methodology_note }}{% if summary.annualized_target_note %} {{ summary.annualized_target_note }}{% endif %}{% if summary.conservative_profile_note %} {{ summary.conservative_profile_note }}{% endif %}</td>
     </tr>
   </table>
 

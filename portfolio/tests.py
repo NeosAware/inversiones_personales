@@ -402,6 +402,19 @@ class AccessControlTests(TestCase):
         response = self.client.get(reverse("portfolio:dashboard"))
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("no-store", response.headers.get("Cache-Control", ""))
+        self.assertEqual(response.headers.get("Pragma"), "no-cache")
+
+    def test_non_admin_cannot_capture_manual_portfolio_snapshot(self):
+        self.client.force_login(self.user)
+        self.client.get(reverse("portfolio:dashboard"))
+        previous_count = PortfolioSnapshot.objects.count()
+
+        response = self.client.post(reverse("portfolio:dashboard"), follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Solo un administrador puede guardar fotos manuales de cartera.")
+        self.assertEqual(PortfolioSnapshot.objects.count(), previous_count)
 
 
 class UserManagementTests(TestCase):

@@ -24,3 +24,10 @@ def can_user_manage_users(user, recovery_mode: bool | None = None) -> bool:
 def set_user_admin_flags(user, is_admin: bool) -> None:
     user.is_staff = is_admin
     user.is_superuser = is_admin
+
+
+def can_user_manage_financial_data(user) -> bool:
+    return bool(
+        getattr(user, "is_authenticated", False)
+        and (getattr(user, "is_staff", False) or getattr(user, "is_superuser", False))
+    )

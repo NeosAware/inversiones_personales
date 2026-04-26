@@ -14,12 +14,14 @@ from django.views.generic import TemplateView
 from django.views.decorators.csrf import csrf_exempt
 
 from portfolio.ownership import AssetOwnershipCategory
+from portfolio.user_management import can_user_manage_financial_data
 
 from .forms import (
     BankBalanceForm,
     ROBOT_BANK_SUGGESTIONS,
     RobotSetupAssistantForm,
     StatementUploadForm,
+    validate_statement_upload_batch,
 )
 from .models import BankBalance, BankInvestmentPosition, BankStatementImport
 from .services import (
@@ -80,9 +82,16 @@ class BankBalanceListView(LoginRequiredMixin, TemplateView):
         context["smart_alerts"] = cockpit_extras["alerts"]
         context["daily_burn_rate"] = cockpit_extras["daily_burn_rate"]
         context["projected_monthly_expense"] = cockpit_extras["projected_monthly_expense"]
+        context["can_manage_finances"] = can_user_manage_financial_data(self.request.user)
         return context
 
     def post(self, request, *args, **kwargs):
+        if not can_user_manage_financial_data(request.user):
+            messages.error(
+                request,
+                "Solo un administrador puede importar extractos o modificar la banca.",
+            )
+            return redirect("banking:list")
         action = request.POST.get("action", "import")
         if action == "save_account":
             return self._save_account(request)
@@ -266,8 +275,10 @@ def robot_statement_import_view(request):
         return JsonResponse({"ok": False, "error": "Token de robot no valido."}, status=403)
 
     uploaded_files = request.FILES.getlist("files") or request.FILES.getlist("file")
-    if not uploaded_files:
-        return JsonResponse({"ok": False, "error": "No se ha enviado ningun fichero."}, status=400)
+    try:
+        uploaded_files = validate_statement_upload_batch(uploaded_files)
+    except ValidationError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
     statement_kind = request.POST.get("statement_kind", BankStatementImport.StatementKind.ACCOUNT).strip()
     valid_statement_kinds = {choice[0] for choice in BankStatementImport.StatementKind.choices}
@@ -340,10 +351,14 @@ robot_statement_import_view.login_required = False
 def local_bridge_statement_import_view(request):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
+    if not can_user_manage_financial_data(request.user):
+        return JsonResponse({"ok": False, "error": "Solo un administrador puede lanzar importaciones locales."}, status=403)
 
     uploaded_files = request.FILES.getlist("files") or request.FILES.getlist("file")
-    if not uploaded_files:
-        return JsonResponse({"ok": False, "error": "No se ha enviado ningun fichero."}, status=400)
+    try:
+        uploaded_files = validate_statement_upload_batch(uploaded_files)
+    except ValidationError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
     statement_kind = request.POST.get("statement_kind", BankStatementImport.StatementKind.ACCOUNT).strip()
     valid_statement_kinds = {choice[0] for choice in BankStatementImport.StatementKind.choices}

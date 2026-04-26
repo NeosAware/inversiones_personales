@@ -965,7 +965,21 @@ def load_cached_ibex_card(
     ).first()
     if snapshot is None:
         return None
-    return deserialize_cached_value(snapshot.analysis_payload or {})
+    card = deserialize_cached_value(snapshot.analysis_payload or {})
+    current_positions_by_id = {position.id: position for position in positions if position.id}
+    current_positions_by_ticker = {
+        clean_ticker(position.ticker): position
+        for position in positions
+        if clean_ticker(position.ticker)
+    }
+    live_position = None
+    if snapshot.position_id and snapshot.position_id in current_positions_by_id:
+        live_position = current_positions_by_id[snapshot.position_id]
+    elif card.get("position") is not None:
+        live_position = current_positions_by_ticker.get(clean_ticker(card["position"].ticker))
+    if live_position is not None:
+        return refresh_cached_card_with_live_position(card, live_position)
+    return card
 
 
 def persist_nightly_analysis_dashboard(

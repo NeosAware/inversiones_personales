@@ -952,6 +952,16 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "weighted_reliability_score": float(plan.get("weighted_reliability_score", 0) or 0) if plan.get("weighted_reliability_score") is not None else None,
         "weighted_cycle_return_annual_pct": float(plan.get("weighted_cycle_return_annual_pct", 0) or 0) if plan.get("weighted_cycle_return_annual_pct") is not None else None,
         "weighted_cycle_return_5y_pct": float(plan.get("weighted_cycle_return_5y_pct", 0) or 0) if plan.get("weighted_cycle_return_5y_pct") is not None else None,
+        "target_holding_annualized_return_pct": float(plan.get("target_holding_annualized_return_pct", 0) or 0) if plan.get("target_holding_annualized_return_pct") is not None else None,
+        "weighted_holding_annualized_return_pct": float(plan.get("weighted_holding_annualized_return_pct", 0) or 0) if plan.get("weighted_holding_annualized_return_pct") is not None else None,
+        "weighted_holding_annualized_target_gap_pct": float(plan.get("weighted_holding_annualized_target_gap_pct", 0) or 0) if plan.get("weighted_holding_annualized_target_gap_pct") is not None else None,
+        "allocations_with_timing_count": int(plan.get("allocations_with_timing_count", 0) or 0),
+        "allocations_meeting_target_count": int(plan.get("allocations_meeting_target_count", 0) or 0),
+        "weighted_target_compliance_pct": float(plan.get("weighted_target_compliance_pct", 0) or 0) if plan.get("weighted_target_compliance_pct") is not None else None,
+        "weighted_conservative_profile_compliance_pct": float(plan.get("weighted_conservative_profile_compliance_pct", 0) or 0) if plan.get("weighted_conservative_profile_compliance_pct") is not None else None,
+        "annualized_target_filtered_count": int(plan.get("annualized_target_filtered_count", 0) or 0),
+        "risk_profile_label": plan.get("risk_profile_label", ""),
+        "conservative_profile_filtered_count": int(plan.get("conservative_profile_filtered_count", 0) or 0),
         "weighted_uncertainty_penalty_pct": float(plan.get("weighted_uncertainty_penalty_pct", 0) or 0) if plan.get("weighted_uncertainty_penalty_pct") is not None else None,
         "net_dividend_income_total": float(plan.get("net_dividend_income_total", 0) or 0),
         "annual_cost_total": float(plan.get("annual_cost_total", 0) or 0),
@@ -982,6 +992,8 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "negative_news_count": news_overview["negative_count"],
         "neutral_news_count": news_overview["neutral_count"],
         "methodology_note": plan.get("methodology_note", ""),
+        "annualized_target_note": plan.get("annualized_target_note", ""),
+        "conservative_profile_note": plan.get("conservative_profile_note", ""),
         "schedule_kind": progress_data.get("schedule_kind", ""),
         "scheduled_run_key": progress_data.get("scheduled_run_key", ""),
         "scheduled_analysis_date": progress_data.get("scheduled_analysis_date", ""),
@@ -1022,6 +1034,11 @@ def serialize_allocations_data(plan: dict) -> list[dict]:
                 "blended_return_signal_pct": float(item["blended_return_signal_pct"]),
                 "cycle_return_annual_pct": float(item["cycle_return_annual_pct"]) if item.get("cycle_return_annual_pct") is not None else None,
                 "cycle_return_5y_pct": float(item["cycle_return_5y_pct"]) if item.get("cycle_return_5y_pct") is not None else None,
+                "holding_annualized_return_pct": float(item["holding_annualized_return_pct"]) if item.get("holding_annualized_return_pct") is not None else None,
+                "annualized_target_return_pct": float(item["annualized_target_return_pct"]) if item.get("annualized_target_return_pct") is not None else None,
+                "annualized_target_gap_pct": float(item["annualized_target_gap_pct"]) if item.get("annualized_target_gap_pct") is not None else None,
+                "meets_target_annualized_return": bool(item.get("meets_target_annualized_return")),
+                "passes_conservative_profile": bool(item.get("passes_conservative_profile")),
                 "cycle_support_score": float(item["cycle_support_score"]),
                 "expected_net_dividend_income": float(item["expected_net_dividend_income"]),
                 "annual_cost_used": float(item["annual_cost_used"]),
@@ -1484,16 +1501,19 @@ def build_scheduled_optimization_persistence_context(
     *,
     as_of: date | None = None,
     max_rows: int = 12,
+    requested_by=None,
+    include_all_users: bool = False,
     live_quote_map: dict[str, dict] | None = None,
 ) -> dict:
     as_of = as_of or timezone.localdate()
     cutoff_date = scheduled_optimization_retention_cutoff(as_of)
-    completed_runs = list(
-        EquityOptimizationRun.objects.filter(
-            status=EquityOptimizationRun.Status.COMPLETED,
-            progress_data__schedule_kind="nightly",
-        ).order_by("-created_at", "-id")
+    completed_runs_queryset = EquityOptimizationRun.objects.filter(
+        status=EquityOptimizationRun.Status.COMPLETED,
+        progress_data__schedule_kind="nightly",
     )
+    if not include_all_users and requested_by is not None:
+        completed_runs_queryset = completed_runs_queryset.filter(requested_by=requested_by)
+    completed_runs = list(completed_runs_queryset.order_by("-created_at", "-id"))
     weekdays = scheduled_optimization_iso_weekdays()
     weekdays_label = build_scheduled_optimization_weekdays_label(weekdays)
     next_run_date = resolve_next_scheduled_optimization_date(as_of, weekdays, include_today=False)

@@ -33,9 +33,11 @@ from .models import (
     EquityTicketSnapshot,
 )
 from .nightly_analysis import (
+    build_positions_analysis_signature,
     build_dashboard_from_nightly_cache,
     build_ibex_recommendation_date_map,
     capture_purchase_forecast_baseline,
+    load_cached_ibex_card,
     persist_nightly_analysis_dashboard,
     run_nightly_equity_analysis,
     serialize_cached_value,
@@ -69,6 +71,7 @@ from .services import (
     build_cycle_zoomed_monthly_projection_path,
     build_equity_round_investment_plan,
     build_equity_sale_preview,
+    build_scenario_expectation_table,
     build_equity_ticket_tracking_context,
     build_equity_ticket_tracking_item,
     build_ticket_expected_series,
@@ -671,6 +674,31 @@ class EquitiesServicesTests(TestCase):
             sum((row["probability_pct"] for row in card["projection"]["scenarios"]), ZERO),
             Decimal("99.0"),
         )
+        self.assertTrue(card["scenario_tables"]["projection_12m"]["available"])
+        self.assertTrue(card["scenario_tables"]["cycle_5y"]["available"])
+        self.assertEqual(
+            sum((row["contribution_return_pct"] for row in card["scenario_tables"]["projection_12m"]["rows"]), ZERO),
+            card["scenario_tables"]["projection_12m"]["expected_return_pct"],
+        )
+
+    def test_scenario_expectation_table_calculates_weighted_hope_from_probability_times_return(self):
+        table = build_scenario_expectation_table(
+            [
+                {"key": "bear", "label": "Bajista", "probability_pct": Decimal("33.0"), "total_return_pct": Decimal("-20.0"), "projected_price": Decimal("8.0000")},
+                {"key": "base", "label": "Base", "probability_pct": Decimal("33.0"), "total_return_pct": Decimal("-5.0"), "projected_price": Decimal("9.5000")},
+                {"key": "bull", "label": "Alcista", "probability_pct": Decimal("33.0"), "total_return_pct": Decimal("10.0"), "projected_price": Decimal("11.0000")},
+            ],
+            return_key="total_return_pct",
+            fallback_value=Decimal("-5.0"),
+        )
+
+        self.assertTrue(table["available"])
+        self.assertEqual(table["expected_return_pct"], Decimal("-5.00"))
+        self.assertEqual(
+            [row["contribution_return_pct"] for row in table["rows"]],
+            [Decimal("-6.67"), Decimal("-1.67"), Decimal("3.34")],
+        )
+        self.assertEqual(table["expected_projected_price"], Decimal("9.5000"))
 
     def test_material_news_event_penalizes_projection_confidence_and_widens_ranges(self):
         position = EquityPosition.objects.create(
@@ -1121,7 +1149,7 @@ class EquitiesServicesTests(TestCase):
             },
         }
 
-        refresh_card_projection_visuals(card)
+        refresh_card_projection_visuals(card, history=[])
 
         self.assertTrue(card["information_basis"]["available"])
         self.assertTrue(card["information_basis"]["geopolitical_flag"])
@@ -5401,6 +5429,7 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual([item["position"].ticker for item in filtered], ["AMS"])
 
     def test_allocation_plan_recalculates_costs_and_dividends_for_assigned_capital(self):
+        anchor_day = date(2026, 4, 25)
         santander_card = {
             "position": EquityPosition(
                 position_kind=EquityPosition.PositionKind.WATCHLIST,
@@ -5416,7 +5445,9 @@ class EquitiesServicesTests(TestCase):
                 average_cost_per_share=Decimal("0"),
                 current_price_per_share=Decimal("11.00"),
                 annual_maintenance_cost=Decimal("0"),
+                latest_price_date=anchor_day,
             ),
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": "Tendencia defensiva."},
             "reference_label": "Demanda electrica Espana",
             "projection_reliability": {
                 "label": "Alta",
@@ -5429,6 +5460,8 @@ class EquitiesServicesTests(TestCase):
                 "price_low_return_pct": Decimal("-6.00"),
                 "price_high_return_pct": Decimal("16.00"),
                 "projected_price": Decimal("11.7150"),
+                "latest_price": Decimal("11.0000"),
+                "latest_date": anchor_day,
                 "confidence_label": "Alta",
                 "safety_score": Decimal("74.00"),
                 "gross_dividend_yield_pct": Decimal("4.00"),
@@ -5440,6 +5473,13 @@ class EquitiesServicesTests(TestCase):
                 "cycle_phase": "Expansion",
                 "current_drawdown_pct": Decimal("-4.00"),
                 "max_drawdown_pct": Decimal("-22.00"),
+                "monthly_path": [
+                    {"label": "1M", "projected_date": anchor_day + timedelta(days=30), "projected_price": Decimal("10.6000")},
+                    {"label": "3M", "projected_date": anchor_day + timedelta(days=90), "projected_price": Decimal("9.5000")},
+                    {"label": "6M", "projected_date": anchor_day + timedelta(days=180), "projected_price": Decimal("10.7000")},
+                    {"label": "9M", "projected_date": anchor_day + timedelta(days=270), "projected_price": Decimal("11.3000")},
+                    {"label": "12M", "projected_date": anchor_day + timedelta(days=365), "projected_price": Decimal("11.7150")},
+                ],
             },
         }
 
@@ -5456,6 +5496,81 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(allocation["net_projected_return_pct"], Decimal("8.71"))
         self.assertEqual(allocation["low_return_pct"], Decimal("-3.79"))
         self.assertLess(allocation["net_projected_return_pct"], Decimal("10.50"))
+
+    def test_optimizer_uses_visible_12m_path_when_raw_projection_and_chart_diverge(self):
+        latest_date = timezone.localdate()
+        position = EquityPosition(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            broker="Interactive Brokers",
+            trade_channel=EquityPosition.TradeChannel.APP,
+            ticker="ANA",
+            quote_symbol="ANA.MC",
+            company_name="Acciona",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_name="IBEX 35",
+            benchmark_symbol="^IBEX",
+            shares=Decimal("0"),
+            average_cost_per_share=Decimal("0"),
+            current_price_per_share=Decimal("100.0000"),
+            annual_maintenance_cost=Decimal("0"),
+        )
+        card = {
+            "position": position,
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "sector_label": "Construccion",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "score": Decimal("4.20"), "note": ""},
+            "projection_reliability": {"label": "Alta", "score": Decimal("79.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("40.00"),
+                "price_return_pct": Decimal("40.00"),
+                "low_return_pct": Decimal("8.00"),
+                "high_return_pct": Decimal("62.00"),
+                "projected_price": Decimal("140.0000"),
+                "latest_price": Decimal("100.0000"),
+                "latest_date": latest_date,
+                "confidence_label": "Alta",
+                "safety_score": Decimal("72.00"),
+                "gross_dividend_yield_pct": Decimal("0.00"),
+                "net_income_yield_pct": Decimal("0.00"),
+                "transaction_drag_pct": Decimal("0.00"),
+                "annualized_volatility_pct": Decimal("15.00"),
+                "positive_year_ratio_pct": Decimal("62.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-3.00"),
+                "max_drawdown_pct": Decimal("-25.00"),
+                "monthly_path": [
+                    {"label": "3M", "projected_date": add_calendar_months(latest_date, 3), "projected_price": Decimal("94.0000")},
+                    {"label": "6M", "projected_date": add_calendar_months(latest_date, 6), "projected_price": Decimal("90.0000")},
+                    {"label": "9M", "projected_date": add_calendar_months(latest_date, 9), "projected_price": Decimal("85.0000")},
+                    {"label": "12M", "projected_date": add_calendar_months(latest_date, 12), "projected_price": Decimal("80.0000")},
+                ],
+                "scenarios": [
+                    {"key": "bear", "label": "Bajista", "probability_pct": Decimal("33.0"), "total_return_pct": Decimal("15.00")},
+                    {"key": "base", "label": "Base", "probability_pct": Decimal("34.0"), "total_return_pct": Decimal("40.00")},
+                    {"key": "bull", "label": "Alcista", "probability_pct": Decimal("33.0"), "total_return_pct": Decimal("55.00")},
+                ],
+            },
+            "cycle_projection_5y": {
+                "available": False,
+                "path": [],
+                "scenarios": [],
+            },
+        }
+
+        refresh_card_projection_visuals(card, history=[])
+        candidate = build_equity_optimizer_candidate(card)
+        plan = build_equity_allocation_plan([card], Decimal("10000"), Decimal("100"))
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["base_return_pct"], card["presentation_projection"]["visible_total_return_pct"])
+        self.assertLess(candidate["base_return_pct"], ZERO)
+        self.assertLess(candidate["scenario_expected_return_pct"], ZERO)
+        self.assertFalse(plan["available"])
+        self.assertIn("retorno robusto positivo", plan["reason"])
 
     def test_allocation_plan_discards_small_tickets_when_fixed_costs_are_too_high(self):
         base_projection = {
@@ -8230,6 +8345,189 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(purchase_timing["exit_month_number"], 12)
         self.assertIsNotNone(purchase_timing["holding_annualized_return_pct"])
         self.assertIn("anualizado", purchase_timing["summary"])
+        self.assertIsNotNone(plan["weighted_holding_annualized_return_pct"])
+        self.assertGreaterEqual(
+            plan["weighted_holding_annualized_return_pct"],
+            plan["target_holding_annualized_return_pct"],
+        )
+        self.assertEqual(plan["allocations_with_timing_count"], 1)
+        self.assertEqual(plan["allocations_meeting_target_count"], 1)
+
+    def test_optimizer_plan_keeps_cash_when_tactical_window_does_not_reach_20_percent_annualized_target(self):
+        anchor_day = date(2026, 4, 25)
+        card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                broker="Interactive Brokers",
+                ticker="ENG",
+                quote_symbol="ENG.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="Enagas",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("20.0000"),
+                latest_price_date=anchor_day,
+            ),
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "sector_label": "Energia",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": "Tendencia favorable."},
+            "projection_reliability": {"label": "Alta", "score": Decimal("82.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("11.50"),
+                "price_return_pct": Decimal("9.80"),
+                "price_low_return_pct": Decimal("-2.00"),
+                "price_high_return_pct": Decimal("14.00"),
+                "projected_price": Decimal("21.9600"),
+                "latest_price": Decimal("20.0000"),
+                "latest_date": anchor_day,
+                "confidence_label": "Alta",
+                "safety_score": Decimal("78.00"),
+                "gross_dividend_yield_pct": Decimal("3.20"),
+                "net_income_yield_pct": Decimal("2.30"),
+                "transaction_drag_pct": Decimal("0.60"),
+                "annualized_volatility_pct": Decimal("9.00"),
+                "positive_year_ratio_pct": Decimal("69.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.00"),
+                "max_drawdown_pct": Decimal("-16.00"),
+                "monthly_path": [
+                    {"label": "3M", "projected_date": anchor_day + timedelta(days=90), "projected_price": Decimal("19.8000")},
+                    {"label": "6M", "projected_date": anchor_day + timedelta(days=180), "projected_price": Decimal("20.4000")},
+                    {"label": "9M", "projected_date": anchor_day + timedelta(days=270), "projected_price": Decimal("21.1000")},
+                    {"label": "12M", "projected_date": anchor_day + timedelta(days=365), "projected_price": Decimal("21.9600")},
+                ],
+            },
+            "cycle_projection_5y": {"available": False},
+        }
+
+        plan = build_equity_allocation_plan([card], Decimal("50000"), Decimal("100"))
+
+        self.assertFalse(plan["available"])
+        self.assertIn("20 % anualizado", plan["reason"])
+
+    def test_optimizer_plan_keeps_cash_when_candidate_is_too_risky_for_conservative_profile(self):
+        anchor_day = date(2026, 4, 25)
+        card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                broker="Interactive Brokers",
+                ticker="ANA",
+                quote_symbol="ANA.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="Acciona",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("40.0000"),
+                latest_price_date=anchor_day,
+            ),
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "sector_label": "Infraestructuras",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": "Tendencia favorable."},
+            "projection_reliability": {"label": "Alta", "score": Decimal("83.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("27.40"),
+                "price_return_pct": Decimal("25.00"),
+                "price_low_return_pct": Decimal("-18.00"),
+                "price_high_return_pct": Decimal("34.00"),
+                "projected_price": Decimal("50.0000"),
+                "latest_price": Decimal("40.0000"),
+                "latest_date": anchor_day,
+                "confidence_label": "Alta",
+                "safety_score": Decimal("60.00"),
+                "gross_dividend_yield_pct": Decimal("2.40"),
+                "net_income_yield_pct": Decimal("1.80"),
+                "transaction_drag_pct": Decimal("0.60"),
+                "annualized_volatility_pct": Decimal("31.00"),
+                "positive_year_ratio_pct": Decimal("66.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-7.00"),
+                "max_drawdown_pct": Decimal("-29.00"),
+                "monthly_path": [
+                    {"label": "1M", "projected_date": anchor_day + timedelta(days=30), "projected_price": Decimal("39.2000")},
+                    {"label": "3M", "projected_date": anchor_day + timedelta(days=90), "projected_price": Decimal("36.0000")},
+                    {"label": "6M", "projected_date": anchor_day + timedelta(days=180), "projected_price": Decimal("41.5000")},
+                    {"label": "9M", "projected_date": anchor_day + timedelta(days=270), "projected_price": Decimal("45.0000")},
+                    {"label": "12M", "projected_date": anchor_day + timedelta(days=365), "projected_price": Decimal("50.0000")},
+                ],
+            },
+            "cycle_projection_5y": {"available": False},
+        }
+
+        plan = build_equity_allocation_plan([card], Decimal("50000"), Decimal("100"))
+
+        self.assertFalse(plan["available"])
+        self.assertIn("perfil adverso al riesgo", plan["reason"].lower())
+
+    def test_optimizer_plan_exposes_conservative_profile_when_candidate_is_defensive_enough(self):
+        anchor_day = date(2026, 4, 25)
+        card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                broker="Interactive Brokers",
+                ticker="IBE",
+                quote_symbol="IBE.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="Iberdrola",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("15.0000"),
+                latest_price_date=anchor_day,
+            ),
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "sector_label": "Utilities",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": "Tendencia favorable."},
+            "projection_reliability": {"label": "Alta", "score": Decimal("86.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("24.20"),
+                "price_return_pct": Decimal("22.00"),
+                "price_low_return_pct": Decimal("-6.00"),
+                "price_high_return_pct": Decimal("29.00"),
+                "projected_price": Decimal("18.3000"),
+                "latest_price": Decimal("15.0000"),
+                "latest_date": anchor_day,
+                "confidence_label": "Alta",
+                "safety_score": Decimal("84.00"),
+                "gross_dividend_yield_pct": Decimal("2.80"),
+                "net_income_yield_pct": Decimal("2.10"),
+                "transaction_drag_pct": Decimal("0.50"),
+                "annualized_volatility_pct": Decimal("11.50"),
+                "positive_year_ratio_pct": Decimal("74.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-3.00"),
+                "max_drawdown_pct": Decimal("-15.00"),
+                "monthly_path": [
+                    {"label": "1M", "projected_date": anchor_day + timedelta(days=30), "projected_price": Decimal("14.9000")},
+                    {"label": "3M", "projected_date": anchor_day + timedelta(days=90), "projected_price": Decimal("14.2000")},
+                    {"label": "6M", "projected_date": anchor_day + timedelta(days=180), "projected_price": Decimal("15.8000")},
+                    {"label": "9M", "projected_date": anchor_day + timedelta(days=270), "projected_price": Decimal("16.9000")},
+                    {"label": "12M", "projected_date": anchor_day + timedelta(days=365), "projected_price": Decimal("18.3000")},
+                ],
+            },
+            "cycle_projection_5y": {"available": False},
+        }
+
+        plan = build_equity_allocation_plan([card], Decimal("50000"), Decimal("100"))
+
+        self.assertTrue(plan["available"])
+        self.assertEqual(plan["risk_profile_label"], "Adverso al riesgo")
+        self.assertIn("alerta Comprar", plan["conservative_profile_note"])
+        self.assertEqual(plan["weighted_conservative_profile_compliance_pct"], Decimal("100.00"))
+        self.assertTrue(plan["allocations"][0]["passes_conservative_profile"])
 
 @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=False, EQUITIES_IBEX_UNIVERSE_ANALYSIS=False)
 @override_settings(EQUITIES_FETCH_FUNDAMENTALS=False)
@@ -8239,6 +8537,9 @@ class EquitiesViewTests(TestCase):
             username="equity-owner",
             password="StrongPass123!",
         )
+        self.user.is_staff = True
+        self.user.is_superuser = True
+        self.user.save(update_fields=["is_staff", "is_superuser"])
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -10093,6 +10394,38 @@ class EquitiesViewTests(TestCase):
         self.assertRedirects(response, f"{reverse('equities:list')}#equity-optimizer")
         self.assertFalse(EquityOptimizationRun.objects.filter(pk=run.pk).exists())
 
+    def test_non_admin_cannot_delete_optimization_history_or_launch_financial_actions(self):
+        admin = self.user
+        viewer = get_user_model().objects.create_user(
+            username="equity-viewer",
+            password="StrongPass123!",
+        )
+        run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-DELETE-LOCKED",
+            label="Borrar historico",
+            requested_by=admin,
+            total_investment=Decimal("75000"),
+            max_company_pct=Decimal("20"),
+            max_total_positions=5,
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            report_html="<html>borrar</html>",
+        )
+
+        self.client.force_login(viewer)
+        response = self.client.post(
+            reverse("equities:list"),
+            {
+                "action": "delete_optimization_run",
+                "run_id": str(run.id),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(EquityOptimizationRun.objects.filter(pk=run.pk).exists())
+        self.assertContains(response, "Solo un administrador puede modificar posiciones, sincronizar mercado o lanzar optimizaciones.")
+
     def test_running_optimization_run_cannot_be_deleted_from_history(self):
         run = EquityOptimizationRun.objects.create(
             reference_code="OPT-DELETE-002",
@@ -10143,6 +10476,72 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(download_html_response.status_code, 200)
         self.assertIn("attachment;", download_html_response.headers["Content-Disposition"])
         self.assertIn("opt-test-report.html", download_html_response.headers["Content-Disposition"])
+
+    def test_non_admin_cannot_open_or_poll_other_users_optimization_runs(self):
+        owner = get_user_model().objects.create_user(
+            username="optimization-owner",
+            password="StrongPass123!",
+        )
+        viewer = get_user_model().objects.create_user(
+            username="optimization-viewer",
+            password="StrongPass123!",
+        )
+        run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-PRIVATE-001",
+            label="Informe privado",
+            requested_by=owner,
+            total_investment=Decimal("50000"),
+            max_company_pct=Decimal("20"),
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            report_html="<html><body>Informe privado</body></html>",
+            summary_data={"available": True, "projected_gain_total": 5000},
+        )
+
+        self.client.force_login(viewer)
+
+        report_response = self.client.get(reverse("equities:optimization_report", args=[run.id]))
+        progress_response = self.client.get(reverse("equities:optimization_progress", args=[run.id]))
+
+        self.assertEqual(report_response.status_code, 404)
+        self.assertEqual(progress_response.status_code, 404)
+
+    def test_non_admin_list_only_shows_own_optimization_runs(self):
+        owner = get_user_model().objects.create_user(
+            username="run-owner",
+            password="StrongPass123!",
+        )
+        other_user = get_user_model().objects.create_user(
+            username="run-other",
+            password="StrongPass123!",
+        )
+        own_run = EquityOptimizationRun.objects.create(
+            reference_code="OPT-OWN-001",
+            label="Solo mia",
+            requested_by=owner,
+            total_investment=Decimal("50000"),
+            max_company_pct=Decimal("20"),
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            summary_data={"available": True, "projected_gain_total": 1200},
+        )
+        EquityOptimizationRun.objects.create(
+            reference_code="OPT-OTHER-001",
+            label="Ajena",
+            requested_by=other_user,
+            total_investment=Decimal("50000"),
+            max_company_pct=Decimal("20"),
+            max_sector_positions=1,
+            status=EquityOptimizationRun.Status.COMPLETED,
+            summary_data={"available": True, "projected_gain_total": 2200},
+        )
+
+        self.client.force_login(owner)
+        response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        visible_run_ids = [run.id for run in response.context["optimization_runs"]]
+        self.assertEqual(visible_run_ids, [own_run.id])
 
     def test_pdf_download_falls_back_to_simplified_template_when_rich_pdf_fails(self):
         run = EquityOptimizationRun.objects.create(
@@ -11320,6 +11719,8 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Mejor correlacion")
         self.assertContains(response, "Prevision 12M")
         self.assertContains(response, "Ciclo 5A")
+        self.assertContains(response, "Esperanza 12M")
+        self.assertContains(response, "Esperanza 5A")
 
     def test_ibex_detail_page_uses_visible_12m_hero_values_when_chart_closes_lower(self):
         position = EquityPosition.objects.create(
@@ -11400,6 +11801,100 @@ class EquitiesViewTests(TestCase):
         self.assertLess(response.context["card"]["presentation_projection"]["visible_total_return_pct"], ZERO)
         self.assertEqual(response.context["card"]["trade_alert"]["label"], "Vigilar")
         self.assertRegex(response.content.decode(), r"Cierre visible\s+8.8000")
+
+    def test_load_cached_ibex_card_refreshes_stale_snapshot_with_live_position_visuals(self):
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="ANA",
+            quote_symbol="ANA.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Acciona",
+            shares=Decimal("1.0000"),
+            average_cost_per_share=Decimal("235.0000"),
+            current_price_per_share=Decimal("235.0000"),
+        )
+        populate_position_history(position, growth=Decimal("1.0100"), benchmark_growth=Decimal("1.0040"), months=36)
+        stale_card = build_equity_history_cards([position])[0]
+        latest_date = stale_card["end_date"]
+        stale_card["projection"].update(
+            {
+                "projected_price": Decimal("329.2721"),
+                "price_return_pct": Decimal("40.30"),
+                "base_return_pct": Decimal("40.30"),
+                "net_income_yield_pct": Decimal("0.00"),
+                "transaction_drag_pct": Decimal("0.00"),
+                "monthly_path": [
+                    {
+                        "label": "3M",
+                        "projected_date": add_calendar_months(latest_date, 3),
+                        "projected_price": Decimal("224.0000"),
+                    },
+                    {
+                        "label": "6M",
+                        "projected_date": add_calendar_months(latest_date, 6),
+                        "projected_price": Decimal("212.0000"),
+                    },
+                    {
+                        "label": "9M",
+                        "projected_date": add_calendar_months(latest_date, 9),
+                        "projected_price": Decimal("201.0000"),
+                    },
+                    {
+                        "label": "12M",
+                        "projected_date": add_calendar_months(latest_date, 12),
+                        "projected_price": Decimal("188.0000"),
+                    },
+                ],
+                "quarterly_path": [],
+            }
+        )
+        stale_card["presentation_projection"] = {"available": False}
+        stale_card["trade_alert"] = {
+            **stale_card["trade_alert"],
+            "label": "Comprar",
+            "tone": "buy",
+            "score": Decimal("4.25"),
+            "trigger_label": "6 trimestres con alpha positiva",
+            "note": "Snapshot antiguo sin refrescar.",
+        }
+        run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=timezone.localdate(),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            started_at=timezone.now(),
+            completed_at=timezone.now(),
+            summary_data=serialize_cached_value(
+                {"tracked_signature": build_positions_analysis_signature([position])}
+            ),
+        )
+        EquityNightlyAnalysisSnapshot.objects.create(
+            run=run,
+            analysis_date=timezone.localdate(),
+            scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
+            analysis_key="ibex:ANA:test",
+            position=position,
+            ticker="ANA",
+            quote_symbol="ANA.MC",
+            company_name="Acciona",
+            status_key="ibex",
+            sector_label="Infraestructuras",
+            agent_provider="core",
+            analysis_payload=serialize_cached_value(stale_card),
+        )
+
+        refreshed_card = load_cached_ibex_card("ANA", [position])
+
+        self.assertIsNotNone(refreshed_card)
+        self.assertTrue(refreshed_card["presentation_projection"]["available"])
+        self.assertLess(refreshed_card["presentation_projection"]["visible_total_return_pct"], ZERO)
+        self.assertEqual(refreshed_card["trade_alert"]["label"], "Vigilar")
+        self.assertEqual(refreshed_card["trade_alert"]["trigger_label"], "La senda visible 12M sigue bajista")
+        self.assertEqual(
+            refreshed_card["presentation_projection"]["visible_projected_price"],
+            Decimal("188.0000"),
+        )
 
     def test_can_store_same_ticker_as_owned_and_watchlist_without_collision(self):
         EquityPosition.objects.create(

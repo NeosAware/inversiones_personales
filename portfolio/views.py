@@ -6,7 +6,13 @@ from django.views.generic import TemplateView
 
 from .forms import ACCESS_LEVEL_CHOICES, ManagedUserCreateForm
 from .services import build_portfolio_dashboard, capture_portfolio_snapshot
-from .user_management import can_user_manage_users, get_active_admin_count, is_user_management_recovery_mode, set_user_admin_flags
+from .user_management import (
+    can_user_manage_financial_data,
+    can_user_manage_users,
+    get_active_admin_count,
+    is_user_management_recovery_mode,
+    set_user_admin_flags,
+)
 
 
 class PortfolioDashboardView(LoginRequiredMixin, TemplateView):
@@ -15,9 +21,13 @@ class PortfolioDashboardView(LoginRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context.update(build_portfolio_dashboard())
+        context["can_manage_finances"] = can_user_manage_financial_data(self.request.user)
         return context
 
     def post(self, request, *args, **kwargs):
+        if not can_user_manage_financial_data(request.user):
+            messages.error(request, "Solo un administrador puede guardar fotos manuales de cartera.")
+            return redirect("portfolio:dashboard")
         capture_portfolio_snapshot()
         messages.success(request, "Se ha guardado la foto de cartera de hoy.")
         return redirect("portfolio:dashboard")

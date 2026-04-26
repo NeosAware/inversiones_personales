@@ -49,3 +49,24 @@ class GlobalLoginRequiredMiddleware(MiddlewareMixin):
             resolved_login_url,
             self.redirect_field_name,
         )
+
+
+class PrivateDataNoCacheMiddleware(MiddlewareMixin):
+    def process_response(self, request, response):
+        user = getattr(request, "user", None)
+        path = getattr(request, "path_info", "") or ""
+        if not getattr(user, "is_authenticated", False):
+            return response
+        if path.startswith("/health/"):
+            return response
+        static_url = getattr(settings, "STATIC_URL", "") or ""
+        media_url = getattr(settings, "MEDIA_URL", "") or ""
+        if static_url and path.startswith(static_url):
+            return response
+        if media_url and path.startswith(media_url):
+            return response
+
+        response.setdefault("Cache-Control", "private, no-store, no-cache, max-age=0, must-revalidate")
+        response.setdefault("Pragma", "no-cache")
+        response.setdefault("Expires", "0")
+        return response

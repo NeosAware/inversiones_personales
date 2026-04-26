@@ -59,6 +59,15 @@ def parse_path(value, default):
     return BASE_DIR / path
 
 
+def parse_samesite(value, default="Lax"):
+    if value is None or str(value).strip() == "":
+        return default
+    normalized = str(value).strip().capitalize()
+    if normalized not in {"Lax", "Strict", "None"}:
+        raise ImproperlyConfigured("APP_SESSION_COOKIE_SAMESITE y APP_CSRF_COOKIE_SAMESITE deben ser Lax, Strict o None.")
+    return normalized
+
+
 def parse_secure_proxy_ssl_header(value):
     if not value:
         return None
@@ -156,8 +165,24 @@ def get_local_network_hosts():
     return sorted(hosts)
 
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-change-me-before-production")
+DEFAULT_SECRET_KEY = "django-insecure-change-me-before-production"
+
+
+def resolve_secret_key(env: dict[str, str] | None = None, *, debug: bool = True) -> str:
+    if env is None:
+        env = os.environ
+    secret_key = str(env.get("DJANGO_SECRET_KEY", DEFAULT_SECRET_KEY) or "").strip()
+    if not secret_key:
+        raise ImproperlyConfigured("DJANGO_SECRET_KEY no puede estar vacia.")
+    if not debug and secret_key == DEFAULT_SECRET_KEY:
+        raise ImproperlyConfigured(
+            "Produccion requiere una DJANGO_SECRET_KEY propia; no se puede arrancar con la clave insegura por defecto."
+        )
+    return secret_key
+
+
 DEBUG = parse_bool(os.environ.get("DJANGO_DEBUG"), True)
+SECRET_KEY = resolve_secret_key(debug=DEBUG)
 HOME_NETWORK_MODE = parse_bool(os.environ.get("APP_HOME_NETWORK_MODE"), False)
 
 ALLOWED_HOSTS = parse_csv(os.environ.get("APP_ALLOWED_HOSTS"))
@@ -202,6 +227,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "config.middleware.GlobalLoginRequiredMiddleware",
+    "config.middleware.PrivateDataNoCacheMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -273,16 +299,24 @@ SECURE_PROXY_SSL_HEADER = parse_secure_proxy_ssl_header(os.environ.get("APP_SECU
 SECURE_SSL_REDIRECT = parse_bool(os.environ.get("APP_SECURE_SSL_REDIRECT"), False)
 SESSION_COOKIE_SECURE = parse_bool(os.environ.get("APP_SESSION_COOKIE_SECURE"), not DEBUG)
 CSRF_COOKIE_SECURE = parse_bool(os.environ.get("APP_CSRF_COOKIE_SECURE"), not DEBUG)
+SESSION_COOKIE_SAMESITE = parse_samesite(os.environ.get("APP_SESSION_COOKIE_SAMESITE"), "Lax")
+CSRF_COOKIE_SAMESITE = parse_samesite(os.environ.get("APP_CSRF_COOKIE_SAMESITE"), "Lax")
+SESSION_COOKIE_HTTPONLY = True
 SECURE_HSTS_SECONDS = parse_int(os.environ.get("APP_SECURE_HSTS_SECONDS"), 0)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = parse_bool(os.environ.get("APP_SECURE_HSTS_INCLUDE_SUBDOMAINS"), False)
 SECURE_HSTS_PRELOAD = parse_bool(os.environ.get("APP_SECURE_HSTS_PRELOAD"), False)
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = os.environ.get("APP_SECURE_REFERRER_POLICY", "same-origin")
+SECURE_CROSS_ORIGIN_OPENER_POLICY = os.environ.get("APP_SECURE_CROSS_ORIGIN_OPENER_POLICY", "same-origin")
+SECURE_CROSS_ORIGIN_RESOURCE_POLICY = os.environ.get("APP_SECURE_CROSS_ORIGIN_RESOURCE_POLICY", "same-origin")
+X_FRAME_OPTIONS = os.environ.get("APP_X_FRAME_OPTIONS", "DENY")
 
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 BANK_ROBOT_IMPORT_TOKEN = os.environ.get("BANK_ROBOT_IMPORT_TOKEN", "").strip()
+BANK_STATEMENT_MAX_FILES_PER_REQUEST = max(parse_int(os.environ.get("APP_BANK_STATEMENT_MAX_FILES_PER_REQUEST"), 8), 1)
+BANK_STATEMENT_MAX_FILE_BYTES = max(parse_int(os.environ.get("APP_BANK_STATEMENT_MAX_FILE_BYTES"), 8 * 1024 * 1024), 1024)
 EQUITIES_AUTO_SYNC_ON_VIEW = parse_bool(os.environ.get("APP_EQUITIES_AUTO_SYNC_ON_VIEW"), True)
 EQUITIES_IBEX_UNIVERSE_ANALYSIS = parse_bool(os.environ.get("APP_EQUITIES_IBEX_UNIVERSE_ANALYSIS"), True)
 EQUITIES_IBEX_UNIVERSE_LIMIT = parse_int(os.environ.get("APP_EQUITIES_IBEX_UNIVERSE_LIMIT"), 0)

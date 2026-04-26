@@ -9,7 +9,10 @@ from django.urls import reverse
 from django.http import HttpResponseRedirect
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from django.utils.http import content_disposition_header
 from django.views.generic import TemplateView, View
+
+from portfolio.user_management import can_user_manage_financial_data
 
 from .forms import (
     EquityAllocationOptimizerForm,
@@ -72,6 +75,21 @@ from .services import (
 )
 
 
+def can_user_access_optimization_run(user, run: EquityOptimizationRun) -> bool:
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if can_user_manage_financial_data(user):
+        return True
+    return bool(run.requested_by_id and run.requested_by_id == user.id)
+
+
+def get_accessible_optimization_run_or_404(user, pk) -> EquityOptimizationRun:
+    run = get_object_or_404(EquityOptimizationRun, pk=pk)
+    if not can_user_access_optimization_run(user, run):
+        raise Http404("No se ha encontrado esa optimizacion.")
+    return run
+
+
 class EquityPeriodBoundsMixin:
     def _selected_period_bounds(self):
         start_date = parse_date(self.request.GET.get("period_start", "").strip()) if self.request.GET.get("period_start") else None
@@ -83,6 +101,22 @@ class EquityPeriodBoundsMixin:
 
 class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, TemplateView):
     template_name = "equities/equityposition_list.html"
+
+    def _can_manage_finances(self) -> bool:
+        return can_user_manage_financial_data(self.request.user)
+
+    def _visible_optimization_runs_queryset(self):
+        queryset = EquityOptimizationRun.objects.select_related("requested_by")
+        if self._can_manage_finances():
+            return queryset
+        return queryset.filter(requested_by=self.request.user)
+
+    def _deny_financial_write(self, request, *, anchor: str = "#equity-overview"):
+        messages.error(
+            request,
+            "Solo un administrador puede modificar posiciones, sincronizar mercado o lanzar optimizaciones.",
+        )
+        return redirect(f"{reverse('equities:list')}{anchor}")
 
     def _market_sync_candidates(self, *, owned_only: bool = False) -> list[EquityPosition]:
         positions = []
@@ -142,6 +176,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         if (
             not positions
             or not getattr(settings, "EQUITIES_AUTO_SYNC_ON_VIEW", True)
+            or not self._can_manage_finances()
             or self._optimizer_requested()
             or active_run_exists
         ):
@@ -161,7 +196,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         resume_equity_optimization_runs()
-        optimization_runs = list(EquityOptimizationRun.objects.select_related("requested_by")[:40])
+        optimization_runs = list(self._visible_optimization_runs_queryset()[:40])
         active_optimization_runs = [
             run for run in optimization_runs if run.status in {EquityOptimizationRun.Status.PENDING, EquityOptimizationRun.Status.RUNNING}
         ]
@@ -240,6 +275,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         context["auto_sync"] = auto_sync
         context["selected_period_start"] = selected_start_date
         context["selected_period_end"] = selected_end_date
+        context["can_manage_finances"] = self._can_manage_finances()
         context["position_form"] = kwargs.get("position_form", EquityPositionForm())
         context["document_form"] = kwargs.get("document_form", EquityDocumentImportForm())
         optimizer_sector_choices = get_equity_optimizer_sector_choices()
@@ -308,6 +344,8 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             None,
         )
         context["scheduled_optimization_persistence"] = build_scheduled_optimization_persistence_context(
+            requested_by=None if self._can_manage_finances() else self.request.user,
+            include_all_users=self._can_manage_finances(),
             live_quote_map=live_quote_map
         )
         if context["latest_completed_optimization"] is not None:
@@ -394,6 +432,8 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         return context
 
     def post(self, request, *args, **kwargs):
+        if not self._can_manage_finances():
+            return self._deny_financial_write(request)
         action = request.POST.get("action", "create_position")
         if action == "sync_market_data":
             return self._sync_market_data(request)
@@ -715,7 +755,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
             return HttpResponseRedirect(f"{reverse('equities:list')}#equity-optimizer")
 
         try:
-            run = EquityOptimizationRun.objects.get(pk=run_id)
+            run = self._visible_optimization_runs_queryset().get(pk=run_id)
         except EquityOptimizationRun.DoesNotExist:
             messages.info(request, "La optimizacion ya no existe en el historico.")
             return HttpResponseRedirect(f"{reverse('equities:list')}#equity-optimizer")
@@ -770,7 +810,7 @@ class IbexEquityDetailView(LoginRequiredMixin, EquityPeriodBoundsMixin, Template
 class EquityOptimizationReportView(LoginRequiredMixin, View):
     def get(self, request, pk, *args, **kwargs):
         resume_equity_optimization_runs()
-        run = get_object_or_404(EquityOptimizationRun, pk=pk)
+        run = get_accessible_optimization_run_or_404(request.user, pk)
         if run.status != EquityOptimizationRun.Status.COMPLETED or not run.report_html:
             messages.info(request, f"La optimizacion {run.reference_code} todavia no esta lista.")
             return redirect(f"{reverse('equities:list')}#equity-optimizer")
@@ -779,7 +819,7 @@ class EquityOptimizationReportView(LoginRequiredMixin, View):
 
 class EquityOptimizationDownloadView(LoginRequiredMixin, View):
     def get(self, request, pk, *args, **kwargs):
-        run = get_object_or_404(EquityOptimizationRun, pk=pk)
+        run = get_accessible_optimization_run_or_404(request.user, pk)
         if run.status != EquityOptimizationRun.Status.COMPLETED or not run.report_html:
             messages.info(request, f"La optimizacion {run.reference_code} todavia no esta lista para descargar.")
             return redirect(f"{reverse('equities:list')}#equity-optimizer")
@@ -799,25 +839,25 @@ class EquityOptimizationDownloadView(LoginRequiredMixin, View):
             messages.error(request, f"No se ha podido generar el PDF de {run.reference_code}: {last_error}")
             return redirect(f"{reverse('equities:list')}#equity-optimizer")
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
-        response["Content-Disposition"] = f'attachment; filename="{run.reference_code.lower()}.pdf"'
+        response["Content-Disposition"] = content_disposition_header(True, f"{run.reference_code.lower()}.pdf")
         return response
 
 
 class EquityOptimizationHtmlDownloadView(LoginRequiredMixin, View):
     def get(self, request, pk, *args, **kwargs):
-        run = get_object_or_404(EquityOptimizationRun, pk=pk)
+        run = get_accessible_optimization_run_or_404(request.user, pk)
         if run.status != EquityOptimizationRun.Status.COMPLETED or not run.report_html:
             messages.info(request, f"La optimizacion {run.reference_code} todavia no esta lista para descargar.")
             return redirect(f"{reverse('equities:list')}#equity-optimizer")
         response = HttpResponse(run.report_html, content_type="text/html; charset=utf-8")
-        response["Content-Disposition"] = f'attachment; filename="{run.reference_code.lower()}.html"'
+        response["Content-Disposition"] = content_disposition_header(True, f"{run.reference_code.lower()}.html")
         return response
 
 
 class EquityOptimizationProgressView(LoginRequiredMixin, View):
     def get(self, request, pk, *args, **kwargs):
         resume_equity_optimization_runs()
-        run = get_object_or_404(EquityOptimizationRun, pk=pk)
+        run = get_accessible_optimization_run_or_404(request.user, pk)
         payload = {
             "id": run.id,
             "reference_code": run.reference_code,

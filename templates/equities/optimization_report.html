@@ -129,6 +129,8 @@
           <div class="card box"><span>Ganancia 12M</span><strong class="{% if plan.projected_gain_total >= 0 %}good{% else %}warn{% endif %}">{{ plan.projected_gain_total|floatformat:0 }} EUR</strong><small>Escenario central neto.</small></div>
           <div class="card box"><span>Rentabilidad neta</span><strong>{% if plan.weighted_return_pct is not None %}{{ plan.weighted_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Media ponderada de la propuesta.</small></div>
           <div class="card box"><span>Retorno robusto</span><strong>{% if plan.weighted_expected_return_pct is not None %}{{ plan.weighted_expected_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Valor esperado por escenarios.</small></div>
+          <div class="card box"><span>Media compra</span><strong class="{% if plan.weighted_holding_annualized_return_pct is not None and plan.weighted_holding_annualized_return_pct >= plan.target_holding_annualized_return_pct %}good{% else %}warn{% endif %}">{% if plan.weighted_holding_annualized_return_pct is not None %}{{ plan.weighted_holding_annualized_return_pct|floatformat:2 }} %/a{% else %}-{% endif %}</strong><small>Objetivo {{ plan.target_holding_annualized_return_pct|floatformat:0 }} %/a.</small></div>
+          <div class="card box"><span>Compras que cumplen</span><strong>{{ plan.allocations_meeting_target_count|default:0 }}/{{ plan.allocations_with_timing_count|default:0 }}</strong><small>{% if plan.weighted_target_compliance_pct is not None %}{{ plan.weighted_target_compliance_pct|floatformat:0 }} % del capital cumple el objetivo.{% else %}Sin tramos tacticos suficientes para medirlo.{% endif %}</small></div>
           <div class="card box"><span>Peor escenario</span><strong class="{% if plan.weighted_low_return_pct is not None and plan.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if plan.weighted_low_return_pct is not None %}{{ plan.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Lectura conservadora 12M.</small></div>
           <div class="card box"><span>Estres escenarios</span><strong class="{% if plan.weighted_stress_return_pct is not None and plan.weighted_stress_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if plan.weighted_stress_return_pct is not None %}{{ plan.weighted_stress_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Bajista ponderado.</small></div>
           <div class="card box"><span>Ciclo 5A</span><strong>{% if plan.weighted_cycle_return_annual_pct is not None %}{{ plan.weighted_cycle_return_annual_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>{% if plan.weighted_cycle_return_5y_pct is not None %}Escenario acumulado {{ plan.weighted_cycle_return_5y_pct|floatformat:1 }} %.{% else %}Lectura larga usada como apoyo secundario.{% endif %}</small></div>
@@ -148,6 +150,8 @@
       <h2>Metodologia</h2>
       <div class="note">
         {{ plan.methodology_note }}
+        {% if plan.annualized_target_note %} {{ plan.annualized_target_note }}{% endif %}
+        {% if plan.conservative_profile_note %} {{ plan.conservative_profile_note }}{% endif %}
         {% if run.restrictions_note %} Restricciones anotadas: <strong>{{ run.restrictions_note }}</strong>.{% endif %}
         {% if plan.selected_sector_note %} {{ plan.selected_sector_note }}{% endif %}
         {% if plan.selected_owned_ticker_note %} {{ plan.selected_owned_ticker_note }}{% endif %}

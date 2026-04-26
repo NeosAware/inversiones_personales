@@ -3,7 +3,7 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase
 
-from config.settings import build_database_settings
+from config.settings import build_database_settings, resolve_secret_key
 
 
 class DatabaseSettingsTests(SimpleTestCase):
@@ -50,3 +50,13 @@ class DatabaseSettingsTests(SimpleTestCase):
         self.assertEqual(databases["default"]["ENGINE"], "django.db.backends.postgresql")
         self.assertEqual(databases["default"]["NAME"], "inversiones_personales")
         self.assertEqual(databases["default"]["USER"], "inversiones_personales")
+
+    def test_production_rejects_default_insecure_secret_key(self):
+        with self.assertRaisesMessage(ImproperlyConfigured, "DJANGO_SECRET_KEY propia"):
+            resolve_secret_key({}, debug=False)
+
+    def test_debug_can_use_default_secret_key_temporarily(self):
+        self.assertEqual(
+            resolve_secret_key({}, debug=True),
+            "django-insecure-change-me-before-production",
+        )

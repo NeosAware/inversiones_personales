@@ -586,7 +586,7 @@
       <div class="equity-section-head" style="margin-top:18px;">
         <div>
           <h5>Escenarios</h5>
-          <p>Rango del modelo alrededor de la senda visible a 12M y lectura agregada del escenario 5A.</p>
+          <p>Rango del modelo alrededor de la senda visible a 12M, lectura agregada del escenario 5A y esperanza calculada como probabilidad x rentabilidad de cada caso.</p>
         </div>
       </div>
       <div class="equity-detail-grid" style="margin-top:14px;">
@@ -615,6 +615,17 @@
               {% if card.presentation_projection.scenario_high_price is not None %}{{ card.presentation_projection.scenario_high_price|floatformat:4 }}{% else %}-{% endif %}
             </small>
           </div>
+          {% if card.scenario_tables.projection_12m.available %}
+            <div class="equity-mini-stat">
+              <span>Esperanza 12M</span>
+              <strong class="{% if card.scenario_tables.projection_12m.expected_return_pct >= 0 %}good{% else %}warn{% endif %}">
+                {% if card.scenario_tables.projection_12m.expected_return_pct is not None %}{{ card.scenario_tables.projection_12m.expected_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+              </strong>
+              <small>
+                {% if card.scenario_tables.projection_12m.expected_projected_price is not None %}Precio esperado {{ card.scenario_tables.projection_12m.expected_projected_price|floatformat:4 }}{% else %}Media ponderada de bajista, base y alcista{% endif %}
+              </small>
+            </div>
+          {% endif %}
         {% endif %}
         {% for scenario in card.cycle_projection_5y.scenarios %}
           <div class="equity-mini-stat">
@@ -628,7 +639,86 @@
             </small>
           </div>
         {% endfor %}
+        {% if card.scenario_tables.cycle_5y.available %}
+          <div class="equity-mini-stat">
+            <span>Esperanza 5A</span>
+            <strong class="{% if card.scenario_tables.cycle_5y.expected_return_pct >= 0 %}good{% else %}warn{% endif %}">
+              {% if card.scenario_tables.cycle_5y.expected_return_pct is not None %}{{ card.scenario_tables.cycle_5y.expected_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+            </strong>
+            <small>
+              {% if card.scenario_tables.cycle_5y.expected_secondary_return_pct is not None %}Anual esperada {{ card.scenario_tables.cycle_5y.expected_secondary_return_pct|floatformat:1 }} %{% endif %}
+              {% if card.scenario_tables.cycle_5y.expected_secondary_return_pct is not None and card.scenario_tables.cycle_5y.expected_projected_price is not None %}| {% endif %}
+              {% if card.scenario_tables.cycle_5y.expected_projected_price is not None %}Precio esperado {{ card.scenario_tables.cycle_5y.expected_projected_price|floatformat:4 }}{% endif %}
+            </small>
+          </div>
+        {% endif %}
       </div>
+      {% if card.scenario_tables.projection_12m.available or card.scenario_tables.cycle_5y.available %}
+        <div class="table-card" style="margin-top:14px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Horizonte</th>
+                <th>Escenario</th>
+                <th>Prob.</th>
+                <th>Rentab.</th>
+                <th>Aportacion</th>
+                <th>Referencia</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in card.scenario_tables.projection_12m.rows %}
+                <tr>
+                  <td>12M</td>
+                  <td>{{ row.label }}</td>
+                  <td>{{ row.probability_pct|floatformat:1 }} %</td>
+                  <td class="{% if row.return_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.return_pct|floatformat:1 }} %</td>
+                  <td class="{% if row.contribution_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.contribution_return_pct|floatformat:2 }} pp</td>
+                  <td>{% if row.projected_price is not None %}precio {{ row.projected_price|floatformat:4 }}{% else %}-{% endif %}</td>
+                </tr>
+              {% endfor %}
+              {% if card.scenario_tables.projection_12m.available %}
+                <tr style="background:#f7fbfd;">
+                  <td>12M</td>
+                  <td><strong>Esperanza</strong></td>
+                  <td>100,0 %</td>
+                  <td class="{% if card.scenario_tables.projection_12m.expected_return_pct >= 0 %}good{% else %}warn{% endif %}"><strong>{{ card.scenario_tables.projection_12m.expected_return_pct|floatformat:2 }} %</strong></td>
+                  <td class="{% if card.scenario_tables.projection_12m.expected_return_pct >= 0 %}good{% else %}warn{% endif %}"><strong>{{ card.scenario_tables.projection_12m.expected_return_pct|floatformat:2 }} pp</strong></td>
+                  <td>{% if card.scenario_tables.projection_12m.expected_projected_price is not None %}<strong>precio esperado {{ card.scenario_tables.projection_12m.expected_projected_price|floatformat:4 }}</strong>{% else %}-{% endif %}</td>
+                </tr>
+              {% endif %}
+              {% for row in card.scenario_tables.cycle_5y.rows %}
+                <tr>
+                  <td>5A</td>
+                  <td>{{ row.label }}</td>
+                  <td>{{ row.probability_pct|floatformat:1 }} %</td>
+                  <td class="{% if row.return_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.return_pct|floatformat:1 }} %</td>
+                  <td class="{% if row.contribution_return_pct >= 0 %}good{% else %}warn{% endif %}">{{ row.contribution_return_pct|floatformat:2 }} pp</td>
+                  <td>
+                    {% if row.secondary_return_pct is not None %}anual {{ row.secondary_return_pct|floatformat:1 }} %{% endif %}
+                    {% if row.secondary_return_pct is not None and row.projected_price is not None %} | {% endif %}
+                    {% if row.projected_price is not None %}precio {{ row.projected_price|floatformat:4 }}{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+              {% if card.scenario_tables.cycle_5y.available %}
+                <tr style="background:#f7fbfd;">
+                  <td>5A</td>
+                  <td><strong>Esperanza</strong></td>
+                  <td>100,0 %</td>
+                  <td class="{% if card.scenario_tables.cycle_5y.expected_return_pct >= 0 %}good{% else %}warn{% endif %}"><strong>{{ card.scenario_tables.cycle_5y.expected_return_pct|floatformat:2 }} %</strong></td>
+                  <td class="{% if card.scenario_tables.cycle_5y.expected_return_pct >= 0 %}good{% else %}warn{% endif %}"><strong>{{ card.scenario_tables.cycle_5y.expected_return_pct|floatformat:2 }} pp</strong></td>
+                  <td>
+                    {% if card.scenario_tables.cycle_5y.expected_secondary_return_pct is not None %}<strong>anual esperada {{ card.scenario_tables.cycle_5y.expected_secondary_return_pct|floatformat:2 }} %</strong>{% endif %}
+                    {% if card.scenario_tables.cycle_5y.expected_secondary_return_pct is not None and card.scenario_tables.cycle_5y.expected_projected_price is not None %} | {% endif %}
+                    {% if card.scenario_tables.cycle_5y.expected_projected_price is not None %}<strong>precio esperado {{ card.scenario_tables.cycle_5y.expected_projected_price|floatformat:4 }}</strong>{% endif %}
+                  </td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
     {% endif %}
 
     <div class="equity-compact-note" style="margin-top:14px;">
