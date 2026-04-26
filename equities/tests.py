@@ -87,6 +87,7 @@ from .services import (
     build_reference_suggestions_for_equity,
     clear_market_data_caches,
     capture_equity_ticket_snapshots,
+    reconcile_trade_alert_with_expected_return,
     refresh_card_projection_visuals,
     synchronize_projection_path_with_cycle_zoom,
     fetch_market_series,
@@ -1730,6 +1731,25 @@ class EquitiesServicesTests(TestCase):
             add_calendar_months(latest_date, 12).isoformat(),
         )
 
+    def test_reconcile_trade_alert_with_expected_return_downgrades_buy_when_expectation_is_negative(self):
+        adjusted_alert = reconcile_trade_alert_with_expected_return(
+            {
+                "label": "Comprar",
+                "tone": "buy",
+                "score": Decimal("4.25"),
+                "trigger_label": "8 trimestres con alpha positiva",
+                "note": "La pendiente relativa todavia apoya compras.",
+            },
+            expected_return_pct=Decimal("-24.00"),
+            horizon_label="1A",
+        )
+
+        self.assertEqual(adjusted_alert["label"], "Vigilar")
+        self.assertEqual(adjusted_alert["tone"], "watch")
+        self.assertEqual(adjusted_alert["trigger_label"], "La esperanza 1A sigue negativa")
+        self.assertTrue(adjusted_alert["coherence_adjusted"])
+        self.assertIn("-24.0 %", adjusted_alert["note"])
+
     def test_cycle_projection_5y_uses_last_five_years_on_chart_and_ten_years_for_model(self):
         position = EquityPosition.objects.create(
             broker="Interactive Brokers",
@@ -1920,6 +1940,86 @@ class EquitiesServicesTests(TestCase):
             [Decimal("12.50"), Decimal("7.56"), Decimal("10.00"), Decimal("10.00"), Decimal("10.00")],
         )
         self.assertEqual(row["cycle_yearly_margins"][0]["margin_pct"], row["projected_return_pct"])
+
+    def test_decision_rows_downgrade_buy_alert_when_expected_1y_return_is_negative(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            shares=Decimal("25"),
+            average_cost_per_share=Decimal("100.0000"),
+            current_price_per_share=Decimal("100.0000"),
+        )
+
+        row = build_equity_decision_rows(
+            [
+                {
+                    "position": position,
+                    "has_history": True,
+                    "status_key": "ibex",
+                    "status_label": "Solo radar",
+                    "status_note": "",
+                    "detail_anchor": "",
+                    "reference_label": "IBEX 35",
+                    "correlation": {"coefficient": Decimal("0.74")},
+                    "projection": {
+                        "available": True,
+                        "base_return_pct": Decimal("8.00"),
+                        "projected_price": Decimal("108.0000"),
+                        "years_covered": Decimal("10.00"),
+                        "scenarios": [
+                            {"key": "bear", "label": "Bajista", "probability_pct": Decimal("40.0"), "total_return_pct": Decimal("-30.0")},
+                            {"key": "base", "label": "Base", "probability_pct": Decimal("40.0"), "total_return_pct": Decimal("-10.0")},
+                            {"key": "bull", "label": "Alcista", "probability_pct": Decimal("20.0"), "total_return_pct": Decimal("8.0")},
+                        ],
+                        "safety_score": Decimal("68.00"),
+                        "safety_label": "Alta",
+                        "benefit_risk_ratio": Decimal("1.90"),
+                        "cycle_phase": "Expansion",
+                        "decision_score": Decimal("82.00"),
+                    },
+                    "projection_reliability": {"label": "Alta", "score": Decimal("79.00")},
+                    "trade_alert": {
+                        "label": "Comprar",
+                        "tone": "buy",
+                        "score": Decimal("75.00"),
+                        "note": "La tendencia relativa sigue apoyando compra.",
+                        "trigger_label": "8 trimestres con alpha positiva",
+                    },
+                    "coefficient_alert": {
+                        "label": "Solido",
+                        "tone": "good",
+                        "trigger_label": "Coeficiente consistente",
+                    },
+                    "reference_playbook": {"best_candidate": None},
+                    "cycle_projection_5y": {
+                        "available": True,
+                        "cycle_phase": "Expansion",
+                        "five_year_return_pct": Decimal("61.0510"),
+                        "path": [
+                            {"label": "6M", "projected_price": Decimal("104.8809")},
+                            {"label": "1A", "projected_price": Decimal("110.0000")},
+                            {"label": "18M", "projected_price": Decimal("115.3687")},
+                            {"label": "2A", "projected_price": Decimal("121.0000")},
+                            {"label": "30M", "projected_price": Decimal("126.9016")},
+                            {"label": "3A", "projected_price": Decimal("133.1000")},
+                            {"label": "42M", "projected_price": Decimal("139.5968")},
+                            {"label": "4A", "projected_price": Decimal("146.4100")},
+                            {"label": "54M", "projected_price": Decimal("153.5574")},
+                            {"label": "5A", "projected_price": Decimal("161.0510")},
+                        ],
+                    },
+                }
+            ]
+        )[0]
+
+        self.assertLess(row["expected_return_1y_pct"], ZERO)
+        self.assertEqual(row["trade_alert_label"], "Vigilar")
+        self.assertEqual(row["trade_alert_tone"], "watch")
+        self.assertEqual(row["trade_alert_trigger"], "La esperanza 1A sigue negativa")
 
     def test_history_cards_and_decision_rows_include_per_valuation(self):
         position = EquityPosition.objects.create(

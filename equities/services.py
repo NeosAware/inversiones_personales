@@ -4105,6 +4105,56 @@ def reconcile_trade_alert_with_visible_projection(trade_alert: dict, presentatio
     return trade_alert
 
 
+def reconcile_trade_alert_with_expected_return(
+    trade_alert: dict,
+    *,
+    expected_return_pct: Decimal | None,
+    horizon_label: str = "1A",
+) -> dict:
+    if not trade_alert or expected_return_pct is None:
+        return trade_alert
+
+    tone = trade_alert.get("tone")
+    expected_return_pct = quantize_decimal(expected_return_pct, "0.01")
+    display_expected_return_pct = expected_return_pct if expected_return_pct is not None else ZERO
+
+    if tone == "buy" and expected_return_pct < ZERO:
+        score = quantize_decimal(trade_alert.get("score"), "0.01")
+        return {
+            **trade_alert,
+            "label": "Vigilar",
+            "tone": "watch",
+            "score": min(score, Decimal("3.10")) if score is not None else Decimal("3.10"),
+            "trigger_label": f"La esperanza {horizon_label} sigue negativa",
+            "note": (
+                "La tendencia relativa venia apoyando compras, pero la media ponderada de escenarios "
+                f"a {horizon_label} sigue en {display_expected_return_pct:.1f} %. "
+                f"Conviene vigilar y esperar a que la esperanza {horizon_label} vuelva a positivo "
+                "antes de activar compra."
+            ),
+            "coherence_adjusted": True,
+        }
+
+    if tone == "sell" and expected_return_pct > ZERO:
+        score = quantize_decimal(trade_alert.get("score"), "0.01")
+        return {
+            **trade_alert,
+            "label": "Vigilar",
+            "tone": "watch",
+            "score": max(score, Decimal("-3.10")) if score is not None else Decimal("-3.10"),
+            "trigger_label": f"La esperanza {horizon_label} aun sigue positiva",
+            "note": (
+                "La senal relativa venia pidiendo reducir, pero la media ponderada de escenarios "
+                f"a {horizon_label} sigue en {display_expected_return_pct:.1f} %. "
+                f"Conviene vigilar y esperar a que la esperanza {horizon_label} se deteriore "
+                "de forma clara antes de activar venta."
+            ),
+            "coherence_adjusted": True,
+        }
+
+    return trade_alert
+
+
 def refresh_card_projection_visuals(card: dict, history=None) -> dict:
     position = card.get("position")
     if position is None:
@@ -4123,12 +4173,18 @@ def refresh_card_projection_visuals(card: dict, history=None) -> dict:
         card["projection_12m_chart"] = build_projection_12m_chart(history, card.get("projection") or {})
         card["cycle_projection_5y_chart"] = build_cycle_projection_5y_chart(history, card.get("cycle_projection_5y") or {})
     card["presentation_projection"] = build_projection_presentation_summary(card)
-    card["trade_alert"] = reconcile_trade_alert_with_visible_projection(
+    card["scenario_tables"] = build_card_scenario_tables(card)
+    trade_alert = reconcile_trade_alert_with_visible_projection(
         card.get("trade_alert") or {},
         card["presentation_projection"],
     )
+    trade_alert = reconcile_trade_alert_with_expected_return(
+        trade_alert,
+        expected_return_pct=(card.get("scenario_tables") or {}).get("projection_12m", {}).get("expected_return_pct"),
+        horizon_label="1A",
+    )
+    card["trade_alert"] = trade_alert
     card["information_basis"] = build_information_basis_summary(card)
-    card["scenario_tables"] = build_card_scenario_tables(card)
     return card
 
 
@@ -13578,11 +13634,15 @@ def build_equity_decision_rows(history_cards: list[dict]) -> list[dict]:
         best_candidate = card.get("reference_playbook", {}).get("best_candidate")
         effective_projection = resolve_effective_projection_metrics(card)
         projected_return_pct = effective_projection.get("base_return_pct")
-        trade_alert = card.get("trade_alert", {})
         coefficient_alert = card.get("coefficient_alert", {})
         valuation = card.get("valuation") or {}
         cycle_projection = card.get("cycle_projection_5y") or {}
         scenario_tables = card.get("scenario_tables") or build_card_scenario_tables(card)
+        trade_alert = reconcile_trade_alert_with_expected_return(
+            card.get("trade_alert", {}),
+            expected_return_pct=(scenario_tables.get("projection_12m") or {}).get("expected_return_pct"),
+            horizon_label="1A",
+        )
         cycle_horizon_expectations = build_cycle_horizon_expectation_map(
             cycle_projection.get("scenarios"),
             current_price=position.current_price_per_share,
