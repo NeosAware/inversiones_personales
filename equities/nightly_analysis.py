@@ -44,6 +44,7 @@ from .services import (
     clear_market_data_caches,
     percentage_change,
     quantize_decimal,
+    refresh_card_projection_visuals,
     resolve_analysis_broker_profile,
     sync_all_equities_market_data,
 )
@@ -513,7 +514,7 @@ def refresh_cached_card_with_live_position(card: dict, position: EquityPosition)
     card["price_vs_cost_pct"] = percentage_change(position.current_price_per_share, position.average_cost_per_share)
     card["broker_costs"] = broker_costs
     card["sale_preview"] = build_equity_sale_preview(position)
-    return card
+    return refresh_card_projection_visuals(card)
 
 
 def load_latest_completed_nightly_analysis_run() -> EquityNightlyAnalysisRun | None:

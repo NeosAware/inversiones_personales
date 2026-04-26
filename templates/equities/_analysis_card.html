@@ -162,12 +162,142 @@
     <div class="equity-section-head" style="margin-top:18px;">
       <div>
         <h5>Graficos clave</h5>
-        <p>Empieza por estos tres: 12 meses, 5 anos y la comparacion historica entre lo que el modelo habria dicho y lo que paso de verdad.</p>
+        <p>Empieza por la tesis 12M visible y luego contrasta 5 anos y backtest. El cierre y la rentabilidad 12M de esta ficha salen de la misma senda naranja que pinta el grafico.</p>
       </div>
     </div>
+    {% if card.presentation_projection.available %}
+      <div class="equity-compact-note" style="margin-top:14px; border-color:#d7e4ee; background:#f7fbfd; color:#17384e;">
+        <strong style="display:block; color:#17384e; margin-bottom:6px;">Tesis 12M visible</strong>
+        <p style="margin:0 0 10px;">{{ card.presentation_projection.shape_note }}</p>
+        <p style="margin:0;">{{ card.presentation_projection.consistency_note }}</p>
+      </div>
+      {% if card.information_basis.available %}
+        <div class="equity-compact-note" style="margin-top:14px; border-color:#d9e2d4; background:#f7fbf5; color:#17384e;">
+          <strong style="display:block; color:#17384e; margin-bottom:6px;">Base informativa de la prevision</strong>
+          <p style="margin:0;">{{ card.information_basis.summary }}</p>
+          {% if card.information_basis.bullet_points %}
+            <ul style="margin:10px 0 0 18px; padding:0;">
+              {% for point in card.information_basis.bullet_points %}
+                <li style="margin:0 0 6px;">{{ point }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </div>
+        <div class="equity-detail-grid" style="margin-top:14px;">
+          <div class="equity-mini-stat">
+            <span>Impacto geopolitico</span>
+            <strong>{% if card.information_basis.geopolitical_flag %}Activo{% else %}Sin senal clara{% endif %}</strong>
+            <small>
+              {% if card.information_basis.geopolitical_sources %}
+                {{ card.information_basis.geopolitical_sources|join:", " }}
+              {% else %}
+                Sin fuente dominante ahora mismo
+              {% endif %}
+            </small>
+          </div>
+          <div class="equity-mini-stat">
+            <span>Impacto macro</span>
+            <strong>{% if card.information_basis.macro_flag %}Activo{% else %}Sin senal clara{% endif %}</strong>
+            <small>
+              {% if card.information_basis.macro_sources %}
+                {{ card.information_basis.macro_sources|join:", " }}
+              {% else %}
+                Sin fuente dominante ahora mismo
+              {% endif %}
+            </small>
+          </div>
+          <div class="equity-mini-stat">
+            <span>Fuentes clave</span>
+            <strong>{% if card.information_basis.source_labels %}{{ card.information_basis.source_labels|length }}{% else %}0{% endif %}</strong>
+            <small>{% if card.information_basis.source_labels %}{{ card.information_basis.source_labels|join:", " }}{% else %}Sin fuentes externas activas{% endif %}</small>
+          </div>
+        </div>
+        <div class="equity-detail-grid" style="margin-top:14px;">
+          {% for row in card.information_basis.rows %}
+            <div class="equity-mini-stat">
+              <span>{{ row.theme_label }} | {{ row.tone_label }}</span>
+              <strong>{{ row.title }}</strong>
+              <small>
+                {% if row.scope_label %}{{ row.scope_label }} | {% endif %}{{ row.source_label }}
+                {% if row.published_label %} | {{ row.published_label }}{% endif %}
+                {% if row.tags %} | {{ row.tags|join:", " }}{% endif %}
+              </small>
+              <small style="display:block; margin-top:6px;">{{ row.impact_note }}</small>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+      <div class="equity-detail-grid" style="margin-top:14px;">
+        <div class="equity-mini-stat">
+          <span>Trayectoria 12M</span>
+          <strong>{{ card.presentation_projection.shape_label }}</strong>
+          <small>{{ card.presentation_projection.visible_projected_window_label }}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Cierre 12M visible</span>
+          <strong>{% if card.presentation_projection.visible_projected_price is not None %}{{ card.presentation_projection.visible_projected_price|floatformat:4 }}{% else %}-{% endif %}</strong>
+          <small>
+            Neto
+            <span class="{% if card.presentation_projection.visible_total_return_pct >= 0 %}good{% else %}warn{% endif %}">
+              {% if card.presentation_projection.visible_total_return_pct is not None %}{{ card.presentation_projection.visible_total_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+            </span>
+            | precio {% if card.presentation_projection.visible_price_return_pct is not None %}{{ card.presentation_projection.visible_price_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+          </small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>{{ card.presentation_projection.key_level_label }}</span>
+          <strong>{% if card.presentation_projection.key_level_price is not None %}{{ card.presentation_projection.key_level_price|floatformat:4 }}{% else %}-{% endif %}</strong>
+          <small>
+            {{ card.presentation_projection.key_level_window_label }}
+            {% if card.presentation_projection.key_level_return_pct is not None %}| {{ card.presentation_projection.key_level_return_pct|floatformat:1 }} % vs hoy{% endif %}
+          </small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Rango 12M del modelo</span>
+          <strong>
+            {% if card.presentation_projection.scenario_low_return_pct is not None %}{{ card.presentation_projection.scenario_low_return_pct|floatformat:1 }}{% else %}-{% endif %}
+            /
+            {% if card.presentation_projection.scenario_high_return_pct is not None %}{{ card.presentation_projection.scenario_high_return_pct|floatformat:1 }}{% else %}-{% endif %} %
+          </strong>
+          <small>
+            Precio
+            {% if card.presentation_projection.scenario_low_price is not None %}{{ card.presentation_projection.scenario_low_price|floatformat:4 }}{% else %}-{% endif %}
+            /
+            {% if card.presentation_projection.scenario_high_price is not None %}{{ card.presentation_projection.scenario_high_price|floatformat:4 }}{% else %}-{% endif %}
+          </small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Soporte / resistencia</span>
+          <strong>
+            {% if card.presentation_projection.support_level is not None %}{{ card.presentation_projection.support_level|floatformat:4 }}{% else %}-{% endif %}
+            /
+            {% if card.presentation_projection.resistance_level is not None %}{{ card.presentation_projection.resistance_level|floatformat:4 }}{% else %}-{% endif %}
+          </strong>
+          <small>{{ card.presentation_projection.decision_level_note }}</small>
+        </div>
+        <div class="equity-mini-stat">
+          <span>Alerta cuantitativa</span>
+          <strong class="{% if card.trade_alert.tone == 'buy' %}good{% elif card.trade_alert.tone == 'sell' %}warn{% endif %}">{{ card.trade_alert.label }}</strong>
+          <small>{{ card.trade_alert.trigger_label }}</small>
+        </div>
+        {% if card.position.is_owned %}
+          <div class="equity-mini-stat">
+            <span>Tu posicion</span>
+            <strong>{% if card.position.average_cost_per_share is not None %}{{ card.position.average_cost_per_share|floatformat:4 }}{% else %}-{% endif %}</strong>
+            <small>{{ card.presentation_projection.owned_position_note }}</small>
+          </div>
+        {% else %}
+          <div class="equity-mini-stat">
+            <span>Precio actual</span>
+            <strong>{{ card.position.current_price_per_share|floatformat:4 }}</strong>
+            <small>{% if card.position.latest_price_date %}Cotizacion {{ card.position.latest_price_date|date:"Y-m-d" }}{% else %}Ultimo precio guardado{% endif %}</small>
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
     <div style="display:grid; gap:16px; grid-template-columns:repeat(auto-fit, minmax(280px,1fr)); margin-top:14px;">
       {% if card.projection_12m_chart.available %}
-        <div class="equity-chart-shell">
+        <div class="equity-chart-shell" style="grid-column:1 / -1;">
           <strong style="display:block; color:#17384e; margin-bottom:8px;">Prevision 12M</strong>
           <svg viewBox="0 0 640 220">
             <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
@@ -186,6 +316,11 @@
             <span>Naranja: {{ card.projection_12m_chart.projection_window_label|default:"Escenario central 12M" }}</span>
             {% if card.projection_12m_chart.model_window_label %}<span>Modelo: {{ card.projection_12m_chart.model_window_label }}</span>{% endif %}
             <span>{{ card.projection_12m_chart.end_label }} a {{ card.projection_12m_chart.projection_end_label }}</span>
+            {% if card.presentation_projection.available %}
+              <span>Hoy {{ card.presentation_projection.current_price|floatformat:4 }}</span>
+              <span>{{ card.presentation_projection.key_level_label }} {{ card.presentation_projection.key_level_price|floatformat:4 }} | {{ card.presentation_projection.key_level_window_label }}</span>
+              <span>Cierre 12M {{ card.presentation_projection.visible_projected_price|floatformat:4 }} | neto {{ card.presentation_projection.visible_total_return_pct|floatformat:1 }} %</span>
+            {% endif %}
           </div>
         </div>
       {% endif %}
@@ -447,89 +582,40 @@
   {% endif %}
 
   {% if card.projection.available %}
-    <div class="equity-section-head" style="margin-top:18px;">
-      <div>
-        <h5>Lectura rapida</h5>
-        <p>Deja visibles solo las claves de decision. El resto queda recogido mas abajo en detalle tecnico.</p>
-      </div>
-    </div>
-    <div class="equity-detail-grid" style="margin-top:14px;">
-      <div class="equity-mini-stat">
-        <span>Retorno total 12M</span>
-        <strong class="{% if card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">
-          {{ card.projection.base_return_pct|floatformat:1 }} %
-        </strong>
-        <small>
-          Precio {{ card.projection.price_return_pct|floatformat:1 }} %
-          {% if card.projection.net_income_yield_pct is not None %}
-            {% if card.projection.net_income_yield_pct >= 0 %}+{% endif %} flujo neto {{ card.projection.net_income_yield_pct|floatformat:1 }} %
-          {% endif %}
-          {% if card.projection.transaction_drag_pct is not None %}
-            - compra/venta {{ card.projection.transaction_drag_pct|floatformat:1 }} %
-          {% endif %}
-        </small>
-      </div>
-      <div class="equity-mini-stat">
-        <span>Precio objetivo</span>
-        <strong>{% if card.projection.projected_price is not None %}{{ card.projection.projected_price|floatformat:4 }}{% else %}-{% endif %}</strong>
-        <small>
-          {% if card.projection.price_return_pct is not None %}Vs actual {{ card.projection.price_return_pct|floatformat:1 }} % | {% endif %}
-          Rango {% if card.projection.low_return_pct is not None and card.projection.high_return_pct is not None %}{{ card.projection.low_return_pct|floatformat:1 }} / {{ card.projection.high_return_pct|floatformat:1 }} %{% else %}-{% endif %}
-        </small>
-      </div>
-      {% if card.position.is_owned %}
-        <div class="equity-mini-stat">
-          <span>Precio compra</span>
-          <strong>{{ card.position.average_cost_per_share|floatformat:4 }}</strong>
-          <small>{% if card.position.opened_on %}Compra {{ card.position.opened_on|date:"Y-m-d" }}{% else %}Precio medio por accion{% endif %}</small>
-        </div>
-        <div class="equity-mini-stat">
-          <span>Precio actual</span>
-          <strong>{{ card.position.current_price_per_share|floatformat:4 }}</strong>
-          <small>
-            {% if card.position.latest_price_date %}Cotizacion {{ card.position.latest_price_date|date:"Y-m-d" }}{% else %}Ultimo precio guardado{% endif %}
-            {% if card.projection.projected_price is not None %} | objetivo {{ card.projection.projected_price|floatformat:4 }}{% endif %}
-          </small>
-        </div>
-      {% endif %}
-      <div class="equity-mini-stat">
-        <span>Alerta</span>
-        <strong class="{% if card.trade_alert.tone == 'buy' %}good{% elif card.trade_alert.tone == 'sell' %}warn{% endif %}">{{ card.trade_alert.label }}</strong>
-        <small>{{ card.trade_alert.trigger_label }}</small>
-      </div>
-      <div class="equity-mini-stat">
-        {% if card.position.is_owned and card.sale_preview.available %}
-          <span>Ano equivalente</span>
-          <strong class="{% if card.sale_preview.annualized_margin_pct >= 0 %}good{% else %}warn{% endif %}">{{ card.sale_preview.annualized_margin_pct|floatformat:2 }} %</strong>
-          <small>{{ card.sale_preview.holding_days }} dias de tenencia llevados al mismo patron anual.</small>
-        {% else %}
-          <span class="equity-label-with-help">Relacion 10A <span class="equity-help-dot" tabindex="0" data-tooltip="Mide cuanto se ha movido esta accion junto a su referencia principal en los ultimos 10 anos. Cerca de 1 significa una relacion fuerte.">i</span></span>
-          <strong>{% if card.correlation.coefficient is not None %}{{ card.correlation.coefficient|floatformat:2 }}{% else %}-{% endif %}</strong>
-          <small>{{ card.reference_label }} | {{ card.correlation.stability_label }}</small>
-        {% endif %}
-      </div>
-    </div>
-
-    {% if card.projection.scenarios or card.cycle_projection_5y.scenarios %}
+    {% if card.presentation_projection.available or card.cycle_projection_5y.scenarios %}
       <div class="equity-section-head" style="margin-top:18px;">
         <div>
           <h5>Escenarios</h5>
-          <p>Lectura rapida de los casos bajista, base y alcista para 12M y 5A.</p>
+          <p>Rango del modelo alrededor de la senda visible a 12M y lectura agregada del escenario 5A.</p>
         </div>
       </div>
       <div class="equity-detail-grid" style="margin-top:14px;">
-        {% for scenario in card.projection.scenarios %}
+        {% if card.presentation_projection.available %}
           <div class="equity-mini-stat">
-            <span>12M {{ scenario.label }}</span>
-            <strong class="{% if scenario.total_return_pct >= 0 %}good{% else %}warn{% endif %}">
-              {% if scenario.total_return_pct is not None %}{{ scenario.total_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+            <span>12M visible</span>
+            <strong class="{% if card.presentation_projection.visible_total_return_pct >= 0 %}good{% else %}warn{% endif %}">
+              {% if card.presentation_projection.visible_total_return_pct is not None %}{{ card.presentation_projection.visible_total_return_pct|floatformat:1 }} %{% else %}-{% endif %}
             </strong>
             <small>
-              Prob. {{ scenario.probability_pct|floatformat:0 }} % |
-              precio {% if scenario.projected_price is not None %}{{ scenario.projected_price|floatformat:4 }}{% else %}-{% endif %}
+              {{ card.presentation_projection.shape_label }} |
+              precio {% if card.presentation_projection.visible_projected_price is not None %}{{ card.presentation_projection.visible_projected_price|floatformat:4 }}{% else %}-{% endif %}
             </small>
           </div>
-        {% endfor %}
+          <div class="equity-mini-stat">
+            <span>Rango 12M del modelo</span>
+            <strong>
+              {% if card.presentation_projection.scenario_low_return_pct is not None %}{{ card.presentation_projection.scenario_low_return_pct|floatformat:1 }}{% else %}-{% endif %}
+              /
+              {% if card.presentation_projection.scenario_high_return_pct is not None %}{{ card.presentation_projection.scenario_high_return_pct|floatformat:1 }}{% else %}-{% endif %} %
+            </strong>
+            <small>
+              Bajo / alto |
+              {% if card.presentation_projection.scenario_low_price is not None %}{{ card.presentation_projection.scenario_low_price|floatformat:4 }}{% else %}-{% endif %}
+              /
+              {% if card.presentation_projection.scenario_high_price is not None %}{{ card.presentation_projection.scenario_high_price|floatformat:4 }}{% else %}-{% endif %}
+            </small>
+          </div>
+        {% endif %}
         {% for scenario in card.cycle_projection_5y.scenarios %}
           <div class="equity-mini-stat">
             <span>5A {{ scenario.label }}</span>
@@ -678,6 +764,9 @@
         <p style="margin:0 0 8px;"><strong>Riesgos:</strong> {{ card.ai_analysis.risks|join:" | " }}</p>
         <p style="margin:0 0 8px;"><strong>Contexto web:</strong> {{ card.ai_analysis.news_note }}</p>
         <p style="margin:0 0 8px;"><strong>Backtest:</strong> {{ card.ai_analysis.backtest_note }}</p>
+        {% if card.information_basis.available and card.information_basis.source_labels %}
+          <p style="margin:0 0 8px;"><strong>Fuentes base:</strong> {{ card.information_basis.source_labels|join:" | " }}</p>
+        {% endif %}
         <p style="margin:0;"><strong>Ciclo 5A:</strong> {{ card.ai_analysis.cycle_note }} <span style="color:#627380;">{{ card.ai_analysis.consistency_note }}</span></p>
       </div>
     {% elif card.ai_analysis.note %}

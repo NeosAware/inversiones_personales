@@ -57,6 +57,7 @@ from .services import (
     ZERO,
     apply_expert_consensus_adjustments_to_dashboard,
     apply_news_context_adjustments_to_dashboard,
+    build_candidate_purchase_timing_plan,
     build_equity_allocation_plan,
     build_equity_analysis_dashboard,
     build_equity_decision_rows,
@@ -77,11 +78,13 @@ from .services import (
     build_value_tracking_chart,
     build_equity_optimizer_candidate,
     build_owned_cycle_trade_timing_plan,
+    add_calendar_months,
     archive_equity_position_sale,
     build_trade_alert,
     build_reference_suggestions_for_equity,
     clear_market_data_caches,
     capture_equity_ticket_snapshots,
+    refresh_card_projection_visuals,
     synchronize_projection_path_with_cycle_zoom,
     fetch_market_series,
     filter_positive_optimizer_candidates,
@@ -718,6 +721,12 @@ class EquitiesServicesTests(TestCase):
         self.assertGreater(adjusted_card["projection"]["band_pct"], original_band_pct)
         self.assertLess(adjusted_card["projection_reliability"]["score"], original_reliability_score)
         self.assertGreater(adjusted_card["cycle_projection_5y"]["scenario_spread_annual_pct"], original_cycle_spread)
+        self.assertTrue(adjusted_card["projection_12m_chart"]["available"])
+        self.assertTrue(adjusted_card["presentation_projection"]["available"])
+        self.assertEqual(
+            adjusted_card["presentation_projection"]["visible_projected_price"],
+            adjusted_card["projection"]["monthly_path"][-1]["projected_price"],
+        )
         self.assertGreater(
             adjusted_card["projection"]["scenarios"][0]["probability_pct"],
             adjusted_card["projection"]["scenarios"][-1]["probability_pct"],
@@ -1015,6 +1024,115 @@ class EquitiesServicesTests(TestCase):
         self.assertGreater(adjusted_card["projection"]["band_pct"], original_band_pct)
         self.assertLess(adjusted_card["projection_reliability"]["score"], original_reliability_score)
         self.assertGreater(adjusted_card["cycle_projection_5y"]["scenario_spread_annual_pct"], original_cycle_spread)
+        self.assertTrue(adjusted_card["projection_12m_chart"]["available"])
+        self.assertTrue(adjusted_card["presentation_projection"]["available"])
+        self.assertEqual(
+            adjusted_card["presentation_projection"]["visible_projected_price"],
+            adjusted_card["projection"]["monthly_path"][-1]["projected_price"],
+        )
+
+    def test_information_basis_summary_highlights_geopolitical_and_expert_sources(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="ACS",
+            quote_symbol="ACS.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="ACS",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("34.0000"),
+            current_price_per_share=Decimal("34.0000"),
+        )
+        populate_position_history(position, growth=Decimal("1.0160"), benchmark_growth=Decimal("1.0070"), months=84)
+        card = build_equity_history_cards([position])[0]
+        card["news_context"] = {
+            "available": True,
+            "label": "Contexto adverso",
+            "score": Decimal("-3.20"),
+            "items_count": 2,
+            "top_tags": ["geopolitica", "energia"],
+            "material_event": True,
+            "material_note": "La tension geopolitica reciente obliga a revisar el timing.",
+            "note": "Empresa adversa | mercado adversa",
+            "top_items": [
+                {
+                    "title": "ACS cae por tension geopolitica y repunte del crudo",
+                    "source": "Reuters",
+                    "published_label": "2026-04-26",
+                    "tone": "negative",
+                    "score": Decimal("-2.40"),
+                    "tags": ["geopolitica", "energia"],
+                }
+            ],
+        }
+        card["expert_consensus"] = {
+            "available": True,
+            "label": "Consenso experto mixto",
+            "score": Decimal("1.80"),
+            "quality_score": Decimal("78.00"),
+            "quality_label": "Alta",
+            "items_count": 2,
+            "best_sources": ["JPMorgan"],
+            "note": "Las fuentes mejor rankeadas siguen viendo valor aunque con mas cautela.",
+            "top_items": [
+                {
+                    "title": "JPMorgan mantiene compra sobre ACS pero enfria el timing",
+                    "source": "Reuters",
+                    "expert_source": "JPMorgan",
+                    "published_label": "2026-04-26",
+                    "tone": "positive",
+                    "score": Decimal("1.90"),
+                    "tags": [],
+                }
+            ],
+            "wall_street_signal": {
+                "available": True,
+                "label": "Wall Street favorable",
+                "score": Decimal("2.10"),
+                "note": "Wall Street sigue empujando el apetito por riesgo.",
+                "top_tags": [],
+                "items": [
+                    {
+                        "published_label": "2026-04-26",
+                    }
+                ],
+                "source_rows": [
+                    {
+                        "source": "S&P 500",
+                    }
+                ],
+            },
+            "bridgewater_signal": {
+                "available": True,
+                "label": "Bridgewater mixta",
+                "score": Decimal("-0.40"),
+                "note": "Bridgewater mantiene una lectura macro menos limpia.",
+                "top_tags": ["tipos"],
+                "items": [
+                    {
+                        "published_label": "2026-04-26",
+                    }
+                ],
+                "source_rows": [
+                    {
+                        "source": "Bridgewater",
+                    }
+                ],
+            },
+        }
+
+        refresh_card_projection_visuals(card)
+
+        self.assertTrue(card["information_basis"]["available"])
+        self.assertTrue(card["information_basis"]["geopolitical_flag"])
+        self.assertTrue(card["information_basis"]["macro_flag"])
+        self.assertIn("Reuters", card["information_basis"]["source_labels"])
+        self.assertIn("JPMorgan via Reuters", card["information_basis"]["source_labels"])
+        self.assertIn("S&P 500", card["information_basis"]["source_labels"])
+        self.assertIn("timing", card["information_basis"]["summary"].lower())
+        self.assertTrue(card["information_basis"]["bullet_points"])
+        self.assertIn("Reuters", card["information_basis"]["geopolitical_sources"])
+        self.assertIn("S&P 500", card["information_basis"]["macro_sources"])
 
     def test_build_reference_suggestions_for_iberdrola_prioritizes_electricity_demand(self):
         suggestions = build_reference_suggestions_for_equity("Iberdrola", "IBE")
@@ -1441,6 +1559,79 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(projection["monthly_path"][-1]["projected_price"], Decimal("8.8000"))
         self.assertTrue(projection["cycle_sync"]["applied"])
         self.assertEqual(projection["cycle_sync"]["projected_price"], Decimal("8.8000"))
+
+    def test_projection_presentation_summary_uses_same_12m_path_shown_in_chart(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="SAB",
+            quote_symbol="SAB.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Banco de Sabadell",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+        )
+        populate_position_history(position, growth=Decimal("1.0100"), benchmark_growth=Decimal("1.0040"), months=36)
+        card = build_equity_history_cards([position])[0]
+        latest_date = card["end_date"]
+
+        card["projection"].update(
+            {
+                "projected_price": Decimal("11.5000"),
+                "price_return_pct": Decimal("15.00"),
+                "base_return_pct": Decimal("16.20"),
+                "net_income_yield_pct": Decimal("1.50"),
+                "transaction_drag_pct": Decimal("0.30"),
+                "monthly_path": [],
+                "quarterly_path": [],
+            }
+        )
+        card["cycle_projection_5y"] = {
+            "available": True,
+            "model_window_label": "10.0 anos de historico",
+            "path": [
+                {
+                    "label": "6M",
+                    "projected_date": add_calendar_months(latest_date, 6),
+                    "projected_price": Decimal("9.1000"),
+                },
+                {
+                    "label": "1A",
+                    "projected_date": add_calendar_months(latest_date, 12),
+                    "projected_price": Decimal("8.8000"),
+                },
+                {
+                    "label": "18M",
+                    "projected_date": add_calendar_months(latest_date, 18),
+                    "projected_price": Decimal("9.4000"),
+                },
+            ],
+        }
+
+        synchronize_projection_path_with_cycle_zoom(
+            card["projection"],
+            card["cycle_projection_5y"],
+            current_price=Decimal("10.0000"),
+            anchor_date=latest_date,
+        )
+        refreshed_card = refresh_card_projection_visuals(card)
+
+        self.assertTrue(refreshed_card["presentation_projection"]["available"])
+        self.assertEqual(
+            refreshed_card["presentation_projection"]["visible_projected_price"],
+            Decimal("8.8000"),
+        )
+        self.assertLess(refreshed_card["presentation_projection"]["visible_total_return_pct"], ZERO)
+        self.assertIn(
+            "misma senda naranja",
+            refreshed_card["presentation_projection"]["consistency_note"].lower(),
+        )
+        self.assertTrue(refreshed_card["projection_12m_chart"]["available"])
+        self.assertEqual(
+            refreshed_card["projection_12m_chart"]["projection_end_label"],
+            add_calendar_months(latest_date, 12).isoformat(),
+        )
 
     def test_cycle_projection_5y_uses_last_five_years_on_chart_and_ten_years_for_model(self):
         position = EquityPosition.objects.create(
@@ -6408,6 +6599,7 @@ class EquitiesServicesTests(TestCase):
                 }
             ],
         }
+        refresh_card_projection_visuals(history_card)
 
         context = build_card_llm_context(history_card, analysis_date=date(2026, 4, 18), scope="ibex")
 
@@ -6425,6 +6617,12 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(context["expert_consensus"]["wall_street_signal"]["label"], "Wall Street favorable")
         self.assertTrue(context["expert_consensus"]["bridgewater_signal"]["available"])
         self.assertEqual(context["expert_consensus"]["bridgewater_signal"]["label"], "Bridgewater favorable")
+        self.assertTrue(context["information_basis"]["available"])
+        self.assertEqual(context["information_basis"]["rows"][0]["source_label"], "Fuente Test")
+        self.assertIn("geopolitica", context["information_basis"]["summary"].lower())
+        self.assertTrue(context["information_basis"]["geopolitical_flag"])
+        self.assertTrue(context["information_basis"]["macro_flag"])
+        self.assertTrue(context["information_basis"]["highlights"])
         self.assertTrue(context["technical_view"]["available"])
         self.assertTrue(context["technical_view"]["signal_label"])
         self.assertTrue(context["technical_view"]["trend_label"])
@@ -6542,6 +6740,49 @@ class EquitiesServicesTests(TestCase):
         )
         populate_position_history(position)
         tracked_card = build_equity_history_cards([position])[0]
+        tracked_card["news_context"] = {
+            "available": True,
+            "label": "Contexto adverso",
+            "score": Decimal("-2.40"),
+            "items_count": 1,
+            "top_tags": ["geopolitica"],
+            "material_event": True,
+            "material_note": "Se detecta un evento geopolitico reciente.",
+            "note": "Mercado adversa",
+            "top_items": [
+                {
+                    "title": "Iberdrola vigila la tension geopolitica",
+                    "source": "Reuters",
+                    "published_label": "2026-04-16",
+                    "tone": "negative",
+                    "score": Decimal("-1.60"),
+                    "tags": ["geopolitica"],
+                }
+            ],
+        }
+        tracked_card["expert_consensus"] = {
+            "available": True,
+            "label": "Consenso experto favorable",
+            "score": Decimal("2.10"),
+            "quality_score": Decimal("76.00"),
+            "quality_label": "Alta",
+            "items_count": 1,
+            "best_sources": ["JPMorgan"],
+            "note": "JPMorgan mantiene una lectura constructiva.",
+            "top_items": [
+                {
+                    "title": "JPMorgan mantiene compra sobre Iberdrola",
+                    "source": "Reuters",
+                    "expert_source": "JPMorgan",
+                    "published_label": "2026-04-16",
+                    "tone": "positive",
+                    "score": Decimal("2.10"),
+                    "tags": [],
+                }
+            ],
+            "wall_street_signal": {"available": False},
+            "bridgewater_signal": {"available": False},
+        }
         ibex_position = EquityPosition(
             position_kind=EquityPosition.PositionKind.WATCHLIST,
             ownership_category=AssetOwnershipCategory.JOINT,
@@ -7389,6 +7630,56 @@ class EquitiesServicesTests(TestCase):
         )
         populate_position_history(position)
         tracked_card = build_equity_history_cards([position])[0]
+        tracked_card["news_context"] = {
+            "available": True,
+            "label": "Contexto adverso",
+            "score": Decimal("-2.60"),
+            "items_count": 1,
+            "top_tags": ["geopolitica"],
+            "material_event": True,
+            "material_note": "La tension geopolitica obliga a revisar el timing.",
+            "note": "La compania queda expuesta a un entorno menos limpio.",
+            "top_items": [
+                {
+                    "title": "Iberdrola cede por tension geopolitica en Europa",
+                    "source": "Reuters",
+                    "published_label": "2026-04-26",
+                    "tone": "negative",
+                    "score": Decimal("-2.10"),
+                    "tags": ["geopolitica"],
+                }
+            ],
+        }
+        tracked_card["expert_consensus"] = {
+            "available": True,
+            "label": "Consenso mixto",
+            "score": Decimal("1.20"),
+            "quality_score": Decimal("72.00"),
+            "quality_label": "Media",
+            "items_count": 1,
+            "best_sources": ["JPMorgan"],
+            "note": "El consenso acompana pero con mas cautela.",
+            "top_items": [
+                {
+                    "title": "JPMorgan mantiene sobreponderar en Iberdrola",
+                    "source": "Reuters",
+                    "expert_source": "JPMorgan",
+                    "published_label": "2026-04-26",
+                    "tone": "positive",
+                    "score": Decimal("1.20"),
+                    "tags": ["tipos"],
+                }
+            ],
+            "wall_street_signal": {
+                "available": True,
+                "label": "Wall Street favorable",
+                "score": Decimal("1.80"),
+                "note": "Wall Street sigue empujando el apetito por riesgo.",
+                "top_tags": [],
+                "items": [{"published_label": "2026-04-26"}],
+                "source_rows": [{"source": "S&P 500"}],
+            },
+        }
         ibex_position = EquityPosition(
             position_kind=EquityPosition.PositionKind.WATCHLIST,
             ownership_category=AssetOwnershipCategory.JOINT,
@@ -7460,6 +7751,8 @@ class EquitiesServicesTests(TestCase):
         self.assertIsNotNone(cached_dashboard)
         self.assertEqual(cached_dashboard["history_cards"][0]["position"].current_price_per_share, Decimal("19.5000"))
         self.assertTrue(cached_dashboard["history_cards"][0]["projection_12m_chart"]["available"])
+        self.assertTrue(cached_dashboard["history_cards"][0]["information_basis"]["available"])
+        self.assertIn("Reuters", cached_dashboard["history_cards"][0]["information_basis"]["source_labels"])
         self.assertEqual(cached_dashboard["ibex_universe_cards"][0]["position"].ticker, "ACS")
         self.assertTrue(cached_dashboard["nightly_analysis"]["available"])
 
@@ -7676,6 +7969,136 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(purchase_timing["entry_horizon_months"], 12)
         self.assertGreaterEqual(purchase_timing["exit_horizon_months"], purchase_timing["exit_month_number"])
         self.assertIn("mas alla del ano de entrada", purchase_timing["summary"])
+
+    def test_optimizer_purchase_timing_can_select_non_april_month_from_12m_path(self):
+        anchor_day = date(2026, 4, 25)
+        card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                broker="Interactive Brokers",
+                ticker="ACS",
+                quote_symbol="ACS.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="ACS",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("40.0000"),
+                latest_price_date=anchor_day,
+            ),
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "sector_label": "Infraestructuras",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": "Tendencia favorable."},
+            "projection_reliability": {"label": "Alta", "score": Decimal("84.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("15.00"),
+                "price_return_pct": Decimal("12.00"),
+                "price_low_return_pct": Decimal("-8.00"),
+                "price_high_return_pct": Decimal("18.00"),
+                "projected_price": Decimal("46.5000"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("76.00"),
+                "gross_dividend_yield_pct": Decimal("3.00"),
+                "net_income_yield_pct": Decimal("2.40"),
+                "transaction_drag_pct": Decimal("0.80"),
+                "annualized_volatility_pct": Decimal("12.00"),
+                "positive_year_ratio_pct": Decimal("70.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.50"),
+                "max_drawdown_pct": Decimal("-18.00"),
+                "latest_date": anchor_day,
+                "latest_price": Decimal("40.0000"),
+                "monthly_path": [
+                    {"label": "1M", "projected_date": add_calendar_months(anchor_day, 1), "projected_price": Decimal("39.2000")},
+                    {"label": "4M", "projected_date": add_calendar_months(anchor_day, 4), "projected_price": Decimal("36.0000")},
+                    {"label": "6M", "projected_date": add_calendar_months(anchor_day, 6), "projected_price": Decimal("33.0000")},
+                    {"label": "9M", "projected_date": add_calendar_months(anchor_day, 9), "projected_price": Decimal("42.5000")},
+                    {"label": "12M", "projected_date": add_calendar_months(anchor_day, 12), "projected_price": Decimal("46.5000")},
+                ],
+            },
+            "cycle_projection_5y": {"available": False},
+        }
+
+        purchase_timing = build_candidate_purchase_timing_plan(card)
+
+        self.assertTrue(purchase_timing["available"])
+        self.assertEqual(purchase_timing["analysis_basis_key"], "projection_12m")
+        self.assertEqual(purchase_timing["buy_month_number"], 6)
+        self.assertEqual(purchase_timing["buy_date"], add_calendar_months(anchor_day, 6))
+        self.assertEqual(purchase_timing["buy_date"].month, 10)
+        self.assertIn("octubre 2026", purchase_timing["buy_window_label"])
+
+    def test_optimizer_purchase_timing_can_select_non_april_month_from_cycle_path(self):
+        anchor_day = date(2026, 4, 25)
+        card = {
+            "position": EquityPosition(
+                position_kind=EquityPosition.PositionKind.WATCHLIST,
+                broker="Interactive Brokers",
+                ticker="ACS",
+                quote_symbol="ACS.MC",
+                benchmark_symbol="^IBEX",
+                benchmark_name="IBEX 35",
+                company_name="ACS",
+                shares=Decimal("0"),
+                average_cost_per_share=Decimal("0"),
+                current_price_per_share=Decimal("40.0000"),
+                latest_price_date=anchor_day,
+            ),
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "sector_label": "Infraestructuras",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Comprar", "tone": "buy", "note": "Tendencia favorable."},
+            "projection_reliability": {"label": "Alta", "score": Decimal("84.00")},
+            "projection": {
+                "available": True,
+                "base_return_pct": Decimal("8.00"),
+                "price_return_pct": Decimal("6.00"),
+                "price_low_return_pct": Decimal("-5.00"),
+                "price_high_return_pct": Decimal("12.00"),
+                "projected_price": Decimal("42.4000"),
+                "confidence_label": "Alta",
+                "safety_score": Decimal("76.00"),
+                "gross_dividend_yield_pct": Decimal("3.00"),
+                "net_income_yield_pct": Decimal("2.40"),
+                "transaction_drag_pct": Decimal("0.80"),
+                "annualized_volatility_pct": Decimal("12.00"),
+                "positive_year_ratio_pct": Decimal("70.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Expansion",
+                "current_drawdown_pct": Decimal("-2.50"),
+                "max_drawdown_pct": Decimal("-18.00"),
+                "latest_date": anchor_day,
+                "latest_price": Decimal("40.0000"),
+                "monthly_path": [
+                    {"label": "1M", "projected_date": add_calendar_months(anchor_day, 1), "projected_price": Decimal("40.4000")},
+                    {"label": "6M", "projected_date": add_calendar_months(anchor_day, 6), "projected_price": Decimal("41.0000")},
+                    {"label": "12M", "projected_date": add_calendar_months(anchor_day, 12), "projected_price": Decimal("42.4000")},
+                ],
+            },
+            "cycle_projection_5y": {
+                "available": True,
+                "path": [
+                    {"label": "4M", "projected_date": add_calendar_months(anchor_day, 4), "projected_price": Decimal("36.5000")},
+                    {"label": "8M", "projected_date": add_calendar_months(anchor_day, 8), "projected_price": Decimal("31.0000")},
+                    {"label": "20M", "projected_date": add_calendar_months(anchor_day, 20), "projected_price": Decimal("49.5000")},
+                    {"label": "30M", "projected_date": add_calendar_months(anchor_day, 30), "projected_price": Decimal("58.0000")},
+                ],
+            },
+        }
+
+        purchase_timing = build_candidate_purchase_timing_plan(card, strategy_mode="5y_primary")
+
+        self.assertTrue(purchase_timing["available"])
+        self.assertEqual(purchase_timing["analysis_basis_key"], "cycle_5y")
+        self.assertEqual(purchase_timing["buy_month_number"], 8)
+        self.assertEqual(purchase_timing["buy_date"], add_calendar_months(anchor_day, 8))
+        self.assertEqual(purchase_timing["buy_date"].month, 12)
+        self.assertIn("diciembre 2026", purchase_timing["buy_window_label"])
 
     def test_optimizer_plan_exposes_annualized_return_for_trade_window(self):
         anchor_day = date(2026, 4, 25)
@@ -10409,6 +10832,36 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, f'id="stock-tab-{watchlist.id}"', html=False)
         self.assertNotContains(response, f'id="stock-tab-{owned.id}"', html=False)
         self.assertIn(f'href="#tracked-ticket-{owned.id}"', page)
+
+    def test_equities_page_highlights_visible_12m_thesis_on_analysis_cards(self):
+        position = EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("20.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+        populate_position_history(position, growth=Decimal("1.0180"), benchmark_growth=Decimal("1.0070"), months=48)
+        benchmark_series = build_compound_market_series(
+            "^IBEX",
+            "IBEX 35",
+            growth=Decimal("1.0060"),
+            start_price=Decimal("100.0000"),
+        )
+
+        with patch("equities.services.fetch_reference_series_for_choice", return_value=benchmark_series):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Tesis 12M visible")
+        self.assertContains(response, "Cierre 12M visible")
+        self.assertContains(response, "Rango 12M del modelo")
+        self.assertContains(response, "Alerta cuantitativa")
 
     def test_equities_page_groups_major_sections_into_page_tabs(self):
         response = self.client.get(reverse("equities:list"))

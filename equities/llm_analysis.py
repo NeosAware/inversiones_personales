@@ -246,6 +246,8 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
     position = card["position"]
     projection = card.get("projection") or {}
     cycle_projection = card.get("cycle_projection_5y") or {}
+    presentation_projection = card.get("presentation_projection") or {}
+    information_basis = card.get("information_basis") or {}
     projection_backtest = card.get("projection_backtest") or {}
     correlation = card.get("correlation") or {}
     trade_alert = card.get("trade_alert") or {}
@@ -305,6 +307,15 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
             "projected_total_return_pct": json_ready_number(projection.get("base_return_pct")),
             "projected_price_return_pct": json_ready_number(projection.get("price_return_pct")),
             "projected_price": json_ready_number(projection.get("projected_price"), "0.0001"),
+            "visible_shape_label": presentation_projection.get("shape_label"),
+            "visible_total_return_pct": json_ready_number(presentation_projection.get("visible_total_return_pct")),
+            "visible_price_return_pct": json_ready_number(presentation_projection.get("visible_price_return_pct")),
+            "visible_projected_price": json_ready_number(presentation_projection.get("visible_projected_price"), "0.0001"),
+            "visible_projected_window": presentation_projection.get("visible_projected_window_label"),
+            "visible_key_level_label": presentation_projection.get("key_level_label"),
+            "visible_key_level_price": json_ready_number(presentation_projection.get("key_level_price"), "0.0001"),
+            "visible_key_level_window": presentation_projection.get("key_level_window_label"),
+            "visible_note": trim_text(presentation_projection.get("shape_note") or "", 220),
             "low_return_pct": json_ready_number(projection.get("low_return_pct")),
             "high_return_pct": json_ready_number(projection.get("high_return_pct")),
             "band_pct": json_ready_number(projection.get("band_pct")),
@@ -443,6 +454,26 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
             "source_rows": build_expert_source_context_rows(expert_consensus.get("source_rows"), limit=4),
             "top_forecasts": build_news_item_context_rows(expert_consensus.get("top_items"), limit=4),
         },
+        "information_basis": {
+            "available": bool(information_basis.get("available")),
+            "summary": trim_text(information_basis.get("summary") or "", 260),
+            "geopolitical_flag": bool(information_basis.get("geopolitical_flag")),
+            "macro_flag": bool(information_basis.get("macro_flag")),
+            "source_labels": [trim_text(label, 80) for label in list(information_basis.get("source_labels") or [])[:5]],
+            "highlights": [trim_text(point, 180) for point in list(information_basis.get("bullet_points") or [])[:4]],
+            "rows": [
+                {
+                    "theme_label": row.get("theme_label") or "",
+                    "tone_label": row.get("tone_label") or "",
+                    "scope_label": row.get("scope_label") or "",
+                    "title": trim_text(row.get("title") or "", 160),
+                    "source_label": trim_text(row.get("source_label") or "", 80),
+                    "published_label": row.get("published_label") or "",
+                    "impact_note": trim_text(row.get("impact_note") or "", 180),
+                }
+                for row in list(information_basis.get("rows") or [])[:5]
+            ],
+        },
     }
     return context
 
@@ -464,6 +495,8 @@ def build_system_prompt() -> str:
         "Si expert_consensus.available es true, explica si refuerza o cuestiona la tesis base y cita el sesgo agregado sin convertirlo en verdad absoluta. "
         "Si aparece wall_street_signal, usalo como termometro de apetito o aversion al riesgo global. "
         "Si aparece bridgewater_signal, usalo como lectura macro de los informes de Bridgewater, siempre como senal adicional y no como certeza. "
+        "Si mencionas geopolítica, macro, noticias o consenso, cita dentro del texto la fuente disponible mas cercana tal como aparezca en el JSON "
+        "(por ejemplo Reuters, JPMorgan, Bridgewater, S&P 500 o el medio concreto). "
         "El objetivo es explicar de forma potente pero compacta el escenario 12M, la lectura 5A, la validacion historica del modelo y cualquier riesgo informativo reciente."
     )
 
@@ -477,6 +510,7 @@ def build_user_prompt(card_context: dict) -> str:
         "Si technical_view.available es true, explica si la tecnica confirma o contradice la tesis cuantitativa. "
         "Si el bloque news_context detecta un evento material, explica si cambia el timing o la confianza aunque la tesis base siga igual. "
         "Si el bloque expert_consensus existe, valora la calidad historica de las fuentes y si el consenso acompana o contradice al modelo. "
+        "Si information_basis.available es true, usa esas evidencias para hacer la sintesis y nombra sus fuentes cuando cites geopolítica, macro o previsiones externas. "
         "Si wall_street_signal esta disponible, explica si Wall Street esta empujando o frenando el escenario. "
         "Si bridgewater_signal esta disponible, explica si Bridgewater refuerza o enfria el escenario macro. "
         "Si la fiabilidad o el historico son flojos, dilo claramente. JSON de entrada: "

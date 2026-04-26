@@ -3133,6 +3133,520 @@ def build_projection_12m_chart(history, projection: dict) -> dict:
     }
 
 
+def build_projection_presentation_summary(card: dict) -> dict:
+    position = card.get("position")
+    projection = card.get("projection") or {}
+    technical_signal = card.get("technical_signal") or {}
+    if position is None or not projection.get("available"):
+        return {"available": False}
+
+    monthly_rows = build_projection_monthly_trend_rows(card)
+    current_price = quantize_decimal(
+        projection.get("latest_price") or getattr(position, "current_price_per_share", None),
+        "0.0001",
+    )
+    anchor_date = projection.get("latest_date") or getattr(position, "latest_price_date", None)
+    fallback_end_price = quantize_decimal(projection.get("projected_price"), "0.0001")
+    if current_price in {None, ZERO}:
+        return {"available": False}
+
+    if not monthly_rows and fallback_end_price not in {None, ZERO}:
+        monthly_rows = [
+            {
+                "month_number": 0,
+                "projected_date": anchor_date,
+                "projected_price": current_price,
+            },
+            {
+                "month_number": 12,
+                "projected_date": add_calendar_months(anchor_date, 12) if anchor_date else None,
+                "projected_price": fallback_end_price,
+            },
+        ]
+    if len(monthly_rows) < 2:
+        return {"available": False}
+
+    current_row = monthly_rows[0]
+    future_rows = [row for row in monthly_rows[1:] if row.get("projected_price") not in {None, ZERO}]
+    if not future_rows:
+        return {"available": False}
+
+    end_row = future_rows[-1]
+    min_row = min(future_rows, key=lambda row: (row.get("projected_price") or ZERO, row.get("month_number") or 999))
+    max_row = max(future_rows, key=lambda row: (row.get("projected_price") or ZERO, -(row.get("month_number") or 999)))
+    current_price = quantize_decimal(current_row.get("projected_price"), "0.0001") or current_price
+    end_price = quantize_decimal(end_row.get("projected_price"), "0.0001")
+    min_price = quantize_decimal(min_row.get("projected_price"), "0.0001")
+    max_price = quantize_decimal(max_row.get("projected_price"), "0.0001")
+    if end_price in {None, ZERO}:
+        return {"available": False}
+
+    visible_price_return_pct = quantize_decimal(percentage_change(end_price, current_price), "0.01")
+    net_income_yield_pct = quantize_decimal(projection.get("net_income_yield_pct"), "0.01") or ZERO
+    transaction_drag_pct = quantize_decimal(projection.get("transaction_drag_pct"), "0.01") or ZERO
+    visible_total_return_pct = quantize_decimal(
+        (visible_price_return_pct or ZERO) + net_income_yield_pct - transaction_drag_pct,
+        "0.01",
+    )
+
+    future_prices = [quantize_decimal(row.get("projected_price"), "0.0001") or ZERO for row in future_rows]
+    is_non_decreasing = all(current >= previous for previous, current in zip(future_prices, future_prices[1:]))
+    is_non_increasing = all(current <= previous for previous, current in zip(future_prices, future_prices[1:]))
+    future_min_below_current = min_price not in {None, ZERO} and min_price < current_price
+    future_max_above_current = max_price not in {None, ZERO} and max_price > current_price
+
+    if future_min_below_current and min_row.get("month_number", 0) < end_row.get("month_number", 0) and end_price > min_price:
+        shape_label = "Corrige y recupera"
+        shape_note = (
+            f"La senda visible cae primero hasta {min_price:.4f} en "
+            f"{format_projection_month_window(min_row.get('projected_date'), min_row.get('month_number'))} "
+            f"y luego rebota para cerrar 12M en {end_price:.4f}."
+        )
+        key_level_label = "Suelo probable"
+        key_level_row = min_row
+    elif future_max_above_current and max_row.get("month_number", 0) < end_row.get("month_number", 0) and end_price < max_price:
+        shape_label = "Sube y corrige"
+        shape_note = (
+            f"La senda visible marca antes un techo en {max_price:.4f} en "
+            f"{format_projection_month_window(max_row.get('projected_date'), max_row.get('month_number'))} "
+            f"y despues se enfria hasta cerrar 12M en {end_price:.4f}."
+        )
+        key_level_label = "Techo intermedio"
+        key_level_row = max_row
+    elif is_non_decreasing and (visible_price_return_pct or ZERO) > ZERO:
+        shape_label = "Subida progresiva"
+        shape_note = (
+            f"La senda visible mantiene una pendiente alcista bastante continua y cierra 12M "
+            f"en {end_price:.4f}."
+        )
+        key_level_label = "Mejor nivel visible"
+        key_level_row = max_row
+    elif is_non_increasing and (visible_price_return_pct or ZERO) < ZERO:
+        shape_label = "Caida progresiva"
+        shape_note = (
+            f"La senda visible pierde nivel de forma bastante continua y termina 12M "
+            f"en {end_price:.4f}."
+        )
+        key_level_label = "Peor nivel visible"
+        key_level_row = min_row
+    elif abs(visible_price_return_pct or ZERO) <= Decimal("2.50"):
+        shape_label = "Lateral"
+        shape_note = (
+            f"La senda visible oscila sin una direccion limpia y cierra 12M muy cerca de hoy, "
+            f"en {end_price:.4f}."
+        )
+        key_level_label = "Tramo clave"
+        key_level_row = min_row if future_min_below_current else max_row
+    else:
+        bias_label = "alcista" if (visible_price_return_pct or ZERO) > ZERO else "bajista"
+        shape_label = f"Volatil con sesgo {bias_label}"
+        shape_note = (
+            f"La senda visible se mueve con idas y vueltas, pero el cierre 12M queda sesgado "
+            f"a {end_price:.4f}."
+        )
+        key_level_label = "Tramo clave"
+        key_level_row = min_row if future_min_below_current else max_row
+
+    key_level_price = quantize_decimal(key_level_row.get("projected_price"), "0.0001") if key_level_row else None
+    key_level_return_pct = (
+        quantize_decimal(percentage_change(key_level_price, current_price), "0.01")
+        if key_level_price not in {None, ZERO}
+        else None
+    )
+
+    support_level = quantize_decimal(technical_signal.get("support_level"), "0.0001")
+    resistance_level = quantize_decimal(technical_signal.get("resistance_level"), "0.0001")
+    support_gap_pct = (
+        quantize_decimal(percentage_change(support_level, current_price), "0.01")
+        if support_level not in {None, ZERO}
+        else None
+    )
+    resistance_gap_pct = (
+        quantize_decimal(percentage_change(resistance_level, current_price), "0.01")
+        if resistance_level not in {None, ZERO}
+        else None
+    )
+    if support_level not in {None, ZERO} and resistance_level not in {None, ZERO}:
+        decision_level_note = (
+            f"Perder {support_level:.4f} enfriaria la tesis y romper {resistance_level:.4f} la mejoraria."
+        )
+    elif support_level not in {None, ZERO}:
+        decision_level_note = f"Perder {support_level:.4f} seria la primera senal clara de deterioro."
+    elif resistance_level not in {None, ZERO}:
+        decision_level_note = f"Romper {resistance_level:.4f} ayudaria a confirmar una mejora real."
+    else:
+        decision_level_note = technical_signal.get("note") or "Sin niveles tecnicos claros todavia."
+
+    average_cost = quantize_decimal(getattr(position, "average_cost_per_share", None), "0.0001")
+    current_vs_cost_pct = (
+        quantize_decimal(percentage_change(current_price, average_cost), "0.01")
+        if position.is_owned and average_cost not in {None, ZERO}
+        else None
+    )
+    visible_vs_cost_pct = (
+        quantize_decimal(percentage_change(end_price, average_cost), "0.01")
+        if position.is_owned and average_cost not in {None, ZERO}
+        else None
+    )
+    if position.is_owned and average_cost not in {None, ZERO}:
+        owned_position_note = (
+            f"Hoy va {current_vs_cost_pct:.1f} % frente a tu compra y el cierre 12M visible quedaria "
+            f"en {visible_vs_cost_pct:.1f} % sobre tu precio medio."
+        )
+    else:
+        owned_position_note = (
+            "La lectura 12M visible usa el precio actual como base y no una recta separada del grafico."
+        )
+
+    raw_projected_price = quantize_decimal(projection.get("projected_price"), "0.0001")
+    raw_gap_pct = (
+        quantize_decimal(percentage_change(end_price, raw_projected_price), "0.01")
+        if raw_projected_price not in {None, ZERO}
+        else None
+    )
+    consistency_note = "La rentabilidad y el cierre 12M salen de la misma senda naranja que ves en el grafico."
+    if projection.get("uses_cycle_zoom_shape"):
+        consistency_note += " El 12M se ancla al primer ano del patron 5A para que ambos horizontes cuenten la misma historia."
+
+    return {
+        "available": True,
+        "shape_label": shape_label,
+        "shape_note": shape_note,
+        "consistency_note": consistency_note,
+        "current_price": current_price,
+        "current_date": current_row.get("projected_date") or anchor_date,
+        "visible_projected_price": end_price,
+        "visible_projected_date": end_row.get("projected_date"),
+        "visible_projected_window_label": format_projection_month_window(
+            end_row.get("projected_date"),
+            end_row.get("month_number"),
+        ),
+        "visible_price_return_pct": visible_price_return_pct,
+        "visible_total_return_pct": visible_total_return_pct,
+        "scenario_low_return_pct": quantize_decimal(projection.get("low_return_pct"), "0.01"),
+        "scenario_high_return_pct": quantize_decimal(projection.get("high_return_pct"), "0.01"),
+        "scenario_low_price": quantize_decimal(projection.get("low_price"), "0.0001"),
+        "scenario_high_price": quantize_decimal(projection.get("high_price"), "0.0001"),
+        "key_level_label": key_level_label,
+        "key_level_price": key_level_price,
+        "key_level_date": key_level_row.get("projected_date") if key_level_row else None,
+        "key_level_window_label": format_projection_month_window(
+            key_level_row.get("projected_date") if key_level_row else None,
+            key_level_row.get("month_number") if key_level_row else None,
+        ),
+        "key_level_return_pct": key_level_return_pct,
+        "support_level": support_level,
+        "resistance_level": resistance_level,
+        "support_gap_pct": support_gap_pct,
+        "resistance_gap_pct": resistance_gap_pct,
+        "decision_level_note": decision_level_note,
+        "owned_position_note": owned_position_note,
+        "current_vs_cost_pct": current_vs_cost_pct,
+        "visible_vs_cost_pct": visible_vs_cost_pct,
+        "raw_projected_price": raw_projected_price,
+        "raw_gap_pct": raw_gap_pct,
+    }
+
+
+INFORMATION_THEME_LABELS = {
+    "geopolitica": "Geopolitica",
+    "tipos": "Tipos e inflacion",
+    "energia": "Energia",
+    "vivienda": "Vivienda",
+    "regulacion": "Regulacion",
+    "resultados": "Resultados",
+    "contratos": "Contratos",
+    "empresa": "Empresa",
+    "mercado": "Mercado",
+    "wall_street": "Wall Street",
+    "bridgewater": "Bridgewater",
+    "experto": "Consenso experto",
+}
+
+
+INFORMATION_THEME_PRIORITY = {
+    "geopolitica": 9,
+    "tipos": 8,
+    "energia": 7,
+    "regulacion": 7,
+    "vivienda": 6,
+    "wall_street": 6,
+    "bridgewater": 6,
+    "resultados": 5,
+    "contratos": 5,
+    "empresa": 4,
+    "experto": 4,
+    "mercado": 3,
+}
+
+
+INFORMATION_THEME_NOTES = {
+    "geopolitica": "Puede mover timing y rango del escenario.",
+    "tipos": "Afecta descuento, financiacion y valoracion.",
+    "energia": "Afecta costes y sensibilidad macro.",
+    "vivienda": "Afecta demanda y ciclo domestico.",
+    "regulacion": "Puede cambiar visibilidad o margenes.",
+    "resultados": "Afecta ejecucion y confianza en la tesis.",
+    "contratos": "Afecta cartera futura e ingresos esperados.",
+    "empresa": "Impacta la tesis propia de la compania.",
+    "mercado": "Mueve apetito por riesgo y beta del valor.",
+    "wall_street": "Funciona como termometro global de riesgo.",
+    "bridgewater": "Anade lectura macro de fondo.",
+    "experto": "Refuerza o cuestiona la tesis con opinion externa.",
+}
+
+
+def resolve_information_theme_key(tags: list[str] | None, *, fallback_scope: str = "") -> str:
+    normalized_tags = [str(tag or "").strip().lower() for tag in (tags or []) if str(tag or "").strip()]
+    for candidate in ("geopolitica", "tipos", "energia", "vivienda", "regulacion", "resultados", "contratos"):
+        if candidate in normalized_tags:
+            return candidate
+    normalized_scope = str(fallback_scope or "").strip().lower()
+    if normalized_scope in {"company", "empresa"}:
+        return "empresa"
+    if normalized_scope in {"market", "mercado"}:
+        return "mercado"
+    if normalized_scope in {"wall_street", "wall street"}:
+        return "wall_street"
+    if normalized_scope == "bridgewater":
+        return "bridgewater"
+    if normalized_scope in {"expert", "experto", "expert_consensus"}:
+        return "experto"
+    return "mercado"
+
+
+def build_information_source_label(item: dict) -> str:
+    expert_source = str(item.get("expert_source") or "").strip()
+    source = str(item.get("source") or "").strip()
+    if expert_source and source and source.lower() != expert_source.lower():
+        return f"{expert_source} via {source}"
+    return expert_source or source or "Fuente agregada"
+
+
+def resolve_information_tone_label(tone: str | None, score: Decimal | None = None) -> str:
+    normalized_tone = str(tone or "").strip().lower()
+    numeric_score = Decimal(str(score or ZERO))
+    if normalized_tone == "positive" or numeric_score > ZERO:
+        return "Apoya"
+    if normalized_tone == "negative" or numeric_score < ZERO:
+        return "Presiona"
+    return "Mixto"
+
+
+def build_information_evidence_row(
+    *,
+    title: str,
+    source_label: str,
+    published_label: str = "",
+    tags: list[str] | None = None,
+    tone: str | None = None,
+    score: Decimal | None = None,
+    scope_label: str = "",
+    fallback_scope: str = "",
+) -> dict | None:
+    cleaned_title = " ".join(str(title or "").strip().split())
+    if not cleaned_title:
+        return None
+    theme_key = resolve_information_theme_key(tags, fallback_scope=fallback_scope)
+    theme_label = INFORMATION_THEME_LABELS.get(theme_key, "Mercado")
+    tone_label = resolve_information_tone_label(tone, score)
+    base_note = INFORMATION_THEME_NOTES.get(theme_key, "Aporta contexto adicional a la tesis.")
+    numeric_score = Decimal(str(score or ZERO))
+    impact_note = (
+        f"{tone_label} la prevision. {base_note}"
+        if tone_label != "Mixto"
+        else f"Introduce una lectura menos limpia. {base_note}"
+    )
+    return {
+        "theme_key": theme_key,
+        "theme_label": theme_label,
+        "tone_label": tone_label,
+        "title": cleaned_title,
+        "source_label": source_label or "Fuente agregada",
+        "published_label": str(published_label or "").strip(),
+        "scope_label": scope_label or "",
+        "impact_note": impact_note,
+        "tags": list(tags or [])[:4],
+        "priority": INFORMATION_THEME_PRIORITY.get(theme_key, 1),
+        "score": numeric_score,
+        "score_abs": abs(numeric_score),
+    }
+
+
+def build_information_basis_summary(card: dict) -> dict:
+    news_context = card.get("news_context") or {}
+    expert_consensus = card.get("expert_consensus") or {}
+    rows = []
+    seen_keys = set()
+
+    def append_row(row: dict | None):
+        if not row:
+            return
+        row_key = (
+            str(row.get("title") or "").strip().lower(),
+            str(row.get("source_label") or "").strip().lower(),
+            str(row.get("theme_key") or "").strip().lower(),
+        )
+        if row_key in seen_keys:
+            return
+        seen_keys.add(row_key)
+        rows.append(row)
+
+    for item in list(news_context.get("top_items") or [])[:4]:
+        append_row(
+            build_information_evidence_row(
+                title=item.get("title") or news_context.get("material_note") or news_context.get("note"),
+                source_label=build_information_source_label(item),
+                published_label=item.get("published_label") or "",
+                tags=item.get("tags") or [],
+                tone=item.get("tone"),
+                score=Decimal(str(item.get("score") or ZERO)),
+                scope_label="Prensa reciente",
+                fallback_scope="market",
+            )
+        )
+
+    for item in list(expert_consensus.get("top_items") or [])[:4]:
+        append_row(
+            build_information_evidence_row(
+                title=item.get("title") or expert_consensus.get("note"),
+                source_label=build_information_source_label(item),
+                published_label=item.get("published_label") or "",
+                tags=item.get("tags") or [],
+                tone=item.get("tone"),
+                score=Decimal(str(item.get("score") or ZERO)),
+                scope_label="Prevision externa",
+                fallback_scope="expert",
+            )
+        )
+
+    for signal_key, signal_label in (
+        ("wall_street_signal", "Wall Street"),
+        ("bridgewater_signal", "Bridgewater"),
+    ):
+        signal = expert_consensus.get(signal_key) or {}
+        if not signal.get("available"):
+            continue
+        first_source_row = (signal.get("source_rows") or [{}])[0]
+        append_row(
+            build_information_evidence_row(
+                title=signal.get("note") or signal.get("label"),
+                source_label=str(first_source_row.get("source") or signal_label),
+                published_label=(signal.get("items") or [{}])[0].get("published_label") or expert_consensus.get("captured_at_label") or "",
+                tags=signal.get("top_tags") or [],
+                tone="positive" if Decimal(str(signal.get("score") or ZERO)) > ZERO else "negative" if Decimal(str(signal.get("score") or ZERO)) < ZERO else "neutral",
+                score=Decimal(str(signal.get("score") or ZERO)),
+                scope_label=signal_label,
+                fallback_scope=signal_key,
+            )
+        )
+
+    rows = sorted(
+        rows,
+        key=lambda row: (
+            -int(row.get("theme_key") == "geopolitica"),
+            -int(row.get("theme_key") in {"tipos", "energia", "vivienda", "regulacion", "mercado", "wall_street", "bridgewater"}),
+            -int(row.get("priority") or 0),
+            -Decimal(str(row.get("score_abs") or ZERO)),
+            str(row.get("source_label") or "").strip().lower(),
+        ),
+    )[:6]
+    if not rows:
+        return {"available": False, "rows": []}
+
+    theme_labels = []
+    for row in rows:
+        theme_label = row.get("theme_label")
+        if theme_label and theme_label not in theme_labels:
+            theme_labels.append(theme_label)
+    source_labels = []
+    for row in rows:
+        source_label = row.get("source_label")
+        if source_label and source_label not in source_labels:
+            source_labels.append(source_label)
+
+    pressure_rows = [row for row in rows if row.get("tone_label") == "Presiona"]
+    support_rows = [row for row in rows if row.get("tone_label") == "Apoya"]
+    geopolitical_flag = any(row.get("theme_key") == "geopolitica" for row in rows)
+    macro_flag = any(
+        row.get("theme_key") in {"tipos", "energia", "vivienda", "regulacion", "mercado", "wall_street", "bridgewater"}
+        for row in rows
+    )
+
+    def compact_row_label(row: dict) -> str:
+        theme_label = str(row.get("theme_label") or "Mercado").strip()
+        source_label = str(row.get("source_label") or "Fuente agregada").strip()
+        return f"{theme_label} ({source_label})"
+
+    def build_bullet_point(row: dict) -> str:
+        theme_label = str(row.get("theme_label") or "Mercado").strip()
+        tone_label = str(row.get("tone_label") or "Mixto").strip().lower()
+        source_label = str(row.get("source_label") or "Fuente agregada").strip()
+        title = str(row.get("title") or "").strip()
+        published_label = str(row.get("published_label") or "").strip()
+        point = f"{theme_label}: {tone_label} segun {source_label}"
+        if published_label:
+            point += f" ({published_label})"
+        if title:
+            point += f". {title}"
+        return point
+
+    geopolitical_sources = []
+    macro_sources = []
+    for row in rows:
+        source_label = row.get("source_label")
+        if row.get("theme_key") == "geopolitica" and source_label and source_label not in geopolitical_sources:
+            geopolitical_sources.append(source_label)
+        if row.get("theme_key") in {"tipos", "energia", "vivienda", "regulacion", "mercado", "wall_street", "bridgewater"}:
+            if source_label and source_label not in macro_sources:
+                macro_sources.append(source_label)
+
+    summary_bits = [f"La prevision usa {len(rows)} evidencias informativas recientes."]
+    if pressure_rows:
+        summary_bits.append(f"Hoy presionan {', '.join(compact_row_label(row) for row in pressure_rows[:2])}.")
+    if support_rows:
+        summary_bits.append(f"Apoyan {', '.join(compact_row_label(row) for row in support_rows[:2])}.")
+    elif theme_labels:
+        summary_bits.append(f"Hoy pesan sobre todo {', '.join(theme_labels[:3]).lower()}.")
+    if geopolitical_flag:
+        summary_bits.append("Hay senal geopolitica que puede cambiar el timing.")
+    if macro_flag:
+        summary_bits.append("Tambien pesa el bloque macro y de mercado.")
+    if source_labels:
+        summary_bits.append(f"Fuentes clave: {', '.join(source_labels[:3])}.")
+
+    return {
+        "available": True,
+        "summary": " ".join(summary_bits),
+        "rows": rows,
+        "bullet_points": [build_bullet_point(row) for row in rows[:3]],
+        "theme_labels": theme_labels,
+        "source_labels": source_labels,
+        "geopolitical_flag": geopolitical_flag,
+        "macro_flag": macro_flag,
+        "geopolitical_sources": geopolitical_sources,
+        "macro_sources": macro_sources,
+    }
+
+
+def refresh_card_projection_visuals(card: dict, history=None) -> dict:
+    position = card.get("position")
+    if position is None:
+        card["presentation_projection"] = {"available": False}
+        card["information_basis"] = {"available": False, "rows": []}
+        return card
+
+    if history is None:
+        history = list(position.price_history.order_by("price_date"))
+
+    if history and len(history) >= 2:
+        card["projection_12m_chart"] = build_projection_12m_chart(history, card.get("projection") or {})
+        card["cycle_projection_5y_chart"] = build_cycle_projection_5y_chart(history, card.get("cycle_projection_5y") or {})
+    card["presentation_projection"] = build_projection_presentation_summary(card)
+    card["information_basis"] = build_information_basis_summary(card)
+    return card
+
+
 def collapse_market_points_to_frequency(points: list[dict], frequency: str) -> list[dict]:
     buckets = {}
     for point in points:
@@ -12003,7 +12517,7 @@ def apply_news_context_adjustments_to_card(card: dict) -> dict:
     )
     trade_alert["note"] = f"{str(trade_alert.get('note') or '').strip()} {note}".strip()
     card["trade_alert"] = trade_alert
-    return card
+    return refresh_card_projection_visuals(card)
 
 
 def apply_news_context_adjustments_to_dashboard(dashboard: dict) -> dict:
@@ -12017,6 +12531,7 @@ def apply_news_context_adjustments_to_dashboard(dashboard: dict) -> dict:
             material_event_count += 1
         was_adjusted = bool(((card.get("projection") or {}).get("news_adjustment") or {}).get("applied"))
         apply_news_context_adjustments_to_card(card)
+        refresh_card_projection_visuals(card)
         is_adjusted = bool(((card.get("projection") or {}).get("news_adjustment") or {}).get("applied"))
         if is_adjusted and not was_adjusted:
             adjusted_cards_count += 1
@@ -12362,7 +12877,7 @@ def apply_expert_consensus_adjustments_to_card(card: dict) -> dict:
     )
     trade_alert["note"] = f"{str(trade_alert.get('note') or '').strip()} {note}".strip()
     card["trade_alert"] = trade_alert
-    return card
+    return refresh_card_projection_visuals(card)
 
 
 def apply_expert_consensus_adjustments_to_dashboard(dashboard: dict) -> dict:
@@ -12377,6 +12892,7 @@ def apply_expert_consensus_adjustments_to_dashboard(dashboard: dict) -> dict:
             strong_consensus_count += 1
         was_adjusted = bool(((card.get("projection") or {}).get("expert_adjustment") or {}).get("applied"))
         apply_expert_consensus_adjustments_to_card(card)
+        refresh_card_projection_visuals(card)
         is_adjusted = bool(((card.get("projection") or {}).get("expert_adjustment") or {}).get("applied"))
         if is_adjusted and not was_adjusted:
             adjusted_cards_count += 1
@@ -13402,6 +13918,8 @@ def build_equity_history_card(
         "best_correlation_chart": best_correlation_chart,
         "projection_12m_chart": projection_12m_chart,
         "cycle_projection_5y_chart": cycle_projection_5y_chart,
+        "presentation_projection": {"available": False},
+        "information_basis": {"available": False, "rows": []},
     }
     card["reference_playbook"] = (
         build_reference_playbook_from_card(card)
@@ -13420,7 +13938,7 @@ def build_equity_history_card(
             "notes": position.notes,
         }
     )
-    return card
+    return refresh_card_projection_visuals(card, history=history)
 
 
 def build_equity_history_cards(
