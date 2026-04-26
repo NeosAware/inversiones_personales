@@ -58,6 +58,7 @@ from .services import (
     build_equity_analysis_dashboard,
     build_equity_allocation_plan,
     build_equity_investment_journey_context,
+    build_expectation_review_dashboard,
     build_equity_round_investment_plan,
     build_equity_ticket_tracking_context,
     build_portfolio_correlation_context,
@@ -428,6 +429,9 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         )
         context["portfolio_correlation"] = build_portfolio_correlation_context(
             dashboard["owned_history_cards"],
+        )
+        context["expectation_review_dashboard"] = build_expectation_review_dashboard(
+            as_of=timezone.localdate(),
         )
         return context
 

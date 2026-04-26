@@ -17,6 +17,7 @@ from .llm_analysis import (
     resolve_ai_provider_config,
 )
 from .models import (
+    EquityExpectationReview,
     EquityNightlyAnalysisRun,
     EquityNightlyAnalysisSnapshot,
     EquityPosition,
@@ -33,6 +34,8 @@ from .services import (
     apply_news_context_adjustments_to_dashboard,
     build_analysis_broker_costs,
     build_cycle_projection_yearly_margins,
+    build_cycle_horizon_expectation_map,
+    build_card_scenario_tables,
     build_equity_analysis_dashboard,
     build_equity_analysis_overview,
     build_equity_decision_rows,
@@ -44,7 +47,9 @@ from .services import (
     clear_market_data_caches,
     percentage_change,
     quantize_decimal,
+    reconcile_trade_alert_with_expected_return,
     refresh_card_projection_visuals,
+    resolve_effective_projection_metrics,
     resolve_analysis_broker_profile,
     sync_all_equities_market_data,
 )
@@ -152,6 +157,22 @@ def should_refresh_nightly_llm(*, analysis_date: date | None = None, force: bool
     if not weekdays:
         return False
     return analysis_date.isoweekday() in weekdays
+
+
+def resolve_expectation_review_kind(
+    *,
+    analysis_date: date,
+    force: bool,
+    material_news_refresh: bool = False,
+) -> str:
+    weekdays = nightly_llm_refresh_iso_weekdays()
+    if analysis_date.isoweekday() in weekdays:
+        return EquityExpectationReview.ReviewKind.SCHEDULED
+    if material_news_refresh:
+        return EquityExpectationReview.ReviewKind.NEWS_SHOCK
+    if force:
+        return EquityExpectationReview.ReviewKind.FORCED
+    return EquityExpectationReview.ReviewKind.CARRY_FORWARD
 
 
 def resolve_nightly_analysis_agent() -> dict:
@@ -268,6 +289,65 @@ def iter_dashboard_cards(dashboard: dict):
         yield EquityNightlyAnalysisSnapshot.Scope.TRACKED, card
     for card in dashboard.get("ibex_universe_cards") or []:
         yield EquityNightlyAnalysisSnapshot.Scope.IBEX, card
+
+
+def build_expectation_review_from_card(
+    *,
+    run: EquityNightlyAnalysisRun,
+    card: dict,
+    scope: str,
+    analysis_date: date,
+    review_kind: str,
+) -> EquityExpectationReview:
+    position = card["position"]
+    projection = card.get("projection") or {}
+    cycle_projection = card.get("cycle_projection_5y") or {}
+    scenario_tables = card.get("scenario_tables") or build_card_scenario_tables(card)
+    effective_projection = resolve_effective_projection_metrics(card)
+    current_price = quantize_decimal(getattr(position, "current_price_per_share", None), "0.0001")
+    cycle_horizon_expectations = build_cycle_horizon_expectation_map(
+        cycle_projection.get("scenarios"),
+        current_price=current_price,
+    )
+    trade_alert = reconcile_trade_alert_with_expected_return(
+        card.get("trade_alert") or {},
+        expected_return_pct=(scenario_tables.get("projection_12m") or {}).get("expected_return_pct"),
+        horizon_label="1A",
+    )
+    reliability = card.get("projection_reliability") or {}
+
+    return EquityExpectationReview(
+        run=run,
+        analysis_date=analysis_date,
+        review_kind=review_kind,
+        scope=scope,
+        analysis_key=build_cached_analysis_key(card, scope),
+        position=position if getattr(position, "id", None) else None,
+        ticker=clean_ticker(position.ticker),
+        quote_symbol=position.quote_symbol or "",
+        company_name=position.company_name,
+        status_key=card.get("status_key", ""),
+        sector_label=card.get("sector_label", ""),
+        reference_label=card.get("reference_label", ""),
+        trade_alert_label=trade_alert.get("label", ""),
+        trade_alert_tone=trade_alert.get("tone", ""),
+        safety_score=quantize_decimal(projection.get("safety_score"), "0.01"),
+        reliability_label=reliability.get("label", ""),
+        reliability_score=quantize_decimal(reliability.get("score"), "0.01"),
+        current_price=current_price,
+        projected_return_pct_1y=quantize_decimal(effective_projection.get("base_return_pct"), "0.01"),
+        projected_return_pct_5y=quantize_decimal(cycle_projection.get("five_year_return_pct"), "0.01"),
+        expected_return_pct_1y=quantize_decimal((scenario_tables.get("projection_12m") or {}).get("expected_return_pct"), "0.01"),
+        expected_return_pct_2y=quantize_decimal(cycle_horizon_expectations.get(24), "0.01"),
+        expected_return_pct_3y=quantize_decimal(cycle_horizon_expectations.get(36), "0.01"),
+        expected_return_pct_4y=quantize_decimal(cycle_horizon_expectations.get(48), "0.01"),
+        expected_return_pct_5y=quantize_decimal(
+            cycle_horizon_expectations.get(60) or (scenario_tables.get("cycle_5y") or {}).get("expected_return_pct"),
+            "0.01",
+        ),
+        projection_12m_scenario_rows=serialize_cached_value((scenario_tables.get("projection_12m") or {}).get("rows") or []),
+        cycle_5y_scenario_rows=serialize_cached_value((scenario_tables.get("cycle_5y") or {}).get("rows") or []),
+    )
 
 
 def load_latest_completed_llm_run(provider: str | None = None) -> EquityNightlyAnalysisRun | None:
@@ -990,6 +1070,7 @@ def persist_nightly_analysis_dashboard(
     agent_provider: str,
     agent_label: str,
     llm_summary: dict | None = None,
+    review_kind: str = EquityExpectationReview.ReviewKind.SCHEDULED,
 ) -> EquityNightlyAnalysisRun:
     tracked_signature = build_positions_analysis_signature(positions)
     with transaction.atomic():
@@ -1007,16 +1088,18 @@ def persist_nightly_analysis_dashboard(
             },
         )
         run.snapshots.all().delete()
+        run.expectation_reviews.all().delete()
 
         snapshot_rows = []
-        for card in dashboard["history_cards"]:
+        expectation_review_rows = []
+        for scope, card in iter_dashboard_cards(dashboard):
             position = card["position"]
             snapshot_rows.append(
                 EquityNightlyAnalysisSnapshot(
                     run=run,
                     analysis_date=analysis_date,
-                    scope=EquityNightlyAnalysisSnapshot.Scope.TRACKED,
-                    analysis_key=build_cached_analysis_key(card, EquityNightlyAnalysisSnapshot.Scope.TRACKED),
+                    scope=scope,
+                    analysis_key=build_cached_analysis_key(card, scope),
                     position=position if position.id else None,
                     ticker=clean_ticker(position.ticker),
                     quote_symbol=position.quote_symbol or "",
@@ -1027,25 +1110,17 @@ def persist_nightly_analysis_dashboard(
                     analysis_payload=serialize_cached_value(card),
                 )
             )
-        for card in dashboard["ibex_universe_cards"]:
-            position = card["position"]
-            snapshot_rows.append(
-                EquityNightlyAnalysisSnapshot(
+            expectation_review_rows.append(
+                build_expectation_review_from_card(
                     run=run,
+                    card=card,
+                    scope=scope,
                     analysis_date=analysis_date,
-                    scope=EquityNightlyAnalysisSnapshot.Scope.IBEX,
-                    analysis_key=build_cached_analysis_key(card, EquityNightlyAnalysisSnapshot.Scope.IBEX),
-                    position=position if position.id else None,
-                    ticker=clean_ticker(position.ticker),
-                    quote_symbol=position.quote_symbol or "",
-                    company_name=position.company_name,
-                    status_key=card.get("status_key", ""),
-                    sector_label=card.get("sector_label", ""),
-                    agent_provider=agent_provider,
-                    analysis_payload=serialize_cached_value(card),
+                    review_kind=review_kind,
                 )
             )
         EquityNightlyAnalysisSnapshot.objects.bulk_create(snapshot_rows)
+        EquityExpectationReview.objects.bulk_create(expectation_review_rows)
 
         run.status = EquityNightlyAnalysisRun.Status.COMPLETED
         run.status_note = build_nightly_completion_note(llm_summary)
@@ -1059,6 +1134,8 @@ def persist_nightly_analysis_dashboard(
                 "reference_guide_summary": dashboard["reference_guide_summary"],
                 "news_summary": dashboard.get("news_summary") or {},
                 "expert_consensus_summary": dashboard.get("expert_consensus_summary") or {},
+                "expectation_review_kind": review_kind,
+                "expectation_review_count": len(expectation_review_rows),
                 "llm": llm_summary or {},
             }
         )
@@ -1134,6 +1211,11 @@ def run_nightly_equity_analysis(
             and nightly_llm_news_shock_refresh_enabled()
             and int(news_summary.get("material_event_count") or 0) > 0
         )
+        review_kind = resolve_expectation_review_kind(
+            analysis_date=analysis_date,
+            force=force,
+            material_news_refresh=material_news_refresh,
+        )
         refresh_reason = "scheduled" if scheduled_refresh else "news_shock" if material_news_refresh else ""
         refresh_llm = bool(ai_config.available and (scheduled_refresh or material_news_refresh))
         if refresh_llm:
@@ -1194,6 +1276,7 @@ def run_nightly_equity_analysis(
             agent_provider=agent["provider"],
             agent_label=agent["label"],
             llm_summary=llm_summary,
+            review_kind=review_kind,
         )
     except Exception as exc:
         run.status = EquityNightlyAnalysisRun.Status.FAILED

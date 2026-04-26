@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    EquityExpectationReview,
     EquityNightlyAnalysisRun,
     EquityNightlyAnalysisSnapshot,
     EquityOptimizationRun,
@@ -99,6 +100,23 @@ class EquityNightlyAnalysisSnapshotAdmin(admin.ModelAdmin):
     )
     search_fields = ("ticker", "company_name", "quote_symbol", "analysis_key")
     list_filter = ("analysis_date", "scope", "status_key", "agent_provider")
+
+
+@admin.register(EquityExpectationReview)
+class EquityExpectationReviewAdmin(admin.ModelAdmin):
+    list_display = (
+        "analysis_date",
+        "review_kind",
+        "scope",
+        "ticker",
+        "company_name",
+        "trade_alert_label",
+        "expected_return_pct_1y",
+        "expected_return_pct_3y",
+        "expected_return_pct_5y",
+    )
+    search_fields = ("ticker", "company_name", "quote_symbol", "analysis_key", "reference_label")
+    list_filter = ("analysis_date", "review_kind", "scope", "trade_alert_label", "reference_label")
 
 
 @admin.register(EquityPurchaseForecastBaseline)

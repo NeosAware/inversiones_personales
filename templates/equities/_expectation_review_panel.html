@@ -1,0 +1,260 @@
+{% if expectation_review_dashboard.available %}
+  <section class="equity-panel" id="equity-bondad">
+    <div class="equity-panel-head">
+      <div>
+        <p class="section-title">Bondad del modelo</p>
+        <h2>Como se esta comportando la esperanza frente a la realidad</h2>
+        <p>{{ expectation_review_dashboard.scope_note }}</p>
+      </div>
+      {% if expectation_review_dashboard.last_review_date_label %}
+        <span class="pill">Ultima revision {{ expectation_review_dashboard.last_review_date_label }}</span>
+      {% endif %}
+    </div>
+
+    <div class="equity-detail-grid">
+      <div class="equity-mini-stat">
+        <span>Empresas con grafico</span>
+        <strong>{{ expectation_review_dashboard.companies_count }}</strong>
+        <small>Subpestanas por valor del IBEX con revisiones guardadas.</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Revisiones usadas</span>
+        <strong>{{ expectation_review_dashboard.reviews_count }}</strong>
+        <small>Solo se priorizan las programadas de martes y jueves.</small>
+      </div>
+      <div class="equity-mini-stat">
+        <span>Ecuaciones listas</span>
+        <strong>{{ expectation_review_dashboard.equation_ready_count }}</strong>
+        <small>Necesitan al menos 3 revisiones con algo de recorrido real.</small>
+      </div>
+    </div>
+
+    <div class="equity-compact-note" style="margin-top:14px; border-color:#d7e4ee; background:#f7fbfd; color:#17384e;">
+      <strong style="display:block; color:#17384e; margin-bottom:6px;">Como leer esta calibracion</strong>
+      <p style="margin:0 0 8px;">{{ expectation_review_dashboard.equation_note }}</p>
+      <p style="margin:0;">Naranja = esperanza acumulada observada hasta esa fecha. Azul = resultado real observado. Gris = esperanza corregida con la ecuacion historica de ese valor.</p>
+    </div>
+
+    <div class="equity-stock-tabs-shell" data-equity-tabs style="margin-top:18px;">
+      <div class="equity-stock-tabs" role="tablist" aria-label="Bondad por empresa del IBEX">
+        {% for company in expectation_review_dashboard.companies %}
+          <button
+            type="button"
+            class="equity-stock-tab"
+            id="bondad-tab-{{ company.tab_key }}"
+            data-stock-tab="{{ company.tab_key }}"
+            role="tab"
+            aria-selected="{% if forloop.first %}true{% else %}false{% endif %}"
+            aria-controls="bondad-{{ company.tab_key }}"
+          >
+            <strong>{{ company.ticker }}</strong>
+            <span>{{ company.company_name }}</span>
+            <span class="equity-stock-tab-note">{{ company.reviews_count }} revisiones | {{ company.equation.short_formula_label }}</span>
+          </button>
+        {% endfor %}
+      </div>
+
+      <div class="equity-stock-panels">
+        {% for company in expectation_review_dashboard.companies %}
+          <section
+            class="equity-stock-panel"
+            id="bondad-{{ company.tab_key }}"
+            data-stock-panel="{{ company.tab_key }}"
+            role="tabpanel"
+            aria-labelledby="bondad-tab-{{ company.tab_key }}"
+            {% if not forloop.first %}hidden{% endif %}
+          >
+            <div class="equity-panel-head">
+              <div>
+                <p class="section-title">Calibracion {{ company.ticker }}</p>
+                <h3 style="margin:0; color:#17384e;">{{ company.company_name }}</h3>
+                <p style="margin:8px 0 0;">
+                  {% if company.current_price is not None %}
+                    Precio actual {{ company.current_price|floatformat:4 }}
+                    {% if company.current_price_date_label %}| {{ company.current_price_date_label }}{% endif %}
+                  {% else %}
+                    Sin cotizacion reciente suficiente para completar la comparativa.
+                  {% endif %}
+                </p>
+              </div>
+              {% if company.market_error %}
+                <span class="pill">{{ company.market_error }}</span>
+              {% endif %}
+            </div>
+
+            <div class="equity-calibration-grid">
+              <div class="equity-mini-stat">
+                <span>Sesgo medio</span>
+                <strong class="{% if company.average_gap_pct is not None and company.average_gap_pct >= 0 %}good{% elif company.average_gap_pct is not None %}warn{% endif %}">
+                  {% if company.average_gap_pct is not None %}{{ company.average_gap_pct|floatformat:1 }} %{% else %}-{% endif %}
+                </strong>
+                <small>Real menos esperanza observada.</small>
+              </div>
+              <div class="equity-mini-stat">
+                <span>Esperanza media</span>
+                <strong>{% if company.average_expected_return_pct is not None %}{{ company.average_expected_return_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+                <small>Lectura acumulada observada en cada revision.</small>
+              </div>
+              <div class="equity-mini-stat">
+                <span>Real medio</span>
+                <strong>{% if company.average_actual_return_pct is not None %}{{ company.average_actual_return_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
+                <small>Resultado acumulado hasta hoy o hasta 1 ano.</small>
+              </div>
+              <div class="equity-mini-stat">
+                <span>Muestras para corregir</span>
+                <strong>{{ company.equation.sample_count }}</strong>
+                <small>{{ company.matured_reviews_count }} ya cerraron 1 ano completo.</small>
+              </div>
+            </div>
+
+            {% if company.chart.available %}
+              <div class="equity-chart-shell" style="margin-top:16px;">
+                <div class="equity-chart-head">
+                  <strong style="color:#17384e;">Prevision vs realidad desde {{ company.chart.start_label }}</strong>
+                  <span class="equity-chart-note">Cada punto se compara con el tramo realmente transcurrido desde esa revision, no con un ano ficticio completo.</span>
+                </div>
+                <svg viewBox="0 0 640 220" aria-label="Grafico de bondad {{ company.company_name }}">
+                  <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                  <line x1="18" y1="18" x2="18" y2="202" stroke="#d7e4ee" stroke-width="1" />
+                  {% if company.chart.zero_y %}
+                    <line x1="18" y1="{{ company.chart.zero_y }}" x2="622" y2="{{ company.chart.zero_y }}" stroke="#d8e0e8" stroke-width="1" stroke-dasharray="5 5" />
+                  {% endif %}
+                  {% for marker in company.chart.grid_markers %}
+                    <line x1="{{ marker.x }}" y1="{{ marker.grid_y1 }}" x2="{{ marker.x }}" y2="{{ marker.grid_y2 }}" stroke="#edf2f6" stroke-width="1" />
+                  {% endfor %}
+                  {% if company.chart.benchmark_line %}
+                    <polyline fill="none" stroke="#6c7a86" stroke-width="3" points="{{ company.chart.benchmark_line }}" />
+                  {% endif %}
+                  {% if company.chart.expected_line %}
+                    <polyline fill="none" stroke="#b7642d" stroke-width="3.5" stroke-dasharray="8 6" points="{{ company.chart.expected_line }}" />
+                  {% endif %}
+                  {% if company.chart.actual_line %}
+                    <polyline fill="none" stroke="#0d5d78" stroke-width="4" points="{{ company.chart.actual_line }}" />
+                  {% endif %}
+                  {% for point in company.chart.benchmark_display_points %}
+                    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#6c7a86">
+                      <title>{{ point.tooltip }}</title>
+                    </circle>
+                  {% endfor %}
+                  {% for point in company.chart.expected_display_points %}
+                    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#b7642d">
+                      <title>{{ point.tooltip }}</title>
+                    </circle>
+                  {% endfor %}
+                  {% for point in company.chart.actual_display_points %}
+                    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ point.radius }}" fill="#0d5d78" {% if point.cluster_size > 1 or point.is_latest %}stroke="#ffffff" stroke-width="1.4"{% endif %}>
+                      <title>{{ point.tooltip }}</title>
+                    </circle>
+                  {% endfor %}
+                  {% for marker in company.chart.x_markers %}
+                    <line x1="{{ marker.x }}" y1="{{ marker.y1 }}" x2="{{ marker.x }}" y2="{{ marker.y2 }}" stroke="#9fb2c0" stroke-width="1" />
+                    <text x="{{ marker.x }}" y="{{ marker.text_y }}" font-size="11" text-anchor="middle" fill="#627380">{{ marker.label }}</text>
+                  {% endfor %}
+                  <text x="8" y="20" font-size="12" fill="#17384e">{{ company.chart.max_label }}</text>
+                  <text x="8" y="214" font-size="12" fill="#17384e">{{ company.chart.min_label }}</text>
+                </svg>
+                <div class="equity-chart-foot">
+                  <span class="equity-legend"><span class="equity-legend-swatch actual"></span>Real observado</span>
+                  <span class="equity-legend"><span class="equity-legend-swatch expected"></span>Esperanza observada</span>
+                  <span class="equity-legend"><span class="equity-legend-swatch corrected"></span>Esperanza corregida</span>
+                  <span>{{ company.chart.start_label }} a {{ company.chart.latest_label }}</span>
+                </div>
+              </div>
+            {% else %}
+              <div class="equity-compact-note" style="margin-top:16px; border-color:#f2d7d5; background:#fff7f6; color:#17384e;">
+                <strong style="display:block; color:#17384e; margin-bottom:6px;">Todavia no hay grafico util</strong>
+                <p style="margin:0;">Necesitamos al menos dos revisiones con comparativa real para dibujar la bondad de {{ company.company_name }}.</p>
+              </div>
+            {% endif %}
+
+            <div class="equity-calibration-grid" style="margin-top:16px;">
+              <div class="equity-calibration-card">
+                <span class="section-title">Ecuacion correctora</span>
+                <strong class="equity-calibration-formula">{{ company.equation.formula_label }}</strong>
+                <p>{{ company.equation.interpretation }}</p>
+                <small>
+                  {% if company.equation.r_squared is not None %}
+                    Ajuste R2 {{ company.equation.r_squared|floatformat:2 }}
+                  {% else %}
+                    Ajuste pendiente de mas muestras historicas
+                  {% endif %}
+                </small>
+              </div>
+              <div class="equity-calibration-card">
+                <span class="section-title">Ultima revision</span>
+                {% if company.latest_row %}
+                  <strong>{{ company.latest_row.analysis_date_label }}</strong>
+                  <p>
+                    Esperanza {% if company.latest_row.expected_return_pct is not None %}{{ company.latest_row.expected_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+                    |
+                    Real {% if company.latest_row.actual_return_pct is not None %}{{ company.latest_row.actual_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+                  </p>
+                  <small>
+                    Ventana {{ company.latest_row.window_label }}
+                    {% if company.latest_row.gap_pct is not None %}| gap {{ company.latest_row.gap_pct|floatformat:1 }} %{% endif %}
+                  </small>
+                {% else %}
+                  <strong>Sin lectura</strong>
+                  <p>No hay comparativa suficiente todavia.</p>
+                {% endif %}
+              </div>
+            </div>
+
+            {% if company.rows %}
+              <div class="equity-table-wrap" style="margin-top:16px;">
+                <table class="equity-calibration-table">
+                  <thead>
+                    <tr>
+                      <th>Revision</th>
+                      <th>Ventana</th>
+                      <th>Esperanza</th>
+                      <th>Corregida</th>
+                      <th>Real</th>
+                      <th>Gap</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in company.rows %}
+                      <tr>
+                        <td>
+                          <strong>{{ row.analysis_date_label }}</strong>
+                          <br><span class="metric-sub">{{ row.window_end_date_label }}</span>
+                        </td>
+                        <td>
+                          {{ row.window_label }}
+                          {% if row.matured %}<br><span class="metric-sub">1A completo</span>{% endif %}
+                        </td>
+                        <td class="{% if row.expected_return_pct is not None and row.expected_return_pct >= 0 %}good{% elif row.expected_return_pct is not None %}warn{% endif %}">
+                          {% if row.expected_return_pct is not None %}{{ row.expected_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+                        </td>
+                        <td class="{% if row.corrected_return_pct is not None and row.corrected_return_pct >= 0 %}good{% elif row.corrected_return_pct is not None %}warn{% endif %}">
+                          {% if row.corrected_return_pct is not None %}{{ row.corrected_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+                        </td>
+                        <td class="{% if row.actual_return_pct is not None and row.actual_return_pct >= 0 %}good{% elif row.actual_return_pct is not None %}warn{% endif %}">
+                          {% if row.actual_return_pct is not None %}{{ row.actual_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+                        </td>
+                        <td class="{% if row.gap_pct is not None and row.gap_pct >= 0 %}good{% elif row.gap_pct is not None %}warn{% endif %}">
+                          {% if row.gap_pct is not None %}{{ row.gap_pct|floatformat:1 }} %{% else %}-{% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% endif %}
+          </section>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+{% else %}
+  <section class="equity-panel" id="equity-bondad">
+    <div class="equity-panel-head">
+      <div>
+        <p class="section-title">Bondad del modelo</p>
+        <h2>Sin historico suficiente aun</h2>
+        <p>Todavia no hay revisiones guardadas de martes y jueves para comparar la esperanza con la realidad.</p>
+      </div>
+    </div>
+  </section>
+{% endif %}

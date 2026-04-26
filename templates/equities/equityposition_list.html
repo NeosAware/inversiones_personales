@@ -1281,7 +1281,37 @@
     .equity-legend-swatch.actual{ background:#0b5f8c; }
     .equity-legend-swatch.expected{ background:#7b8896; }
     .equity-legend-swatch.benchmark{ background:#c4572a; }
+    .equity-legend-swatch.corrected{ background:#6c7a86; }
     .equity-legend-swatch.zero{ background:#9aa9b6; }
+    .equity-calibration-grid{
+      display:grid;
+      gap:14px;
+      grid-template-columns:repeat(auto-fit, minmax(220px,1fr));
+    }
+    .equity-calibration-card{
+      padding:16px;
+      border-radius:18px;
+      border:1px solid var(--line);
+      background:linear-gradient(180deg, #ffffff 0%, #f8fbfe 100%);
+      box-shadow:0 10px 24px rgba(18,37,53,.04);
+      display:grid;
+      gap:8px;
+    }
+    .equity-calibration-card p{
+      margin:0;
+      color:var(--muted);
+      line-height:1.5;
+    }
+    .equity-calibration-formula{
+      display:block;
+      color:#17384e;
+      font-size:22px;
+      line-height:1.2;
+    }
+    .equity-calibration-table th,
+    .equity-calibration-table td{
+      white-space:nowrap;
+    }
     .equity-sale-gantt-shell{
       margin-top:18px;
       padding:18px;
@@ -1800,6 +1830,18 @@
         <button
           type="button"
           class="equity-page-tab"
+          id="equity-page-tab-bondad"
+          data-page-tab="bondad"
+          role="tab"
+          aria-selected="false"
+          aria-controls="equity-view-bondad"
+        >
+          <strong>Bondad</strong>
+          <span>Prevision, realidad y correccion historica por empresa.</span>
+        </button>
+        <button
+          type="button"
+          class="equity-page-tab"
           id="equity-page-tab-optimizacion"
           data-page-tab="optimizacion"
           role="tab"
@@ -2205,6 +2247,18 @@
       {% endif %}
     </section>
 
+        </section>
+
+        <section
+          class="equity-page-panel"
+          id="equity-view-bondad"
+          data-page-panel="bondad"
+          role="tabpanel"
+          aria-labelledby="equity-page-tab-bondad"
+          hidden
+        >
+
+          {% include "equities/_expectation_review_panel.html" %}
         </section>
 
         <section

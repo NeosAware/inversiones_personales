@@ -20,6 +20,7 @@ from urllib.request import Request, urlopen
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone as django_timezone
 
 from banking.services import load_rows_from_workbook
@@ -28,6 +29,7 @@ from portfolio.ownership import AssetOwnershipCategory
 from .broker_costs import estimate_broker_costs, resolve_recurring_cost_used
 from .models import (
     EquityClosedPosition,
+    EquityExpectationReview,
     EquityPosition,
     EquityPriceHistory,
     EquityPurchaseForecastBaseline,
@@ -89,6 +91,8 @@ OPTIMIZER_CONSERVATIVE_MIN_WORST_RETURN_PCT = Decimal("-12.00")
 OPTIMIZER_CONSERVATIVE_MIN_STRESS_RETURN_PCT = Decimal("-10.00")
 OPTIMIZER_CONSERVATIVE_MAX_VOLATILITY_PCT = Decimal("22.00")
 OPTIMIZER_CONSERVATIVE_MAX_UNCERTAINTY_PENALTY_PCT = Decimal("3.25")
+EXPECTATION_REVIEW_CORRECTION_MIN_POINTS = 3
+EXPECTATION_REVIEW_CORRECTION_MIN_ELAPSED_DAYS = 7
 REFERENCE_CYCLE_TEMPLATE_RECENT_MONTHS = 18
 REFERENCE_CYCLE_TEMPLATE_MAX_MATCHES = 12
 
@@ -4167,7 +4171,10 @@ def refresh_card_projection_visuals(card: dict, history=None) -> dict:
         return card
 
     if history is None:
-        history = list(position.price_history.order_by("price_date"))
+        if getattr(position, "pk", None):
+            history = list(position.price_history.order_by("price_date"))
+        else:
+            history = []
 
     if history and len(history) >= 2:
         card["projection_12m_chart"] = build_projection_12m_chart(history, card.get("projection") or {})
@@ -15391,6 +15398,365 @@ def build_equity_analysis_overview(
         "best_decision": decision_rows[0] if decision_rows else ibex_universe_summary.get("top_pick"),
         "comparable_summary": comparable_summary,
         "next_sale_recommendation": next_sale_recommendation,
+    }
+
+
+def resolve_market_range_key_for_days(total_days: int) -> str:
+    if total_days <= 45:
+        return "3mo"
+    if total_days <= 120:
+        return "6mo"
+    if total_days <= 370:
+        return "1y"
+    if total_days <= 740:
+        return "2y"
+    if total_days <= 1850:
+        return "5y"
+    if total_days <= LONG_ANALYSIS_DAYS:
+        return DEFAULT_MARKET_RANGE_KEY
+    return MAX_MARKET_RANGE_KEY
+
+
+def project_return_pct_to_elapsed_days(
+    return_pct: Decimal | None,
+    elapsed_days: int,
+    *,
+    horizon_days: int = TRACKING_HORIZON_DAYS,
+) -> Decimal | None:
+    if return_pct is None or elapsed_days <= 0 or horizon_days <= 0:
+        return None
+    clipped_days = min(max(elapsed_days, 0), horizon_days)
+    base = 1 + (float(return_pct) / 100)
+    if base <= 0:
+        return Decimal("-100.00")
+    cumulative_return_pct = (base ** (clipped_days / horizon_days) - 1) * 100
+    return Decimal(str(round(cumulative_return_pct, 4)))
+
+
+def find_closest_market_point(points: list[dict] | None, target_date: date, tolerance_days: int = 10) -> dict | None:
+    normalized_points = [
+        point
+        for point in list(points or [])
+        if point.get("date") is not None and point.get("close") is not None
+    ]
+    if not normalized_points:
+        return None
+
+    nearby_points = [
+        point
+        for point in normalized_points
+        if abs((point["date"] - target_date).days) <= tolerance_days
+    ]
+    if nearby_points:
+        return min(
+            nearby_points,
+            key=lambda point: (
+                abs((point["date"] - target_date).days),
+                0 if point["date"] <= target_date else 1,
+                point["date"],
+            ),
+        )
+
+    before_points = [point for point in normalized_points if point["date"] <= target_date]
+    if before_points:
+        return max(before_points, key=lambda point: point["date"])
+
+    after_points = [point for point in normalized_points if point["date"] >= target_date]
+    if after_points:
+        return min(after_points, key=lambda point: point["date"])
+    return None
+
+
+def calculate_regression_intercept(xs: list[Decimal], ys: list[Decimal], beta: Decimal | None) -> Decimal | None:
+    if beta is None or len(xs) != len(ys) or len(xs) < EXPECTATION_REVIEW_CORRECTION_MIN_POINTS:
+        return None
+    mean_x = average_decimal(xs)
+    mean_y = average_decimal(ys)
+    if mean_x is None or mean_y is None:
+        return None
+    return quantize_decimal(mean_y - (beta * mean_x), "0.01")
+
+
+def calculate_regression_r_squared(xs: list[Decimal], ys: list[Decimal]) -> Decimal | None:
+    correlation = pearson_correlation(xs, ys)
+    if correlation is None:
+        return None
+    return quantize_decimal(correlation * correlation, "0.01")
+
+
+def build_expectation_review_company_context(
+    *,
+    ticker: str,
+    reviews: list[EquityExpectationReview],
+    market_series: MarketSeries | None,
+    market_error: str,
+    as_of: date,
+) -> dict:
+    sorted_reviews = sorted(
+        list(reviews or []),
+        key=lambda row: (row.analysis_date, row.created_at, row.id or 0),
+    )
+    company_name = next((row.company_name for row in reversed(sorted_reviews) if row.company_name), ticker)
+    market_points = list((market_series.points if market_series else []) or [])
+    latest_price = quantize_decimal((market_series.latest_price if market_series else None), "0.0001")
+    latest_price_date = market_series.latest_date if market_series else None
+    comparison_rows = []
+
+    for review in sorted_reviews:
+        window_end_date = min(as_of, review.analysis_date + timedelta(days=TRACKING_HORIZON_DAYS))
+        elapsed_days = max((window_end_date - review.analysis_date).days, 0)
+        if elapsed_days <= 0:
+            continue
+        expected_return_pct = quantize_decimal(
+            review.expected_return_pct_1y if review.expected_return_pct_1y is not None else review.projected_return_pct_1y,
+            "0.01",
+        )
+        expected_progress_pct = quantize_decimal(
+            project_return_pct_to_elapsed_days(expected_return_pct, elapsed_days),
+            "0.01",
+        )
+        start_price = quantize_decimal(review.current_price, "0.0001")
+        if start_price is None:
+            start_point = find_closest_market_point(market_points, review.analysis_date)
+            start_price = quantize_decimal(start_point.get("close") if start_point else None, "0.0001")
+        end_point = find_closest_market_point(market_points, window_end_date)
+        actual_price = quantize_decimal(end_point.get("close") if end_point else latest_price, "0.0001")
+        actual_return_pct = quantize_decimal(percentage_change(actual_price, start_price), "0.01")
+        gap_pct = (
+            quantize_decimal(actual_return_pct - expected_progress_pct, "0.01")
+            if actual_return_pct is not None and expected_progress_pct is not None
+            else None
+        )
+        comparison_rows.append(
+            {
+                "analysis_date": review.analysis_date,
+                "analysis_date_label": review.analysis_date.isoformat(),
+                "window_end_date": window_end_date,
+                "window_end_date_label": window_end_date.isoformat(),
+                "elapsed_days": elapsed_days,
+                "window_label": "1A cerrado" if elapsed_days >= TRACKING_HORIZON_DAYS else f"{elapsed_days} dias",
+                "matured": elapsed_days >= TRACKING_HORIZON_DAYS,
+                "expected_return_pct": expected_progress_pct,
+                "actual_return_pct": actual_return_pct,
+                "gap_pct": gap_pct,
+                "current_price": actual_price,
+                "current_price_date_label": end_point["date"].isoformat() if end_point and end_point.get("date") else "",
+                "trade_alert_label": review.trade_alert_label,
+                "review_kind": review.review_kind,
+            }
+        )
+
+    calibration_rows = [
+        row
+        for row in comparison_rows
+        if row.get("expected_return_pct") is not None
+        and row.get("actual_return_pct") is not None
+        and row.get("elapsed_days", 0) >= EXPECTATION_REVIEW_CORRECTION_MIN_ELAPSED_DAYS
+    ]
+    xs = [Decimal(str(row["expected_return_pct"])) for row in calibration_rows]
+    ys = [Decimal(str(row["actual_return_pct"])) for row in calibration_rows]
+    beta = quantize_decimal(calculate_regression_beta(xs, ys), "0.01")
+    intercept = calculate_regression_intercept(xs, ys, beta)
+    r_squared = calculate_regression_r_squared(xs, ys)
+
+    for row in comparison_rows:
+        corrected_return_pct = None
+        expected_return_pct = row.get("expected_return_pct")
+        if beta is not None and intercept is not None and expected_return_pct is not None:
+            corrected_return_pct = quantize_decimal(intercept + (beta * Decimal(str(expected_return_pct))), "0.01")
+        row["corrected_return_pct"] = corrected_return_pct
+        row["corrected_gap_pct"] = (
+            quantize_decimal((row.get("actual_return_pct") or ZERO) - corrected_return_pct, "0.01")
+            if corrected_return_pct is not None and row.get("actual_return_pct") is not None
+            else None
+        )
+
+    actual_series = [
+        {"date": row["analysis_date"], "value": row["actual_return_pct"], "label": row["window_label"]}
+        for row in comparison_rows
+        if row.get("actual_return_pct") is not None
+    ]
+    expected_series = [
+        {"date": row["analysis_date"], "value": row["expected_return_pct"], "label": row["window_label"]}
+        for row in comparison_rows
+        if row.get("expected_return_pct") is not None
+    ]
+    corrected_series = [
+        {"date": row["analysis_date"], "value": row["corrected_return_pct"], "label": row["window_label"]}
+        for row in comparison_rows
+        if row.get("corrected_return_pct") is not None
+    ]
+    chart = build_value_tracking_chart(
+        actual_series,
+        expected_series,
+        corrected_series,
+        value_suffix="%",
+        axis_formatter=format_percentage_axis_value,
+        time_marker_mode="month",
+        grid_marker_mode="month",
+    )
+
+    average_expected_return_pct = average_decimal(
+        [Decimal(str(row["expected_return_pct"])) for row in comparison_rows if row.get("expected_return_pct") is not None]
+    )
+    average_actual_return_pct = average_decimal(
+        [Decimal(str(row["actual_return_pct"])) for row in comparison_rows if row.get("actual_return_pct") is not None]
+    )
+    average_gap_pct = average_decimal(
+        [Decimal(str(row["gap_pct"])) for row in comparison_rows if row.get("gap_pct") is not None]
+    )
+    latest_row = comparison_rows[-1] if comparison_rows else None
+
+    equation_available = beta is not None and intercept is not None
+    if equation_available:
+        if (average_gap_pct or ZERO) <= Decimal("-4.00"):
+            interpretation = "El modelo ha venido demasiado optimista y la correccion lo enfria."
+        elif (average_gap_pct or ZERO) >= Decimal("4.00"):
+            interpretation = "El modelo ha venido demasiado prudente y la correccion deja mas margen."
+        else:
+            interpretation = "La lectura historica va razonablemente cerca de la realidad observada."
+        formula_label = (
+            f"Real observado ~= {intercept:+.1f} + {beta:.2f} x Esperanza observada"
+        )
+        short_formula_label = f"{intercept:+.1f} + {beta:.2f}x"
+    else:
+        interpretation = (
+            f"Hacen falta al menos {EXPECTATION_REVIEW_CORRECTION_MIN_POINTS} revisiones con algo de recorrido "
+            "para calcular la ecuacion correctora."
+        )
+        formula_label = "Sin muestras suficientes"
+        short_formula_label = "Sin ecuacion"
+
+    return {
+        "available": bool(comparison_rows),
+        "ticker": ticker,
+        "company_name": company_name,
+        "tab_key": re.sub(r"[^a-z0-9]+", "-", f"bondad-{clean_ticker(ticker).lower()}").strip("-") or clean_ticker(ticker).lower(),
+        "scope_label": "Revisiones programadas",
+        "market_error": market_error,
+        "current_price": latest_price,
+        "current_price_date": latest_price_date,
+        "current_price_date_label": latest_price_date.isoformat() if latest_price_date else "",
+        "reviews_count": len(comparison_rows),
+        "matured_reviews_count": sum(1 for row in comparison_rows if row.get("matured")),
+        "average_expected_return_pct": quantize_decimal(average_expected_return_pct, "0.01"),
+        "average_actual_return_pct": quantize_decimal(average_actual_return_pct, "0.01"),
+        "average_gap_pct": quantize_decimal(average_gap_pct, "0.01"),
+        "latest_row": latest_row,
+        "rows": list(reversed(comparison_rows[-8:])),
+        "chart": chart,
+        "equation": {
+            "available": equation_available,
+            "beta": beta,
+            "intercept": intercept,
+            "r_squared": r_squared,
+            "formula_label": formula_label,
+            "short_formula_label": short_formula_label,
+            "interpretation": interpretation,
+            "sample_count": len(calibration_rows),
+        },
+    }
+
+
+def build_expectation_review_dashboard(as_of: date | None = None) -> dict:
+    as_of = as_of or django_timezone.localdate()
+
+    try:
+        queryset = (
+            EquityExpectationReview.objects.filter(
+                scope=EquityExpectationReview.Scope.IBEX,
+                review_kind=EquityExpectationReview.ReviewKind.SCHEDULED,
+            )
+            .select_related("position")
+            .order_by("company_name", "ticker", "analysis_date", "id")
+        )
+        review_rows = list(queryset)
+        if not review_rows:
+            review_rows = list(
+                EquityExpectationReview.objects.filter(scope=EquityExpectationReview.Scope.IBEX)
+                .select_related("position")
+                .order_by("company_name", "ticker", "analysis_date", "id")
+            )
+    except (OperationalError, ProgrammingError):
+        return {
+            "available": False,
+            "companies": [],
+            "reviews_count": 0,
+            "companies_count": 0,
+            "equation_ready_count": 0,
+            "last_review_date_label": "",
+            "scope_note": "La tabla historica de bondad aun no esta disponible. Aplica la migracion para activar esta pestana.",
+        }
+
+    if not review_rows:
+        return {
+            "available": False,
+            "companies": [],
+            "reviews_count": 0,
+            "companies_count": 0,
+            "equation_ready_count": 0,
+            "last_review_date_label": "",
+            "scope_note": "Todavia no hay revisiones historicas guardadas para comparar la bondad del modelo.",
+        }
+
+    reviews_by_ticker: dict[str, list[EquityExpectationReview]] = defaultdict(list)
+    for review in review_rows:
+        reviews_by_ticker[clean_ticker(review.ticker)].append(review)
+
+    grouped_rows = []
+    series_map: dict[str, MarketSeries | None] = {}
+    error_map: dict[str, str] = {}
+    fetch_targets = {}
+    for ticker, rows in reviews_by_ticker.items():
+        earliest_review_date = min(row.analysis_date for row in rows)
+        range_key = resolve_market_range_key_for_days(max((as_of - earliest_review_date).days + 14, 30))
+        quote_symbol = next((row.quote_symbol for row in reversed(rows) if row.quote_symbol), ticker)
+        fetch_targets[ticker] = (quote_symbol, range_key)
+
+    max_workers = min(max(len(fetch_targets), 1), ibex_universe_max_workers())
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {
+            executor.submit(fetch_market_series, quote_symbol, range_key=range_key): ticker
+            for ticker, (quote_symbol, range_key) in fetch_targets.items()
+        }
+        for future in as_completed(future_map):
+            ticker = future_map[future]
+            try:
+                series_map[ticker] = future.result()
+                error_map[ticker] = ""
+            except Exception as exc:
+                series_map[ticker] = None
+                error_map[ticker] = str(exc)
+
+    for ticker, rows in sorted(reviews_by_ticker.items(), key=lambda item: (item[1][-1].company_name or item[0], item[0])):
+        grouped_rows.append(
+            build_expectation_review_company_context(
+                ticker=ticker,
+                reviews=rows,
+                market_series=series_map.get(ticker),
+                market_error=error_map.get(ticker, ""),
+                as_of=as_of,
+            )
+        )
+
+    available_rows = [row for row in grouped_rows if row.get("available")]
+    last_review_date = max((review.analysis_date for review in review_rows), default=None)
+    return {
+        "available": bool(available_rows),
+        "companies": available_rows,
+        "reviews_count": len(review_rows),
+        "companies_count": len(available_rows),
+        "equation_ready_count": sum(1 for row in available_rows if (row.get("equation") or {}).get("available")),
+        "last_review_date": last_review_date,
+        "last_review_date_label": last_review_date.isoformat() if last_review_date else "",
+        "scope_note": (
+            "Cada punto compara la esperanza 1A guardada el martes o jueves frente a la realidad observada "
+            "hasta hoy o hasta cumplir 365 dias, lo que ocurra antes."
+        ),
+        "equation_note": (
+            "La ecuacion correctora sale de ajustar la realidad observada contra la esperanza observada "
+            "para no fiarnos solo del modelo bruto."
+        ),
     }
 
 

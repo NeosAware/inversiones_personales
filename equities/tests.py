@@ -24,6 +24,7 @@ from .llm_analysis import build_card_llm_context, enrich_dashboard_with_ai_analy
 from .management.commands.import_monica_equity_positions import MONICA_EQUITY_POSITIONS
 from .models import (
     EquityClosedPosition,
+    EquityExpectationReview,
     EquityNightlyAnalysisRun,
     EquityNightlyAnalysisSnapshot,
     EquityOptimizationRun,
@@ -71,6 +72,7 @@ from .services import (
     build_cycle_zoomed_monthly_projection_path,
     build_equity_round_investment_plan,
     build_equity_sale_preview,
+    build_expectation_review_dashboard,
     build_scenario_expectation_table,
     build_equity_ticket_tracking_context,
     build_equity_ticket_tracking_item,
@@ -7376,6 +7378,128 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(snapshot.analysis_payload["projection"]["expert_adjustment"]["applied"])
         self.assertTrue(snapshot.analysis_payload["cycle_projection_5y"]["expert_adjustment"]["applied"])
 
+    @override_settings(EQUITIES_NIGHTLY_LLM_REFRESH_ISO_WEEKDAYS=(2, 4))
+    def test_run_nightly_equity_analysis_persists_expectation_reviews_for_scheduled_day(self):
+        analysis_day = date(2026, 4, 16)
+        self.assertEqual(analysis_day.isoweekday(), 4)
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            opened_on=date(2024, 1, 10),
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_dividend_income=Decimal("18.00"),
+            annual_maintenance_cost=Decimal("4.00"),
+        )
+        populate_position_history(position)
+        card = build_equity_history_cards([position])[0]
+        dashboard = {
+            "history_cards": [card],
+            "owned_history_cards": [card],
+            "ibex_universe_cards": [],
+            "ibex_universe_summary": {"available": False},
+            "reference_guide_summary": {"available": False},
+        }
+
+        with (
+            patch("equities.nightly_analysis.sync_all_equities_market_data", return_value=[]),
+            patch("equities.nightly_analysis.build_equity_analysis_dashboard", return_value=dashboard),
+            patch(
+                "equities.nightly_analysis.attach_llm_news_context_to_dashboard",
+                return_value={"enabled": True, "signals_count": 0, "items_count": 0, "material_event_count": 0},
+            ),
+            patch(
+                "equities.nightly_analysis.attach_expert_consensus_to_dashboard",
+                return_value={"enabled": True, "signals_count": 0, "items_count": 0, "ranked_sources_count": 0, "strong_consensus_count": 0},
+            ),
+            patch(
+                "equities.nightly_analysis.resolve_ai_provider_config",
+                return_value=type(
+                    "ProviderConfig",
+                    (),
+                    {
+                        "available": False,
+                        "provider": "core",
+                        "label": "Analista nocturno",
+                        "model": "",
+                        "reason": "disabled",
+                        "monthly_budget_usd": ZERO,
+                    },
+                )(),
+            ),
+        ):
+            run = run_nightly_equity_analysis(
+                analysis_date=analysis_day,
+                force=True,
+            )
+
+        self.assertIsNotNone(run)
+        self.assertEqual(run.status, EquityNightlyAnalysisRun.Status.COMPLETED)
+        self.assertEqual(run.summary_data["expectation_review_kind"], "scheduled")
+        self.assertEqual(run.summary_data["expectation_review_count"], 1)
+        review = EquityExpectationReview.objects.get(run=run, ticker="IBE")
+        self.assertEqual(review.review_kind, EquityExpectationReview.ReviewKind.SCHEDULED)
+        self.assertEqual(review.scope, EquityExpectationReview.Scope.TRACKED)
+        self.assertIsNotNone(review.expected_return_pct_1y)
+        self.assertIsNotNone(review.expected_return_pct_5y)
+        self.assertTrue(review.projection_12m_scenario_rows)
+        self.assertTrue(review.cycle_5y_scenario_rows)
+
+    def test_build_expectation_review_dashboard_builds_chart_and_corrective_equation(self):
+        run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2026, 4, 24),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            completed_at=timezone.now(),
+            summary_data={},
+        )
+        review_dates = (date(2026, 1, 15), date(2026, 2, 12), date(2026, 3, 12))
+        current_prices = (Decimal("100.00"), Decimal("105.00"), Decimal("110.00"))
+        expected_returns = (Decimal("24.00"), Decimal("18.00"), Decimal("12.00"))
+
+        for review_date, current_price, expected_return in zip(review_dates, current_prices, expected_returns):
+            EquityExpectationReview.objects.create(
+                run=run,
+                analysis_date=review_date,
+                review_kind=EquityExpectationReview.ReviewKind.SCHEDULED,
+                scope=EquityExpectationReview.Scope.IBEX,
+                analysis_key=f"ibex:ANA:{review_date.isoformat()}",
+                ticker="ANA",
+                quote_symbol="ANA.MC",
+                company_name="Acciona",
+                current_price=current_price,
+                expected_return_pct_1y=expected_return,
+                projected_return_pct_1y=expected_return,
+            )
+
+        series = MarketSeries(
+            symbol="ANA.MC",
+            name="Acciona",
+            latest_price=Decimal("118.00"),
+            latest_date=date(2026, 4, 26),
+            points=[{"date": date(2026, 4, 26), "close": Decimal("118.00")}],
+        )
+
+        with patch("equities.services.fetch_market_series", return_value=series):
+            dashboard = build_expectation_review_dashboard(as_of=date(2026, 4, 26))
+
+        self.assertTrue(dashboard["available"])
+        self.assertEqual(dashboard["companies_count"], 1)
+        company = dashboard["companies"][0]
+        self.assertEqual(company["ticker"], "ANA")
+        self.assertTrue(company["chart"]["available"])
+        self.assertTrue(company["equation"]["available"])
+        self.assertEqual(company["equation"]["sample_count"], 3)
+        self.assertIn("Real observado", company["equation"]["formula_label"])
+        self.assertEqual(company["reviews_count"], 3)
+        self.assertEqual(len(company["rows"]), 3)
+
     @override_settings(
         AI_LLM_PROVIDER="anthropic",
         ANTHROPIC_API_KEY="test-anthropic-key",
@@ -11483,22 +11607,106 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, 'data-equity-page-tabs', html=False)
         self.assertContains(response, 'id="equity-page-tab-cartera"', html=False)
         self.assertContains(response, 'id="equity-page-tab-mercado"', html=False)
+        self.assertContains(response, 'id="equity-page-tab-bondad"', html=False)
         self.assertContains(response, 'id="equity-page-tab-optimizacion"', html=False)
         self.assertContains(response, 'id="equity-page-tab-seguimiento"', html=False)
         self.assertContains(response, 'id="equity-page-tab-operativa"', html=False)
         self.assertContains(response, 'id="equity-view-cartera"', html=False)
         self.assertContains(response, 'id="equity-view-mercado"', html=False)
+        self.assertContains(response, 'id="equity-view-bondad"', html=False)
         self.assertContains(response, 'id="equity-view-optimizacion"', html=False)
         self.assertContains(response, 'id="equity-view-seguimiento"', html=False)
         self.assertContains(response, 'id="equity-view-operativa"', html=False)
         self.assertContains(response, 'id="equity-decision"', html=False)
+        self.assertContains(response, 'id="equity-bondad"', html=False)
         self.assertContains(response, 'id="equity-optimizer"', html=False)
         self.assertContains(response, 'id="equity-ops"', html=False)
         self.assertContains(response, "Cartera")
         self.assertContains(response, "Mercado")
+        self.assertContains(response, "Bondad")
         self.assertContains(response, "Optimizacion")
         self.assertContains(response, "Seguimiento")
         self.assertContains(response, "Operativa")
+
+    def test_equities_page_renders_expectation_review_tabs(self):
+        expectation_dashboard = {
+            "available": True,
+            "companies_count": 1,
+            "reviews_count": 4,
+            "equation_ready_count": 1,
+            "last_review_date_label": "2026-04-24",
+            "scope_note": "Comparativa programada.",
+            "equation_note": "Ecuacion correctora activa.",
+            "companies": [
+                {
+                    "available": True,
+                    "ticker": "ANA",
+                    "company_name": "Acciona",
+                    "tab_key": "bondad-ana",
+                    "reviews_count": 4,
+                    "matured_reviews_count": 1,
+                    "current_price": Decimal("118.0000"),
+                    "current_price_date_label": "2026-04-26",
+                    "average_gap_pct": Decimal("-2.50"),
+                    "average_expected_return_pct": Decimal("6.00"),
+                    "average_actual_return_pct": Decimal("3.50"),
+                    "latest_row": {
+                        "analysis_date_label": "2026-04-24",
+                        "expected_return_pct": Decimal("1.20"),
+                        "actual_return_pct": Decimal("-0.80"),
+                        "gap_pct": Decimal("-2.00"),
+                        "window_label": "2 dias",
+                    },
+                    "chart": {
+                        "available": True,
+                        "actual_line": "18,180 622,120",
+                        "expected_line": "18,170 622,132",
+                        "benchmark_line": "18,176 622,126",
+                        "actual_display_points": [],
+                        "expected_display_points": [],
+                        "benchmark_display_points": [],
+                        "x_markers": [],
+                        "grid_markers": [],
+                        "min_label": "-4.0 %",
+                        "max_label": "8.0 %",
+                        "start_label": "2026-01-15",
+                        "latest_label": "2026-04-24",
+                        "zero_y": "146.0",
+                    },
+                    "equation": {
+                        "available": True,
+                        "formula_label": "Real observado ~= -1.0 + 0.80 x Esperanza observada",
+                        "short_formula_label": "-1.0 + 0.80x",
+                        "interpretation": "La correccion enfria el sesgo.",
+                        "sample_count": 4,
+                        "r_squared": Decimal("0.72"),
+                    },
+                    "rows": [
+                        {
+                            "analysis_date_label": "2026-04-24",
+                            "window_end_date_label": "2026-04-26",
+                            "window_label": "2 dias",
+                            "matured": False,
+                            "expected_return_pct": Decimal("1.20"),
+                            "corrected_return_pct": Decimal("0.00"),
+                            "actual_return_pct": Decimal("-0.80"),
+                            "gap_pct": Decimal("-2.00"),
+                        }
+                    ],
+                    "market_error": "",
+                }
+            ],
+        }
+
+        with patch("equities.views.build_expectation_review_dashboard", return_value=expectation_dashboard):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Como se esta comportando la esperanza frente a la realidad")
+        self.assertContains(response, 'id="bondad-tab-bondad-ana"', html=False)
+        self.assertContains(response, "Real observado")
+        self.assertContains(response, "Esperanza corregida")
+        self.assertContains(response, "Real observado ~= -1.0 + 0.80 x Esperanza observada")
 
     def test_equities_page_renders_investment_journey_section(self):
         active = EquityPosition.objects.create(
