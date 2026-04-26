@@ -1623,6 +1623,75 @@ class EquitiesServicesTests(TestCase):
             Decimal("8.8000"),
         )
         self.assertLess(refreshed_card["presentation_projection"]["visible_total_return_pct"], ZERO)
+
+    def test_refresh_card_projection_visuals_downgrades_buy_alert_when_visible_12m_closes_lower(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="ANA",
+            quote_symbol="ANA.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Acciona",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+        )
+        populate_position_history(position, growth=Decimal("1.0110"), benchmark_growth=Decimal("1.0040"), months=36)
+        card = build_equity_history_cards([position])[0]
+        latest_date = card["end_date"]
+        card["projection"].update(
+            {
+                "projected_price": Decimal("12.8000"),
+                "price_return_pct": Decimal("28.00"),
+                "base_return_pct": Decimal("29.20"),
+                "net_income_yield_pct": Decimal("1.50"),
+                "transaction_drag_pct": Decimal("0.30"),
+                "monthly_path": [
+                    {
+                        "label": "3M",
+                        "projected_date": add_calendar_months(latest_date, 3),
+                        "projected_price": Decimal("9.7000"),
+                    },
+                    {
+                        "label": "6M",
+                        "projected_date": add_calendar_months(latest_date, 6),
+                        "projected_price": Decimal("9.3000"),
+                    },
+                    {
+                        "label": "9M",
+                        "projected_date": add_calendar_months(latest_date, 9),
+                        "projected_price": Decimal("9.0000"),
+                    },
+                    {
+                        "label": "12M",
+                        "projected_date": add_calendar_months(latest_date, 12),
+                        "projected_price": Decimal("8.8000"),
+                    },
+                ],
+                "quarterly_path": [],
+            }
+        )
+        card["trade_alert"] = {
+            **card["trade_alert"],
+            "label": "Comprar",
+            "tone": "buy",
+            "score": Decimal("4.25"),
+            "trigger_label": "3 meses con alpha positiva",
+            "note": "La pendiente relativa todavia apoya compras.",
+        }
+
+        refreshed_card = refresh_card_projection_visuals(card)
+
+        self.assertEqual(refreshed_card["trade_alert"]["label"], "Vigilar")
+        self.assertEqual(refreshed_card["trade_alert"]["tone"], "watch")
+        self.assertEqual(refreshed_card["trade_alert"]["trigger_label"], "La senda visible 12M sigue bajista")
+        self.assertTrue(refreshed_card["trade_alert"]["coherence_adjusted"])
+        self.assertLess(refreshed_card["presentation_projection"]["visible_total_return_pct"], ZERO)
+        self.assertLess(refreshed_card["presentation_projection"]["visible_price_return_pct"], ZERO)
+        self.assertEqual(
+            refreshed_card["presentation_projection"]["visible_projected_price"],
+            Decimal("8.8000"),
+        )
         self.assertIn(
             "misma senda naranja",
             refreshed_card["presentation_projection"]["consistency_note"].lower(),
@@ -11251,6 +11320,86 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Mejor correlacion")
         self.assertContains(response, "Prevision 12M")
         self.assertContains(response, "Ciclo 5A")
+
+    def test_ibex_detail_page_uses_visible_12m_hero_values_when_chart_closes_lower(self):
+        position = EquityPosition.objects.create(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="ANA",
+            quote_symbol="ANA.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Acciona",
+            shares=Decimal("1.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+        )
+        populate_position_history(position, growth=Decimal("1.0100"), benchmark_growth=Decimal("1.0040"), months=36)
+        card = build_equity_history_cards([position])[0]
+        latest_date = card["end_date"]
+        card["projection"].update(
+            {
+                "projected_price": Decimal("12.8000"),
+                "price_return_pct": Decimal("28.00"),
+                "base_return_pct": Decimal("29.20"),
+                "net_income_yield_pct": Decimal("1.50"),
+                "transaction_drag_pct": Decimal("0.30"),
+                "monthly_path": [
+                    {
+                        "label": "3M",
+                        "projected_date": add_calendar_months(latest_date, 3),
+                        "projected_price": Decimal("9.7000"),
+                    },
+                    {
+                        "label": "6M",
+                        "projected_date": add_calendar_months(latest_date, 6),
+                        "projected_price": Decimal("9.3000"),
+                    },
+                    {
+                        "label": "9M",
+                        "projected_date": add_calendar_months(latest_date, 9),
+                        "projected_price": Decimal("9.0000"),
+                    },
+                    {
+                        "label": "12M",
+                        "projected_date": add_calendar_months(latest_date, 12),
+                        "projected_price": Decimal("8.8000"),
+                    },
+                ],
+                "quarterly_path": [],
+            }
+        )
+        card["trade_alert"] = {
+            **card["trade_alert"],
+            "label": "Comprar",
+            "tone": "buy",
+            "score": Decimal("4.25"),
+            "trigger_label": "3 meses con alpha positiva",
+            "note": "La pendiente relativa todavia apoya compras.",
+        }
+        refresh_card_projection_visuals(card)
+        company = {
+            "ticker": "ANA",
+            "company_name": "Acciona",
+            "quote_symbol": "ANA.MC",
+            "sector": "Infraestructuras",
+        }
+
+        with (
+            patch("equities.views.find_ibex_universe_company", return_value=(company, {"available": False})),
+            patch("equities.views.load_cached_ibex_card", return_value=card),
+        ):
+            response = self.client.get(reverse("equities:ibex_detail", kwargs={"ticker": "ANA"}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Vigilar")
+        self.assertContains(response, "La senda visible 12M sigue bajista")
+        self.assertNotContains(response, "29.2 %")
+        self.assertNotContains(response, "Precio objetivo 12.8000")
+        self.assertLess(response.context["card"]["presentation_projection"]["visible_total_return_pct"], ZERO)
+        self.assertEqual(response.context["card"]["trade_alert"]["label"], "Vigilar")
+        self.assertRegex(response.content.decode(), r"Cierre visible\s+8.8000")
 
     def test_can_store_same_ticker_as_owned_and_watchlist_without_collision(self):
         EquityPosition.objects.create(

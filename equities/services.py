@@ -3629,6 +3629,64 @@ def build_information_basis_summary(card: dict) -> dict:
     }
 
 
+def reconcile_trade_alert_with_visible_projection(trade_alert: dict, presentation_projection: dict) -> dict:
+    if not trade_alert or not presentation_projection.get("available"):
+        return trade_alert
+
+    tone = trade_alert.get("tone")
+    visible_price_return_pct = quantize_decimal(presentation_projection.get("visible_price_return_pct"), "0.01")
+    visible_total_return_pct = quantize_decimal(presentation_projection.get("visible_total_return_pct"), "0.01")
+    visible_projected_price = quantize_decimal(presentation_projection.get("visible_projected_price"), "0.0001")
+    shape_label = presentation_projection.get("shape_label") or ""
+    display_price_return_pct = visible_price_return_pct if visible_price_return_pct is not None else ZERO
+    display_total_return_pct = visible_total_return_pct if visible_total_return_pct is not None else ZERO
+    display_projected_price = visible_projected_price if visible_projected_price is not None else ZERO
+
+    closes_lower_visibly = (
+        (visible_price_return_pct is not None and visible_price_return_pct < ZERO)
+        or (visible_total_return_pct is not None and visible_total_return_pct < ZERO)
+        or shape_label == "Caida progresiva"
+    )
+    closes_higher_visibly = (
+        (visible_price_return_pct is not None and visible_price_return_pct > ZERO)
+        and (visible_total_return_pct is not None and visible_total_return_pct > ZERO)
+    )
+
+    if tone == "buy" and closes_lower_visibly:
+        score = quantize_decimal(trade_alert.get("score"), "0.01")
+        return {
+            **trade_alert,
+            "label": "Vigilar",
+            "tone": "watch",
+            "score": min(score, Decimal("3.10")) if score is not None else Decimal("3.10"),
+            "trigger_label": "La senda visible 12M sigue bajista",
+            "note": (
+                "La senal relativa venia apoyando compras, pero la senda visible 12M cierra por debajo de hoy "
+                f"({display_price_return_pct:.1f} % en precio y {display_total_return_pct:.1f} % neto, "
+                f"hasta {display_projected_price:.4f}). Conviene vigilar y esperar un giro claro antes de comprar."
+            ),
+            "coherence_adjusted": True,
+        }
+
+    if tone == "sell" and closes_higher_visibly:
+        score = quantize_decimal(trade_alert.get("score"), "0.01")
+        return {
+            **trade_alert,
+            "label": "Vigilar",
+            "tone": "watch",
+            "score": max(score, Decimal("-3.10")) if score is not None else Decimal("-3.10"),
+            "trigger_label": "La senda visible 12M aun cierra al alza",
+            "note": (
+                "La lectura relativa salia debil, pero la senda visible 12M sigue cerrando por encima de hoy "
+                f"({display_price_return_pct:.1f} % en precio y {display_total_return_pct:.1f} % neto, "
+                f"hasta {display_projected_price:.4f}). Conviene vigilar antes de activar venta."
+            ),
+            "coherence_adjusted": True,
+        }
+
+    return trade_alert
+
+
 def refresh_card_projection_visuals(card: dict, history=None) -> dict:
     position = card.get("position")
     if position is None:
@@ -3643,6 +3701,10 @@ def refresh_card_projection_visuals(card: dict, history=None) -> dict:
         card["projection_12m_chart"] = build_projection_12m_chart(history, card.get("projection") or {})
         card["cycle_projection_5y_chart"] = build_cycle_projection_5y_chart(history, card.get("cycle_projection_5y") or {})
     card["presentation_projection"] = build_projection_presentation_summary(card)
+    card["trade_alert"] = reconcile_trade_alert_with_visible_projection(
+        card.get("trade_alert") or {},
+        card["presentation_projection"],
+    )
     card["information_basis"] = build_information_basis_summary(card)
     return card
 

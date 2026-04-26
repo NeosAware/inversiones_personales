@@ -222,8 +222,18 @@
         </div>
         <div class="equity-box">
           <span>Retorno 12M</span>
-          <strong class="{% if card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if card.projection.available %}{{ card.projection.base_return_pct|floatformat:1 }} %{% else %}-{% endif %}</strong>
-          <small>{% if card.projection.available %}Precio objetivo {{ card.projection.projected_price|floatformat:4 }}{% else %}Sin proyeccion suficiente{% endif %}</small>
+          <strong class="{% if card.presentation_projection.available %}{% if card.presentation_projection.visible_total_return_pct >= 0 %}good{% else %}warn{% endif %}{% elif card.projection.base_return_pct >= 0 %}good{% else %}warn{% endif %}">
+            {% if card.presentation_projection.available %}{{ card.presentation_projection.visible_total_return_pct|floatformat:1 }} %{% elif card.projection.available %}{{ card.projection.base_return_pct|floatformat:1 }} %{% else %}-{% endif %}
+          </strong>
+          <small>
+            {% if card.presentation_projection.available %}
+              Cierre visible {{ card.presentation_projection.visible_projected_price|floatformat:4 }}
+            {% elif card.projection.available %}
+              Precio objetivo {{ card.projection.projected_price|floatformat:4 }}
+            {% else %}
+              Sin proyeccion suficiente
+            {% endif %}
+          </small>
         </div>
         <div class="equity-box">
           <span>Corr mejor ajuste</span>
