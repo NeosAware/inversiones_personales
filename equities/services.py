@@ -5339,6 +5339,7 @@ def build_value_tracking_chart(
     axis_formatter=None,
     time_marker_mode: str = "auto",
     grid_marker_mode: str = "none",
+    allow_expected_only: bool = False,
     width: int = 640,
     height: int = 220,
     padding: int = 18,
@@ -5356,7 +5357,12 @@ def build_value_tracking_chart(
     actual_points = normalize_tracking_series(actual_series)
     expected_points = normalize_tracking_series(expected_series)
     benchmark_points = normalize_tracking_series(benchmark_series or [])
-    if not actual_points or max(len(actual_points), len(expected_points), len(benchmark_points)) < 2:
+    primary_points = actual_points or expected_points or benchmark_points
+    if (
+        not primary_points
+        or max(len(actual_points), len(expected_points), len(benchmark_points)) < 2
+        or (not actual_points and not allow_expected_only)
+    ):
         return {
             "available": False,
             "actual_line": "",
@@ -5395,21 +5401,25 @@ def build_value_tracking_chart(
     if series_min == series_max:
         series_max += Decimal("1")
 
-    all_dates = [point["date"] for point in actual_points]
-    if expected_points:
+    all_dates = [point["date"] for point in primary_points]
+    if expected_points and expected_points is not primary_points:
         all_dates.extend(point["date"] for point in expected_points)
-    if benchmark_points:
+    if benchmark_points and benchmark_points is not primary_points:
         all_dates.extend(point["date"] for point in benchmark_points)
+    if actual_points and actual_points is not primary_points:
+        all_dates.extend(point["date"] for point in actual_points)
     min_date = min(all_dates)
     max_date = max(all_dates)
     total_days = max((max_date - min_date).days, 1)
     span_x = width - (padding * 2)
     span_y = height - (padding * 2)
-    latest_actual_date = actual_points[-1]["date"]
+    latest_actual_date = actual_points[-1]["date"] if actual_points else primary_points[0]["date"]
     projection_end_date = expected_points[-1]["date"] if expected_points else latest_actual_date
     observed_days = max((latest_actual_date - min_date).days, 0)
     future_days = max((projection_end_date - latest_actual_date).days, 0)
     segmented_time_axis = bool(
+        actual_points
+        and
         expected_points
         and future_days >= 45
         and future_days >= max(observed_days * 2, 30)
@@ -5732,13 +5742,13 @@ def build_value_tracking_chart(
         "min_label": format_chart_value(series_min),
         "max_label": format_chart_value(series_max),
         "start_label": min_date.isoformat(),
-        "latest_label": actual_points[-1]["date"].isoformat(),
+        "latest_label": latest_actual_date.isoformat(),
         "projection_end_label": (
             expected_points[-1]["date"].isoformat()
             if expected_points
-            else actual_points[-1]["date"].isoformat()
+            else latest_actual_date.isoformat()
         ),
-        "points_count": len(actual_points),
+        "points_count": len(primary_points),
         "zero_y": zero_y,
         "x_markers": x_markers,
         "grid_markers": grid_markers,
@@ -5756,6 +5766,9 @@ def build_value_tracking_chart(
         ),
         "latest_gap_line": latest_gap_line,
         "latest_expected_point": latest_expected_point,
+        "has_actual_series": bool(actual_points),
+        "has_expected_series": bool(expected_points),
+        "has_benchmark_series": bool(benchmark_points),
     }
 
 
@@ -15593,6 +15606,13 @@ def build_expectation_review_company_context(
     market_error: str,
     as_of: date,
 ) -> dict:
+    horizon_preview_fields = (
+        (12, "1A", "expected_return_pct_1y"),
+        (24, "2A", "expected_return_pct_2y"),
+        (36, "3A", "expected_return_pct_3y"),
+        (48, "4A", "expected_return_pct_4y"),
+        (60, "5A", "expected_return_pct_5y"),
+    )
     sorted_reviews = sorted(
         list(reviews or []),
         key=lambda row: (row.analysis_date, row.created_at, row.id or 0),
@@ -15687,15 +15707,80 @@ def build_expectation_review_company_context(
         for row in comparison_rows
         if row.get("corrected_return_pct") is not None
     ]
-    chart = build_value_tracking_chart(
-        actual_series,
-        expected_series,
-        corrected_series,
-        value_suffix="%",
-        axis_formatter=format_percentage_axis_value,
-        time_marker_mode="month",
-        grid_marker_mode="month",
-    )
+
+    latest_review = sorted_reviews[-1] if sorted_reviews else None
+    preview_mode = False
+    preview_note = ""
+    if len(comparison_rows) >= 2:
+        chart = build_value_tracking_chart(
+            actual_series,
+            expected_series,
+            corrected_series,
+            value_suffix="%",
+            axis_formatter=format_percentage_axis_value,
+            time_marker_mode="month",
+            grid_marker_mode="month",
+        )
+    else:
+        preview_expected_series = []
+        preview_corrected_series = []
+        if latest_review is not None:
+            preview_expected_series.append(
+                {
+                    "date": latest_review.analysis_date,
+                    "value": ZERO,
+                    "label": "Hoy",
+                    "is_anchor": True,
+                }
+            )
+            if beta is not None and intercept is not None:
+                preview_corrected_series.append(
+                    {
+                        "date": latest_review.analysis_date,
+                        "value": ZERO,
+                        "label": "Hoy",
+                        "is_anchor": True,
+                    }
+                )
+            for months, label, field_name in horizon_preview_fields:
+                expected_value = quantize_decimal(getattr(latest_review, field_name, None), "0.01")
+                horizon_date = add_calendar_months(latest_review.analysis_date, months)
+                if expected_value is None or horizon_date is None:
+                    continue
+                preview_expected_series.append(
+                    {
+                        "date": horizon_date,
+                        "value": expected_value,
+                        "label": label,
+                        "is_anchor": True,
+                    }
+                )
+                if beta is not None and intercept is not None:
+                    preview_corrected_value = quantize_decimal(intercept + (beta * expected_value), "0.01")
+                    preview_corrected_series.append(
+                        {
+                            "date": horizon_date,
+                            "value": preview_corrected_value,
+                            "label": label,
+                            "is_anchor": True,
+                        }
+                    )
+        chart = build_value_tracking_chart(
+            [],
+            preview_expected_series,
+            preview_corrected_series,
+            value_suffix="%",
+            axis_formatter=format_percentage_axis_value,
+            time_marker_mode="month",
+            grid_marker_mode="month",
+            allow_expected_only=True,
+        )
+        preview_mode = bool(chart.get("available"))
+        if preview_mode:
+            preview_note = (
+                "Todavia no hay realidad suficiente para comparar la bondad. "
+                "Se muestra la ultima esperanza guardada con sus hitos 1A..5A."
+            )
 
     average_expected_return_pct = average_decimal(
         [Decimal(str(row["expected_return_pct"])) for row in comparison_rows if row.get("expected_return_pct") is not None]
@@ -15729,7 +15814,7 @@ def build_expectation_review_company_context(
         short_formula_label = "Sin ecuacion"
 
     return {
-        "available": bool(comparison_rows),
+        "available": bool(comparison_rows) or preview_mode,
         "ticker": ticker,
         "company_name": company_name,
         "tab_key": re.sub(r"[^a-z0-9]+", "-", f"bondad-{clean_ticker(ticker).lower()}").strip("-") or clean_ticker(ticker).lower(),
@@ -15746,6 +15831,8 @@ def build_expectation_review_company_context(
         "latest_row": latest_row,
         "rows": list(reversed(comparison_rows[-8:])),
         "chart": chart,
+        "preview_mode": preview_mode,
+        "preview_note": preview_note,
         "equation": {
             "available": equation_available,
             "beta": beta,

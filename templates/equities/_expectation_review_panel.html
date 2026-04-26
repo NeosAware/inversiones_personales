@@ -32,7 +32,7 @@
     <div class="equity-compact-note" style="margin-top:14px; border-color:#d7e4ee; background:#f7fbfd; color:#17384e;">
       <strong style="display:block; color:#17384e; margin-bottom:6px;">Como leer esta calibracion</strong>
       <p style="margin:0 0 8px;">{{ expectation_review_dashboard.equation_note }}</p>
-      <p style="margin:0;">Naranja = esperanza acumulada observada hasta esa fecha. Azul = resultado real observado. Gris = esperanza corregida con la ecuacion historica de ese valor.</p>
+      <p style="margin:0;">Naranja = esperanza observada o prevista. Azul = resultado real observado cuando ya existe comparativa. Gris = esperanza corregida con la ecuacion historica de ese valor.</p>
     </div>
 
     <div class="equity-stock-tabs-shell" data-equity-tabs style="margin-top:18px;">
@@ -110,8 +110,13 @@
             {% if company.chart.available %}
               <div class="equity-chart-shell" style="margin-top:16px;">
                 <div class="equity-chart-head">
-                  <strong style="color:#17384e;">Prevision vs realidad desde {{ company.chart.start_label }}</strong>
-                  <span class="equity-chart-note">Cada punto se compara con el tramo realmente transcurrido desde esa revision, no con un ano ficticio completo.</span>
+                  {% if company.preview_mode %}
+                    <strong style="color:#17384e;">Vista previa de esperanza desde {{ company.chart.start_label }}</strong>
+                    <span class="equity-chart-note">{{ company.preview_note }}</span>
+                  {% else %}
+                    <strong style="color:#17384e;">Prevision vs realidad desde {{ company.chart.start_label }}</strong>
+                    <span class="equity-chart-note">Cada punto se compara con el tramo realmente transcurrido desde esa revision, no con un ano ficticio completo.</span>
+                  {% endif %}
                 </div>
                 <svg viewBox="0 0 640 220" aria-label="Grafico de bondad {{ company.company_name }}">
                   <line x1="18" y1="202" x2="622" y2="202" stroke="#d7e4ee" stroke-width="1" />
@@ -154,10 +159,18 @@
                   <text x="8" y="214" font-size="12" fill="#17384e">{{ company.chart.min_label }}</text>
                 </svg>
                 <div class="equity-chart-foot">
-                  <span class="equity-legend"><span class="equity-legend-swatch actual"></span>Real observado</span>
-                  <span class="equity-legend"><span class="equity-legend-swatch expected"></span>Esperanza observada</span>
-                  <span class="equity-legend"><span class="equity-legend-swatch corrected"></span>Esperanza corregida</span>
-                  <span>{{ company.chart.start_label }} a {{ company.chart.latest_label }}</span>
+                  {% if company.chart.has_actual_series %}
+                    <span class="equity-legend"><span class="equity-legend-swatch actual"></span>Real observado</span>
+                  {% else %}
+                    <span class="equity-legend">Real pendiente</span>
+                  {% endif %}
+                  {% if company.chart.has_expected_series %}
+                    <span class="equity-legend"><span class="equity-legend-swatch expected"></span>{% if company.preview_mode %}Esperanza prevista{% else %}Esperanza observada{% endif %}</span>
+                  {% endif %}
+                  {% if company.chart.has_benchmark_series %}
+                    <span class="equity-legend"><span class="equity-legend-swatch corrected"></span>Esperanza corregida</span>
+                  {% endif %}
+                  <span>{{ company.chart.start_label }} a {% if company.preview_mode %}{{ company.chart.projection_end_label }}{% else %}{{ company.chart.latest_label }}{% endif %}</span>
                 </div>
               </div>
             {% else %}

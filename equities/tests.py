@@ -7635,6 +7635,54 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(company["reviews_count"], 3)
         self.assertEqual(len(company["rows"]), 3)
 
+    def test_build_expectation_review_dashboard_builds_preview_chart_without_real_history(self):
+        run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2026, 4, 26),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            completed_at=timezone.now(),
+            summary_data={},
+        )
+        EquityExpectationReview.objects.create(
+            run=run,
+            analysis_date=date(2026, 4, 26),
+            review_kind=EquityExpectationReview.ReviewKind.FORCED,
+            scope=EquityExpectationReview.Scope.IBEX,
+            analysis_key="ibex:CABK:2026-04-26",
+            ticker="CABK",
+            quote_symbol="CABK.MC",
+            company_name="CaixaBank",
+            current_price=Decimal("10.37"),
+            expected_return_pct_1y=Decimal("-0.80"),
+            expected_return_pct_2y=Decimal("18.40"),
+            expected_return_pct_3y=Decimal("31.20"),
+            expected_return_pct_4y=Decimal("46.50"),
+            expected_return_pct_5y=Decimal("58.10"),
+            projected_return_pct_1y=Decimal("-0.80"),
+            projected_return_pct_5y=Decimal("58.10"),
+        )
+
+        series = MarketSeries(
+            symbol="CABK.MC",
+            name="CaixaBank",
+            latest_price=Decimal("10.37"),
+            latest_date=date(2026, 4, 26),
+            points=[{"date": date(2026, 4, 26), "close": Decimal("10.37")}],
+        )
+
+        with patch("equities.services.fetch_market_series", return_value=series):
+            dashboard = build_expectation_review_dashboard(as_of=date(2026, 4, 26))
+
+        self.assertTrue(dashboard["available"])
+        self.assertEqual(dashboard["companies_count"], 1)
+        company = dashboard["companies"][0]
+        self.assertTrue(company["preview_mode"])
+        self.assertTrue(company["chart"]["available"])
+        self.assertEqual(company["chart"]["actual_line"], "")
+        self.assertTrue(company["chart"]["expected_line"])
+        self.assertTrue(company["chart"]["has_expected_series"])
+        self.assertFalse(company["chart"]["has_actual_series"])
+        self.assertIn("ultima esperanza guardada", company["preview_note"])
+
     @override_settings(
         AI_LLM_PROVIDER="anthropic",
         ANTHROPIC_API_KEY="test-anthropic-key",
@@ -11873,6 +11921,9 @@ class EquitiesViewTests(TestCase):
                         "actual_line": "18,180 622,120",
                         "expected_line": "18,170 622,132",
                         "benchmark_line": "18,176 622,126",
+                        "has_actual_series": True,
+                        "has_expected_series": True,
+                        "has_benchmark_series": True,
                         "actual_display_points": [],
                         "expected_display_points": [],
                         "benchmark_display_points": [],
@@ -11892,6 +11943,8 @@ class EquitiesViewTests(TestCase):
                         "sample_count": 4,
                         "r_squared": Decimal("0.72"),
                     },
+                    "preview_mode": False,
+                    "preview_note": "",
                     "rows": [
                         {
                             "analysis_date_label": "2026-04-24",
@@ -11918,6 +11971,73 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Real observado")
         self.assertContains(response, "Esperanza corregida")
         self.assertContains(response, "Real observado ~= -1.0 + 0.80 x Esperanza observada")
+
+    def test_equities_page_renders_expectation_preview_chart_when_real_history_is_pending(self):
+        expectation_dashboard = {
+            "available": True,
+            "companies_count": 1,
+            "reviews_count": 1,
+            "equation_ready_count": 0,
+            "last_review_date_label": "2026-04-26",
+            "scope_note": "Comparativa programada.",
+            "equation_note": "Ecuacion correctora pendiente.",
+            "companies": [
+                {
+                    "available": True,
+                    "ticker": "CABK",
+                    "company_name": "CaixaBank",
+                    "tab_key": "bondad-cabk",
+                    "reviews_count": 1,
+                    "matured_reviews_count": 0,
+                    "current_price": Decimal("10.3700"),
+                    "current_price_date_label": "2026-04-26",
+                    "average_gap_pct": None,
+                    "average_expected_return_pct": Decimal("30.00"),
+                    "average_actual_return_pct": None,
+                    "latest_row": None,
+                    "chart": {
+                        "available": True,
+                        "actual_line": "",
+                        "expected_line": "18,180 180,150 320,110 470,72 622,40",
+                        "benchmark_line": "",
+                        "has_actual_series": False,
+                        "has_expected_series": True,
+                        "has_benchmark_series": False,
+                        "actual_display_points": [],
+                        "expected_display_points": [],
+                        "benchmark_display_points": [],
+                        "x_markers": [],
+                        "grid_markers": [],
+                        "min_label": "-1.0 %",
+                        "max_label": "58.0 %",
+                        "start_label": "2026-04-26",
+                        "latest_label": "2026-04-26",
+                        "projection_end_label": "2031-04-26",
+                        "zero_y": "198.0",
+                    },
+                    "equation": {
+                        "available": False,
+                        "formula_label": "Sin muestras suficientes",
+                        "short_formula_label": "Sin ecuacion",
+                        "interpretation": "Pendiente de mas muestras.",
+                        "sample_count": 0,
+                        "r_squared": None,
+                    },
+                    "preview_mode": True,
+                    "preview_note": "Todavia no hay realidad suficiente para comparar la bondad. Se muestra la ultima esperanza guardada con sus hitos 1A..5A.",
+                    "rows": [],
+                    "market_error": "",
+                }
+            ],
+        }
+
+        with patch("equities.views.build_expectation_review_dashboard", return_value=expectation_dashboard):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Vista previa de esperanza")
+        self.assertContains(response, "Real pendiente")
+        self.assertContains(response, "Esperanza prevista")
 
     def test_equities_page_renders_investment_journey_section(self):
         active = EquityPosition.objects.create(
