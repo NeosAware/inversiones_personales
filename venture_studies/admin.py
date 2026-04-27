@@ -1,13 +1,30 @@
 from django.contrib import admin
 
-from .models import VentureDocument, VentureOpportunity
+from .models import VentureAnalysisSnapshot, VentureDocument, VentureOpportunity
 
 
 class VentureDocumentInline(admin.TabularInline):
     model = VentureDocument
     extra = 0
-    fields = ("title", "file", "notes", "uploaded_at")
-    readonly_fields = ("uploaded_at",)
+    fields = ("document_kind", "title", "fiscal_year", "document_date", "file", "extraction_status", "uploaded_at")
+    readonly_fields = ("extraction_status", "uploaded_at")
+
+
+class VentureAnalysisSnapshotInline(admin.TabularInline):
+    model = VentureAnalysisSnapshot
+    extra = 0
+    fields = (
+        "analysis_date",
+        "recommendation",
+        "confidence",
+        "score_pct",
+        "suggested_purchase_price",
+        "suggested_ticket",
+        "agent_label",
+        "created_at",
+    )
+    readonly_fields = ("created_at",)
+    show_change_link = True
 
 
 @admin.register(VentureOpportunity)
@@ -20,13 +37,14 @@ class VentureOpportunityAdmin(admin.ModelAdmin):
         "score_pct_display",
         "ticket_min",
         "ticket_max",
+        "latest_recommendation",
         "next_review_on",
         "updated_at",
     )
     list_filter = ("status", "stage", "strategic_fit")
     search_fields = ("company_name", "sector", "geography", "fit_summary", "synergy_notes", "red_flags")
     readonly_fields = ("score_total", "score_pct", "updated_at")
-    inlines = [VentureDocumentInline]
+    inlines = [VentureDocumentInline, VentureAnalysisSnapshotInline]
     fieldsets = (
         (
             "Identificacion",
@@ -94,9 +112,35 @@ class VentureOpportunityAdmin(admin.ModelAdmin):
     def score_pct_display(self, obj):
         return f"{obj.score_pct:.0f} %"
 
+    @admin.display(description="Ultimo analisis")
+    def latest_recommendation(self, obj):
+        latest = obj.analysis_snapshots.order_by("-analysis_date", "-created_at", "-id").first()
+        if not latest:
+            return "-"
+        return f"{latest.get_recommendation_display()} ({latest.suggested_purchase_price or 0:.0f} EUR)"
+
 
 @admin.register(VentureDocument)
 class VentureDocumentAdmin(admin.ModelAdmin):
-    list_display = ("title", "opportunity", "uploaded_at")
+    list_display = ("title", "opportunity", "document_kind", "fiscal_year", "extraction_status", "uploaded_at")
     search_fields = ("title", "opportunity__company_name", "notes")
-    list_filter = ("uploaded_at",)
+    list_filter = ("document_kind", "extraction_status", "uploaded_at")
+    readonly_fields = ("extracted_text", "extraction_status", "extraction_error", "uploaded_at")
+
+
+@admin.register(VentureAnalysisSnapshot)
+class VentureAnalysisSnapshotAdmin(admin.ModelAdmin):
+    list_display = (
+        "opportunity",
+        "analysis_date",
+        "recommendation",
+        "confidence",
+        "score_pct",
+        "suggested_purchase_price",
+        "suggested_ticket",
+        "agent_label",
+        "created_at",
+    )
+    search_fields = ("opportunity__company_name", "summary", "valuation_note", "web_summary")
+    list_filter = ("recommendation", "confidence", "agent_provider", "analysis_date")
+    readonly_fields = ("created_at",)

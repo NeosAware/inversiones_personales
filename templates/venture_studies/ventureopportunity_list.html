@@ -87,6 +87,22 @@
       gap:14px;
       grid-template-columns:repeat(5, minmax(0, 1fr));
     }
+    .venture-chart{
+      width:100%;
+      height:120px;
+      border:1px solid var(--line);
+      border-radius:16px;
+      background:#f7fafc;
+    }
+    .venture-mini-list{
+      margin:0;
+      padding-left:18px;
+      color:var(--muted);
+      line-height:1.45;
+    }
+    .venture-mini-list li{
+      margin:0 0 5px;
+    }
     @media (max-width: 1180px){
       .venture-split,
       .venture-form-grid,
@@ -111,19 +127,19 @@
           <div class="metric-sub">{{ summary.total_count }} empresa(s) en el historico.</div>
         </section>
         <section class="venture-kpi">
-          <div class="metric-label">Prioridad alta</div>
-          <div class="metric-value">{{ summary.high_priority_count }}</div>
-          <div class="metric-sub">Score igual o superior al 80 %.</div>
+          <div class="metric-label">Empresas analizadas</div>
+          <div class="metric-value">{{ summary.analysed_count }}</div>
+          <div class="metric-sub">Con balance PDF, contexto web o valoracion guardada.</div>
         </section>
         <section class="venture-kpi">
-          <div class="metric-label">Ticket potencial</div>
-          <div class="metric-value">{{ summary.ticket_min_total|floatformat:0 }} - {{ summary.ticket_max_total|floatformat:0 }} EUR</div>
-          <div class="metric-sub">Suma orientativa de oportunidades activas.</div>
+          <div class="metric-label">Recomendacion compra</div>
+          <div class="metric-value">{{ summary.buy_count }}</div>
+          <div class="metric-sub">Sobre el ultimo analisis disponible.</div>
         </section>
         <section class="venture-kpi">
-          <div class="metric-label">Score medio</div>
-          <div class="metric-value">{{ summary.avg_score|floatformat:0 }} %</div>
-          <div class="metric-sub">{{ summary.review_due_count }} revision(es) proximas.</div>
+          <div class="metric-label">Precio orientativo agregado</div>
+          <div class="metric-value">{{ summary.suggested_purchase_total|floatformat:0 }} EUR</div>
+          <div class="metric-sub">{{ summary.review_due_count }} revision(es) proximas. Score medio {{ summary.avg_score|floatformat:0 }} %.</div>
         </section>
       </div>
     </section>
@@ -144,6 +160,7 @@
               <th>Estado</th>
               <th>Encaje</th>
               <th>Score</th>
+              <th>Analisis</th>
               <th>Ticket</th>
               <th>Problema</th>
               <th>Proximo paso</th>
@@ -161,6 +178,15 @@
                 <td>{{ opportunity.get_strategic_fit_display }}</td>
                 <td><span class="venture-score {{ opportunity.score_tone }}">{{ opportunity.score_pct|floatformat:0 }} %</span><div class="metric-sub">{{ opportunity.score_label }}</div></td>
                 <td>
+                  {% if opportunity.latest_analysis %}
+                    <span class="venture-score {{ opportunity.latest_analysis.recommendation_tone }}">{{ opportunity.latest_analysis.get_recommendation_display }}</span>
+                    <div class="metric-sub">Precio {{ opportunity.latest_analysis.suggested_purchase_price|floatformat:0 }} EUR</div>
+                    <div class="metric-sub">Confianza {{ opportunity.latest_analysis.get_confidence_display }}</div>
+                  {% else %}
+                    <span class="pill">Sin balance</span>
+                  {% endif %}
+                </td>
+                <td>
                   {% if opportunity.ticket_min or opportunity.ticket_max %}
                     {% if opportunity.ticket_min %}{{ opportunity.ticket_min|floatformat:0 }}{% else %}-{% endif %} - {% if opportunity.ticket_max %}{{ opportunity.ticket_max|floatformat:0 }}{% else %}-{% endif %}
                   {% else %}
@@ -174,7 +200,7 @@
                 </td>
               </tr>
             {% empty %}
-              <tr><td colspan="7" class="muted">Todavia no hay empresas en el radar.</td></tr>
+              <tr><td colspan="8" class="muted">Todavia no hay empresas en el radar.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -220,6 +246,113 @@
     </div>
 
     <section class="card table-card">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:baseline;flex-wrap:wrap;">
+        <div>
+          <p class="section-title">Analisis de balances</p>
+          <h2 style="margin-top:0;">Precio de compra y recomendacion</h2>
+        </div>
+        <span class="pill">Compra / Vigilancia</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Empresa</th>
+            <th>Recomendacion</th>
+            <th>Precio compra aprox.</th>
+            <th>Rango valoracion</th>
+            <th>Ticket sugerido</th>
+            <th>Lectura</th>
+            <th>Drivers</th>
+            <th>Riesgos</th>
+            <th>Evolucion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for analysis in latest_analyses %}
+            <tr>
+              <td>
+                <strong>{{ analysis.opportunity.company_name }}</strong>
+                <div class="metric-sub">{{ analysis.analysis_date|date:"Y-m-d" }} - {{ analysis.agent_label }}</div>
+                {% if analysis.source_document %}<div class="metric-sub">{{ analysis.source_document.title }}</div>{% endif %}
+              </td>
+              <td><span class="venture-score {{ analysis.recommendation_tone }}">{{ analysis.get_recommendation_display }}</span><div class="metric-sub">Confianza {{ analysis.get_confidence_display }}</div></td>
+              <td><strong>{{ analysis.suggested_purchase_price|floatformat:2 }} EUR</strong></td>
+              <td>{{ analysis.valuation_low|floatformat:0 }} - {{ analysis.valuation_high|floatformat:0 }} EUR<div class="metric-sub">Base {{ analysis.valuation_base|floatformat:0 }} EUR</div></td>
+              <td>
+                {% if analysis.suggested_ticket %}{{ analysis.suggested_ticket|floatformat:2 }} EUR{% else %}-{% endif %}
+                {% if analysis.target_ownership_pct %}<div class="metric-sub">{{ analysis.target_ownership_pct|floatformat:2 }} % aprox.</div>{% endif %}
+              </td>
+              <td><div class="venture-note">{{ analysis.summary }}</div><div class="metric-sub">{{ analysis.web_summary }}</div></td>
+              <td>
+                <ul class="venture-mini-list">
+                  {% for driver in analysis.drivers %}
+                    <li>{{ driver }}</li>
+                  {% endfor %}
+                </ul>
+              </td>
+              <td>
+                <ul class="venture-mini-list">
+                  {% for risk in analysis.risks %}
+                    <li>{{ risk }}</li>
+                  {% endfor %}
+                </ul>
+              </td>
+              <td>
+                {% if analysis.opportunity.valuation_line %}
+                  <svg viewBox="0 0 720 160" class="venture-chart" preserveAspectRatio="none">
+                    <line x1="16" y1="144" x2="704" y2="144" stroke="#d3e1ea" stroke-width="1" />
+                    <polyline fill="none" stroke="#0f5f88" stroke-width="5" points="{{ analysis.opportunity.valuation_line }}" />
+                  </svg>
+                {% else %}
+                  <span class="muted">Primera foto</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="9" class="muted">Sube un balance PDF para generar el primer analisis y empezar la serie historica.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card table-card">
+      <p class="section-title">Evolucion</p>
+      <h2 style="margin-top:0;">Historico de analisis</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Empresa</th>
+            <th>Documento</th>
+            <th>Recomendacion</th>
+            <th>Score</th>
+            <th>Precio compra aprox.</th>
+            <th>Ventas</th>
+            <th>EBITDA</th>
+            <th>Deuda neta</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for analysis in analysis_history %}
+            <tr>
+              <td>{{ analysis.analysis_date|date:"Y-m-d" }}<div class="metric-sub">{{ analysis.created_at|date:"Y-m-d H:i" }}</div></td>
+              <td>{{ analysis.opportunity.company_name }}</td>
+              <td>{% if analysis.source_document %}{{ analysis.source_document.title }}{% else %}-{% endif %}</td>
+              <td>{{ analysis.get_recommendation_display }}<div class="metric-sub">{{ analysis.get_confidence_display }}</div></td>
+              <td>{{ analysis.score_pct|floatformat:0 }} %</td>
+              <td>{{ analysis.suggested_purchase_price|floatformat:2 }} EUR</td>
+              <td>{{ analysis.annual_revenue|floatformat:2 }}</td>
+              <td>{{ analysis.ebitda|floatformat:2 }}</td>
+              <td>{{ analysis.net_debt|floatformat:2 }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="9" class="muted">Todavia no hay historico de valoraciones.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card table-card">
       <p class="section-title">Tesis</p>
       <h2 style="margin-top:0;">Encaje con Neos y riesgos</h2>
       <table>
@@ -252,10 +385,35 @@
 
     {% if can_manage_finances %}
       <section class="card">
+        <p class="section-title">Balances PDF</p>
+        <h2 style="margin-top:0;">Subir balance y lanzar analisis</h2>
+        <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="upload_balance">
+          <div class="venture-form-grid">
+            <div><label for="{{ analysis_form.opportunity.id_for_label }}">{{ analysis_form.opportunity.label }}</label>{{ analysis_form.opportunity }}</div>
+            <div><label for="{{ analysis_form.title.id_for_label }}">{{ analysis_form.title.label }}</label>{{ analysis_form.title }}</div>
+            <div><label for="{{ analysis_form.fiscal_year.id_for_label }}">{{ analysis_form.fiscal_year.label }}</label>{{ analysis_form.fiscal_year }}</div>
+            <div><label for="{{ analysis_form.document_date.id_for_label }}">{{ analysis_form.document_date.label }}</label>{{ analysis_form.document_date }}</div>
+            <div><label for="{{ analysis_form.file.id_for_label }}">{{ analysis_form.file.label }}</label>{{ analysis_form.file }}</div>
+            <div>
+              <label for="{{ analysis_form.use_ai.id_for_label }}">{{ analysis_form.use_ai.label }}</label>
+              {{ analysis_form.use_ai }}
+            </div>
+          </div>
+          {% if analysis_form.errors %}
+            <div class="message error">Revisa el PDF y la empresa seleccionada antes de analizar.</div>
+          {% endif %}
+          <button class="button" type="submit">Analizar balance</button>
+        </form>
+      </section>
+
+      <section class="card">
         <p class="section-title">Alta o actualizacion</p>
         <h2 style="margin-top:0;">Registrar empresa en estudio</h2>
         <form method="post" class="stack" style="margin-top:18px;">
           {% csrf_token %}
+          <input type="hidden" name="action" value="save_opportunity">
           <div class="venture-form-grid">
             <div><label for="{{ form.company_name.id_for_label }}">{{ form.company_name.label }}</label>{{ form.company_name }}</div>
             <div><label for="{{ form.website.id_for_label }}">{{ form.website.label }}</label>{{ form.website }}</div>

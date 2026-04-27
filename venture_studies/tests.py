@@ -1,10 +1,13 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.urls import reverse
 
-from .models import VentureOpportunity
+from .models import VentureAnalysisSnapshot, VentureDocument, VentureOpportunity
+from .services import run_document_analysis
 
 
 class VentureStudiesViewTests(TestCase):
@@ -105,3 +108,92 @@ class VentureStudiesViewTests(TestCase):
         self.assertContains(response, "Radar de empresas no cotizadas")
         self.assertContains(response, "Aditivos Funcionales SL")
         self.assertContains(response, "Neos Additives")
+        self.assertContains(response, "Analisis de balances")
+
+    def test_staff_user_can_upload_balance_pdf_for_analysis(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Ceramica Circular SL",
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.CERAMICA,
+            annual_revenue=Decimal("300000.00"),
+            ebitda=Decimal("45000.00"),
+            neos_fit_score=5,
+            market_score=4,
+            team_score=4,
+            financial_score=4,
+            risk_control_score=4,
+        )
+        self.client.force_login(self.staff_user)
+
+        def fake_analysis(document, use_ai=True):
+            return VentureAnalysisSnapshot.objects.create(
+                opportunity=document.opportunity,
+                source_document=document,
+                recommendation=VentureAnalysisSnapshot.Recommendation.BUY,
+                confidence=VentureAnalysisSnapshot.Confidence.MEDIUM,
+                score_pct=Decimal("84.00"),
+                suggested_purchase_price=Decimal("180000.00"),
+                summary="Encaja con Neos Ceramica.",
+            )
+
+        with patch("venture_studies.views.run_document_analysis", side_effect=fake_analysis):
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "upload_balance",
+                    "opportunity": str(opportunity.id),
+                    "title": "Balance 2025",
+                    "fiscal_year": "2025",
+                    "file": SimpleUploadedFile("balance.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf"),
+                    "use_ai": "on",
+                },
+            )
+
+        self.assertRedirects(response, reverse("venture_studies:list"))
+        document = VentureDocument.objects.get(opportunity=opportunity)
+        self.assertEqual(document.title, "Balance 2025")
+        self.assertEqual(document.fiscal_year, 2025)
+        analysis = VentureAnalysisSnapshot.objects.get(opportunity=opportunity)
+        self.assertEqual(analysis.recommendation, VentureAnalysisSnapshot.Recommendation.BUY)
+        self.assertEqual(analysis.suggested_purchase_price, Decimal("180000.00"))
+
+    def test_document_analysis_creates_snapshot_from_extracted_balance_text(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Aditivos Minerales SL",
+            stage=VentureOpportunity.Stage.SCALEUP,
+            status=VentureOpportunity.Status.DUE_DILIGENCE,
+            strategic_fit=VentureOpportunity.StrategicFit.ADDITIVES,
+            ticket_max=Decimal("50000.00"),
+            neos_fit_score=5,
+            market_score=5,
+            team_score=4,
+            financial_score=4,
+            risk_control_score=4,
+        )
+        document = VentureDocument.objects.create(
+            opportunity=opportunity,
+            title="Balance 2025",
+            file="venture_studies/test/balance.pdf",
+            extracted_text=(
+                "Importe neto de la cifra de negocios 420.000,00 "
+                "EBITDA 80.000,00 Patrimonio neto 150.000,00 "
+                "Deuda financiera 30.000,00 Tesoreria 10.000,00"
+            ),
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+
+        with patch("venture_studies.services.fetch_venture_web_context") as web_context:
+            web_context.return_value = {
+                "available": False,
+                "note": "Sin contexto web en test.",
+                "top_items": [],
+                "website": {},
+            }
+            snapshot = run_document_analysis(document, use_ai=False)
+
+        self.assertEqual(snapshot.opportunity, opportunity)
+        self.assertEqual(snapshot.recommendation, VentureAnalysisSnapshot.Recommendation.BUY)
+        self.assertGreater(snapshot.suggested_purchase_price, Decimal("0"))
+        self.assertEqual(snapshot.annual_revenue, Decimal("420000.00"))
+        self.assertEqual(snapshot.ebitda, Decimal("80000.00"))

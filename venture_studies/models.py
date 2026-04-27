@@ -124,13 +124,34 @@ class VentureOpportunity(models.Model):
 
 
 class VentureDocument(models.Model):
+    class DocumentKind(models.TextChoices):
+        BALANCE = "balance", "Balance o cuentas anuales"
+        PITCH = "pitch", "Presentacion"
+        CONTRACT = "contract", "Contrato o pedido"
+        OTHER = "other", "Otro documento"
+
+    class ExtractionStatus(models.TextChoices):
+        PENDING = "pending", "Pendiente"
+        EXTRACTED = "extracted", "Texto extraido"
+        FAILED = "failed", "Error de lectura"
+
     opportunity = models.ForeignKey(
         VentureOpportunity,
         on_delete=models.CASCADE,
         related_name="documents",
     )
+    document_kind = models.CharField(max_length=16, choices=DocumentKind.choices, default=DocumentKind.BALANCE)
     title = models.CharField(max_length=180)
     file = models.FileField(upload_to="venture_studies/%Y/%m")
+    document_date = models.DateField(null=True, blank=True)
+    fiscal_year = models.PositiveIntegerField(null=True, blank=True)
+    extracted_text = models.TextField(blank=True)
+    extraction_status = models.CharField(
+        max_length=16,
+        choices=ExtractionStatus.choices,
+        default=ExtractionStatus.PENDING,
+    )
+    extraction_error = models.TextField(blank=True)
     notes = models.TextField(blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
@@ -139,3 +160,71 @@ class VentureDocument(models.Model):
 
     def __str__(self):
         return f"{self.opportunity.company_name} - {self.title}"
+
+
+class VentureAnalysisSnapshot(models.Model):
+    class Recommendation(models.TextChoices):
+        BUY = "buy", "Compra"
+        WATCH = "watch", "Vigilancia"
+
+    class Confidence(models.TextChoices):
+        HIGH = "high", "Alta"
+        MEDIUM = "medium", "Media"
+        LOW = "low", "Baja"
+
+    opportunity = models.ForeignKey(
+        VentureOpportunity,
+        on_delete=models.CASCADE,
+        related_name="analysis_snapshots",
+    )
+    source_document = models.ForeignKey(
+        VentureDocument,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="analysis_snapshots",
+    )
+    analysis_date = models.DateField(default=timezone.localdate)
+    recommendation = models.CharField(
+        max_length=12,
+        choices=Recommendation.choices,
+        default=Recommendation.WATCH,
+    )
+    confidence = models.CharField(
+        max_length=12,
+        choices=Confidence.choices,
+        default=Confidence.MEDIUM,
+    )
+    score_pct = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    valuation_low = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    valuation_base = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    valuation_high = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    suggested_purchase_price = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    suggested_ticket = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    target_ownership_pct = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True)
+    annual_revenue = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    ebitda = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    net_equity = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    net_debt = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    cash_need = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    summary = models.TextField(blank=True)
+    valuation_note = models.TextField(blank=True)
+    web_summary = models.TextField(blank=True)
+    drivers = models.JSONField(default=list, blank=True)
+    risks = models.JSONField(default=list, blank=True)
+    assumptions = models.JSONField(default=list, blank=True)
+    web_context = models.JSONField(default=dict, blank=True)
+    analysis_payload = models.JSONField(default=dict, blank=True)
+    agent_provider = models.CharField(max_length=32, default="core")
+    agent_label = models.CharField(max_length=120, default="Analisis interno")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-analysis_date", "-created_at", "-id"]
+
+    def __str__(self):
+        return f"{self.opportunity.company_name} - {self.analysis_date} - {self.get_recommendation_display()}"
+
+    @property
+    def recommendation_tone(self):
+        return "good" if self.recommendation == self.Recommendation.BUY else ""
