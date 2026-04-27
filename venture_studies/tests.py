@@ -7,7 +7,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .models import VentureAnalysisSnapshot, VentureDocument, VentureOpportunity
-from .services import run_document_analysis
+from .services import import_informa_report, run_document_analysis
 
 
 class VentureStudiesViewTests(TestCase):
@@ -109,6 +109,7 @@ class VentureStudiesViewTests(TestCase):
         self.assertContains(response, "Aditivos Funcionales SL")
         self.assertContains(response, "Neos Additives")
         self.assertContains(response, "Analisis de balances")
+        self.assertContains(response, "Datos importados de Informa")
 
     def test_staff_user_can_upload_balance_pdf_for_analysis(self):
         opportunity = VentureOpportunity.objects.create(
@@ -197,3 +198,63 @@ class VentureStudiesViewTests(TestCase):
         self.assertGreater(snapshot.suggested_purchase_price, Decimal("0"))
         self.assertEqual(snapshot.annual_revenue, Decimal("420000.00"))
         self.assertEqual(snapshot.ebitda, Decimal("80000.00"))
+
+    def test_informa_report_can_create_and_fill_company_fields(self):
+        informa_text = """
+        Denominacion Social
+        ADITIVOS INFORMA SL
+        CIF B12345678
+        Domicilio social Calle Mayor 12
+        Localidad Castellon
+        Provincia Castellon
+        CNAE 2399 Fabricacion de otros productos minerales
+        Web www.aditivos-informa.example
+        Telefono 964 123 456
+        Email info@aditivos-informa.example
+        Numero de empleados 18
+        Importe neto de la cifra de negocios 420.000,00
+        EBITDA 80.000,00
+        """
+        upload = SimpleUploadedFile("informa.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf")
+
+        with patch("venture_studies.services.extract_pdf_text_from_file", return_value=informa_text):
+            result = import_informa_report(upload, title="Informa Aditivos", overwrite_existing=True)
+
+        opportunity = result["opportunity"]
+        self.assertTrue(result["created"])
+        self.assertEqual(opportunity.company_name, "ADITIVOS INFORMA SL")
+        self.assertEqual(opportunity.tax_id, "B12345678")
+        self.assertEqual(opportunity.website, "https://www.aditivos-informa.example")
+        self.assertEqual(opportunity.cnae_code, "2399")
+        self.assertEqual(opportunity.employees, 18)
+        self.assertEqual(opportunity.annual_revenue, Decimal("420000.00"))
+        self.assertEqual(opportunity.ebitda, Decimal("80000.00"))
+        document = VentureDocument.objects.get(opportunity=opportunity)
+        self.assertEqual(document.document_kind, VentureDocument.DocumentKind.INFORMA)
+
+    def test_staff_user_can_upload_informa_report_from_page(self):
+        informa_text = """
+        Razon social
+        CERAMICA INFORMA SL
+        NIF B87654321
+        Domicilio Calle Industria 4
+        Provincia Castellon
+        Actividad CNAE 2331 Fabricacion de azulejos
+        """
+        self.client.force_login(self.staff_user)
+
+        with patch("venture_studies.services.extract_pdf_text_from_file", return_value=informa_text):
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "upload_informa",
+                    "title": "Informe Informa",
+                    "file": SimpleUploadedFile("informa.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf"),
+                    "overwrite_existing": "on",
+                },
+            )
+
+        self.assertRedirects(response, reverse("venture_studies:list"))
+        opportunity = VentureOpportunity.objects.get(company_name="CERAMICA INFORMA SL")
+        self.assertEqual(opportunity.tax_id, "B87654321")
+        self.assertEqual(opportunity.cnae_code, "2331")

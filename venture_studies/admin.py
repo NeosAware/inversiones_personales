@@ -31,6 +31,7 @@ class VentureAnalysisSnapshotInline(admin.TabularInline):
 class VentureOpportunityAdmin(admin.ModelAdmin):
     list_display = (
         "company_name",
+        "tax_id",
         "status",
         "stage",
         "strategic_fit",
@@ -41,8 +42,18 @@ class VentureOpportunityAdmin(admin.ModelAdmin):
         "next_review_on",
         "updated_at",
     )
-    list_filter = ("status", "stage", "strategic_fit")
-    search_fields = ("company_name", "sector", "geography", "fit_summary", "synergy_notes", "red_flags")
+    list_filter = ("status", "stage", "strategic_fit", "cnae_code")
+    search_fields = (
+        "company_name",
+        "legal_name",
+        "tax_id",
+        "sector",
+        "cnae_label",
+        "geography",
+        "fit_summary",
+        "synergy_notes",
+        "red_flags",
+    )
     readonly_fields = ("score_total", "score_pct", "updated_at")
     inlines = [VentureDocumentInline, VentureAnalysisSnapshotInline]
     fieldsets = (
@@ -51,9 +62,17 @@ class VentureOpportunityAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     "company_name",
+                    "legal_name",
+                    "tax_id",
                     "website",
                     "sector",
                     "geography",
+                    "address",
+                    "phone",
+                    "email",
+                    "cnae_code",
+                    "cnae_label",
+                    "employees",
                     "stage",
                     "status",
                     "strategic_fit",

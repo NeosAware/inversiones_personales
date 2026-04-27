@@ -59,9 +59,17 @@ class VentureOpportunityForm(forms.ModelForm):
         model = VentureOpportunity
         fields = (
             "company_name",
+            "legal_name",
+            "tax_id",
             "website",
             "sector",
             "geography",
+            "address",
+            "phone",
+            "email",
+            "cnae_code",
+            "cnae_label",
+            "employees",
             "stage",
             "status",
             "strategic_fit",
@@ -90,9 +98,17 @@ class VentureOpportunityForm(forms.ModelForm):
         )
         labels = {
             "company_name": "Empresa",
+            "legal_name": "Razon social",
+            "tax_id": "NIF/CIF",
             "website": "Web",
             "sector": "Sector",
             "geography": "Zona",
+            "address": "Domicilio",
+            "phone": "Telefono",
+            "email": "Email",
+            "cnae_code": "CNAE",
+            "cnae_label": "Actividad CNAE",
+            "employees": "Empleados",
             "stage": "Estadio",
             "status": "Estado",
             "strategic_fit": "Encaje Neos",
@@ -116,6 +132,7 @@ class VentureOpportunityForm(forms.ModelForm):
         widgets = {
             "identified_on": forms.DateInput(format="%Y-%m-%d", attrs={"type": "date"}),
             "next_review_on": forms.DateInput(format="%Y-%m-%d", attrs={"type": "date"}),
+            "employees": forms.NumberInput(attrs={"min": 0}),
             "neos_fit_score": forms.NumberInput(attrs={"min": 1, "max": 5}),
             "market_score": forms.NumberInput(attrs={"min": 1, "max": 5}),
             "team_score": forms.NumberInput(attrs={"min": 1, "max": 5}),
@@ -133,6 +150,12 @@ class VentureOpportunityForm(forms.ModelForm):
     def clean_company_name(self):
         return self.cleaned_data["company_name"].strip()
 
+    def clean_legal_name(self):
+        return self.cleaned_data.get("legal_name", "").strip()
+
+    def clean_tax_id(self):
+        return self.cleaned_data.get("tax_id", "").strip().upper()
+
     def clean_website(self):
         return self.cleaned_data.get("website", "").strip()
 
@@ -141,6 +164,21 @@ class VentureOpportunityForm(forms.ModelForm):
 
     def clean_geography(self):
         return self.cleaned_data.get("geography", "").strip()
+
+    def clean_address(self):
+        return self.cleaned_data.get("address", "").strip()
+
+    def clean_phone(self):
+        return self.cleaned_data.get("phone", "").strip()
+
+    def clean_email(self):
+        return self.cleaned_data.get("email", "").strip()
+
+    def clean_cnae_code(self):
+        return self.cleaned_data.get("cnae_code", "").strip()
+
+    def clean_cnae_label(self):
+        return self.cleaned_data.get("cnae_label", "").strip()
 
     def clean_contact_name(self):
         return self.cleaned_data.get("contact_name", "").strip()
@@ -225,3 +263,46 @@ class VentureBalanceAnalysisForm(forms.Form):
             document_date=self.cleaned_data.get("document_date"),
             file=self.cleaned_data["file"],
         )
+
+
+class VentureInformaImportForm(forms.Form):
+    opportunity = forms.ModelChoiceField(
+        queryset=VentureOpportunity.objects.none(),
+        required=False,
+        label="Empresa existente",
+        help_text="Opcional. Si lo dejas vacio, se intentara crear o localizar por nombre/NIF.",
+    )
+    title = forms.CharField(
+        max_length=180,
+        required=False,
+        label="Titulo del informe",
+    )
+    document_date = forms.DateField(
+        required=False,
+        label="Fecha del informe",
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
+    file = forms.FileField(
+        label="Informe Informa PDF",
+        widget=forms.ClearableFileInput(attrs={"accept": ".pdf,application/pdf"}),
+    )
+    overwrite_existing = forms.BooleanField(
+        required=False,
+        initial=False,
+        label="Sobrescribir campos ya rellenados",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["opportunity"].queryset = VentureOpportunity.objects.order_by("company_name")
+
+    def clean_file(self):
+        uploaded_file = self.cleaned_data["file"]
+        suffix = Path(str(getattr(uploaded_file, "name", "") or "")).suffix.lower()
+        if suffix != ".pdf":
+            raise ValidationError("Solo se admiten informes Informa en PDF.")
+        max_file_bytes = max(int(getattr(settings, "VENTURE_DOCUMENT_MAX_FILE_BYTES", 12 * 1024 * 1024) or 0), 1024)
+        if getattr(uploaded_file, "size", 0) and uploaded_file.size > max_file_bytes:
+            max_file_mb = max_file_bytes / (1024 * 1024)
+            raise ValidationError(f"El PDF supera el limite de {max_file_mb:.1f} MB.")
+        return uploaded_file

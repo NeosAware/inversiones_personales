@@ -30,9 +30,17 @@ class VentureOpportunity(models.Model):
         OTHER = "other", "Otro encaje"
 
     company_name = models.CharField(max_length=180, unique=True)
+    legal_name = models.CharField(max_length=180, blank=True)
+    tax_id = models.CharField(max_length=24, blank=True, db_index=True)
     website = models.URLField(blank=True)
     sector = models.CharField(max_length=140, blank=True)
     geography = models.CharField(max_length=120, blank=True)
+    address = models.CharField(max_length=240, blank=True)
+    phone = models.CharField(max_length=60, blank=True)
+    email = models.EmailField(blank=True)
+    cnae_code = models.CharField(max_length=16, blank=True)
+    cnae_label = models.CharField(max_length=180, blank=True)
+    employees = models.PositiveIntegerField(null=True, blank=True)
     stage = models.CharField(max_length=24, choices=Stage.choices, default=Stage.EARLY)
     status = models.CharField(max_length=24, choices=Status.choices, default=Status.SCREENING)
     strategic_fit = models.CharField(max_length=24, choices=StrategicFit.choices, default=StrategicFit.BOTH)
@@ -126,6 +134,7 @@ class VentureOpportunity(models.Model):
 class VentureDocument(models.Model):
     class DocumentKind(models.TextChoices):
         BALANCE = "balance", "Balance o cuentas anuales"
+        INFORMA = "informa", "Informe Informa"
         PITCH = "pitch", "Presentacion"
         CONTRACT = "contract", "Contrato o pedido"
         OTHER = "other", "Otro documento"

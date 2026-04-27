@@ -28,6 +28,10 @@ from .models import VentureAnalysisSnapshot, VentureDocument, VentureOpportunity
 
 ZERO = Decimal("0")
 MONEY_RE = re.compile(r"[-+]?\d{1,3}(?:[.\s]\d{3})*(?:,\d+)?|[-+]?\d+(?:[.,]\d+)?")
+EMAIL_RE = re.compile(r"[\w.\-+]+@[\w.\-]+\.[A-Za-z]{2,}", re.I)
+URL_RE = re.compile(r"(?:https?://)?(?:www\.)?[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+(?:/[^\s]*)?", re.I)
+PHONE_RE = re.compile(r"(?:\+34\s*)?(?:\d[\s.-]?){9,12}")
+TAX_ID_RE = re.compile(r"\b(?:[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]|[XYZ]?\d{7,8}[A-Z])\b", re.I)
 
 
 def _sum_optional(values):
@@ -110,6 +114,284 @@ def extract_pdf_text(document: VentureDocument, *, max_chars: int = 70000) -> st
     document.extraction_error = "" if text else "El PDF no contiene texto extraible. Puede ser un escaneo."
     document.save(update_fields=["extracted_text", "extraction_status", "extraction_error"])
     return text
+
+
+def extract_pdf_text_from_file(uploaded_file, *, max_chars: int = 70000) -> str:
+    uploaded_file.seek(0)
+    reader = PdfReader(uploaded_file)
+    parts = []
+    for page in reader.pages:
+        page_text = page.extract_text() or ""
+        if page_text:
+            parts.append(page_text)
+        if sum(len(part) for part in parts) >= max_chars:
+            break
+    uploaded_file.seek(0)
+    return "\n".join(parts).strip()[:max_chars]
+
+
+def normalize_lines(text: str) -> list[str]:
+    return [line.strip() for line in str(text or "").splitlines() if line.strip()]
+
+
+def clean_informa_value(value: str, *, max_length: int = 240) -> str:
+    cleaned = " ".join(str(value or "").replace(":", " ").split())
+    cleaned = cleaned.strip(" -|")
+    return cleaned[:max_length].strip()
+
+
+def find_value_after_label(text: str, labels: tuple[str, ...], *, max_length: int = 240) -> str:
+    lines = normalize_lines(text)
+    normalized_labels = [normalize_search_text(label) for label in labels]
+    for index, line in enumerate(lines):
+        normalized_line = normalize_search_text(line)
+        for label, normalized_label in zip(labels, normalized_labels):
+            if normalized_label not in normalized_line:
+                continue
+            after = line[normalized_line.find(normalized_label) + len(label) :].strip(" :-|")
+            if after and normalize_search_text(after) != normalized_label:
+                return clean_informa_value(after, max_length=max_length)
+            if index + 1 < len(lines):
+                candidate = clean_informa_value(lines[index + 1], max_length=max_length)
+                if candidate and normalize_search_text(candidate) not in normalized_labels:
+                    return candidate
+    return ""
+
+
+def find_company_name_from_informa(text: str) -> str:
+    labels = (
+        "denominacion social",
+        "razon social",
+        "nombre de la empresa",
+        "empresa",
+    )
+    value = find_value_after_label(text, labels, max_length=180)
+    if value and not normalize_search_text(value).startswith("informe"):
+        return value
+    for line in normalize_lines(text)[:30]:
+        cleaned = clean_informa_value(line, max_length=180)
+        normalized = normalize_search_text(cleaned)
+        if (
+            len(cleaned) >= 5
+            and not normalized.startswith("informe")
+            and not normalized.startswith("fecha")
+            and any(token in normalized for token in (" sl", " s.l", " sa", " s.a", " sociedad limitada", " sociedad anonima"))
+        ):
+            return cleaned
+    return ""
+
+
+def find_tax_id_from_informa(text: str) -> str:
+    labelled = find_value_after_label(text, ("cif", "nif", "nif/cif", "identificacion fiscal"), max_length=40)
+    match = TAX_ID_RE.search(labelled or "")
+    if match:
+        return match.group(0).upper()
+    match = TAX_ID_RE.search(text or "")
+    return match.group(0).upper() if match else ""
+
+
+def find_website_from_informa(text: str) -> str:
+    labelled = find_value_after_label(text, ("web", "pagina web", "sitio web"), max_length=120)
+    candidates = [labelled, *(URL_RE.findall(text or "")[:20])]
+    for candidate in candidates:
+        cleaned = clean_informa_value(candidate, max_length=120)
+        normalized = cleaned.lower()
+        if not cleaned or "einforma" in normalized or "informa.es" in normalized or "informa.com" in normalized or "linkedin" in normalized:
+            continue
+        if not re.search(r"[a-z]", normalized):
+            continue
+        if "." not in cleaned or "@" in cleaned:
+            continue
+        if not normalized.startswith(("http://", "https://")):
+            cleaned = f"https://{cleaned}"
+        return cleaned
+    return ""
+
+
+def find_email_from_informa(text: str) -> str:
+    labelled = find_value_after_label(text, ("email", "e-mail", "correo electronico"), max_length=120)
+    match = EMAIL_RE.search(labelled or "")
+    if match:
+        return match.group(0)
+    match = EMAIL_RE.search(text or "")
+    return match.group(0) if match else ""
+
+
+def find_phone_from_informa(text: str) -> str:
+    labelled = find_value_after_label(text, ("telefono", "tel.", "tel "), max_length=80)
+    match = PHONE_RE.search(labelled or "")
+    if match:
+        return clean_informa_value(match.group(0), max_length=60)
+    match = PHONE_RE.search(text or "")
+    return clean_informa_value(match.group(0), max_length=60) if match else ""
+
+
+def find_cnae_from_informa(text: str) -> tuple[str, str]:
+    raw = find_value_after_label(text, ("cnae", "actividad cnae", "actividad principal"), max_length=220)
+    match = re.search(r"\b(\d{3,4})\b", raw)
+    if match:
+        code = match.group(1)
+        label = clean_informa_value(raw.replace(code, " ", 1), max_length=180)
+        return code, label
+    return "", raw
+
+
+def find_employees_from_informa(text: str):
+    raw = find_value_after_label(text, ("empleados", "numero de empleados", "trabajadores"), max_length=80)
+    match = re.search(r"\d{1,5}", raw.replace(".", ""))
+    if not match:
+        return None
+    try:
+        return int(match.group(0))
+    except ValueError:
+        return None
+
+
+def parse_informa_company_fields(text: str) -> dict:
+    cnae_code, cnae_label = find_cnae_from_informa(text)
+    legal_name = find_company_name_from_informa(text)
+    address = find_value_after_label(
+        text,
+        (
+            "domicilio social",
+            "domicilio",
+            "direccion",
+            "sede social",
+        ),
+        max_length=240,
+    )
+    city = find_value_after_label(text, ("localidad", "municipio", "poblacion"), max_length=100)
+    province = find_value_after_label(text, ("provincia",), max_length=100)
+    geography = " - ".join(item for item in (city, province) if item)
+    if not geography:
+        geography = province or city
+    sector = cnae_label or find_value_after_label(text, ("actividad", "objeto social"), max_length=140)
+    metrics = parse_balance_metrics(text)
+    return {
+        "company_name": legal_name,
+        "legal_name": legal_name,
+        "tax_id": find_tax_id_from_informa(text),
+        "website": find_website_from_informa(text),
+        "sector": sector,
+        "geography": geography,
+        "address": address,
+        "phone": find_phone_from_informa(text),
+        "email": find_email_from_informa(text),
+        "cnae_code": cnae_code,
+        "cnae_label": cnae_label,
+        "employees": find_employees_from_informa(text),
+        "annual_revenue": metrics.get("annual_revenue"),
+        "ebitda": metrics.get("ebitda"),
+        "source": "Informe Informa",
+    }
+
+
+def resolve_informa_opportunity(parsed_fields: dict, selected_opportunity: VentureOpportunity | None = None) -> tuple[VentureOpportunity, bool]:
+    if selected_opportunity is not None:
+        return selected_opportunity, False
+
+    tax_id = str(parsed_fields.get("tax_id") or "").strip()
+    if tax_id:
+        match = VentureOpportunity.objects.filter(tax_id__iexact=tax_id).order_by("company_name").first()
+        if match:
+            return match, False
+
+    company_name = str(parsed_fields.get("company_name") or parsed_fields.get("legal_name") or "").strip()
+    if company_name:
+        match = VentureOpportunity.objects.filter(company_name__iexact=company_name).first()
+        if match:
+            return match, False
+        opportunity = VentureOpportunity.objects.create(
+            company_name=company_name,
+            legal_name=parsed_fields.get("legal_name", ""),
+            tax_id=tax_id,
+            source="Informe Informa",
+        )
+        return opportunity, True
+
+    raise ValueError("No se ha podido detectar el nombre de la empresa en el informe Informa.")
+
+
+def update_opportunity_from_informa(opportunity: VentureOpportunity, parsed_fields: dict, *, overwrite_existing: bool = False) -> list[str]:
+    updated_fields = []
+    field_names = (
+        "company_name",
+        "legal_name",
+        "tax_id",
+        "website",
+        "sector",
+        "geography",
+        "address",
+        "phone",
+        "email",
+        "cnae_code",
+        "cnae_label",
+        "employees",
+        "annual_revenue",
+        "ebitda",
+        "source",
+    )
+    for field_name in field_names:
+        value = parsed_fields.get(field_name)
+        if value in (None, ""):
+            continue
+        current_value = getattr(opportunity, field_name)
+        if overwrite_existing or current_value in (None, ""):
+            if current_value != value:
+                setattr(opportunity, field_name, value)
+                updated_fields.append(field_name)
+    if updated_fields:
+        updated_fields.append("updated_at")
+        opportunity.save(update_fields=updated_fields)
+    return updated_fields
+
+
+def import_informa_report(
+    uploaded_file,
+    *,
+    selected_opportunity: VentureOpportunity | None = None,
+    title: str = "",
+    document_date=None,
+    overwrite_existing: bool = False,
+) -> dict:
+    text = extract_pdf_text_from_file(uploaded_file)
+    parsed_fields = parse_informa_company_fields(text)
+    opportunity, created = resolve_informa_opportunity(parsed_fields, selected_opportunity)
+    updated_fields = update_opportunity_from_informa(
+        opportunity,
+        parsed_fields,
+        overwrite_existing=overwrite_existing,
+    )
+    document_title = clean_informa_value(title, max_length=180) or f"Informe Informa {timezone.localdate():%Y-%m-%d}"
+    document = VentureDocument.objects.create(
+        opportunity=opportunity,
+        document_kind=VentureDocument.DocumentKind.INFORMA,
+        title=document_title,
+        document_date=document_date,
+        file=uploaded_file,
+        extracted_text=text,
+        extraction_status=VentureDocument.ExtractionStatus.EXTRACTED if text else VentureDocument.ExtractionStatus.FAILED,
+        extraction_error="" if text else "El informe no contiene texto extraible.",
+        notes=json.dumps(
+            {
+                "created_opportunity": created,
+                "updated_fields": updated_fields,
+                "parsed_fields": {
+                    key: str(value)
+                    for key, value in parsed_fields.items()
+                    if value not in (None, "")
+                },
+            },
+            ensure_ascii=True,
+        ),
+    )
+    return {
+        "opportunity": opportunity,
+        "document": document,
+        "created": created,
+        "updated_fields": updated_fields,
+        "parsed_fields": parsed_fields,
+    }
 
 
 def _find_metric_after_labels(text: str, labels: tuple[str, ...]) -> Decimal | None:

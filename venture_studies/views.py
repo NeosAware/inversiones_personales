@@ -5,9 +5,9 @@ from django.views.generic import TemplateView
 
 from portfolio.user_management import can_user_manage_financial_data
 
-from .forms import VentureBalanceAnalysisForm, VentureOpportunityForm
+from .forms import VentureBalanceAnalysisForm, VentureInformaImportForm, VentureOpportunityForm
 from .models import VentureDocument, VentureOpportunity
-from .services import build_venture_study_context, run_document_analysis
+from .services import build_venture_study_context, import_informa_report, run_document_analysis
 
 
 class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
@@ -27,6 +27,7 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         context["can_manage_finances"] = can_user_manage_financial_data(self.request.user)
         context.setdefault("form", VentureOpportunityForm())
         context.setdefault("analysis_form", VentureBalanceAnalysisForm())
+        context.setdefault("informa_form", VentureInformaImportForm())
         context.update(build_venture_study_context(opportunities))
         return context
 
@@ -38,6 +39,8 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         action = request.POST.get("action", "save_opportunity")
         if action == "upload_balance":
             return self._upload_balance(request)
+        if action == "upload_informa":
+            return self._upload_informa(request)
 
         form = VentureOpportunityForm(request.POST)
         if not form.is_valid():
@@ -83,4 +86,33 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
                 request,
                 "El PDF se ha guardado, pero no se pudo extraer texto. Si es un escaneo, sube una version con OCR para mejorar el analisis.",
             )
+        return redirect("venture_studies:list")
+
+    def _upload_informa(self, request):
+        form = VentureInformaImportForm(request.POST, request.FILES)
+        if not form.is_valid():
+            context = self.get_context_data(informa_form=form)
+            return self.render_to_response(context, status=400)
+
+        try:
+            result = import_informa_report(
+                form.cleaned_data["file"],
+                selected_opportunity=form.cleaned_data.get("opportunity"),
+                title=form.cleaned_data.get("title", ""),
+                document_date=form.cleaned_data.get("document_date"),
+                overwrite_existing=form.cleaned_data.get("overwrite_existing", False),
+            )
+        except Exception as exc:
+            messages.error(request, f"No se ha podido importar el informe Informa: {exc}")
+            context = self.get_context_data(informa_form=form)
+            return self.render_to_response(context, status=400)
+
+        opportunity = result["opportunity"]
+        updated_labels = ", ".join(result["updated_fields"]) if result["updated_fields"] else "sin cambios en campos existentes"
+        if result["created"]:
+            messages.success(request, f"Informe Informa importado y empresa {opportunity.company_name} creada.")
+        else:
+            messages.success(request, f"Informe Informa importado para {opportunity.company_name}: {updated_labels}.")
+        if result["document"].extraction_status == VentureDocument.ExtractionStatus.FAILED:
+            messages.warning(request, "El PDF se ha guardado, pero no contiene texto extraible. Prueba con una version OCR.")
         return redirect("venture_studies:list")

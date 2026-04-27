@@ -171,6 +171,7 @@
               <tr>
                 <td>
                   <strong>{{ opportunity.company_name }}</strong>
+                  {% if opportunity.tax_id %}<div class="metric-sub">{{ opportunity.tax_id }}</div>{% endif %}
                   <div class="metric-sub">{{ opportunity.sector|default:"Sector pendiente" }}{% if opportunity.geography %} - {{ opportunity.geography }}{% endif %}</div>
                   {% if opportunity.website %}<div class="metric-sub"><a class="link" href="{{ opportunity.website }}" target="_blank" rel="noopener">Web</a></div>{% endif %}
                 </td>
@@ -383,7 +384,77 @@
       </table>
     </section>
 
+    <section class="card table-card">
+      <p class="section-title">Ficha empresa</p>
+      <h2 style="margin-top:0;">Datos importados de Informa</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Empresa</th>
+            <th>Razon social</th>
+            <th>NIF/CIF</th>
+            <th>Actividad</th>
+            <th>Domicilio</th>
+            <th>Contacto</th>
+            <th>Empleados</th>
+            <th>Finanzas detectadas</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for opportunity in opportunities %}
+            <tr>
+              <td><strong>{{ opportunity.company_name }}</strong></td>
+              <td>{{ opportunity.legal_name|default:"-" }}</td>
+              <td>{{ opportunity.tax_id|default:"-" }}</td>
+              <td>
+                {{ opportunity.sector|default:"-" }}
+                {% if opportunity.cnae_code or opportunity.cnae_label %}
+                  <div class="metric-sub">CNAE {{ opportunity.cnae_code|default:"-" }} {{ opportunity.cnae_label }}</div>
+                {% endif %}
+              </td>
+              <td>{{ opportunity.address|default:"-" }}{% if opportunity.geography %}<div class="metric-sub">{{ opportunity.geography }}</div>{% endif %}</td>
+              <td>
+                {{ opportunity.phone|default:"-" }}
+                {% if opportunity.email %}<div class="metric-sub">{{ opportunity.email }}</div>{% endif %}
+                {% if opportunity.website %}<div class="metric-sub"><a class="link" href="{{ opportunity.website }}" target="_blank" rel="noopener">Web</a></div>{% endif %}
+              </td>
+              <td>{{ opportunity.employees|default:"-" }}</td>
+              <td>
+                Ventas {{ opportunity.annual_revenue|floatformat:2 }}<br>
+                EBITDA {{ opportunity.ebitda|floatformat:2 }}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="8" class="muted">Sube un informe Informa para completar automaticamente la ficha.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
     {% if can_manage_finances %}
+      <section class="card">
+        <p class="section-title">Informes Informa</p>
+        <h2 style="margin-top:0;">Subir informe y rellenar ficha</h2>
+        <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="upload_informa">
+          <div class="venture-form-grid">
+            <div><label for="{{ informa_form.opportunity.id_for_label }}">{{ informa_form.opportunity.label }}</label>{{ informa_form.opportunity }}</div>
+            <div><label for="{{ informa_form.title.id_for_label }}">{{ informa_form.title.label }}</label>{{ informa_form.title }}</div>
+            <div><label for="{{ informa_form.document_date.id_for_label }}">{{ informa_form.document_date.label }}</label>{{ informa_form.document_date }}</div>
+            <div><label for="{{ informa_form.file.id_for_label }}">{{ informa_form.file.label }}</label>{{ informa_form.file }}</div>
+            <div>
+              <label for="{{ informa_form.overwrite_existing.id_for_label }}">{{ informa_form.overwrite_existing.label }}</label>
+              {{ informa_form.overwrite_existing }}
+            </div>
+          </div>
+          {% if informa_form.errors %}
+            <div class="message error">Revisa el informe Informa antes de importarlo.</div>
+          {% endif %}
+          <button class="button" type="submit">Importar Informa</button>
+        </form>
+      </section>
+
       <section class="card">
         <p class="section-title">Balances PDF</p>
         <h2 style="margin-top:0;">Subir balance y lanzar analisis</h2>
@@ -416,9 +487,17 @@
           <input type="hidden" name="action" value="save_opportunity">
           <div class="venture-form-grid">
             <div><label for="{{ form.company_name.id_for_label }}">{{ form.company_name.label }}</label>{{ form.company_name }}</div>
+            <div><label for="{{ form.legal_name.id_for_label }}">{{ form.legal_name.label }}</label>{{ form.legal_name }}</div>
+            <div><label for="{{ form.tax_id.id_for_label }}">{{ form.tax_id.label }}</label>{{ form.tax_id }}</div>
             <div><label for="{{ form.website.id_for_label }}">{{ form.website.label }}</label>{{ form.website }}</div>
             <div><label for="{{ form.sector.id_for_label }}">{{ form.sector.label }}</label>{{ form.sector }}</div>
             <div><label for="{{ form.geography.id_for_label }}">{{ form.geography.label }}</label>{{ form.geography }}</div>
+            <div><label for="{{ form.address.id_for_label }}">{{ form.address.label }}</label>{{ form.address }}</div>
+            <div><label for="{{ form.phone.id_for_label }}">{{ form.phone.label }}</label>{{ form.phone }}</div>
+            <div><label for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>{{ form.email }}</div>
+            <div><label for="{{ form.cnae_code.id_for_label }}">{{ form.cnae_code.label }}</label>{{ form.cnae_code }}</div>
+            <div><label for="{{ form.cnae_label.id_for_label }}">{{ form.cnae_label.label }}</label>{{ form.cnae_label }}</div>
+            <div><label for="{{ form.employees.id_for_label }}">{{ form.employees.label }}</label>{{ form.employees }}</div>
             <div><label for="{{ form.stage.id_for_label }}">{{ form.stage.label }}</label>{{ form.stage }}</div>
             <div><label for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>{{ form.status }}</div>
             <div><label for="{{ form.strategic_fit.id_for_label }}">{{ form.strategic_fit.label }}</label>{{ form.strategic_fit }}</div>
