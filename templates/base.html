@@ -520,6 +520,7 @@
         <a class="{% if request.resolver_match.namespace == 'neos_additives' %}active{% endif %}" href="{% url 'neos_additives:list' %}">Neos Additives</a>
         <a class="{% if request.resolver_match.namespace == 'neos_ceramica' %}active{% endif %}" href="{% url 'neos_ceramica:list' %}">Neos Ceramica</a>
         <a class="{% if request.resolver_match.namespace == 'neos_materials' %}active{% endif %}" href="{% url 'neos_materials:list' %}">Neos Materials</a>
+        <a class="{% if request.resolver_match.namespace == 'venture_studies' %}active{% endif %}" href="{% url 'venture_studies:list' %}">Radar de empresas no cotizadas</a>
         <a class="{% if request.resolver_match.namespace == 'real_estate' %}active{% endif %}" href="{% url 'real_estate:list' %}">Inmuebles</a>
         {% if can_manage_users %}
           <a class="{% if request.resolver_match.namespace == 'portfolio' and request.resolver_match.url_name == 'user_management' %}active{% endif %}" href="{% url 'portfolio:user_management' %}">Usuarios</a>

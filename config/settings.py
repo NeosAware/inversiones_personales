@@ -217,6 +217,7 @@ INSTALLED_APPS = [
     "neos_ceramica",
     "neos_materials",
     "real_estate",
+    "venture_studies",
 ]
 
 

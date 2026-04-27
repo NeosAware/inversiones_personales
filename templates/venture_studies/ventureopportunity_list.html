@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+
+{% block title %}Radar de empresas no cotizadas | Centro de inversiones personales{% endblock %}
+
+{% block content %}
+  <style>
+    .venture-page{
+      display:grid;
+      gap:24px;
+    }
+    .venture-page > *,
+    .venture-kpi-grid > *,
+    .venture-split > *,
+    .venture-panel-grid > *{
+      min-width:0;
+    }
+    .venture-hero{
+      padding:28px;
+    }
+    .venture-hero h2{
+      margin:0 0 10px;
+      font-size:clamp(32px, 2.25vw, 42px);
+      letter-spacing:-.03em;
+    }
+    .venture-kpi-grid{
+      display:grid;
+      gap:14px;
+      grid-template-columns:repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+      margin-top:18px;
+    }
+    .venture-kpi{
+      padding:18px;
+      border:1px solid #e4ecf2;
+      border-radius:16px;
+      background:linear-gradient(180deg, #ffffff 0%, #f7fafc 100%);
+    }
+    .venture-kpi .metric-value{
+      font-size:clamp(30px, 2vw, 42px);
+    }
+    .venture-split{
+      display:grid;
+      gap:18px;
+      grid-template-columns:1.2fr .8fr;
+    }
+    .venture-panel-grid{
+      display:grid;
+      gap:12px;
+    }
+    .venture-breakdown-row{
+      display:grid;
+      grid-template-columns:minmax(0, 1fr) auto auto;
+      gap:12px;
+      align-items:center;
+      padding:12px 0;
+      border-bottom:1px solid #e8eef3;
+    }
+    .venture-breakdown-row:last-child{
+      border-bottom:none;
+    }
+    .venture-score{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-width:68px;
+      padding:7px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:#fff;
+      font-weight:800;
+      font-variant-numeric:tabular-nums;
+    }
+    .venture-note{
+      max-width:56ch;
+      color:var(--muted);
+      line-height:1.45;
+    }
+    .venture-form-grid{
+      display:grid;
+      gap:14px;
+      grid-template-columns:repeat(3, minmax(0, 1fr));
+    }
+    .venture-form-grid.two{
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+    }
+    .venture-score-grid{
+      display:grid;
+      gap:14px;
+      grid-template-columns:repeat(5, minmax(0, 1fr));
+    }
+    @media (max-width: 1180px){
+      .venture-split,
+      .venture-form-grid,
+      .venture-form-grid.two,
+      .venture-score-grid{
+        grid-template-columns:1fr;
+      }
+    }
+  </style>
+
+  <div class="venture-page">
+    <section class="card venture-hero">
+      <p class="section-title">{{ page_title }}</p>
+      <h2>Radar privado de oportunidades industriales</h2>
+      <p class="muted" style="margin:0;max-width:84ch;">
+        Empresas en fase inicial, con tension de crecimiento o con una pieza tecnologica/comercial que pueda reforzar Neos Ceramica, Neos Additives o el grupo.
+      </p>
+      <div class="venture-kpi-grid">
+        <section class="venture-kpi">
+          <div class="metric-label">Oportunidades activas</div>
+          <div class="metric-value">{{ summary.active_count }}</div>
+          <div class="metric-sub">{{ summary.total_count }} empresa(s) en el historico.</div>
+        </section>
+        <section class="venture-kpi">
+          <div class="metric-label">Prioridad alta</div>
+          <div class="metric-value">{{ summary.high_priority_count }}</div>
+          <div class="metric-sub">Score igual o superior al 80 %.</div>
+        </section>
+        <section class="venture-kpi">
+          <div class="metric-label">Ticket potencial</div>
+          <div class="metric-value">{{ summary.ticket_min_total|floatformat:0 }} - {{ summary.ticket_max_total|floatformat:0 }} EUR</div>
+          <div class="metric-sub">Suma orientativa de oportunidades activas.</div>
+        </section>
+        <section class="venture-kpi">
+          <div class="metric-label">Score medio</div>
+          <div class="metric-value">{{ summary.avg_score|floatformat:0 }} %</div>
+          <div class="metric-sub">{{ summary.review_due_count }} revision(es) proximas.</div>
+        </section>
+      </div>
+    </section>
+
+    <div class="venture-split">
+      <section class="card table-card">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:baseline;flex-wrap:wrap;">
+          <div>
+            <p class="section-title">Pipeline</p>
+            <h2 style="margin-top:0;">Empresas priorizadas</h2>
+          </div>
+          <span class="pill">Score: encaje + mercado + equipo + finanzas + riesgo</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Empresa</th>
+              <th>Estado</th>
+              <th>Encaje</th>
+              <th>Score</th>
+              <th>Ticket</th>
+              <th>Problema</th>
+              <th>Proximo paso</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for opportunity in priority_rows %}
+              <tr>
+                <td>
+                  <strong>{{ opportunity.company_name }}</strong>
+                  <div class="metric-sub">{{ opportunity.sector|default:"Sector pendiente" }}{% if opportunity.geography %} - {{ opportunity.geography }}{% endif %}</div>
+                  {% if opportunity.website %}<div class="metric-sub"><a class="link" href="{{ opportunity.website }}" target="_blank" rel="noopener">Web</a></div>{% endif %}
+                </td>
+                <td>{{ opportunity.get_status_display }}<div class="metric-sub">{{ opportunity.get_stage_display }}</div></td>
+                <td>{{ opportunity.get_strategic_fit_display }}</td>
+                <td><span class="venture-score {{ opportunity.score_tone }}">{{ opportunity.score_pct|floatformat:0 }} %</span><div class="metric-sub">{{ opportunity.score_label }}</div></td>
+                <td>
+                  {% if opportunity.ticket_min or opportunity.ticket_max %}
+                    {% if opportunity.ticket_min %}{{ opportunity.ticket_min|floatformat:0 }}{% else %}-{% endif %} - {% if opportunity.ticket_max %}{{ opportunity.ticket_max|floatformat:0 }}{% else %}-{% endif %}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+                <td><div class="venture-note">{{ opportunity.growth_issue|default:"Pendiente de concretar" }}</div></td>
+                <td>
+                  <div class="venture-note">{{ opportunity.next_steps|default:"Pendiente de definir" }}</div>
+                  {% if opportunity.next_review_on %}<div class="metric-sub">Revision {{ opportunity.next_review_on|date:"Y-m-d" }}</div>{% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="7" class="muted">Todavia no hay empresas en el radar.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="card">
+        <p class="section-title">Lectura rapida</p>
+        <h2 style="margin-top:0;">Encaje y proceso</h2>
+        <div class="venture-panel-grid">
+          {% for row in fit_rows %}
+            {% if row.count %}
+              <div class="venture-breakdown-row">
+                <strong>{{ row.label }}</strong>
+                <span class="pill">{{ row.count }}</span>
+                <span class="venture-score">{{ row.avg_score|floatformat:0 }} %</span>
+              </div>
+            {% endif %}
+          {% empty %}
+          {% endfor %}
+        </div>
+        <div style="height:18px;"></div>
+        <p class="section-title">Estados</p>
+        <div class="venture-panel-grid">
+          {% for row in status_rows %}
+            {% if row.count %}
+              <div class="venture-breakdown-row">
+                <strong>{{ row.label }}</strong>
+                <span class="pill">{{ row.count }}</span>
+                <span class="venture-score">{{ row.avg_score|floatformat:0 }} %</span>
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% if review_due_rows %}
+          <div class="message info" style="margin-top:18px;">
+            Revisiones proximas:
+            {% for opportunity in review_due_rows %}
+              {{ opportunity.company_name }}{% if opportunity.next_review_on %} ({{ opportunity.next_review_on|date:"Y-m-d" }}){% endif %}{% if not forloop.last %}, {% endif %}
+            {% endfor %}
+          </div>
+        {% endif %}
+      </section>
+    </div>
+
+    <section class="card table-card">
+      <p class="section-title">Tesis</p>
+      <h2 style="margin-top:0;">Encaje con Neos y riesgos</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Empresa</th>
+            <th>Tesis de encaje</th>
+            <th>Sinergias</th>
+            <th>Due diligence</th>
+            <th>Riesgos</th>
+            <th>Documentos</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for opportunity in opportunities %}
+            <tr>
+              <td><strong>{{ opportunity.company_name }}</strong><div class="metric-sub">{{ opportunity.get_strategic_fit_display }}</div></td>
+              <td><div class="venture-note">{{ opportunity.fit_summary|default:"-" }}</div></td>
+              <td><div class="venture-note">{{ opportunity.synergy_notes|default:"-" }}</div></td>
+              <td><div class="venture-note">{{ opportunity.diligence_notes|default:"-" }}</div></td>
+              <td><div class="venture-note">{{ opportunity.red_flags|default:"-" }}</div></td>
+              <td>{{ opportunity.documents.count }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" class="muted">Cuando registres empresas, aqui veras la tesis y las dudas clave.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    {% if can_manage_finances %}
+      <section class="card">
+        <p class="section-title">Alta o actualizacion</p>
+        <h2 style="margin-top:0;">Registrar empresa en estudio</h2>
+        <form method="post" class="stack" style="margin-top:18px;">
+          {% csrf_token %}
+          <div class="venture-form-grid">
+            <div><label for="{{ form.company_name.id_for_label }}">{{ form.company_name.label }}</label>{{ form.company_name }}</div>
+            <div><label for="{{ form.website.id_for_label }}">{{ form.website.label }}</label>{{ form.website }}</div>
+            <div><label for="{{ form.sector.id_for_label }}">{{ form.sector.label }}</label>{{ form.sector }}</div>
+            <div><label for="{{ form.geography.id_for_label }}">{{ form.geography.label }}</label>{{ form.geography }}</div>
+            <div><label for="{{ form.stage.id_for_label }}">{{ form.stage.label }}</label>{{ form.stage }}</div>
+            <div><label for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>{{ form.status }}</div>
+            <div><label for="{{ form.strategic_fit.id_for_label }}">{{ form.strategic_fit.label }}</label>{{ form.strategic_fit }}</div>
+            <div><label for="{{ form.contact_name.id_for_label }}">{{ form.contact_name.label }}</label>{{ form.contact_name }}</div>
+            <div><label for="{{ form.source.id_for_label }}">{{ form.source.label }}</label>{{ form.source }}</div>
+            <div><label for="{{ form.identified_on.id_for_label }}">{{ form.identified_on.label }}</label>{{ form.identified_on }}</div>
+            <div><label for="{{ form.next_review_on.id_for_label }}">{{ form.next_review_on.label }}</label>{{ form.next_review_on }}</div>
+          </div>
+          <div class="venture-form-grid">
+            <div><label for="{{ form.ticket_min.id_for_label }}">{{ form.ticket_min.label }}</label>{{ form.ticket_min }}</div>
+            <div><label for="{{ form.ticket_max.id_for_label }}">{{ form.ticket_max.label }}</label>{{ form.ticket_max }}</div>
+            <div><label for="{{ form.estimated_valuation.id_for_label }}">{{ form.estimated_valuation.label }}</label>{{ form.estimated_valuation }}</div>
+            <div><label for="{{ form.annual_revenue.id_for_label }}">{{ form.annual_revenue.label }}</label>{{ form.annual_revenue }}</div>
+            <div><label for="{{ form.ebitda.id_for_label }}">{{ form.ebitda.label }}</label>{{ form.ebitda }}</div>
+            <div><label for="{{ form.cash_need.id_for_label }}">{{ form.cash_need.label }}</label>{{ form.cash_need }}</div>
+          </div>
+          <div class="venture-score-grid">
+            <div><label for="{{ form.neos_fit_score.id_for_label }}">{{ form.neos_fit_score.label }}</label>{{ form.neos_fit_score }}</div>
+            <div><label for="{{ form.market_score.id_for_label }}">{{ form.market_score.label }}</label>{{ form.market_score }}</div>
+            <div><label for="{{ form.team_score.id_for_label }}">{{ form.team_score.label }}</label>{{ form.team_score }}</div>
+            <div><label for="{{ form.financial_score.id_for_label }}">{{ form.financial_score.label }}</label>{{ form.financial_score }}</div>
+            <div><label for="{{ form.risk_control_score.id_for_label }}">{{ form.risk_control_score.label }}</label>{{ form.risk_control_score }}</div>
+          </div>
+          <div class="venture-form-grid two">
+            <div><label for="{{ form.fit_summary.id_for_label }}">{{ form.fit_summary.label }}</label>{{ form.fit_summary }}</div>
+            <div><label for="{{ form.growth_issue.id_for_label }}">{{ form.growth_issue.label }}</label>{{ form.growth_issue }}</div>
+            <div><label for="{{ form.synergy_notes.id_for_label }}">{{ form.synergy_notes.label }}</label>{{ form.synergy_notes }}</div>
+            <div><label for="{{ form.diligence_notes.id_for_label }}">{{ form.diligence_notes.label }}</label>{{ form.diligence_notes }}</div>
+            <div><label for="{{ form.red_flags.id_for_label }}">{{ form.red_flags.label }}</label>{{ form.red_flags }}</div>
+            <div><label for="{{ form.next_steps.id_for_label }}">{{ form.next_steps.label }}</label>{{ form.next_steps }}</div>
+          </div>
+          <div>
+            <label for="{{ form.notes.id_for_label }}">{{ form.notes.label }}</label>
+            {{ form.notes }}
+          </div>
+          {% if form.errors %}
+            <div class="message error">Revisa los campos del formulario antes de guardar.</div>
+          {% endif %}
+          <button class="button" type="submit">Guardar empresa</button>
+        </form>
+      </section>
+    {% endif %}
+  </div>
+{% endblock %}
