@@ -653,7 +653,7 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         analysis = opportunity.analysis_snapshots.first()
         documents = self._sort_documents_for_analysis(list(opportunity.documents.all()))
         generation_error = ""
-        if not analysis and request.POST.get("generate_analysis") == "1" and documents:
+        if request.POST.get("generate_analysis") == "1" and documents:
             try:
                 analysis = run_opportunity_documents_analysis(
                     opportunity,

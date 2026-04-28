@@ -788,6 +788,64 @@ class VentureStudiesViewTests(TestCase):
         self.assertTrue(response.content.startswith(b"%PDF"))
         self.assertTrue(VentureAnalysisSnapshot.objects.filter(opportunity=opportunity).exists())
 
+    def test_existing_report_can_be_regenerated_from_current_documents(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Informe Regenerado SL",
+            annual_revenue=Decimal("500000.00"),
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+        )
+        document = VentureDocument.objects.create(
+            opportunity=opportunity,
+            document_kind=VentureDocument.DocumentKind.BALANCE,
+            title="Memoria 2024",
+            file="venture_studies/test/memoria.pdf",
+            extracted_text="Importe neto cifra negocios 40100 577.352,12 576.080,81 Resultado ejercicio 49500 -52.915,60 -21.582,62",
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+        old_snapshot = VentureAnalysisSnapshot.objects.create(
+            opportunity=opportunity,
+            source_document=document,
+            recommendation=VentureAnalysisSnapshot.Recommendation.BUY,
+            confidence=VentureAnalysisSnapshot.Confidence.LOW,
+            score_pct=Decimal("55.00"),
+            suggested_purchase_price=Decimal("10000.00"),
+            summary="Informe antiguo pobre.",
+        )
+        self.client.force_login(self.staff_user)
+
+        def fake_analysis(opportunity, documents, use_ai=True):
+            return VentureAnalysisSnapshot.objects.create(
+                opportunity=opportunity,
+                source_document=list(documents)[0],
+                recommendation=VentureAnalysisSnapshot.Recommendation.WATCH,
+                confidence=VentureAnalysisSnapshot.Confidence.MEDIUM,
+                score_pct=Decimal("70.00"),
+                suggested_purchase_price=Decimal("120000.00"),
+                summary="Informe regenerado con memoria actual.",
+                agent_provider="anthropic",
+                agent_label="Claude test",
+            )
+
+        with patch("venture_studies.views.run_opportunity_documents_analysis", side_effect=fake_analysis) as mocked_analysis:
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "download_opportunity_report_pdf",
+                    "opportunity_id": str(opportunity.id),
+                    "generate_analysis": "1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertTrue(response.content.startswith(b"%PDF"))
+        mocked_analysis.assert_called_once()
+        self.assertEqual(VentureAnalysisSnapshot.objects.filter(opportunity=opportunity).count(), 2)
+        self.assertNotEqual(opportunity.analysis_snapshots.first().id, old_snapshot.id)
+        self.assertEqual(opportunity.analysis_snapshots.first().summary, "Informe regenerado con memoria actual.")
+
     def test_pending_report_downloads_pdf_even_when_analysis_generation_fails(self):
         opportunity = VentureOpportunity.objects.create(
             company_name="Informe Pendiente SL",

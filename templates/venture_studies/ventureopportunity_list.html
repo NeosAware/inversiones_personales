@@ -441,6 +441,21 @@
                 </ul>
               </div>
             </div>
+            {% if can_manage_finances and selected_documents and selected_analysis_document %}
+              <div class="venture-primary-analysis">
+                <div>
+                  <strong>Regenerar informe con los PDFs actuales</strong>
+                  <p class="metric-sub" style="margin:4px 0 0;">Crea un nuevo memo usando la memoria, Informa, balance y dossier cargados ahora.</p>
+                </div>
+                <form method="post" style="margin:0;">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="download_opportunity_report_pdf">
+                  <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
+                  <input type="hidden" name="generate_analysis" value="1">
+                  <button class="button" type="submit">Regenerar y descargar informe PDF</button>
+                </form>
+              </div>
+            {% endif %}
           {% else %}
             <p class="venture-note">La ficha ya tiene datos basicos y {{ selected_documents|length }} PDF(s) cargados, pero todavia no existe un memo de inversion guardado. El siguiente paso crea una valoracion combinada con todos los documentos: Informa, balance y dossier.</p>
             <div class="venture-memo-grid">
@@ -475,6 +490,15 @@
               <p class="metric-sub">Precio compra aprox.: {{ selected_opportunity.latest_analysis.suggested_purchase_price|floatformat:0 }} EUR - Score {{ selected_opportunity.latest_analysis.score_pct|floatformat:0 }} % - {{ selected_opportunity.latest_analysis.agent_label }}</p>
               <p class="venture-note">{{ selected_opportunity.latest_analysis.summary }}</p>
               <p style="margin-top:14px;"><a class="button secondary" href="{% url 'venture_studies:opportunity_pdf' selected_opportunity.id %}">Descargar informe PDF</a></p>
+              {% if can_manage_finances and selected_documents and selected_analysis_document %}
+                <form method="post" style="margin-top:10px;">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="download_opportunity_report_pdf">
+                  <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
+                  <input type="hidden" name="generate_analysis" value="1">
+                  <button class="button" type="submit">Regenerar informe con memoria actual</button>
+                </form>
+              {% endif %}
             {% elif selected_documents and selected_analysis_document %}
               <p class="venture-decision-value">Pendiente</p>
               <p class="venture-note">Hay {{ selected_documents|length }} PDF(s) cargados. Genera la recomendacion para ver si es compra o vigilancia y el precio orientativo.</p>
