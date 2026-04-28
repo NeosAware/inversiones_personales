@@ -8,6 +8,7 @@ from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidd
 from django.shortcuts import get_object_or_404, redirect
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.text import slugify
 from django.views.generic import TemplateView
 from xhtml2pdf import pisa
@@ -51,6 +52,49 @@ def _analysis_report_documents(analysis: VentureAnalysisSnapshot):
     return list(opportunity.documents.all())
 
 
+def _pdf_response_from_template(template_name: str, context: dict, filename: str):
+    html = render_to_string(template_name, context)
+    output = BytesIO()
+    result = pisa.CreatePDF(html, dest=output, encoding="UTF-8")
+    if result.err:
+        logger.error("Error creating venture PDF from template %s", template_name)
+        return HttpResponse("No se ha podido generar el PDF.", status=500)
+
+    response = HttpResponse(output.getvalue(), content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+def _opportunity_report_documents(opportunity: VentureOpportunity, analysis: VentureAnalysisSnapshot | None = None):
+    if analysis:
+        return _analysis_report_documents(analysis)
+    return list(opportunity.documents.all())
+
+
+def _opportunity_report_pdf_response(
+    opportunity: VentureOpportunity,
+    *,
+    analysis: VentureAnalysisSnapshot | None = None,
+    documents=None,
+    generation_error: str = "",
+):
+    if documents is None:
+        documents = _opportunity_report_documents(opportunity, analysis)
+    filename_company = slugify(opportunity.company_name) or "empresa"
+    filename = f"informe-inversion-{filename_company}-{timezone.localdate():%Y-%m-%d}.pdf"
+    return _pdf_response_from_template(
+        "venture_studies/opportunity_report_pdf.html",
+        {
+            "opportunity": opportunity,
+            "analysis": analysis,
+            "documents": list(documents),
+            "generation_error": generation_error,
+            "report_date": timezone.localdate(),
+        },
+        filename,
+    )
+
+
 @login_required
 def download_analysis_pdf(request, analysis_id):
     if not can_user_manage_financial_data(request.user):
@@ -60,25 +104,30 @@ def download_analysis_pdf(request, analysis_id):
         VentureAnalysisSnapshot.objects.select_related("opportunity", "source_document").prefetch_related("opportunity__documents"),
         pk=analysis_id,
     )
-    html = render_to_string(
+    filename_company = slugify(analysis.opportunity.company_name) or "empresa"
+    filename = f"informe-inversion-{filename_company}-{analysis.analysis_date:%Y-%m-%d}.pdf"
+    return _pdf_response_from_template(
         "venture_studies/analysis_report_pdf.html",
         {
             "analysis": analysis,
             "opportunity": analysis.opportunity,
             "documents": _analysis_report_documents(analysis),
         },
+        filename,
     )
-    output = BytesIO()
-    result = pisa.CreatePDF(html, dest=output, encoding="UTF-8")
-    if result.err:
-        logger.error("Error creating venture analysis PDF %s", analysis.pk)
-        return HttpResponse("No se ha podido generar el PDF.", status=500)
 
-    filename_company = slugify(analysis.opportunity.company_name) or "empresa"
-    filename = f"informe-inversion-{filename_company}-{analysis.analysis_date:%Y-%m-%d}.pdf"
-    response = HttpResponse(output.getvalue(), content_type="application/pdf")
-    response["Content-Disposition"] = f'attachment; filename="{filename}"'
-    return response
+
+@login_required
+def download_opportunity_report_pdf(request, opportunity_id):
+    if not can_user_manage_financial_data(request.user):
+        return HttpResponseForbidden("No tienes permiso para descargar este informe.")
+
+    opportunity = get_object_or_404(
+        VentureOpportunity.objects.prefetch_related("documents", "analysis_snapshots"),
+        pk=opportunity_id,
+    )
+    analysis = opportunity.analysis_snapshots.first()
+    return _opportunity_report_pdf_response(opportunity, analysis=analysis)
 
 
 @login_required
@@ -245,6 +294,8 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             return self._analyze_existing_document(request)
         if action == "analyze_opportunity_documents":
             return self._analyze_opportunity_documents(request)
+        if action == "download_opportunity_report_pdf":
+            return self._download_opportunity_report_pdf(request)
         if action == "delete_opportunity":
             return self._delete_opportunity(request)
         if action == "discover_web":
@@ -593,6 +644,36 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         if request.POST.get("download_pdf") == "1":
             return redirect("venture_studies:analysis_pdf", analysis_id=snapshot.id)
         return self._redirect_to_company(opportunity.id)
+
+    def _download_opportunity_report_pdf(self, request):
+        opportunity = get_object_or_404(
+            VentureOpportunity.objects.prefetch_related("documents", "analysis_snapshots"),
+            pk=request.POST.get("opportunity_id"),
+        )
+        analysis = opportunity.analysis_snapshots.first()
+        documents = self._sort_documents_for_analysis(list(opportunity.documents.all()))
+        generation_error = ""
+        if not analysis and request.POST.get("generate_analysis") == "1" and documents:
+            try:
+                analysis = run_opportunity_documents_analysis(
+                    opportunity,
+                    documents,
+                    use_ai=True,
+                )
+            except Exception as exc:
+                logger.exception("Error generating downloadable venture report %s", opportunity.pk)
+                generation_error = (
+                    "No se ha podido completar la valoracion automatica. "
+                    f"Se genera informe pendiente con la ficha y documentos cargados. Detalle: {str(exc)[:220]}"
+                )
+        if analysis:
+            documents = _analysis_report_documents(analysis)
+        return _opportunity_report_pdf_response(
+            opportunity,
+            analysis=analysis,
+            documents=documents,
+            generation_error=generation_error,
+        )
 
     def _delete_opportunity(self, request):
         opportunity = get_object_or_404(VentureOpportunity, pk=request.POST.get("opportunity_id"))

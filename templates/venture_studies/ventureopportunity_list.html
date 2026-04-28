@@ -445,9 +445,9 @@
                 </div>
                 <form method="post" style="margin:0;">
                   {% csrf_token %}
-                  <input type="hidden" name="action" value="analyze_opportunity_documents">
+                  <input type="hidden" name="action" value="download_opportunity_report_pdf">
                   <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
-                  <input type="hidden" name="download_pdf" value="1">
+                  <input type="hidden" name="generate_analysis" value="1">
                   <button class="button" type="submit">Generar y descargar informe PDF</button>
                 </form>
               </div>
@@ -462,7 +462,7 @@
               <p class="venture-decision-value">{{ selected_opportunity.latest_analysis.get_recommendation_display }}</p>
               <p class="metric-sub">Precio compra aprox.: {{ selected_opportunity.latest_analysis.suggested_purchase_price|floatformat:0 }} EUR - Score {{ selected_opportunity.latest_analysis.score_pct|floatformat:0 }} % - {{ selected_opportunity.latest_analysis.agent_label }}</p>
               <p class="venture-note">{{ selected_opportunity.latest_analysis.summary }}</p>
-              <p style="margin-top:14px;"><a class="button secondary" href="{% url 'venture_studies:analysis_pdf' selected_opportunity.latest_analysis.id %}">Descargar informe PDF</a></p>
+              <p style="margin-top:14px;"><a class="button secondary" href="{% url 'venture_studies:opportunity_pdf' selected_opportunity.id %}">Descargar informe PDF</a></p>
             {% elif selected_documents and selected_analysis_document %}
               <p class="venture-decision-value">Pendiente</p>
               <p class="venture-note">Hay {{ selected_documents|length }} PDF(s) cargados. Genera la recomendacion para ver si es compra o vigilancia y el precio orientativo.</p>
@@ -470,9 +470,9 @@
               {% if can_manage_finances %}
                 <form method="post" style="margin-top:14px;">
                   {% csrf_token %}
-                  <input type="hidden" name="action" value="analyze_opportunity_documents">
+                  <input type="hidden" name="action" value="download_opportunity_report_pdf">
                   <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
-                  <input type="hidden" name="download_pdf" value="1">
+                  <input type="hidden" name="generate_analysis" value="1">
                   <button class="button" type="submit">Generar y descargar informe PDF</button>
                 </form>
               {% endif %}
@@ -502,9 +502,9 @@
             </div>
             <form method="post" style="margin:0;">
               {% csrf_token %}
-              <input type="hidden" name="action" value="analyze_opportunity_documents">
+              <input type="hidden" name="action" value="download_opportunity_report_pdf">
               <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
-              <input type="hidden" name="download_pdf" value="1">
+              <input type="hidden" name="generate_analysis" value="1">
               <button class="button" type="submit">Generar y descargar informe PDF</button>
             </form>
           </section>

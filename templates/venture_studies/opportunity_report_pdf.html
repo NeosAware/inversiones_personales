@@ -1,0 +1,224 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm;
+    }
+    body {
+      font-family: Helvetica, Arial, sans-serif;
+      color: #102b3a;
+      font-size: 10.5pt;
+      line-height: 1.35;
+    }
+    h1 {
+      font-size: 22pt;
+      margin: 0 0 6pt;
+    }
+    h2 {
+      font-size: 13pt;
+      margin: 18pt 0 8pt;
+      color: #0f5f88;
+      text-transform: uppercase;
+      letter-spacing: .8pt;
+    }
+    p {
+      margin: 0 0 7pt;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 6pt 0 12pt;
+    }
+    th, td {
+      border: 1px solid #d7e4ec;
+      padding: 6pt;
+      vertical-align: top;
+    }
+    th {
+      background: #eef5fa;
+      color: #31546a;
+      font-size: 8.5pt;
+      text-transform: uppercase;
+      letter-spacing: .5pt;
+    }
+    ul {
+      margin: 0 0 10pt 16pt;
+      padding: 0;
+    }
+    li {
+      margin-bottom: 4pt;
+    }
+    .muted {
+      color: #5c7280;
+    }
+    .decision {
+      background: #eef7f2;
+      border: 1px solid #bad9c8;
+      padding: 10pt;
+      margin: 12pt 0;
+    }
+    .pending {
+      background: #f6f1e8;
+      border-color: #decba7;
+    }
+    .big {
+      font-size: 18pt;
+      font-weight: bold;
+      margin: 0 0 4pt;
+    }
+    .small {
+      font-size: 8.5pt;
+    }
+  </style>
+</head>
+<body>
+  <p class="small muted">Radar de empresas no cotizadas - Informe de inversion</p>
+  <h1>{{ opportunity.company_name }}</h1>
+  <p class="muted">Fecha de informe: {{ report_date|date:"Y-m-d" }}{% if analysis %} | Analista: {{ analysis.agent_label }}{% endif %}</p>
+
+  <div class="decision {% if not analysis or analysis.recommendation != 'buy' %}pending{% endif %}">
+    {% if analysis %}
+      <p class="big">{{ analysis.get_recommendation_display }}</p>
+      <p>Confianza: {{ analysis.get_confidence_display }} | Score: {{ analysis.score_pct|floatformat:0 }} %</p>
+      <p>{{ analysis.summary }}</p>
+    {% else %}
+      <p class="big">Pendiente de valoracion</p>
+      <p>La ficha tiene documentos cargados, pero todavia no hay una recomendacion automatica guardada.</p>
+      {% if generation_error %}<p>{{ generation_error }}</p>{% endif %}
+    {% endif %}
+  </div>
+
+  <h2>Valoracion y participacion</h2>
+  <table>
+    <tr>
+      <th>Precio maximo 100 %</th>
+      <th>Ticket sugerido</th>
+      <th>Participacion objetivo</th>
+      <th>Rango de valoracion</th>
+    </tr>
+    <tr>
+      <td>{% if analysis and analysis.suggested_purchase_price %}{{ analysis.suggested_purchase_price|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+      <td>{% if analysis and analysis.suggested_ticket %}{{ analysis.suggested_ticket|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+      <td>{% if analysis and analysis.target_ownership_pct %}{{ analysis.target_ownership_pct|floatformat:1 }} %{% else %}-{% endif %}</td>
+      <td>
+        {% if analysis and analysis.valuation_low and analysis.valuation_high %}
+          {{ analysis.valuation_low|floatformat:0 }} - {{ analysis.valuation_high|floatformat:0 }} EUR
+        {% else %}
+          -
+        {% endif %}
+      </td>
+    </tr>
+  </table>
+  {% if analysis and analysis.valuation_note %}
+    <p>{{ analysis.valuation_note }}</p>
+  {% endif %}
+
+  <h2>Datos de empresa</h2>
+  <table>
+    <tr>
+      <th>NIF/CIF</th>
+      <th>Sector</th>
+      <th>Zona</th>
+      <th>CNAE</th>
+    </tr>
+    <tr>
+      <td>{{ opportunity.tax_id|default:"-" }}</td>
+      <td>{{ opportunity.sector|default:"-" }}</td>
+      <td>{{ opportunity.geography|default:"-" }}</td>
+      <td>{{ opportunity.cnae_code|default:"-" }} {% if opportunity.cnae_label %}- {{ opportunity.cnae_label }}{% endif %}</td>
+    </tr>
+    <tr>
+      <th>Ventas</th>
+      <th>EBITDA</th>
+      <th>Empleados</th>
+      <th>Web</th>
+    </tr>
+    <tr>
+      <td>{% if analysis and analysis.annual_revenue %}{{ analysis.annual_revenue|floatformat:0 }} EUR{% elif opportunity.annual_revenue %}{{ opportunity.annual_revenue|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+      <td>{% if analysis and analysis.ebitda %}{{ analysis.ebitda|floatformat:0 }} EUR{% elif opportunity.ebitda %}{{ opportunity.ebitda|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+      <td>{{ opportunity.employees|default:"-" }}</td>
+      <td>{{ opportunity.website|default:"-" }}</td>
+    </tr>
+  </table>
+
+  <h2>Motivos para comprar o participar</h2>
+  <ul>
+    {% if analysis %}
+      {% for driver in analysis.drivers %}
+        <li>{{ driver }}</li>
+      {% empty %}
+        <li>Sin motivos automaticos guardados.</li>
+      {% endfor %}
+    {% else %}
+      <li>Pendiente de generar por el analisis automatico.</li>
+    {% endif %}
+  </ul>
+
+  <h2>Riesgos y condiciones</h2>
+  <ul>
+    {% if analysis %}
+      {% for risk in analysis.risks %}
+        <li>{{ risk }}</li>
+      {% empty %}
+        <li>Sin riesgos automaticos guardados.</li>
+      {% endfor %}
+    {% else %}
+      <li>{{ opportunity.red_flags|default:"Pendiente de due diligence." }}</li>
+    {% endif %}
+  </ul>
+
+  {% if analysis %}
+    <h2>Supuestos</h2>
+    <ul>
+      {% for assumption in analysis.assumptions %}
+        <li>{{ assumption }}</li>
+      {% empty %}
+        <li>Sin supuestos automaticos guardados.</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  <h2>Tesis y proximos pasos</h2>
+  <table>
+    <tr>
+      <th>Encaje</th>
+      <th>Problema de crecimiento</th>
+    </tr>
+    <tr>
+      <td>{{ opportunity.synergy_notes|default:opportunity.fit_summary|default:"Pendiente" }}</td>
+      <td>{{ opportunity.growth_issue|default:"Pendiente" }}</td>
+    </tr>
+    <tr>
+      <th>Due diligence</th>
+      <th>Proximos pasos</th>
+    </tr>
+    <tr>
+      <td>{{ opportunity.diligence_notes|default:"Pendiente" }}</td>
+      <td>{{ opportunity.next_steps|default:"Pendiente de definir" }}</td>
+    </tr>
+  </table>
+
+  <h2>Documentos usados</h2>
+  <table>
+    <tr>
+      <th>Documento</th>
+      <th>Tipo</th>
+      <th>Fecha</th>
+    </tr>
+    {% for document in documents %}
+      <tr>
+        <td>{{ document.title }}</td>
+        <td>{{ document.get_document_kind_display }}</td>
+        <td>{% if document.document_date %}{{ document.document_date|date:"Y-m-d" }}{% elif document.fiscal_year %}{{ document.fiscal_year }}{% else %}{{ document.uploaded_at|date:"Y-m-d" }}{% endif %}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="3">Sin documentos asociados.</td></tr>
+    {% endfor %}
+  </table>
+
+  <p class="small muted">Informe orientativo para decision interna. Requiere due diligence legal, fiscal, financiera y comercial antes de comprar o participar.</p>
+</body>
+</html>

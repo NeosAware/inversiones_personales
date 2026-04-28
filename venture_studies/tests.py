@@ -741,6 +741,87 @@ class VentureStudiesViewTests(TestCase):
         analysis = VentureAnalysisSnapshot.objects.get(opportunity=opportunity)
         self.assertRedirects(response, reverse("venture_studies:analysis_pdf", args=[analysis.id]), fetch_redirect_response=False)
 
+    def test_pending_report_button_generates_and_downloads_pdf(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Informe Directo SL",
+            annual_revenue=Decimal("500000.00"),
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+        )
+        VentureDocument.objects.create(
+            opportunity=opportunity,
+            document_kind=VentureDocument.DocumentKind.BALANCE,
+            title="Balance 2024",
+            file="venture_studies/test/balance.pdf",
+            extracted_text="Ventas balance 500.000 EUR",
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+        self.client.force_login(self.staff_user)
+
+        def fake_analysis(opportunity, documents, use_ai=True):
+            return VentureAnalysisSnapshot.objects.create(
+                opportunity=opportunity,
+                source_document=list(documents)[0],
+                recommendation=VentureAnalysisSnapshot.Recommendation.BUY,
+                confidence=VentureAnalysisSnapshot.Confidence.MEDIUM,
+                score_pct=Decimal("80.00"),
+                suggested_purchase_price=Decimal("220000.00"),
+                summary="Informe directo generado.",
+                agent_provider="anthropic",
+                agent_label="Claude test",
+            )
+
+        with patch("venture_studies.views.run_opportunity_documents_analysis", side_effect=fake_analysis):
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "download_opportunity_report_pdf",
+                    "opportunity_id": str(opportunity.id),
+                    "generate_analysis": "1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertTrue(response.content.startswith(b"%PDF"))
+        self.assertTrue(VentureAnalysisSnapshot.objects.filter(opportunity=opportunity).exists())
+
+    def test_pending_report_downloads_pdf_even_when_analysis_generation_fails(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Informe Pendiente SL",
+            annual_revenue=Decimal("500000.00"),
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+        )
+        VentureDocument.objects.create(
+            opportunity=opportunity,
+            document_kind=VentureDocument.DocumentKind.BALANCE,
+            title="Balance 2024",
+            file="venture_studies/test/balance.pdf",
+            extracted_text="Ventas balance 500.000 EUR",
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+        self.client.force_login(self.staff_user)
+
+        with (
+            patch("venture_studies.views.run_opportunity_documents_analysis", side_effect=RuntimeError("Claude timeout")),
+            patch("venture_studies.views.logger.exception"),
+        ):
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "download_opportunity_report_pdf",
+                    "opportunity_id": str(opportunity.id),
+                    "generate_analysis": "1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertTrue(response.content.startswith(b"%PDF"))
+
     def test_document_analysis_creates_snapshot_from_extracted_balance_text(self):
         opportunity = VentureOpportunity.objects.create(
             company_name="Aditivos Minerales SL",
