@@ -407,6 +407,18 @@
             {% if selected_opportunity.latest_analysis.valuation_note %}
               <p class="venture-note">{{ selected_opportunity.latest_analysis.valuation_note }}</p>
             {% endif %}
+            {% with metrics=selected_opportunity.latest_analysis.analysis_payload.metrics %}
+              {% if metrics %}
+                <div class="venture-key-grid" style="margin-top:14px;">
+                  <div><span class="metric-label">Resultado neto memoria</span><strong>{% if metrics.profit %}{{ metrics.profit|floatformat:0 }} EUR{% else %}-{% endif %}</strong></div>
+                  <div><span class="metric-label">Resultado explotacion</span><strong>{% if metrics.operating_result %}{{ metrics.operating_result|floatformat:0 }} EUR{% else %}-{% endif %}</strong></div>
+                  <div><span class="metric-label">Patrimonio neto</span><strong>{% if selected_opportunity.latest_analysis.net_equity %}{{ selected_opportunity.latest_analysis.net_equity|floatformat:0 }} EUR{% elif metrics.net_equity %}{{ metrics.net_equity|floatformat:0 }} EUR{% else %}-{% endif %}</strong></div>
+                  <div><span class="metric-label">Tesoreria</span><strong>{% if metrics.cash %}{{ metrics.cash|floatformat:0 }} EUR{% else %}-{% endif %}</strong></div>
+                  <div><span class="metric-label">Clientes</span><strong>{% if metrics.trade_receivables %}{{ metrics.trade_receivables|floatformat:0 }} EUR{% else %}-{% endif %}</strong></div>
+                  <div><span class="metric-label">Pago proveedores</span><strong>{% if metrics.supplier_payment_days %}{{ metrics.supplier_payment_days|floatformat:0 }} dias{% else %}-{% endif %}</strong></div>
+                </div>
+              {% endif %}
+            {% endwith %}
             <div class="venture-decision-grid">
               <div>
                 <p class="metric-label">Motivos para comprar o participar</p>

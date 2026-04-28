@@ -934,12 +934,116 @@ def _find_metric_after_labels(text: str, labels: tuple[str, ...]) -> Decimal | N
     return None
 
 
+def _account_code_values(text: str, code: str) -> list[Decimal]:
+    code_pattern = re.compile(rf"(?<!\d){re.escape(str(code))}(?!\d)")
+    for line in normalize_lines(text):
+        match = code_pattern.search(line)
+        if not match:
+            continue
+        tail = line[match.end() :]
+        values = _money_values_from_window(tail, allow_chart_values=True)
+        if values:
+            return values
+    return []
+
+
+def _account_current_value(text: str, codes: tuple[str, ...]) -> Decimal | None:
+    for code in codes:
+        values = _account_code_values(text, code)
+        if values:
+            return values[0]
+    return None
+
+
+def _account_previous_value(text: str, codes: tuple[str, ...]) -> Decimal | None:
+    for code in codes:
+        values = _account_code_values(text, code)
+        if len(values) >= 2:
+            return values[1]
+    return None
+
+
+def _ratio_pct(numerator: Decimal | None, denominator: Decimal | None) -> Decimal | None:
+    if numerator is None or denominator is None or denominator == ZERO:
+        return None
+    return (numerator / denominator * Decimal("100")).quantize(Decimal("0.01"))
+
+
+def _days_ratio(numerator: Decimal | None, denominator: Decimal | None) -> Decimal | None:
+    if numerator is None or denominator is None or denominator == ZERO:
+        return None
+    return (numerator / denominator * Decimal("365")).quantize(Decimal("0.01"))
+
+
 def parse_balance_metrics(text: str) -> dict:
-    annual_revenue = _find_informa_summary_money(text, ("ventas balance",))
-    total_assets = _find_informa_summary_money(text, ("activo total",))
-    profit = _find_informa_summary_money(text, ("resultados balance",))
-    return {
-        "annual_revenue": annual_revenue or _find_metric_after_labels(
+    annual_revenue = _find_informa_summary_money(text, ("ventas balance",)) or _account_current_value(text, ("40100",))
+    total_assets = _find_informa_summary_money(text, ("activo total",)) or _account_current_value(text, ("10000",))
+    net_equity = _account_current_value(text, ("20000", "21000")) or _find_metric_after_labels(
+        text,
+        (
+            "patrimonio neto",
+            "fondos propios",
+            "capital y reservas",
+        ),
+    )
+    current_liabilities = _account_current_value(text, ("32000",))
+    non_current_liabilities = _account_current_value(text, ("31000",))
+    total_liabilities = _account_current_value(text, ("31000", "32000"))
+    if non_current_liabilities is not None and current_liabilities is not None:
+        total_liabilities = non_current_liabilities + current_liabilities
+    if total_liabilities is None and total_assets is not None and net_equity is not None:
+        total_liabilities = total_assets - net_equity
+
+    debt_values = [
+        _account_current_value(text, ("31220",)),
+        _account_current_value(text, ("32320",)),
+        _find_metric_after_labels(
+            text,
+            (
+                "deudas con entidades de credito",
+                "deuda financiera",
+                "prestamos",
+                "acreedores financieros",
+            ),
+        ),
+    ]
+    debt = sum((value for value in debt_values if value is not None), ZERO)
+    if debt == ZERO and not any(value is not None for value in debt_values):
+        debt = None
+
+    profit = (
+        _account_current_value(text, ("49500", "21700"))
+        or _find_metric_after_labels(
+            text,
+            (
+                "resultado del ejercicio",
+                "beneficio despues de impuestos",
+                "resultado despues de impuestos",
+            ),
+        )
+        or _find_informa_summary_money(text, ("resultados balance",))
+    )
+    current_assets = _account_current_value(text, ("12000",))
+    cash = _account_current_value(text, ("12700",)) or _find_metric_after_labels(
+        text,
+        (
+            "efectivo y otros activos liquidos equivalentes",
+            "tesoreria",
+            "efectivo",
+            "caja",
+        ),
+    )
+    trade_receivables = _account_current_value(text, ("12380", "12300"))
+    trade_payables = _account_current_value(text, ("32580", "32500"))
+    operating_result = _account_current_value(text, ("49100",))
+    previous_profit = _account_previous_value(text, ("49500", "21700"))
+    previous_revenue = _account_previous_value(text, ("40100",))
+    supplier_payment_days = _account_current_value(text, ("94705",))
+    average_employees = _account_current_value(text, ("04001",))
+
+    metrics = {
+        "annual_revenue": annual_revenue
+        or _find_metric_after_labels(
             text,
             (
                 "importe neto de la cifra de negocios",
@@ -950,43 +1054,29 @@ def parse_balance_metrics(text: str) -> dict:
             ),
         ),
         "ebitda": _find_metric_after_labels(text, ("ebitda",)),
-        "net_equity": _find_metric_after_labels(
-            text,
-            (
-                "patrimonio neto",
-                "fondos propios",
-                "capital y reservas",
-            ),
-        ),
+        "net_equity": net_equity,
         "total_assets": total_assets or _find_metric_after_labels(text, ("total activo", "activo total")),
-        "total_liabilities": _find_metric_after_labels(text, ("total pasivo", "pasivo total")),
-        "debt": _find_metric_after_labels(
-            text,
-            (
-                "deudas con entidades de credito",
-                "deuda financiera",
-                "prestamos",
-                "acreedores financieros",
-            ),
-        ),
-        "cash": _find_metric_after_labels(
-            text,
-            (
-                "efectivo y otros activos liquidos equivalentes",
-                "tesoreria",
-                "efectivo",
-                "caja",
-            ),
-        ),
-        "profit": _find_metric_after_labels(
-            text,
-            (
-                "resultado del ejercicio",
-                "beneficio despues de impuestos",
-                "resultado despues de impuestos",
-            ),
-        ) or profit,
+        "total_liabilities": total_liabilities,
+        "current_assets": current_assets,
+        "current_liabilities": current_liabilities,
+        "debt": debt,
+        "cash": cash,
+        "profit": profit,
+        "operating_result": operating_result,
+        "previous_revenue": previous_revenue,
+        "previous_profit": previous_profit,
+        "trade_receivables": trade_receivables,
+        "trade_payables": trade_payables,
+        "inventory": _account_current_value(text, ("12200",)),
+        "supplier_payment_days": supplier_payment_days,
+        "average_employees": average_employees,
     }
+    metrics["profit_margin_pct"] = _ratio_pct(metrics["profit"], metrics["annual_revenue"])
+    metrics["operating_margin_pct"] = _ratio_pct(metrics["operating_result"], metrics["annual_revenue"])
+    metrics["equity_ratio_pct"] = _ratio_pct(metrics["net_equity"], metrics["total_assets"])
+    metrics["collection_days"] = _days_ratio(metrics["trade_receivables"], metrics["annual_revenue"])
+    metrics["payable_days"] = _days_ratio(metrics["trade_payables"], metrics["annual_revenue"])
+    return metrics
 
 
 def fetch_website_context(url: str) -> dict:
@@ -1122,7 +1212,19 @@ def build_core_valuation(opportunity: VentureOpportunity, metrics: dict, web_con
     cash_need = metrics.get("cash_need") or opportunity.cash_need
     debt = metrics.get("debt")
     cash = metrics.get("cash")
+    profit = metrics.get("profit")
+    operating_result = metrics.get("operating_result")
+    total_assets = metrics.get("total_assets")
+    total_liabilities = metrics.get("total_liabilities")
+    current_assets = metrics.get("current_assets")
+    current_liabilities = metrics.get("current_liabilities")
+    supplier_payment_days = metrics.get("supplier_payment_days")
+    collection_days = metrics.get("collection_days")
+    equity_ratio_pct = metrics.get("equity_ratio_pct")
+    profit_margin_pct = metrics.get("profit_margin_pct")
     net_debt = (debt - cash) if debt is not None and cash is not None else debt
+    if net_debt is None and cash is not None:
+        net_debt = -cash
     score_pct = Decimal(str(opportunity.score_pct)).quantize(Decimal("0.01"))
     score_factor = max(Decimal("0.70"), min(Decimal("1.30"), score_pct / Decimal("75")))
 
@@ -1134,11 +1236,22 @@ def build_core_valuation(opportunity: VentureOpportunity, metrics: dict, web_con
         VentureOpportunity.Stage.OTHER: Decimal("0.85"),
     }.get(opportunity.stage, Decimal("0.85"))
 
-    revenue_multiple = Decimal("0.65") * score_factor * stage_discount
-    ebitda_multiple = Decimal("4.50") * score_factor * stage_discount
+    loss_discount = Decimal("1.00")
+    if profit is not None and profit < ZERO:
+        loss_discount *= Decimal("0.72")
+    if operating_result is not None and operating_result < ZERO:
+        loss_discount *= Decimal("0.88")
+    if supplier_payment_days is not None and supplier_payment_days > Decimal("75"):
+        loss_discount *= Decimal("0.92")
+
+    revenue_multiple = Decimal("0.65") * score_factor * stage_discount * loss_discount
+    ebitda_multiple = Decimal("4.50") * score_factor * stage_discount * loss_discount
     revenue_value = revenue * revenue_multiple if revenue and revenue > ZERO else None
     ebitda_value = ebitda * ebitda_multiple if ebitda and ebitda > ZERO else None
-    equity_floor = net_equity * Decimal("0.85") if net_equity and net_equity > ZERO else None
+    equity_floor_discount = Decimal("0.85")
+    if profit is not None and profit < ZERO:
+        equity_floor_discount = Decimal("0.70")
+    equity_floor = net_equity * equity_floor_discount if net_equity and net_equity > ZERO else None
     enterprise_value = _weighted_average(
         [
             (revenue_value, Decimal("0.40")),
@@ -1179,19 +1292,31 @@ def build_core_valuation(opportunity: VentureOpportunity, metrics: dict, web_con
     ask_is_attractive = ask_valuation is not None and suggested_purchase_price and ask_valuation <= suggested_purchase_price
     score_supports_buy = score_pct >= Decimal("75")
     strong_fit_watch = score_pct >= Decimal("68") and opportunity.neos_fit_score >= 4
+    has_current_losses = (profit is not None and profit < ZERO) or (operating_result is not None and operating_result < ZERO)
     recommendation = (
         VentureAnalysisSnapshot.Recommendation.BUY
         if (ask_is_attractive or (ask_valuation is None and score_supports_buy and confidence != VentureAnalysisSnapshot.Confidence.LOW))
         else VentureAnalysisSnapshot.Recommendation.WATCH
     )
+    if has_current_losses and not ask_is_attractive:
+        recommendation = VentureAnalysisSnapshot.Recommendation.WATCH
     if recommendation == VentureAnalysisSnapshot.Recommendation.WATCH and strong_fit_watch and confidence == VentureAnalysisSnapshot.Confidence.HIGH:
         recommendation = VentureAnalysisSnapshot.Recommendation.BUY
+    if has_current_losses and not ask_is_attractive:
+        recommendation = VentureAnalysisSnapshot.Recommendation.WATCH
 
     drivers = [
         f"Encaje Neos {opportunity.neos_fit_score}/5 y score total {score_pct:.0f} %.",
     ]
     if revenue:
         drivers.append(f"Facturacion detectada o registrada: {revenue:.0f} EUR.")
+    if net_equity and net_equity > ZERO:
+        if equity_ratio_pct is not None:
+            drivers.append(f"Patrimonio neto positivo: {net_equity:.0f} EUR ({equity_ratio_pct:.0f} % del activo).")
+        else:
+            drivers.append(f"Patrimonio neto positivo: {net_equity:.0f} EUR.")
+    if cash and cash > ZERO:
+        drivers.append(f"Tesoreria detectada: {cash:.0f} EUR.")
     if ebitda and ebitda > ZERO:
         drivers.append(f"EBITDA positivo usado en la valoracion: {ebitda:.0f} EUR.")
     if web_context.get("available"):
@@ -1200,6 +1325,17 @@ def build_core_valuation(opportunity: VentureOpportunity, metrics: dict, web_con
     risks = []
     if not text:
         risks.append("El PDF no ha aportado texto util; la valoracion depende mas de datos manuales.")
+    if profit is not None and profit < ZERO:
+        if profit_margin_pct is not None:
+            risks.append(f"Resultado neto negativo: {profit:.0f} EUR ({profit_margin_pct:.1f} % sobre ventas).")
+        else:
+            risks.append(f"Resultado neto negativo: {profit:.0f} EUR.")
+    if operating_result is not None and operating_result < ZERO:
+        risks.append(f"Resultado de explotacion negativo: {operating_result:.0f} EUR; no conviene pagar multiple de EBITDA.")
+    if supplier_payment_days is not None and supplier_payment_days > Decimal("60"):
+        risks.append(f"Periodo medio de pago a proveedores elevado: {supplier_payment_days:.0f} dias.")
+    if collection_days is not None and collection_days > Decimal("120"):
+        risks.append(f"Clientes pendientes equivalen a unos {collection_days:.0f} dias de ventas; revisar cobros y concentracion.")
     if ebitda is not None and ebitda <= ZERO:
         risks.append("EBITDA negativo o no demostrable: exige margen de seguridad.")
     if confidence == VentureAnalysisSnapshot.Confidence.LOW:
@@ -1212,14 +1348,32 @@ def build_core_valuation(opportunity: VentureOpportunity, metrics: dict, web_con
         f"Margen de seguridad aplicado: {(Decimal('1') - margin_of_safety) * Decimal('100'):.0f} %.",
         "Precio de compra aproximado entendido como valor maximo orientativo del 100 % de la empresa antes de negociacion.",
     ]
+    if has_current_losses:
+        assumptions.append("La existencia de perdidas penaliza los multiplos y desplaza la decision hacia vigilancia salvo precio muy atractivo.")
+    if current_assets is not None and current_liabilities is not None:
+        assumptions.append(f"Liquidez corriente orientativa: activo corriente {current_assets:.0f} EUR frente a pasivo corriente {current_liabilities:.0f} EUR.")
+    if total_assets is not None and total_liabilities is not None:
+        assumptions.append(f"Estructura de balance: activo total {total_assets:.0f} EUR y pasivo total {total_liabilities:.0f} EUR.")
     valuation_note = (
         "Valoracion por triangulacion de ventas, EBITDA y patrimonio neto cuando estan disponibles. "
         "Para empresas no cotizadas y con tension de crecimiento, el precio sugerido aplica descuento de seguridad."
     )
+    if has_current_losses:
+        valuation_note = (
+            "La memoria muestra perdidas y resultado operativo negativo. La valoracion se apoya de forma prudente en ventas, "
+            "patrimonio neto y caja, aplicando descuentos adicionales hasta aclarar margen, cobros y deuda comercial."
+        )
     summary = (
         f"{opportunity.company_name}: recomendacion {dict(VentureAnalysisSnapshot.Recommendation.choices)[recommendation].lower()} "
         f"con confianza {dict(VentureAnalysisSnapshot.Confidence.choices)[confidence].lower()}. "
+        f"Ventas {revenue:.0f} EUR, resultado {profit:.0f} EUR y patrimonio neto {net_equity:.0f} EUR. "
         f"Precio maximo orientativo del 100 %: {suggested_purchase_price:.0f} EUR."
+        if revenue is not None and profit is not None and net_equity is not None
+        else (
+            f"{opportunity.company_name}: recomendacion {dict(VentureAnalysisSnapshot.Recommendation.choices)[recommendation].lower()} "
+            f"con confianza {dict(VentureAnalysisSnapshot.Confidence.choices)[confidence].lower()}. "
+            f"Precio maximo orientativo del 100 %: {suggested_purchase_price:.0f} EUR."
+        )
     )
 
     return {
@@ -1247,6 +1401,8 @@ def build_core_valuation(opportunity: VentureOpportunity, metrics: dict, web_con
         "agent_label": "Analisis interno",
         "analysis_payload": {
             "metrics": {key: str(value) for key, value in metrics.items() if value is not None},
+            "loss_discount": str(loss_discount.quantize(Decimal("0.01"))),
+            "equity_floor_discount": str(equity_floor_discount.quantize(Decimal("0.01"))),
             "revenue_multiple": str(revenue_multiple.quantize(Decimal("0.01"))),
             "ebitda_multiple": str(ebitda_multiple.quantize(Decimal("0.01"))),
             "margin_of_safety": str(margin_of_safety),
@@ -1475,6 +1631,7 @@ def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, tex
         "Trabajas solo con el JSON recibido: datos manuales, texto extraido del PDF y contexto web. "
         "El PDF puede ser un balance, cuentas anuales, un dossier financiero/comercial, un deck comercial o un informe mixto. "
         "Evalua finanzas, calidad comercial, clientes, recurrencia, cartera de pedidos, pipeline, pricing, canales, dependencia de clientes, equipo y encaje industrial con Neos. "
+        "Si hay memoria o cuentas anuales, comenta resultado de explotacion, resultado neto, patrimonio, caja, clientes, proveedores, pago a proveedores y solvencia. "
         "No inventes cifras. Si una cifra no aparece, dilo. Devuelve solo JSON valido. "
         "La recomendacion debe ser buy o watch. El precio sugerido es orientativo para el 100 % de la empresa, con margen de seguridad."
     )
@@ -1484,6 +1641,7 @@ def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, tex
         "Devuelve JSON con: recommendation, confidence, score_pct, "
         "suggested_purchase_price, valuation_low, valuation_base, valuation_high, suggested_ticket, target_ownership_pct, "
         "annual_revenue, ebitda, cash_need, summary, valuation_note, web_summary, drivers, risks y assumptions. "
+        "El summary, drivers, risks y assumptions deben citar las cifras clave detectadas cuando existan y explicar por que es compra o vigilancia. "
         "Incluye tambien opportunity_updates con los campos del formulario que puedas completar sin inventar: "
         "legal_name, tax_id, website, sector, geography, address, phone, email, cnae_code, cnae_label, employees, "
         "stage, status, strategic_fit, contact_name, source, next_review_on, ticket_min, ticket_max, estimated_valuation, "

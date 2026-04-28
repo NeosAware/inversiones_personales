@@ -13,6 +13,7 @@ from .services import (
     discover_web_candidates,
     guess_company_name_from_upload,
     import_informa_report,
+    parse_balance_metrics,
     parse_informa_company_fields,
     run_document_analysis,
     try_ai_venture_analysis,
@@ -861,6 +862,87 @@ class VentureStudiesViewTests(TestCase):
         self.assertGreater(snapshot.suggested_purchase_price, Decimal("0"))
         self.assertEqual(snapshot.annual_revenue, Decimal("420000.00"))
         self.assertEqual(snapshot.ebitda, Decimal("80000.00"))
+
+    def test_parse_spanish_annual_accounts_memoria_metrics(self):
+        text = """
+        INFORMACION SOBRE EL PERIODO MEDIO DE PAGO A PROVEEDORES DURANTE EL EJERCICIO
+        94705 90 85
+        ACTIVO NOTASDELAMEMORIA EJERCICIO2024 EJERCICIO2023
+        B) ACTIVOCORRIENTE 12000 296.437,33 379.959,42
+        I. Existencias 12200 45.200,00 62.359,34
+        1. Clientesporventasyprestacionesdeservicios 12380 202.616,83 202.690,54
+        VI.Efectivoy otrosactivosliquidosequivalentes 12700 47.544,40 48.647,20
+        TOTALACTIVO(A+ B) 10000 319.513,19 403.376,61
+        PATRIMONIONETOY PASIVO NOTASDELAMEMORIA EJERCICIO2024 EJERCICIO2023
+        A) PATRIMONIONETO 20000 211.836,45 264.976,67
+        VII.Resultadodelejercicio 21700 -52.915,60 -21.582,62
+        C) PASIVOCORRIENTE 32000 107.676,74 138.399,94
+        IV.Acreedorescomercialesy otrascuentasa pagar 32500 107.676,74 138.399,94
+        1. Proveedores 32580 88.635,33 90.077,26
+        1. Importenetodelacifradenegocios 40100 577.352,12 576.080,81
+        A) RESULTADODE EXPLOTACION 49100 -53.943,42 -20.350,49
+        D) RESULTADODELEJERCICIO 49500 -52.915,60 -21.582,62
+        PERSONALASALARIADO
+        04001 3,75 3,75
+        """
+
+        metrics = parse_balance_metrics(text)
+
+        self.assertEqual(metrics["annual_revenue"], Decimal("577352.12"))
+        self.assertEqual(metrics["cash"], Decimal("47544.40"))
+        self.assertEqual(metrics["net_equity"], Decimal("211836.45"))
+        self.assertEqual(metrics["total_assets"], Decimal("319513.19"))
+        self.assertEqual(metrics["total_liabilities"], Decimal("107676.74"))
+        self.assertEqual(metrics["profit"], Decimal("-52915.60"))
+        self.assertEqual(metrics["operating_result"], Decimal("-53943.42"))
+        self.assertEqual(metrics["supplier_payment_days"], Decimal("90"))
+        self.assertEqual(metrics["collection_days"], Decimal("128.09"))
+
+    def test_annual_accounts_analysis_uses_memoria_for_decision(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Compuestos Ceramicos SL",
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+        )
+        document = VentureDocument.objects.create(
+            opportunity=opportunity,
+            title="Memoria 2024",
+            file="venture_studies/test/memoria.pdf",
+            extracted_text=(
+                "94705 90 85\n"
+                "B) ACTIVOCORRIENTE 12000 296.437,33 379.959,42\n"
+                "1. Clientesporventasyprestacionesdeservicios 12380 202.616,83 202.690,54\n"
+                "VI.Efectivoy otrosactivosliquidosequivalentes 12700 47.544,40 48.647,20\n"
+                "TOTALACTIVO(A+ B) 10000 319.513,19 403.376,61\n"
+                "A) PATRIMONIONETO 20000 211.836,45 264.976,67\n"
+                "C) PASIVOCORRIENTE 32000 107.676,74 138.399,94\n"
+                "1. Proveedores 32580 88.635,33 90.077,26\n"
+                "1. Importenetodelacifradenegocios 40100 577.352,12 576.080,81\n"
+                "A) RESULTADODE EXPLOTACION 49100 -53.943,42 -20.350,49\n"
+                "D) RESULTADODELEJERCICIO 49500 -52.915,60 -21.582,62\n"
+            ),
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+
+        with patch("venture_studies.services.fetch_venture_web_context") as web_context:
+            web_context.return_value = {
+                "available": False,
+                "note": "Sin contexto web en test.",
+                "top_items": [],
+                "website": {},
+            }
+            snapshot = run_document_analysis(document, use_ai=False)
+
+        self.assertEqual(snapshot.recommendation, VentureAnalysisSnapshot.Recommendation.WATCH)
+        self.assertEqual(snapshot.annual_revenue, Decimal("577352.12"))
+        self.assertEqual(snapshot.net_equity, Decimal("211836.45"))
+        self.assertEqual(snapshot.net_debt, Decimal("-47544.40"))
+        self.assertGreater(snapshot.suggested_purchase_price, Decimal("0"))
+        self.assertIn("Resultado neto negativo", " ".join(snapshot.risks))
+        self.assertIn("Periodo medio de pago", " ".join(snapshot.risks))
+        self.assertIn("memoria", snapshot.valuation_note.lower())
+        self.assertEqual(snapshot.analysis_payload["metrics"]["operating_result"], "-53943.42")
 
     @override_settings(
         AI_LLM_PROVIDER="anthropic",

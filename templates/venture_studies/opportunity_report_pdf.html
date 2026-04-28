@@ -144,6 +144,52 @@
     </tr>
   </table>
 
+  {% if analysis %}
+    {% with metrics=analysis.analysis_payload.metrics %}
+      {% if metrics %}
+        <h2>Lectura de memoria y solvencia</h2>
+        <table>
+          <tr>
+            <th>Resultado neto</th>
+            <th>Resultado explotacion</th>
+            <th>Patrimonio neto</th>
+            <th>Activo total</th>
+          </tr>
+          <tr>
+            <td>{% if metrics.profit %}{{ metrics.profit|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+            <td>{% if metrics.operating_result %}{{ metrics.operating_result|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+            <td>{% if analysis.net_equity %}{{ analysis.net_equity|floatformat:0 }} EUR{% elif metrics.net_equity %}{{ metrics.net_equity|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+            <td>{% if metrics.total_assets %}{{ metrics.total_assets|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+          </tr>
+          <tr>
+            <th>Tesoreria</th>
+            <th>Pasivo total</th>
+            <th>Clientes</th>
+            <th>Proveedores</th>
+          </tr>
+          <tr>
+            <td>{% if metrics.cash %}{{ metrics.cash|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+            <td>{% if metrics.total_liabilities %}{{ metrics.total_liabilities|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+            <td>{% if metrics.trade_receivables %}{{ metrics.trade_receivables|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+            <td>{% if metrics.trade_payables %}{{ metrics.trade_payables|floatformat:0 }} EUR{% else %}-{% endif %}</td>
+          </tr>
+          <tr>
+            <th>Margen neto</th>
+            <th>Solvencia patrimonial</th>
+            <th>Dias de cobro estimados</th>
+            <th>Pago proveedores</th>
+          </tr>
+          <tr>
+            <td>{% if metrics.profit_margin_pct %}{{ metrics.profit_margin_pct|floatformat:1 }} %{% else %}-{% endif %}</td>
+            <td>{% if metrics.equity_ratio_pct %}{{ metrics.equity_ratio_pct|floatformat:1 }} %{% else %}-{% endif %}</td>
+            <td>{% if metrics.collection_days %}{{ metrics.collection_days|floatformat:0 }} dias{% else %}-{% endif %}</td>
+            <td>{% if metrics.supplier_payment_days %}{{ metrics.supplier_payment_days|floatformat:0 }} dias{% else %}-{% endif %}</td>
+          </tr>
+        </table>
+      {% endif %}
+    {% endwith %}
+  {% endif %}
+
   <h2>Motivos para comprar o participar</h2>
   <ul>
     {% if analysis %}
