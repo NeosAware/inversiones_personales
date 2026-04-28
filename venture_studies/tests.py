@@ -234,6 +234,41 @@ class VentureStudiesViewTests(TestCase):
         self.assertEqual(document.document_kind, VentureDocument.DocumentKind.DOSSIER)
         mocked_analysis.assert_called_once_with(document, use_ai=True)
 
+    def test_initial_pdf_upload_does_not_500_when_analysis_fails(self):
+        self.client.force_login(self.staff_user)
+
+        with (
+            patch("venture_studies.views.run_document_analysis", side_effect=RuntimeError("Claude timeout")),
+            patch("venture_studies.views.logger.exception"),
+        ):
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "save_opportunity",
+                    "stage": VentureOpportunity.Stage.EARLY,
+                    "status": VentureOpportunity.Status.SCREENING,
+                    "strategic_fit": VentureOpportunity.StrategicFit.BOTH,
+                    "identified_on": "2026-04-28",
+                    "neos_fit_score": "3",
+                    "market_score": "3",
+                    "team_score": "3",
+                    "financial_score": "3",
+                    "risk_control_score": "3",
+                    "title": "Dossier con fallo",
+                    "use_ai": "on",
+                    "file": SimpleUploadedFile(
+                        "Informe Financiero - FALLO CLAUDE SL.pdf",
+                        b"%PDF-1.4\n%%EOF",
+                        content_type="application/pdf",
+                    ),
+                },
+            )
+
+        opportunity = VentureOpportunity.objects.get(company_name="FALLO CLAUDE SL")
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
+        document = VentureDocument.objects.get(opportunity=opportunity)
+        self.assertIn("Claude timeout", document.extraction_error)
+
     def test_staff_user_can_update_selected_company_from_partial_tab_form(self):
         opportunity = VentureOpportunity.objects.create(
             company_name="Empresa Parcial SL",

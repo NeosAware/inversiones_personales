@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.shortcuts import get_object_or_404, redirect
@@ -22,6 +24,9 @@ from .services import (
     promote_discovery_candidate,
     run_document_analysis,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
@@ -188,13 +193,24 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         return self._redirect_to_company(opportunity.id)
 
     def _create_opportunity_from_initial_pdf(self, request):
-        seed = build_opportunity_seed_from_pdf(
-            request.FILES["file"],
-            fallback_company_name=request.POST.get("company_name", ""),
-        )
+        try:
+            seed = build_opportunity_seed_from_pdf(
+                request.FILES["file"],
+                fallback_company_name=request.POST.get("company_name", ""),
+            )
+        except Exception as exc:
+            logger.exception("Error creating venture opportunity seed from PDF upload")
+            seed = {
+                "company_name": "",
+                "fields": {},
+                "text": "",
+                "error": str(exc),
+            }
         if not seed["company_name"]:
             form = VentureOpportunityForm(request.POST)
             form.add_error("company_name", "No se ha podido detectar la empresa en el PDF. Escribe el nombre y vuelve a guardar.")
+            if seed.get("error"):
+                messages.warning(request, f"No se pudo leer el PDF automaticamente: {seed['error']}")
             context = self.get_context_data(form=form, creating_new_company=True)
             return self.render_to_response(context, status=400)
 
@@ -225,6 +241,23 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         self._analyze_attached_dossier(request, opportunity, extracted_text=seed.get("text", ""))
         return self._redirect_to_company(opportunity.id)
 
+    def _document_analysis_failed(self, request, document, exc):
+        logger.exception("Error analysing venture document %s", document.pk)
+        document.extraction_error = str(exc)[:1000]
+        update_fields = ["extraction_error"]
+        if not document.extracted_text:
+            document.extraction_status = VentureDocument.ExtractionStatus.FAILED
+            update_fields.append("extraction_status")
+        document.save(update_fields=update_fields)
+        messages.warning(
+            request,
+            (
+                "El PDF se ha guardado, pero el analisis automatico no se ha podido completar. "
+                "Revisa que el PDF tenga texto seleccionable o prueba con una version OCR."
+            ),
+        )
+        return None
+
     def _analyze_attached_dossier(self, request, opportunity, *, extracted_text: str = ""):
         if "file" not in request.FILES:
             return None
@@ -244,10 +277,13 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             document.extraction_status = VentureDocument.ExtractionStatus.EXTRACTED
             document.extraction_error = ""
             document.save(update_fields=["extracted_text", "extraction_status", "extraction_error"])
-        snapshot = run_document_analysis(
-            document,
-            use_ai=form.cleaned_data.get("use_ai", True),
-        )
+        try:
+            snapshot = run_document_analysis(
+                document,
+                use_ai=form.cleaned_data.get("use_ai", True),
+            )
+        except Exception as exc:
+            return self._document_analysis_failed(request, document, exc)
         messages.success(
             request,
             (
@@ -275,10 +311,14 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             return self.render_to_response(context, status=400)
 
         document = form.save_document()
-        snapshot = run_document_analysis(
-            document,
-            use_ai=form.cleaned_data.get("use_ai", True),
-        )
+        try:
+            snapshot = run_document_analysis(
+                document,
+                use_ai=form.cleaned_data.get("use_ai", True),
+            )
+        except Exception as exc:
+            self._document_analysis_failed(request, document, exc)
+            return self._redirect_to_company(document.opportunity_id)
         messages.success(
             request,
             (
@@ -301,10 +341,14 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             return self.render_to_response(context, status=400)
 
         document = form.save_document()
-        snapshot = run_document_analysis(
-            document,
-            use_ai=form.cleaned_data.get("use_ai", True),
-        )
+        try:
+            snapshot = run_document_analysis(
+                document,
+                use_ai=form.cleaned_data.get("use_ai", True),
+            )
+        except Exception as exc:
+            self._document_analysis_failed(request, document, exc)
+            return self._redirect_to_company(document.opportunity_id)
         messages.success(
             request,
             (
