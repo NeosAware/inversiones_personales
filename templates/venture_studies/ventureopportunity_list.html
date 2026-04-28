@@ -557,7 +557,7 @@
           </div>
         </div>
         {% if can_manage_finances %}
-          <form method="post" enctype="multipart/form-data" class="stack">
+          <form method="post" enctype="multipart/form-data" class="stack" novalidate>
             {% csrf_token %}
             <input type="hidden" name="action" value="save_opportunity">
             <section class="soft-panel">

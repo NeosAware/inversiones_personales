@@ -127,6 +127,7 @@ class VentureStudiesViewTests(TestCase):
         self.assertContains(response, "PDF financiero/comercial para Claude")
         self.assertContains(response, "Subir PDF con informacion financiera y comercial")
         self.assertContains(response, "Si dejas Empresa vacio")
+        self.assertContains(response, 'class="stack" novalidate')
         self.assertContains(response, "Guardar empresa")
         self.assertContains(response, 'href="?company=')
 
