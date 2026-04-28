@@ -1,10 +1,16 @@
 import logging
+from io import BytesIO
 
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect
+from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils.text import slugify
 from django.views.generic import TemplateView
+from xhtml2pdf import pisa
 
 from portfolio.user_management import can_user_manage_financial_data
 
@@ -15,7 +21,7 @@ from .forms import (
     VentureOpportunityForm,
     VentureWebDiscoveryForm,
 )
-from .models import VentureDiscoveryCandidate, VentureDocument, VentureOpportunity
+from .models import VentureAnalysisSnapshot, VentureDiscoveryCandidate, VentureDocument, VentureOpportunity
 from .services import (
     build_opportunity_seed_from_pdf,
     build_venture_study_context,
@@ -28,6 +34,51 @@ from .services import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _analysis_report_documents(analysis: VentureAnalysisSnapshot):
+    opportunity = analysis.opportunity
+    payload = analysis.analysis_payload or {}
+    combined_ids = payload.get("combined_document_ids") or []
+    if combined_ids:
+        documents_by_id = {
+            document.id: document
+            for document in opportunity.documents.filter(id__in=combined_ids)
+        }
+        return [documents_by_id[document_id] for document_id in combined_ids if document_id in documents_by_id]
+    if analysis.source_document:
+        return [analysis.source_document]
+    return list(opportunity.documents.all())
+
+
+@login_required
+def download_analysis_pdf(request, analysis_id):
+    if not can_user_manage_financial_data(request.user):
+        return HttpResponseForbidden("No tienes permiso para descargar este informe.")
+
+    analysis = get_object_or_404(
+        VentureAnalysisSnapshot.objects.select_related("opportunity", "source_document").prefetch_related("opportunity__documents"),
+        pk=analysis_id,
+    )
+    html = render_to_string(
+        "venture_studies/analysis_report_pdf.html",
+        {
+            "analysis": analysis,
+            "opportunity": analysis.opportunity,
+            "documents": _analysis_report_documents(analysis),
+        },
+    )
+    output = BytesIO()
+    result = pisa.CreatePDF(html, dest=output, encoding="UTF-8")
+    if result.err:
+        logger.error("Error creating venture analysis PDF %s", analysis.pk)
+        return HttpResponse("No se ha podido generar el PDF.", status=500)
+
+    filename_company = slugify(analysis.opportunity.company_name) or "empresa"
+    filename = f"informe-inversion-{filename_company}-{analysis.analysis_date:%Y-%m-%d}.pdf"
+    response = HttpResponse(output.getvalue(), content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
 
 
 class VentureOpportunityListView(LoginRequiredMixin, TemplateView):

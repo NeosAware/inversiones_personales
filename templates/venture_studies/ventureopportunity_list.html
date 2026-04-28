@@ -390,7 +390,7 @@
               <h3 style="margin:0;">Memo de inversion de {{ selected_opportunity.company_name }}</h3>
             </div>
             {% if selected_opportunity.latest_analysis %}
-              <span class="venture-score {{ selected_opportunity.latest_analysis.tone }}">{{ selected_opportunity.latest_analysis.get_recommendation_display }}</span>
+              <span class="venture-score {{ selected_opportunity.latest_analysis.recommendation_tone }}">{{ selected_opportunity.latest_analysis.get_recommendation_display }}</span>
             {% else %}
               <span class="venture-score">Pendiente</span>
             {% endif %}
@@ -461,6 +461,7 @@
               <p class="venture-decision-value">{{ selected_opportunity.latest_analysis.get_recommendation_display }}</p>
               <p class="metric-sub">Precio compra aprox.: {{ selected_opportunity.latest_analysis.suggested_purchase_price|floatformat:0 }} EUR - Score {{ selected_opportunity.latest_analysis.score_pct|floatformat:0 }} % - {{ selected_opportunity.latest_analysis.agent_label }}</p>
               <p class="venture-note">{{ selected_opportunity.latest_analysis.summary }}</p>
+              <p style="margin-top:14px;"><a class="button secondary" href="{% url 'venture_studies:analysis_pdf' selected_opportunity.latest_analysis.id %}">Descargar informe PDF</a></p>
             {% elif selected_documents and selected_analysis_document %}
               <p class="venture-decision-value">Pendiente</p>
               <p class="venture-note">Hay {{ selected_documents|length }} PDF(s) cargados. Genera la recomendacion para ver si es compra o vigilancia y el precio orientativo.</p>
@@ -610,7 +611,7 @@
               {% endif %}
             {% endif %}
             <table style="margin-top:12px;">
-              <thead><tr><th>Fecha</th><th>Recomendacion</th><th>Precio</th><th>Score</th><th>Analista</th></tr></thead>
+              <thead><tr><th>Fecha</th><th>Recomendacion</th><th>Precio</th><th>Score</th><th>Analista</th><th>Informe</th></tr></thead>
               <tbody>
                 {% for analysis in selected_analyses %}
                   <tr>
@@ -619,9 +620,10 @@
                     <td>{{ analysis.suggested_purchase_price|floatformat:0 }} EUR</td>
                     <td>{{ analysis.score_pct|floatformat:0 }} %</td>
                     <td>{{ analysis.agent_label }}</td>
+                    <td><a class="button secondary" href="{% url 'venture_studies:analysis_pdf' analysis.id %}">PDF</a></td>
                   </tr>
                 {% empty %}
-                  <tr><td colspan="5" class="muted">Sin valoraciones guardadas.</td></tr>
+                  <tr><td colspan="6" class="muted">Sin valoraciones guardadas.</td></tr>
                 {% endfor %}
               </tbody>
             </table>

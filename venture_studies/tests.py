@@ -567,7 +567,52 @@ class VentureStudiesViewTests(TestCase):
         self.assertContains(response, "Ticket participacion")
         self.assertContains(response, "Motivos para comprar o participar")
         self.assertContains(response, "Riesgos y condiciones")
+        self.assertContains(response, "Descargar informe PDF")
         self.assertContains(response, "Interesa participar con control de riesgos.")
+
+    def test_staff_user_can_download_analysis_pdf_report(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Descarga Informe SL",
+            tax_id="B99887766",
+            sector="Aditivos industriales",
+            annual_revenue=Decimal("610000.00"),
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+        )
+        document = VentureDocument.objects.create(
+            opportunity=opportunity,
+            document_kind=VentureDocument.DocumentKind.BALANCE,
+            title="Balance 2024",
+            file="venture_studies/test/balance.pdf",
+            extracted_text="Ventas balance 610.000 EUR EBITDA 90.000 EUR",
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+        analysis = VentureAnalysisSnapshot.objects.create(
+            opportunity=opportunity,
+            source_document=document,
+            recommendation=VentureAnalysisSnapshot.Recommendation.BUY,
+            confidence=VentureAnalysisSnapshot.Confidence.HIGH,
+            score_pct=Decimal("84.00"),
+            valuation_low=Decimal("240000.00"),
+            valuation_base=Decimal("300000.00"),
+            valuation_high=Decimal("360000.00"),
+            suggested_purchase_price=Decimal("230000.00"),
+            suggested_ticket=Decimal("60000.00"),
+            target_ownership_pct=Decimal("26.09"),
+            summary="Interesa comprar con margen de seguridad.",
+            drivers=["Ventas recurrentes"],
+            risks=["Revisar deuda"],
+            assumptions=["Multiplo prudente"],
+        )
+        self.client.force_login(self.staff_user)
+
+        response = self.client.get(reverse("venture_studies:analysis_pdf", args=[analysis.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("informe-inversion-descarga-informe-sl", response["Content-Disposition"])
+        self.assertTrue(response.content.startswith(b"%PDF"))
 
     def test_staff_user_can_analyze_all_company_documents_together(self):
         opportunity = VentureOpportunity.objects.create(
