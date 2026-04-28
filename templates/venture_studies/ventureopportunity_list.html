@@ -465,6 +465,7 @@
             {% elif selected_documents and selected_analysis_document %}
               <p class="venture-decision-value">Pendiente</p>
               <p class="venture-note">Hay {{ selected_documents|length }} PDF(s) cargados. Genera la recomendacion para ver si es compra o vigilancia y el precio orientativo.</p>
+              <p class="metric-sub">El boton Descargar informe PDF aparecera aqui cuando generes el analisis detallado.</p>
               {% if can_manage_finances %}
                 <form method="post" style="margin-top:14px;">
                   {% csrf_token %}
@@ -665,7 +666,7 @@
         <section class="soft-panel" style="margin-top:18px;">
           <p class="section-title">Documentos de la empresa</p>
           <table>
-            <thead><tr><th>Documento</th><th>Tipo</th><th>Fecha</th><th>Lectura</th>{% if can_manage_finances %}<th>Analisis</th>{% endif %}</tr></thead>
+            <thead><tr><th>Documento</th><th>Tipo</th><th>Fecha</th><th>Lectura</th>{% if can_manage_finances %}<th>PDF original</th><th>Analisis</th>{% endif %}</tr></thead>
             <tbody>
               {% for document in selected_documents %}
                 <tr>
@@ -674,6 +675,7 @@
                   <td>{% if document.document_date %}{{ document.document_date|date:"Y-m-d" }}{% elif document.fiscal_year %}{{ document.fiscal_year }}{% else %}{{ document.uploaded_at|date:"Y-m-d" }}{% endif %}</td>
                   <td>{{ document.get_extraction_status_display }}</td>
                   {% if can_manage_finances %}
+                    <td><a class="button secondary" href="{% url 'venture_studies:document_pdf' document.id %}">Descargar PDF</a></td>
                     <td>
                       <form method="post" style="margin:0;">
                         {% csrf_token %}
@@ -685,7 +687,7 @@
                   {% endif %}
                 </tr>
               {% empty %}
-                <tr><td colspan="{% if can_manage_finances %}5{% else %}4{% endif %}" class="muted">Sin documentos todavia.</td></tr>
+                <tr><td colspan="{% if can_manage_finances %}6{% else %}4{% endif %}" class="muted">Sin documentos todavia.</td></tr>
               {% endfor %}
             </tbody>
           </table>

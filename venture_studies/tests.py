@@ -1,7 +1,9 @@
 from decimal import Decimal
+import tempfile
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -533,6 +535,7 @@ class VentureStudiesViewTests(TestCase):
         self.assertContains(response, "Informacion clave")
         self.assertContains(response, "Analisis detallado de compra o participacion")
         self.assertContains(response, "Generar analisis detallado")
+        self.assertContains(response, "Descargar PDF")
         self.assertContains(response, "Pendiente Analisis SL")
 
     def test_company_tab_shows_investment_memo_after_analysis(self):
@@ -613,6 +616,31 @@ class VentureStudiesViewTests(TestCase):
         self.assertEqual(response["Content-Type"], "application/pdf")
         self.assertIn("informe-inversion-descarga-informe-sl", response["Content-Disposition"])
         self.assertTrue(response.content.startswith(b"%PDF"))
+
+    def test_staff_user_can_download_uploaded_document_pdf(self):
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            opportunity = VentureOpportunity.objects.create(
+                company_name="Descarga Documento SL",
+                stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+                status=VentureOpportunity.Status.RESEARCH,
+                strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+            )
+            document = VentureDocument.objects.create(
+                opportunity=opportunity,
+                document_kind=VentureDocument.DocumentKind.BALANCE,
+                title="Balance 2024",
+                extracted_text="Ventas balance 610.000 EUR",
+                extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+            )
+            document.file.save("balance.pdf", ContentFile(b"%PDF-1.4\n%%EOF"), save=True)
+            self.client.force_login(self.staff_user)
+
+            response = self.client.get(reverse("venture_studies:document_pdf", args=[document.id]))
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response["Content-Type"], "application/pdf")
+            self.assertIn("descarga-documento-sl-balance-2024.pdf", response["Content-Disposition"])
+            self.assertEqual(b"".join(response.streaming_content), b"%PDF-1.4\n%%EOF")
 
     def test_staff_user_can_analyze_all_company_documents_together(self):
         opportunity = VentureOpportunity.objects.create(

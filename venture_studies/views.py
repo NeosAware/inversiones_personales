@@ -4,7 +4,7 @@ from io import BytesIO
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.http import HttpResponse, HttpResponseForbidden
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -79,6 +79,28 @@ def download_analysis_pdf(request, analysis_id):
     response = HttpResponse(output.getvalue(), content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+@login_required
+def download_document_pdf(request, document_id):
+    if not can_user_manage_financial_data(request.user):
+        return HttpResponseForbidden("No tienes permiso para descargar este documento.")
+
+    document = get_object_or_404(VentureDocument.objects.select_related("opportunity"), pk=document_id)
+    if not document.file:
+        raise Http404("Documento sin archivo asociado.")
+    try:
+        file_handle = document.file.open("rb")
+    except FileNotFoundError as exc:
+        raise Http404("No se ha encontrado el archivo PDF.") from exc
+
+    filename = f"{slugify(document.opportunity.company_name) or 'empresa'}-{slugify(document.title) or 'documento'}.pdf"
+    return FileResponse(
+        file_handle,
+        as_attachment=True,
+        filename=filename,
+        content_type="application/pdf",
+    )
 
 
 class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
