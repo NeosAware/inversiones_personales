@@ -237,3 +237,47 @@ class VentureAnalysisSnapshot(models.Model):
     @property
     def recommendation_tone(self):
         return "good" if self.recommendation == self.Recommendation.BUY else ""
+
+
+class VentureDiscoveryCandidate(models.Model):
+    class Status(models.TextChoices):
+        NEW = "new", "Nueva"
+        PROMOTED = "promoted", "Incorporada"
+        REJECTED = "rejected", "Descartada"
+
+    company_name = models.CharField(max_length=180)
+    website = models.URLField(blank=True)
+    sector = models.CharField(max_length=140, blank=True)
+    geography = models.CharField(max_length=120, blank=True)
+    source_title = models.CharField(max_length=240, blank=True)
+    source_url = models.URLField(blank=True)
+    source_label = models.CharField(max_length=120, blank=True)
+    summary = models.TextField(blank=True)
+    rationale = models.TextField(blank=True)
+    score_pct = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    tags = models.JSONField(default=list, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.NEW)
+    promoted_opportunity = models.ForeignKey(
+        VentureOpportunity,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="web_discovery_sources",
+    )
+    discovered_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["status", "-score_pct", "-discovered_at", "company_name"]
+        unique_together = ("company_name", "source_url")
+
+    def __str__(self):
+        return f"{self.company_name} ({self.get_status_display()})"
+
+    @property
+    def score_tone(self):
+        if self.score_pct >= Decimal("75"):
+            return "good"
+        if self.score_pct < Decimal("50"):
+            return "warn"
+        return ""

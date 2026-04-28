@@ -306,3 +306,30 @@ class VentureInformaImportForm(forms.Form):
             max_file_mb = max_file_bytes / (1024 * 1024)
             raise ValidationError(f"El PDF supera el limite de {max_file_mb:.1f} MB.")
         return uploaded_file
+
+
+class VentureWebDiscoveryForm(forms.Form):
+    geography = forms.CharField(
+        max_length=120,
+        required=False,
+        initial="Castellon",
+        label="Zona",
+    )
+    sector_focus = forms.CharField(
+        max_length=180,
+        required=False,
+        initial="ceramica aditivos materiales industria",
+        label="Sectores o tecnologias",
+    )
+    max_candidates = forms.IntegerField(
+        min_value=3,
+        max_value=20,
+        initial=8,
+        label="Maximo de candidatos",
+    )
+
+    def clean_geography(self):
+        return self.cleaned_data.get("geography", "").strip()
+
+    def clean_sector_focus(self):
+        return self.cleaned_data.get("sector_focus", "").strip()

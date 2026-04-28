@@ -103,11 +103,62 @@
     .venture-mini-list li{
       margin:0 0 5px;
     }
+    .venture-tabs{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      padding:10px;
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:rgba(255,255,255,.92);
+      box-shadow:var(--shadow-soft);
+    }
+    .venture-tab{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:10px 14px;
+      border-radius:14px;
+      border:1px solid transparent;
+      color:var(--ink-soft);
+      font-weight:800;
+      background:transparent;
+    }
+    .venture-tab.active{
+      border-color:#b9cddd;
+      color:var(--accent);
+      background:linear-gradient(180deg, #ffffff 0%, #eef5fa 100%);
+      box-shadow:0 8px 16px rgba(15,33,46,.05);
+    }
+    .venture-detail-grid{
+      display:grid;
+      gap:18px;
+      grid-template-columns:1.05fr .95fr;
+    }
+    .venture-data-grid{
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+    }
+    .venture-data-item{
+      padding:14px;
+      border:1px solid #e4ecf2;
+      border-radius:14px;
+      background:#fff;
+    }
+    .venture-inline-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
     @media (max-width: 1180px){
       .venture-split,
       .venture-form-grid,
       .venture-form-grid.two,
-      .venture-score-grid{
+      .venture-score-grid,
+      .venture-detail-grid,
+      .venture-data-grid{
         grid-template-columns:1fr;
       }
     }
@@ -142,6 +193,247 @@
           <div class="metric-sub">{{ summary.review_due_count }} revision(es) proximas. Score medio {{ summary.avg_score|floatformat:0 }} %.</div>
         </section>
       </div>
+    </section>
+
+    <nav class="venture-tabs">
+      {% for opportunity in priority_rows %}
+        <a class="venture-tab {% if selected_opportunity and selected_opportunity.id == opportunity.id %}active{% endif %}" href="?company={{ opportunity.id }}">
+          {{ opportunity.company_name }}
+          {% if opportunity.latest_analysis %}
+            <span class="pill">{{ opportunity.latest_analysis.get_recommendation_display }}</span>
+          {% endif %}
+        </a>
+      {% empty %}
+        <span class="venture-tab active">Sin empresas</span>
+      {% endfor %}
+      {% if can_manage_finances %}
+        <a class="venture-tab" href="#new-company">+ Nueva empresa</a>
+      {% endif %}
+    </nav>
+
+    {% if selected_opportunity %}
+      <section class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;">
+          <div>
+            <p class="section-title">Empresa seleccionada</p>
+            <h2 style="margin-top:0;">{{ selected_opportunity.company_name }}</h2>
+            <p class="muted" style="margin-top:0;max-width:78ch;">{{ selected_opportunity.fit_summary|default:"Ficha de trabajo para concentrar documentos, valoraciones, contexto web, tesis y proximas acciones de esta empresa no cotizada." }}</p>
+          </div>
+          {% if can_manage_finances %}
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="delete_opportunity">
+              <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
+              <button class="button danger" type="submit">Eliminar empresa</button>
+            </form>
+          {% endif %}
+        </div>
+
+        <div class="venture-detail-grid" style="margin-top:18px;">
+          <section class="soft-panel">
+            <p class="section-title">Ficha</p>
+            <div class="venture-data-grid">
+              <div class="venture-data-item"><div class="metric-label">Razon social</div><strong>{{ selected_opportunity.legal_name|default:"-" }}</strong></div>
+              <div class="venture-data-item"><div class="metric-label">NIF/CIF</div><strong>{{ selected_opportunity.tax_id|default:"-" }}</strong></div>
+              <div class="venture-data-item"><div class="metric-label">Sector</div><strong>{{ selected_opportunity.sector|default:"-" }}</strong></div>
+              <div class="venture-data-item"><div class="metric-label">Zona</div><strong>{{ selected_opportunity.geography|default:"-" }}</strong></div>
+              <div class="venture-data-item"><div class="metric-label">CNAE</div><strong>{{ selected_opportunity.cnae_code|default:"-" }}</strong><div class="metric-sub">{{ selected_opportunity.cnae_label|default:"" }}</div></div>
+              <div class="venture-data-item"><div class="metric-label">Empleados</div><strong>{{ selected_opportunity.employees|default:"-" }}</strong></div>
+              <div class="venture-data-item"><div class="metric-label">Contacto</div><strong>{{ selected_opportunity.contact_name|default:selected_opportunity.phone|default:"-" }}</strong><div class="metric-sub">{{ selected_opportunity.email|default:"" }}</div></div>
+              <div class="venture-data-item"><div class="metric-label">Web</div>{% if selected_opportunity.website %}<a class="link" href="{{ selected_opportunity.website }}" target="_blank" rel="noopener">{{ selected_opportunity.website }}</a>{% else %}<strong>-</strong>{% endif %}</div>
+            </div>
+          </section>
+
+          <section class="soft-panel">
+            <p class="section-title">Ultima lectura</p>
+            {% if selected_opportunity.latest_analysis %}
+              <div class="venture-kpi-grid" style="margin-top:0;">
+                <section class="venture-kpi">
+                  <div class="metric-label">Recomendacion</div>
+                  <div class="metric-value">{{ selected_opportunity.latest_analysis.get_recommendation_display }}</div>
+                  <div class="metric-sub">Confianza {{ selected_opportunity.latest_analysis.get_confidence_display }}</div>
+                </section>
+                <section class="venture-kpi">
+                  <div class="metric-label">Precio compra aprox.</div>
+                  <div class="metric-value">{{ selected_opportunity.latest_analysis.suggested_purchase_price|floatformat:0 }} EUR</div>
+                  <div class="metric-sub">Ticket {{ selected_opportunity.latest_analysis.suggested_ticket|floatformat:0 }} EUR</div>
+                </section>
+              </div>
+              <p class="muted" style="margin-bottom:0;">{{ selected_opportunity.latest_analysis.summary }}</p>
+            {% else %}
+              <div class="message info">Sube un balance PDF para generar recomendacion, rango de valoracion y evolucion.</div>
+            {% endif %}
+          </section>
+        </div>
+
+        <div class="venture-detail-grid" style="margin-top:18px;">
+          <section class="soft-panel">
+            <p class="section-title">Documentos</p>
+            <table>
+              <thead><tr><th>Documento</th><th>Tipo</th><th>Fecha</th><th>Lectura</th></tr></thead>
+              <tbody>
+                {% for document in selected_documents %}
+                  <tr>
+                    <td>{{ document.title }}</td>
+                    <td>{{ document.get_document_kind_display }}</td>
+                    <td>{% if document.document_date %}{{ document.document_date|date:"Y-m-d" }}{% elif document.fiscal_year %}{{ document.fiscal_year }}{% else %}{{ document.uploaded_at|date:"Y-m-d" }}{% endif %}</td>
+                    <td>{{ document.get_extraction_status_display }}</td>
+                  </tr>
+                {% empty %}
+                  <tr><td colspan="4" class="muted">Sin documentos todavia.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </section>
+
+          <section class="soft-panel">
+            <p class="section-title">Evolucion</p>
+            {% if selected_opportunity.valuation_line %}
+              <svg viewBox="0 0 720 160" class="venture-chart" preserveAspectRatio="none">
+                <line x1="16" y1="144" x2="704" y2="144" stroke="#d3e1ea" stroke-width="1" />
+                <polyline fill="none" stroke="#0f5f88" stroke-width="5" points="{{ selected_opportunity.valuation_line }}" />
+              </svg>
+            {% endif %}
+            <table style="margin-top:12px;">
+              <thead><tr><th>Fecha</th><th>Recomendacion</th><th>Precio</th><th>Score</th></tr></thead>
+              <tbody>
+                {% for analysis in selected_analyses %}
+                  <tr>
+                    <td>{{ analysis.analysis_date|date:"Y-m-d" }}</td>
+                    <td>{{ analysis.get_recommendation_display }}</td>
+                    <td>{{ analysis.suggested_purchase_price|floatformat:0 }} EUR</td>
+                    <td>{{ analysis.score_pct|floatformat:0 }} %</td>
+                  </tr>
+                {% empty %}
+                  <tr><td colspan="4" class="muted">Sin valoraciones guardadas.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </section>
+        </div>
+
+        {% if can_manage_finances %}
+          <div class="venture-detail-grid" style="margin-top:18px;">
+            <section class="soft-panel">
+              <p class="section-title">Subir documentos</p>
+              <form method="post" enctype="multipart/form-data" class="stack">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="upload_informa">
+                <input type="hidden" name="opportunity" value="{{ selected_opportunity.id }}">
+                <div class="venture-form-grid">
+                  <div><label>Titulo informe</label><input type="text" name="title" placeholder="Informe Informa"></div>
+                  <div><label>Fecha informe</label><input type="date" name="document_date"></div>
+                  <div><label>PDF Informa</label><input type="file" name="file" accept=".pdf,application/pdf"></div>
+                </div>
+                <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="overwrite_existing"> Sobrescribir campos ya rellenados</label>
+                <button class="button" type="submit">Importar Informa en esta empresa</button>
+              </form>
+              <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="upload_balance">
+                <input type="hidden" name="opportunity" value="{{ selected_opportunity.id }}">
+                <div class="venture-form-grid">
+                  <div><label>Titulo balance</label><input type="text" name="title" placeholder="Balance"></div>
+                  <div><label>Ano fiscal</label><input type="number" name="fiscal_year" min="1990" max="2100"></div>
+                  <div><label>PDF balance</label><input type="file" name="file" accept=".pdf,application/pdf"></div>
+                </div>
+                <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="use_ai" checked> Usar analista IA si esta configurado</label>
+                <button class="button" type="submit">Analizar balance de esta empresa</button>
+              </form>
+            </section>
+
+            <section class="soft-panel">
+              <p class="section-title">Actualizar ficha</p>
+              {% if selected_company_form %}
+                <form method="post" class="stack">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="save_opportunity">
+                  <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
+                  <div class="venture-form-grid">
+                    <div><label for="{{ selected_company_form.company_name.id_for_label }}">{{ selected_company_form.company_name.label }}</label>{{ selected_company_form.company_name }}</div>
+                    <div><label for="{{ selected_company_form.legal_name.id_for_label }}">{{ selected_company_form.legal_name.label }}</label>{{ selected_company_form.legal_name }}</div>
+                    <div><label for="{{ selected_company_form.tax_id.id_for_label }}">{{ selected_company_form.tax_id.label }}</label>{{ selected_company_form.tax_id }}</div>
+                    <div><label for="{{ selected_company_form.website.id_for_label }}">{{ selected_company_form.website.label }}</label>{{ selected_company_form.website }}</div>
+                    <div><label for="{{ selected_company_form.sector.id_for_label }}">{{ selected_company_form.sector.label }}</label>{{ selected_company_form.sector }}</div>
+                    <div><label for="{{ selected_company_form.geography.id_for_label }}">{{ selected_company_form.geography.label }}</label>{{ selected_company_form.geography }}</div>
+                    <div><label for="{{ selected_company_form.stage.id_for_label }}">{{ selected_company_form.stage.label }}</label>{{ selected_company_form.stage }}</div>
+                    <div><label for="{{ selected_company_form.status.id_for_label }}">{{ selected_company_form.status.label }}</label>{{ selected_company_form.status }}</div>
+                    <div><label for="{{ selected_company_form.strategic_fit.id_for_label }}">{{ selected_company_form.strategic_fit.label }}</label>{{ selected_company_form.strategic_fit }}</div>
+                  </div>
+                  <div><label for="{{ selected_company_form.fit_summary.id_for_label }}">{{ selected_company_form.fit_summary.label }}</label>{{ selected_company_form.fit_summary }}</div>
+                  <div><label for="{{ selected_company_form.next_steps.id_for_label }}">{{ selected_company_form.next_steps.label }}</label>{{ selected_company_form.next_steps }}</div>
+                  <button class="button" type="submit">Guardar ficha de {{ selected_opportunity.company_name }}</button>
+                </form>
+              {% endif %}
+            </section>
+          </div>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    <section class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+        <div>
+          <p class="section-title">Vigilancia web</p>
+          <h2 style="margin-top:0;">Empresas interesantes en la zona</h2>
+          <p class="muted" style="margin-top:0;max-width:74ch;">Busca noticias y senales locales relacionadas con ceramica, aditivos, materiales e industria para proponer posibles empresas no cotizadas.</p>
+        </div>
+      </div>
+      {% if can_manage_finances %}
+        <form method="post" class="stack" style="margin-top:16px;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="discover_web">
+          <div class="venture-form-grid">
+            <div><label for="{{ discovery_form.geography.id_for_label }}">{{ discovery_form.geography.label }}</label>{{ discovery_form.geography }}</div>
+            <div><label for="{{ discovery_form.sector_focus.id_for_label }}">{{ discovery_form.sector_focus.label }}</label>{{ discovery_form.sector_focus }}</div>
+            <div><label for="{{ discovery_form.max_candidates.id_for_label }}">{{ discovery_form.max_candidates.label }}</label>{{ discovery_form.max_candidates }}</div>
+          </div>
+          <button class="button" type="submit">Buscar candidatos web</button>
+        </form>
+      {% endif %}
+      <section class="table-card" style="margin-top:16px;">
+        <table>
+          <thead><tr><th>Candidato</th><th>Zona / sector</th><th>Score</th><th>Motivo</th><th>Fuente</th><th>Accion</th></tr></thead>
+          <tbody>
+            {% for candidate in discovery_candidates %}
+              <tr>
+                <td><strong>{{ candidate.company_name }}</strong><div class="metric-sub">{{ candidate.get_status_display }}</div></td>
+                <td>{{ candidate.geography|default:"-" }}<div class="metric-sub">{{ candidate.sector|default:"-" }}</div></td>
+                <td><span class="venture-score {{ candidate.score_tone }}">{{ candidate.score_pct|floatformat:0 }} %</span></td>
+                <td><div class="venture-note">{{ candidate.rationale }}</div></td>
+                <td>
+                  <div class="venture-note">{{ candidate.source_title|default:"-" }}</div>
+                  {% if candidate.source_url %}<a class="link" href="{{ candidate.source_url }}" target="_blank" rel="noopener">Abrir fuente</a>{% endif %}
+                </td>
+                <td>
+                  {% if can_manage_finances and candidate.status == "new" %}
+                    <div class="venture-inline-actions">
+                      <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="promote_candidate">
+                        <input type="hidden" name="candidate_id" value="{{ candidate.id }}">
+                        <button class="button small" type="submit">Anadir</button>
+                      </form>
+                      <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="reject_candidate">
+                        <input type="hidden" name="candidate_id" value="{{ candidate.id }}">
+                        <button class="button secondary small" type="submit">Descartar</button>
+                      </form>
+                    </div>
+                  {% elif candidate.promoted_opportunity %}
+                    <a class="link" href="?company={{ candidate.promoted_opportunity.id }}">Ver empresa</a>
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="6" class="muted">Todavia no hay candidatos web. Lanza una busqueda por zona para empezar.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
     </section>
 
     <div class="venture-split">

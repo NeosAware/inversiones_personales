@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import VentureAnalysisSnapshot, VentureDocument, VentureOpportunity
+from .models import VentureAnalysisSnapshot, VentureDiscoveryCandidate, VentureDocument, VentureOpportunity
 
 
 class VentureDocumentInline(admin.TabularInline):
@@ -163,3 +163,20 @@ class VentureAnalysisSnapshotAdmin(admin.ModelAdmin):
     search_fields = ("opportunity__company_name", "summary", "valuation_note", "web_summary")
     list_filter = ("recommendation", "confidence", "agent_provider", "analysis_date")
     readonly_fields = ("created_at",)
+
+
+@admin.register(VentureDiscoveryCandidate)
+class VentureDiscoveryCandidateAdmin(admin.ModelAdmin):
+    list_display = (
+        "company_name",
+        "status",
+        "geography",
+        "sector",
+        "score_pct",
+        "source_label",
+        "promoted_opportunity",
+        "discovered_at",
+    )
+    search_fields = ("company_name", "sector", "geography", "source_title", "summary", "rationale")
+    list_filter = ("status", "geography", "sector", "discovered_at")
+    readonly_fields = ("discovered_at", "updated_at")

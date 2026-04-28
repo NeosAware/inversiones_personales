@@ -6,7 +6,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.urls import reverse
 
-from .models import VentureAnalysisSnapshot, VentureDocument, VentureOpportunity
+from .models import VentureAnalysisSnapshot, VentureDiscoveryCandidate, VentureDocument, VentureOpportunity
 from .services import import_informa_report, run_document_analysis
 
 
@@ -61,8 +61,8 @@ class VentureStudiesViewTests(TestCase):
             },
         )
 
-        self.assertRedirects(response, reverse("venture_studies:list"))
         opportunity = VentureOpportunity.objects.get(company_name="Materiales Circulares SL")
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
         self.assertEqual(opportunity.ticket_min, Decimal("25000.00"))
         self.assertEqual(opportunity.score_total, 19)
 
@@ -110,6 +110,8 @@ class VentureStudiesViewTests(TestCase):
         self.assertContains(response, "Neos Additives")
         self.assertContains(response, "Analisis de balances")
         self.assertContains(response, "Datos importados de Informa")
+        self.assertContains(response, "Empresa seleccionada")
+        self.assertContains(response, "Vigilancia web")
 
     def test_staff_user_can_upload_balance_pdf_for_analysis(self):
         opportunity = VentureOpportunity.objects.create(
@@ -151,8 +153,8 @@ class VentureStudiesViewTests(TestCase):
                 },
             )
 
-        self.assertRedirects(response, reverse("venture_studies:list"))
         document = VentureDocument.objects.get(opportunity=opportunity)
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
         self.assertEqual(document.title, "Balance 2025")
         self.assertEqual(document.fiscal_year, 2025)
         analysis = VentureAnalysisSnapshot.objects.get(opportunity=opportunity)
@@ -254,7 +256,76 @@ class VentureStudiesViewTests(TestCase):
                 },
             )
 
-        self.assertRedirects(response, reverse("venture_studies:list"))
         opportunity = VentureOpportunity.objects.get(company_name="CERAMICA INFORMA SL")
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
         self.assertEqual(opportunity.tax_id, "B87654321")
         self.assertEqual(opportunity.cnae_code, "2331")
+
+    def test_staff_user_can_delete_opportunity_from_radar(self):
+        opportunity = VentureOpportunity.objects.create(company_name="Eliminar SL")
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("venture_studies:list"),
+            {
+                "action": "delete_opportunity",
+                "opportunity_id": str(opportunity.id),
+            },
+        )
+
+        self.assertRedirects(response, reverse("venture_studies:list"))
+        self.assertFalse(VentureOpportunity.objects.filter(company_name="Eliminar SL").exists())
+
+    def test_staff_user_can_promote_web_candidate(self):
+        candidate = VentureDiscoveryCandidate.objects.create(
+            company_name="Candidato Web SL",
+            sector="ceramica",
+            geography="Castellon",
+            source_url="https://example.com/noticia",
+            score_pct=Decimal("82.00"),
+            rationale="Encaja con ceramica y crecimiento.",
+        )
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("venture_studies:list"),
+            {
+                "action": "promote_candidate",
+                "candidate_id": str(candidate.id),
+            },
+        )
+
+        opportunity = VentureOpportunity.objects.get(company_name="Candidato Web SL")
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
+        candidate.refresh_from_db()
+        self.assertEqual(candidate.status, VentureDiscoveryCandidate.Status.PROMOTED)
+        self.assertEqual(candidate.promoted_opportunity, opportunity)
+
+    def test_staff_user_can_launch_web_discovery(self):
+        candidate = VentureDiscoveryCandidate.objects.create(
+            company_name="Descubierta SL",
+            sector="materiales",
+            geography="Castellon",
+            source_url="https://example.com/descubierta",
+            score_pct=Decimal("75.00"),
+        )
+        self.client.force_login(self.staff_user)
+
+        with patch("venture_studies.views.discover_web_candidates") as discovery:
+            discovery.return_value = {
+                "created_count": 1,
+                "updated_count": 0,
+                "candidates": [candidate],
+            }
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "discover_web",
+                    "geography": "Castellon",
+                    "sector_focus": "ceramica materiales",
+                    "max_candidates": "8",
+                },
+            )
+
+        self.assertRedirects(response, reverse("venture_studies:list"))
+        discovery.assert_called_once()

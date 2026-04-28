@@ -23,7 +23,7 @@ from equities.news_context import (
     strip_html_tags,
 )
 
-from .models import VentureAnalysisSnapshot, VentureDocument, VentureOpportunity
+from .models import VentureAnalysisSnapshot, VentureDiscoveryCandidate, VentureDocument, VentureOpportunity
 
 
 ZERO = Decimal("0")
@@ -32,6 +32,10 @@ EMAIL_RE = re.compile(r"[\w.\-+]+@[\w.\-]+\.[A-Za-z]{2,}", re.I)
 URL_RE = re.compile(r"(?:https?://)?(?:www\.)?[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+(?:/[^\s]*)?", re.I)
 PHONE_RE = re.compile(r"(?:\+34\s*)?(?:\d[\s.-]?){9,12}")
 TAX_ID_RE = re.compile(r"\b(?:[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]|[XYZ]?\d{7,8}[A-Z])\b", re.I)
+COMPANY_SUFFIX_RE = re.compile(
+    r"\b([^\W_][\w&.,' -]{2,90}?\s+(?:S\.?L\.?|S\.?A\.?|SOCIEDAD LIMITADA|SOCIEDAD ANONIMA))\b",
+    re.I,
+)
 
 
 def _sum_optional(values):
@@ -392,6 +396,138 @@ def import_informa_report(
         "updated_fields": updated_fields,
         "parsed_fields": parsed_fields,
     }
+
+
+def normalize_company_name_candidate(value: str) -> str:
+    cleaned = strip_html_tags(value)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -:|")
+    cleaned = re.sub(r"\b(SL|SA)\b", lambda match: match.group(1).upper(), cleaned, flags=re.I)
+    return cleaned[:180].strip()
+
+
+def extract_candidate_company_name(title: str, description: str = "") -> str:
+    text = f"{title} {description}"
+    match = COMPANY_SUFFIX_RE.search(text)
+    if match:
+        return normalize_company_name_candidate(match.group(1))
+
+    title = strip_html_tags(title)
+    if " - " in title:
+        title = title.rsplit(" - ", 1)[0]
+    title = re.sub(
+        r"\b(recibe|invierte|abre|lanza|crea|desarrolla|amplia|compra|vende|firma|presenta|obtiene|capta)\b.*",
+        "",
+        title,
+        flags=re.I,
+    )
+    title = re.sub(r"^[^:]{0,40}:\s*", "", title)
+    return normalize_company_name_candidate(title)
+
+
+def score_discovery_item(title: str, description: str, *, sector_focus: str = "") -> tuple[Decimal, list[str], str]:
+    text = normalize_search_text(f"{title} {description} {sector_focus}")
+    score = Decimal("45.00")
+    tags = []
+    rules = (
+        ("neos-fit", ("ceramica", "azulejo", "esmalte", "frita", "aditivo", "material", "minerales"), Decimal("18")),
+        ("crecimiento", ("amplia", "expansion", "crecimiento", "nueva planta", "inversion", "financiacion"), Decimal("14")),
+        ("innovacion", ("i+d", "innovacion", "patente", "tecnologia", "sostenible", "circular", "recicl"), Decimal("12")),
+        ("tension", ("reestructuracion", "concurso", "problemas", "deuda", "rescate", "necesita financiacion"), Decimal("8")),
+        ("local", ("castellon", "vila-real", "onda", "alcora", "nules", "valencia"), Decimal("8")),
+    )
+    for tag, tokens, weight in rules:
+        if any(token in text for token in tokens):
+            score += weight
+            tags.append(tag)
+    score = min(score, Decimal("96.00"))
+    if "premio" in text or "feria" in text:
+        score -= Decimal("6")
+    if len(strip_html_tags(title)) < 8:
+        score -= Decimal("12")
+    rationale = "Coincidencia web con " + ", ".join(tags) if tags else "Coincidencia general con el radar de empresas no cotizadas."
+    return score.quantize(Decimal("0.01")), tags, rationale
+
+
+def build_discovery_query(*, geography: str, sector_focus: str) -> str:
+    geography = geography or "Castellon"
+    sector_focus = sector_focus or "ceramica aditivos materiales industria"
+    return (
+        f'("{geography}") ({sector_focus}) '
+        "(empresa OR pyme OR startup OR fabrica OR inversion OR ampliacion OR financiacion OR innovacion)"
+    )
+
+
+def discover_web_candidates(*, geography: str = "Castellon", sector_focus: str = "", max_candidates: int = 8) -> dict:
+    query = build_discovery_query(geography=geography, sector_focus=sector_focus)
+    signal = fetch_news_signal_for_query(
+        query,
+        label="Radar web",
+        lookback_days=60,
+        max_items=max(int(max_candidates or 8), 3),
+    )
+    candidates = []
+    created_count = 0
+    updated_count = 0
+    for item in signal.get("items") or []:
+        company_name = extract_candidate_company_name(item.get("title", ""), item.get("description", ""))
+        if not company_name:
+            continue
+        score_pct, tags, rationale = score_discovery_item(
+            item.get("title", ""),
+            item.get("description", ""),
+            sector_focus=sector_focus,
+        )
+        defaults = {
+            "sector": sector_focus[:140],
+            "geography": geography[:120],
+            "source_title": trim_text(item.get("title", ""), 240),
+            "source_label": trim_text(item.get("source", ""), 120),
+            "summary": trim_text(item.get("description", "") or item.get("title", ""), 700),
+            "rationale": rationale,
+            "score_pct": score_pct,
+            "tags": tags,
+        }
+        source_url = str(item.get("link") or "").strip()
+        candidate, created = VentureDiscoveryCandidate.objects.update_or_create(
+            company_name=company_name,
+            source_url=source_url,
+            defaults={
+                **defaults,
+                "source_url": source_url,
+            },
+        )
+        if created:
+            created_count += 1
+        else:
+            updated_count += 1
+        candidates.append(candidate)
+    return {
+        "query": query,
+        "signal": signal,
+        "candidates": candidates,
+        "created_count": created_count,
+        "updated_count": updated_count,
+    }
+
+
+def promote_discovery_candidate(candidate: VentureDiscoveryCandidate) -> VentureOpportunity:
+    opportunity, _ = VentureOpportunity.objects.update_or_create(
+        company_name=candidate.company_name,
+        defaults={
+            "sector": candidate.sector,
+            "geography": candidate.geography,
+            "stage": VentureOpportunity.Stage.EARLY,
+            "status": VentureOpportunity.Status.SCREENING,
+            "strategic_fit": VentureOpportunity.StrategicFit.BOTH,
+            "source": "Radar web",
+            "fit_summary": candidate.rationale,
+            "next_steps": "Validar empresa, pedir Informe Informa y revisar encaje con Neos.",
+        },
+    )
+    candidate.status = VentureDiscoveryCandidate.Status.PROMOTED
+    candidate.promoted_opportunity = opportunity
+    candidate.save(update_fields=["status", "promoted_opportunity", "updated_at"])
+    return opportunity
 
 
 def _find_metric_after_labels(text: str, labels: tuple[str, ...]) -> Decimal | None:
