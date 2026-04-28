@@ -124,8 +124,57 @@ class VentureStudiesViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Nueva pestana")
+        self.assertContains(response, "PDF financiero/comercial para Claude")
+        self.assertContains(response, "Subir PDF con informacion financiera y comercial")
         self.assertContains(response, "Guardar empresa")
         self.assertContains(response, 'href="?company=')
+
+    def test_staff_user_can_create_company_with_initial_dossier_pdf(self):
+        self.client.force_login(self.staff_user)
+
+        def fake_analysis(document, use_ai=True):
+            return VentureAnalysisSnapshot.objects.create(
+                opportunity=document.opportunity,
+                source_document=document,
+                recommendation=VentureAnalysisSnapshot.Recommendation.BUY,
+                confidence=VentureAnalysisSnapshot.Confidence.MEDIUM,
+                score_pct=Decimal("81.00"),
+                suggested_purchase_price=Decimal("210000.00"),
+                summary="Claude analiza el PDF inicial de alta.",
+                agent_provider="anthropic",
+                agent_label="Claude test",
+            )
+
+        with patch("venture_studies.views.run_document_analysis", side_effect=fake_analysis) as mocked_analysis:
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "save_opportunity",
+                    "company_name": "Alta Con PDF SL",
+                    "sector": "Materiales",
+                    "geography": "Castellon",
+                    "stage": VentureOpportunity.Stage.EARLY,
+                    "status": VentureOpportunity.Status.SCREENING,
+                    "strategic_fit": VentureOpportunity.StrategicFit.BOTH,
+                    "identified_on": "2026-04-28",
+                    "neos_fit_score": "4",
+                    "market_score": "4",
+                    "team_score": "3",
+                    "financial_score": "3",
+                    "risk_control_score": "3",
+                    "title": "PDF financiero comercial",
+                    "fiscal_year": "2026",
+                    "use_ai": "on",
+                    "file": SimpleUploadedFile("dossier.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf"),
+                },
+            )
+
+        opportunity = VentureOpportunity.objects.get(company_name="Alta Con PDF SL")
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
+        document = VentureDocument.objects.get(opportunity=opportunity)
+        self.assertEqual(document.document_kind, VentureDocument.DocumentKind.DOSSIER)
+        self.assertEqual(document.title, "PDF financiero comercial")
+        mocked_analysis.assert_called_once_with(document, use_ai=True)
 
     def test_staff_user_can_update_selected_company_from_partial_tab_form(self):
         opportunity = VentureOpportunity.objects.create(

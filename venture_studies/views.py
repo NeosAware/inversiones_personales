@@ -181,7 +181,46 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             messages.success(request, f"La empresa {opportunity.company_name} se ha incorporado al radar.")
         else:
             messages.success(request, f"La empresa {opportunity.company_name} se ha actualizado correctamente.")
+        self._analyze_attached_dossier(request, opportunity)
         return self._redirect_to_company(opportunity.id)
+
+    def _analyze_attached_dossier(self, request, opportunity):
+        if "file" not in request.FILES:
+            return None
+        data = request.POST.copy()
+        data["opportunity"] = str(opportunity.id)
+        form = VentureDossierAnalysisForm(data, request.FILES)
+        if not form.is_valid():
+            messages.warning(
+                request,
+                "La empresa se ha guardado, pero el PDF financiero/comercial no se pudo analizar. Revisa que sea un PDF valido.",
+            )
+            return None
+
+        document = form.save_document()
+        snapshot = run_document_analysis(
+            document,
+            use_ai=form.cleaned_data.get("use_ai", True),
+        )
+        messages.success(
+            request,
+            (
+                f"PDF financiero/comercial de {document.opportunity.company_name} analizado por {snapshot.agent_label}. "
+                f"Recomendacion: {snapshot.get_recommendation_display()} "
+                f"y precio orientativo {snapshot.suggested_purchase_price or 0:.2f} EUR."
+            ),
+        )
+        if form.cleaned_data.get("use_ai", True) and snapshot.agent_provider != "anthropic":
+            messages.warning(
+                request,
+                "Claude no ha intervenido en este analisis. Revisa AI_LLM_PROVIDER=anthropic y ANTHROPIC_API_KEY si quieres lectura Claude.",
+            )
+        if document.extraction_status == VentureDocument.ExtractionStatus.FAILED:
+            messages.warning(
+                request,
+                "El PDF se ha guardado, pero no se pudo extraer texto. Si es un escaneo, sube una version con OCR para que Claude pueda leerlo.",
+            )
+        return snapshot
 
     def _upload_balance(self, request):
         form = VentureBalanceAnalysisForm(request.POST, request.FILES)

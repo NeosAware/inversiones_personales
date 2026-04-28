@@ -553,13 +553,24 @@
           <div>
             <p class="section-title">Nueva pestana</p>
             <h2 style="margin-top:0;">Anadir empresa no cotizada</h2>
-            <p class="muted" style="margin-top:0;max-width:74ch;">Al guardar se crea una nueva pestana de empresa. Despues podras subir sus informes Informa y balances dentro de esa pestana.</p>
+            <p class="muted" style="margin-top:0;max-width:74ch;">Puedes guardar solo la ficha o adjuntar ya un PDF financiero/comercial para que Claude lo analice al crear la pestana.</p>
           </div>
         </div>
         {% if can_manage_finances %}
-          <form method="post" class="stack">
+          <form method="post" enctype="multipart/form-data" class="stack">
             {% csrf_token %}
             <input type="hidden" name="action" value="save_opportunity">
+            <section class="soft-panel">
+              <p class="section-title">PDF financiero/comercial para Claude</p>
+              <div class="venture-form-grid">
+                <div><label>Titulo del PDF</label><input type="text" name="title" placeholder="Dossier financiero/comercial"></div>
+                <div><label>Ano fiscal</label><input type="number" name="fiscal_year" min="1990" max="2100"></div>
+                <div><label>Fecha del documento</label><input type="date" name="document_date"></div>
+                <div><label>Subir PDF con informacion financiera y comercial</label><input type="file" name="file" accept=".pdf,application/pdf"></div>
+              </div>
+              <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="use_ai" checked> Analizar con Claude al guardar la empresa</label>
+              <p class="metric-sub" style="margin-bottom:0;">Tambien podras subir mas PDFs despues dentro de la pestana de esta empresa.</p>
+            </section>
             <div class="venture-form-grid">
               <div><label for="{{ form.company_name.id_for_label }}">{{ form.company_name.label }}</label>{{ form.company_name }}</div>
               <div><label for="{{ form.legal_name.id_for_label }}">{{ form.legal_name.label }}</label>{{ form.legal_name }}</div>
