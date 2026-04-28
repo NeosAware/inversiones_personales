@@ -4706,8 +4706,12 @@ def build_base_five_year_cycle_projection(
     if len(history) < 2:
         return {"available": False}
 
-    latest_date = history[-1].price_date
-    analysis_history = [point for point in history if point.price_date <= latest_date]
+    raw_latest_date = history[-1].price_date
+    analysis_history = trim_current_partial_month_for_long_horizon(
+        [point for point in history if point.price_date <= raw_latest_date],
+        min_points=24,
+    )
+    latest_date = analysis_history[-1].price_date
     monthly_history = collapse_history_to_frequency(analysis_history, "monthly")
     if len(monthly_history) < 24:
         return {"available": False}
@@ -4941,6 +4945,11 @@ def build_base_five_year_cycle_projection(
         f"Combina CAGR del ciclo, ritmo a 3-5 anos, drawdown actual y fase {cycle_metrics.get('cycle_phase', 'sin ciclo').lower()} "
         "para dibujar una senda larga de orientacion."
     )
+    if raw_latest_date != latest_date:
+        explanation += (
+            f" Para evitar saltos de pocos dias, el 5A queda anclado al ultimo mes cerrado ({latest_date:%Y-%m-%d}) "
+            f"y no al movimiento parcial de {raw_latest_date:%Y-%m-%d}."
+        )
     if reference_cycle_template.get("available"):
         explanation += (
             f" La forma de la senda sale de {reference_cycle_template.get('years_covered') or ZERO:.1f} anos de "
@@ -4961,6 +4970,8 @@ def build_base_five_year_cycle_projection(
         "step_return_pcts": [quantize_decimal(value) or ZERO for value in step_return_pcts],
         "latest_price": quantize_decimal(latest_price, "0.0001"),
         "latest_date": latest_date,
+        "raw_latest_date": raw_latest_date,
+        "uses_completed_month_anchor": raw_latest_date != latest_date,
         "annualized_volatility_pct": cycle_metrics.get("annualized_volatility_pct"),
         "current_drawdown_pct": current_drawdown_pct,
         "confidence_label": confidence["label"],
@@ -9741,6 +9752,31 @@ def collapse_history_to_frequency(history, frequency: str) -> list:
     for point in history:
         buckets[bucket_label_for_date(point.price_date, frequency)] = point
     return [buckets[label] for label in sorted(buckets.keys())]
+
+
+def month_end_date(value: date) -> date:
+    return date(value.year, value.month, monthrange(value.year, value.month)[1])
+
+
+def month_start_date(value: date) -> date:
+    return date(value.year, value.month, 1)
+
+
+def trim_current_partial_month_for_long_horizon(history, *, as_of: date | None = None, min_points: int = 24) -> list:
+    rows = list(history or [])
+    if len(rows) <= min_points:
+        return rows
+    as_of = as_of or django_timezone.localdate()
+    latest_date = rows[-1].price_date
+    if latest_date is None:
+        return rows
+    current_month_start = month_start_date(as_of)
+    latest_month_start = month_start_date(latest_date)
+    current_month_is_open = as_of < month_end_date(as_of)
+    if latest_date > as_of or latest_month_start != current_month_start or not current_month_is_open:
+        return rows
+    trimmed = [point for point in rows if point.price_date < current_month_start]
+    return trimmed if len(trimmed) >= min_points else rows
 
 
 def build_return_series_from_collapsed_rows(
@@ -16037,8 +16073,14 @@ def build_optimizer_expectation_review_horizon_signal(
     trend_return_pct = quantize_decimal(values[-1] - values[0], "0.01") if len(values) >= 2 else None
     recent_delta_pct = quantize_decimal(values[-1] - values[-2], "0.01") if len(values) >= 2 else None
     spread_pct = quantize_decimal(max(values) - min(values), "0.01") if values else None
+    date_span_days = (
+        (value_rows[-1]["analysis_date"] - value_rows[0]["analysis_date"]).days
+        if len(value_rows) >= 2
+        else 0
+    )
     return {
         "available": True,
+        "horizon_years": horizon_years,
         "sample_count": len(value_rows),
         "latest_return_pct": latest_return_pct,
         "average_return_pct": average_return_pct,
@@ -16047,6 +16089,7 @@ def build_optimizer_expectation_review_horizon_signal(
         "spread_pct": spread_pct,
         "first_review_date": value_rows[0]["analysis_date"],
         "latest_review_date": value_rows[-1]["analysis_date"],
+        "date_span_days": date_span_days,
     }
 
 
@@ -16132,6 +16175,19 @@ def apply_optimizer_expectation_review_adjustment(
         }
 
     sample_count = int(signal.get("sample_count") or 0)
+    horizon_years = int(signal.get("horizon_years") or 0)
+    date_span_days = int(signal.get("date_span_days") or 0)
+    if horizon_years >= 5 and (sample_count < 4 or date_span_days < 21):
+        return {
+            "available": True,
+            "deferred_for_stability": True,
+            "sample_count": sample_count,
+            "date_span_days": date_span_days,
+            "raw_return_pct": raw_return_pct,
+            "adjusted_return_pct": raw_return_pct,
+            "adjustment_pct": ZERO,
+            "note": "El ajuste 5A se mantiene sin cambios hasta tener al menos 4 lecturas y 21 dias de separacion.",
+        }
     latest_return_pct = quantize_decimal(signal.get("latest_return_pct"), "0.01")
     average_return_pct = quantize_decimal(signal.get("average_return_pct"), "0.01")
     trend_return_pct = quantize_decimal(signal.get("trend_return_pct"), "0.01") or ZERO

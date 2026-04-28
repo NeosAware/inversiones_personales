@@ -56,12 +56,14 @@ from .services import (
     EURIBOR_REFERENCE_NAME,
     EURIBOR_REFERENCE_SYMBOL,
     MarketSeries,
+    MarketHistoryPoint,
     SPAIN_ELECTRICITY_DEMAND_NAME,
     SPAIN_ELECTRICITY_DEMAND_SYMBOL,
     SPAIN_GAS_CONSUMPTION_NAME,
     SPAIN_GAS_CONSUMPTION_SYMBOL,
     ZERO,
     apply_expert_consensus_adjustments_to_dashboard,
+    apply_optimizer_expectation_review_adjustment,
     apply_news_context_adjustments_to_dashboard,
     build_candidate_purchase_timing_plan,
     build_equity_allocation_plan,
@@ -73,6 +75,7 @@ from .services import (
     build_reference_cycle_template_from_series,
     build_candlestick_metrics,
     build_cycle_zoomed_monthly_projection_path,
+    build_five_year_cycle_projection,
     build_equity_round_investment_plan,
     build_equity_sale_preview,
     build_expectation_review_dashboard,
@@ -387,6 +390,83 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(correlation["change_mode"], "absolute")
         self.assertIsNotNone(correlation["coefficient"])
         self.assertIsNotNone(correlation["beta"])
+
+    def test_five_year_projection_ignores_open_month_noise(self):
+        position = EquityPosition.objects.create(
+            broker="Seguimiento",
+            ticker="EST",
+            quote_symbol="EST.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Estable SA",
+            shares=Decimal("0"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+        )
+
+        monthly_history = []
+        price = Decimal("10.0000")
+        for index in range(63):
+            month_number = index
+            year = 2021 + (month_number // 12)
+            month = (month_number % 12) + 1
+            price = (price * Decimal("1.0060")).quantize(Decimal("0.0001"))
+            monthly_history.append(
+                MarketHistoryPoint(
+                    price_date=date(year, month, monthrange(year, month)[1]),
+                    close_price=price,
+                )
+            )
+        self.assertEqual(monthly_history[-1].price_date, date(2026, 3, 31))
+
+        noisy_drop = monthly_history + [
+            MarketHistoryPoint(price_date=date(2026, 4, 24), close_price=Decimal("6.0000")),
+        ]
+        noisy_rebound = monthly_history + [
+            MarketHistoryPoint(price_date=date(2026, 4, 28), close_price=Decimal("14.0000")),
+        ]
+        correlation = {
+            "coefficient": Decimal("0.40"),
+            "observations_count": 60,
+            "stability_gap": Decimal("0.05"),
+            "stability_label": "Estable",
+        }
+
+        with (
+            patch("equities.services.django_timezone.localdate", return_value=date(2026, 4, 28)),
+            patch("equities.services.build_multifactor_reference_projection_bundle", return_value={"available": False}),
+        ):
+            drop_projection = build_five_year_cycle_projection(noisy_drop, position, correlation, include_visuals=False)
+            rebound_projection = build_five_year_cycle_projection(noisy_rebound, position, correlation, include_visuals=False)
+
+        self.assertTrue(drop_projection["uses_completed_month_anchor"])
+        self.assertTrue(rebound_projection["uses_completed_month_anchor"])
+        self.assertEqual(drop_projection["latest_date"], date(2026, 3, 31))
+        self.assertEqual(rebound_projection["latest_date"], date(2026, 3, 31))
+        self.assertEqual(drop_projection["annual_return_pct"], rebound_projection["annual_return_pct"])
+        self.assertEqual(drop_projection["five_year_return_pct"], rebound_projection["five_year_return_pct"])
+        self.assertIn("ultimo mes cerrado", drop_projection["explanation"])
+
+    def test_five_year_expectation_review_waits_for_stable_sample(self):
+        signal = {
+            "available": True,
+            "horizon_years": 5,
+            "sample_count": 2,
+            "latest_return_pct": Decimal("-4.00"),
+            "average_return_pct": Decimal("2.00"),
+            "trend_return_pct": Decimal("-12.00"),
+            "recent_delta_pct": Decimal("-12.00"),
+            "spread_pct": Decimal("12.00"),
+            "first_review_date": date(2026, 4, 24),
+            "latest_review_date": date(2026, 4, 28),
+            "date_span_days": 4,
+        }
+
+        adjusted = apply_optimizer_expectation_review_adjustment(Decimal("8.00"), signal)
+
+        self.assertTrue(adjusted["deferred_for_stability"])
+        self.assertEqual(adjusted["adjusted_return_pct"], Decimal("8.00"))
+        self.assertEqual(adjusted["adjustment_pct"], ZERO)
 
     def test_cycle_projection_5y_builds_multifactor_model_with_bce_forward_signal(self):
         position = EquityPosition.objects.create(
