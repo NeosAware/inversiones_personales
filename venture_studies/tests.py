@@ -126,6 +126,7 @@ class VentureStudiesViewTests(TestCase):
         self.assertContains(response, "Nueva pestana")
         self.assertContains(response, "PDF financiero/comercial para Claude")
         self.assertContains(response, "Subir PDF con informacion financiera y comercial")
+        self.assertContains(response, "Si dejas Empresa vacio")
         self.assertContains(response, "Guardar empresa")
         self.assertContains(response, 'href="?company=')
 
@@ -174,6 +175,62 @@ class VentureStudiesViewTests(TestCase):
         document = VentureDocument.objects.get(opportunity=opportunity)
         self.assertEqual(document.document_kind, VentureDocument.DocumentKind.DOSSIER)
         self.assertEqual(document.title, "PDF financiero comercial")
+        mocked_analysis.assert_called_once_with(document, use_ai=True)
+
+    def test_staff_user_can_create_company_from_initial_pdf_without_typing_company_name(self):
+        self.client.force_login(self.staff_user)
+
+        def fake_analysis(document, use_ai=True):
+            opportunity = document.opportunity
+            opportunity.tax_id = "B44556677"
+            opportunity.sector = "Complejos ceramicos"
+            opportunity.annual_revenue = Decimal("640000.00")
+            opportunity.fit_summary = "Ficha completada desde el PDF inicial."
+            opportunity.save()
+            return VentureAnalysisSnapshot.objects.create(
+                opportunity=opportunity,
+                source_document=document,
+                recommendation=VentureAnalysisSnapshot.Recommendation.BUY,
+                confidence=VentureAnalysisSnapshot.Confidence.MEDIUM,
+                score_pct=Decimal("82.00"),
+                suggested_purchase_price=Decimal("250000.00"),
+                summary="Claude completa la ficha desde el PDF.",
+                agent_provider="anthropic",
+                agent_label="Claude test",
+            )
+
+        with patch("venture_studies.views.run_document_analysis", side_effect=fake_analysis) as mocked_analysis:
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "save_opportunity",
+                    "stage": VentureOpportunity.Stage.EARLY,
+                    "status": VentureOpportunity.Status.SCREENING,
+                    "strategic_fit": VentureOpportunity.StrategicFit.BOTH,
+                    "identified_on": "2026-04-28",
+                    "neos_fit_score": "3",
+                    "market_score": "3",
+                    "team_score": "3",
+                    "financial_score": "3",
+                    "risk_control_score": "3",
+                    "title": "Dossier inicial",
+                    "use_ai": "on",
+                    "file": SimpleUploadedFile(
+                        "Informe financiero y comercial - COMPLEJOS CERAMICOS SL.pdf",
+                        b"%PDF-1.4\n%%EOF",
+                        content_type="application/pdf",
+                    ),
+                },
+            )
+
+        opportunity = VentureOpportunity.objects.get(company_name="COMPLEJOS CERAMICOS SL")
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
+        self.assertEqual(opportunity.tax_id, "B44556677")
+        self.assertEqual(opportunity.sector, "Complejos ceramicos")
+        self.assertEqual(opportunity.annual_revenue, Decimal("640000.00"))
+        self.assertEqual(opportunity.fit_summary, "Ficha completada desde el PDF inicial.")
+        document = VentureDocument.objects.get(opportunity=opportunity)
+        self.assertEqual(document.document_kind, VentureDocument.DocumentKind.DOSSIER)
         mocked_analysis.assert_called_once_with(document, use_ai=True)
 
     def test_staff_user_can_update_selected_company_from_partial_tab_form(self):

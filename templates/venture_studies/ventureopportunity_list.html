@@ -569,7 +569,7 @@
                 <div><label>Subir PDF con informacion financiera y comercial</label><input type="file" name="file" accept=".pdf,application/pdf"></div>
               </div>
               <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="use_ai" checked> Analizar con Claude al guardar la empresa</label>
-              <p class="metric-sub" style="margin-bottom:0;">Tambien podras subir mas PDFs despues dentro de la pestana de esta empresa.</p>
+              <p class="metric-sub" style="margin-bottom:0;">Si dejas Empresa vacio, se intentara detectar el nombre desde el PDF o desde el nombre del archivo. Tambien podras subir mas PDFs despues dentro de la pestana de esta empresa.</p>
             </section>
             <div class="venture-form-grid">
               <div><label for="{{ form.company_name.id_for_label }}">{{ form.company_name.label }}</label>{{ form.company_name }}</div>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 import unicodedata
 from datetime import timedelta
@@ -525,6 +526,57 @@ def normalize_company_name_candidate(value: str) -> str:
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" -:|")
     cleaned = re.sub(r"\b(SL|SA)\b", lambda match: match.group(1).upper(), cleaned, flags=re.I)
     return cleaned[:180].strip()
+
+
+def guess_company_name_from_upload(uploaded_file, text: str = "", fallback_name: str = "") -> str:
+    fallback_name = normalize_company_name_candidate(fallback_name)
+    if fallback_name:
+        return fallback_name
+
+    parsed_name = find_company_name_from_informa(text)
+    if parsed_name:
+        return parsed_name
+
+    filename = Path(str(getattr(uploaded_file, "name", "") or "")).stem
+    filename = re.sub(r"[_]+", " ", filename)
+    filename = re.sub(r"\s+", " ", filename).strip()
+    pieces = [piece.strip() for piece in re.split(r"\s+-\s+|\s+\|\s+", filename) if piece.strip()]
+    for piece in reversed(pieces or [filename]):
+        match = COMPANY_SUFFIX_RE.search(piece)
+        if match:
+            return normalize_company_name_candidate(match.group(1))
+    return normalize_company_name_candidate(filename)
+
+
+def build_opportunity_seed_from_pdf(uploaded_file, *, fallback_company_name: str = "") -> dict:
+    text = ""
+    parsed_fields = {}
+    try:
+        text = extract_pdf_text_from_file(uploaded_file)
+    except Exception:
+        text = ""
+    if text:
+        parsed_fields = parse_informa_company_fields(text)
+
+    company_name = guess_company_name_from_upload(
+        uploaded_file,
+        text,
+        fallback_name=fallback_company_name or parsed_fields.get("company_name", ""),
+    )
+    opportunity_field_names = {field.name for field in VentureOpportunity._meta.fields}
+    seed_fields = {
+        key: value
+        for key, value in parsed_fields.items()
+        if key in opportunity_field_names
+    }
+    seed_fields.pop("company_name", None)
+    if company_name and not seed_fields.get("source"):
+        seed_fields["source"] = "PDF financiero/comercial"
+    return {
+        "company_name": company_name,
+        "fields": seed_fields,
+        "text": text,
+    }
 
 
 def extract_candidate_company_name(title: str, description: str = "") -> str:

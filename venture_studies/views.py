@@ -15,6 +15,7 @@ from .forms import (
 )
 from .models import VentureDiscoveryCandidate, VentureDocument, VentureOpportunity
 from .services import (
+    build_opportunity_seed_from_pdf,
     build_venture_study_context,
     discover_web_candidates,
     import_informa_report,
@@ -147,6 +148,8 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
 
         opportunity_id = request.POST.get("opportunity_id", "").strip()
         opportunity_instance = get_object_or_404(VentureOpportunity, pk=opportunity_id) if opportunity_id else None
+        if not opportunity_instance and request.FILES.get("file") and not request.POST.get("company_name", "").strip():
+            return self._create_opportunity_from_initial_pdf(request)
         form = VentureOpportunityForm(
             self._opportunity_form_data(request.POST, opportunity_instance),
             instance=opportunity_instance,
@@ -184,7 +187,45 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         self._analyze_attached_dossier(request, opportunity)
         return self._redirect_to_company(opportunity.id)
 
-    def _analyze_attached_dossier(self, request, opportunity):
+    def _create_opportunity_from_initial_pdf(self, request):
+        seed = build_opportunity_seed_from_pdf(
+            request.FILES["file"],
+            fallback_company_name=request.POST.get("company_name", ""),
+        )
+        if not seed["company_name"]:
+            form = VentureOpportunityForm(request.POST)
+            form.add_error("company_name", "No se ha podido detectar la empresa en el PDF. Escribe el nombre y vuelve a guardar.")
+            context = self.get_context_data(form=form, creating_new_company=True)
+            return self.render_to_response(context, status=400)
+
+        data = request.POST.copy()
+        data["company_name"] = seed["company_name"]
+        for field_name, value in seed["fields"].items():
+            if field_name in VentureOpportunityForm.Meta.fields and data.get(field_name) in (None, "") and value not in (None, ""):
+                data[field_name] = str(value)
+
+        form = VentureOpportunityForm(data)
+        if not form.is_valid():
+            context = self.get_context_data(form=form, creating_new_company=True)
+            return self.render_to_response(context, status=400)
+
+        defaults = {
+            field_name: form.cleaned_data[field_name]
+            for field_name in VentureOpportunityForm.Meta.fields
+            if field_name != "company_name"
+        }
+        opportunity, created = VentureOpportunity.objects.update_or_create(
+            company_name=form.cleaned_data["company_name"],
+            defaults=defaults,
+        )
+        if created:
+            messages.success(request, f"La empresa {opportunity.company_name} se ha creado desde el PDF.")
+        else:
+            messages.success(request, f"La empresa {opportunity.company_name} se ha localizado y actualizado desde el PDF.")
+        self._analyze_attached_dossier(request, opportunity, extracted_text=seed.get("text", ""))
+        return self._redirect_to_company(opportunity.id)
+
+    def _analyze_attached_dossier(self, request, opportunity, *, extracted_text: str = ""):
         if "file" not in request.FILES:
             return None
         data = request.POST.copy()
@@ -198,6 +239,11 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             return None
 
         document = form.save_document()
+        if extracted_text:
+            document.extracted_text = extracted_text
+            document.extraction_status = VentureDocument.ExtractionStatus.EXTRACTED
+            document.extraction_error = ""
+            document.save(update_fields=["extracted_text", "extraction_status", "extraction_error"])
         snapshot = run_document_analysis(
             document,
             use_ai=form.cleaned_data.get("use_ai", True),
