@@ -447,7 +447,8 @@
                   {% csrf_token %}
                   <input type="hidden" name="action" value="analyze_opportunity_documents">
                   <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
-                  <button class="button" type="submit">Generar analisis detallado</button>
+                  <input type="hidden" name="download_pdf" value="1">
+                  <button class="button" type="submit">Generar y descargar informe PDF</button>
                 </form>
               </div>
             {% endif %}
@@ -471,7 +472,8 @@
                   {% csrf_token %}
                   <input type="hidden" name="action" value="analyze_opportunity_documents">
                   <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
-                  <button class="button" type="submit">Analizar todos los PDFs y decidir</button>
+                  <input type="hidden" name="download_pdf" value="1">
+                  <button class="button" type="submit">Generar y descargar informe PDF</button>
                 </form>
               {% endif %}
             {% else %}
@@ -502,7 +504,8 @@
               {% csrf_token %}
               <input type="hidden" name="action" value="analyze_opportunity_documents">
               <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
-              <button class="button" type="submit">Analizar todos los PDFs y decidir</button>
+              <input type="hidden" name="download_pdf" value="1">
+              <button class="button" type="submit">Generar y descargar informe PDF</button>
             </form>
           </section>
         {% endif %}
@@ -606,7 +609,7 @@
               {% endif %}
             {% else %}
               {% if selected_documents %}
-                <div class="message info">Hay PDFs con texto extraido. Pulsa Analizar todos los PDFs y decidir o el boton Analizar ahora de la tabla de documentos.</div>
+                <div class="message info">Hay PDFs con texto extraido. Pulsa Generar y descargar informe PDF para crear el memo descargable.</div>
               {% else %}
                 <div class="message info">Sube un balance PDF para generar recomendacion, rango de valoracion, precio aproximado y serie historica.</div>
               {% endif %}
@@ -681,6 +684,7 @@
                         {% csrf_token %}
                         <input type="hidden" name="action" value="analyze_document">
                         <input type="hidden" name="document_id" value="{{ document.id }}">
+                        <input type="hidden" name="download_pdf" value="1">
                         <button class="button secondary" type="submit">Analizar ahora</button>
                       </form>
                     </td>

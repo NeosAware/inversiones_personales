@@ -548,6 +548,8 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
                 request,
                 "Claude no ha intervenido en este analisis. Revisa AI_LLM_PROVIDER=anthropic y ANTHROPIC_API_KEY si quieres lectura Claude.",
             )
+        if request.POST.get("download_pdf") == "1":
+            return redirect("venture_studies:analysis_pdf", analysis_id=snapshot.id)
         return self._redirect_to_company(document.opportunity_id)
 
     def _analyze_opportunity_documents(self, request):
@@ -588,6 +590,8 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
                 request,
                 "Claude no ha intervenido en este analisis. Revisa AI_LLM_PROVIDER=anthropic y ANTHROPIC_API_KEY si quieres lectura Claude.",
             )
+        if request.POST.get("download_pdf") == "1":
+            return redirect("venture_studies:analysis_pdf", analysis_id=snapshot.id)
         return self._redirect_to_company(opportunity.id)
 
     def _delete_opportunity(self, request):
