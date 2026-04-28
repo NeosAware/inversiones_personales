@@ -914,6 +914,7 @@ class VentureStudiesViewTests(TestCase):
             self.assertIn('"kind":"Dossier financiero/comercial"', user_prompt)
             self.assertIn("pipeline comercial", user_prompt)
             self.assertIn("opportunity_updates", user_prompt)
+            self.assertIn('"quality_score":"0.50"', user_prompt)
             return (
                 {
                     "recommendation": "watch",
@@ -937,7 +938,11 @@ class VentureStudiesViewTests(TestCase):
             payload = try_ai_venture_analysis(
                 opportunity,
                 {"annual_revenue": Decimal("300000.00")},
-                {"note": "", "top_items": [], "website": {}},
+                {
+                    "note": "",
+                    "top_items": [{"title": "Senal web", "source": "Test", "tone": "positivo"}],
+                    "website": {"available": True, "quality_score": Decimal("0.50")},
+                },
                 core_payload,
                 document.extracted_text,
                 document=document,

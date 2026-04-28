@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import re
 import unicodedata
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -216,6 +216,18 @@ def normalize_ai_choice_value(field_name: str, value) -> str:
         },
     }
     return aliases.get(field_name, {}).get(text, "")
+
+
+def make_json_safe(value):
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): make_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [make_json_safe(item) for item in value]
+    return value
 
 
 def extract_pdf_text(document: VentureDocument, *, max_chars: int = 70000) -> str:
@@ -1478,7 +1490,7 @@ def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, tex
         "annual_revenue, ebitda, cash_need, neos_fit_score, market_score, team_score, financial_score, risk_control_score, "
         "fit_summary, growth_issue, synergy_notes, diligence_notes, red_flags y next_steps. "
         "Usa fechas ISO YYYY-MM-DD, importes numericos sin simbolos, scores enteros de 1 a 5, y deja vacio cualquier campo no soportado por la informacion. JSON de entrada: "
-        f"{json.dumps(user_payload, ensure_ascii=True, separators=(',', ':'))}"
+        f"{json.dumps(make_json_safe(user_payload), ensure_ascii=True, separators=(',', ':'))}"
     )
     try:
         if config.provider == "anthropic":
@@ -1575,8 +1587,8 @@ def create_venture_analysis_snapshot(
         drivers=payload["drivers"],
         risks=payload["risks"],
         assumptions=payload["assumptions"],
-        web_context=web_context,
-        analysis_payload=payload["analysis_payload"],
+        web_context=make_json_safe(web_context),
+        analysis_payload=make_json_safe(payload["analysis_payload"]),
         agent_provider=payload["agent_provider"],
         agent_label=payload["agent_label"],
     )
