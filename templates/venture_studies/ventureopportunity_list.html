@@ -322,6 +322,23 @@
 
                 <form method="post" enctype="multipart/form-data" class="stack">
                   {% csrf_token %}
+                  <input type="hidden" name="action" value="upload_dossier">
+                  <input type="hidden" name="opportunity" value="{{ selected_opportunity.id }}">
+                  <div class="venture-form-grid">
+                    <div><label>Titulo dossier</label><input type="text" name="title" placeholder="Dossier financiero/comercial"></div>
+                    <div><label>Ano fiscal</label><input type="number" name="fiscal_year" min="1990" max="2100"></div>
+                    <div><label>Fecha documento</label><input type="date" name="document_date"></div>
+                    <div><label>PDF financiero/comercial</label><input type="file" name="file" accept=".pdf,application/pdf" required></div>
+                  </div>
+                  <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="use_ai" checked> Analizar con Claude si esta configurado</label>
+                  {% if dossier_form.errors %}
+                    <div class="message error">Revisa el dossier PDF antes de analizarlo.</div>
+                  {% endif %}
+                  <button class="button" type="submit">Analizar dossier con Claude</button>
+                </form>
+
+                <form method="post" enctype="multipart/form-data" class="stack">
+                  {% csrf_token %}
                   <input type="hidden" name="action" value="upload_balance">
                   <input type="hidden" name="opportunity" value="{{ selected_opportunity.id }}">
                   <div class="venture-form-grid">
@@ -363,6 +380,7 @@
             <p class="section-title">Analisis y evolucion</p>
             {% if selected_opportunity.latest_analysis %}
               <p class="venture-note">{{ selected_opportunity.latest_analysis.summary }}</p>
+              <p class="metric-sub">Analista: {{ selected_opportunity.latest_analysis.agent_label }}{% if selected_opportunity.latest_analysis.source_document %} - {{ selected_opportunity.latest_analysis.source_document.title }}{% endif %}</p>
               {% if selected_opportunity.latest_analysis.valuation_note %}
                 <p class="metric-sub">{{ selected_opportunity.latest_analysis.valuation_note }}</p>
               {% endif %}
@@ -376,7 +394,7 @@
               <div class="message info">Sube un balance PDF para generar recomendacion, rango de valoracion, precio aproximado y serie historica.</div>
             {% endif %}
             <table style="margin-top:12px;">
-              <thead><tr><th>Fecha</th><th>Recomendacion</th><th>Precio</th><th>Score</th></tr></thead>
+              <thead><tr><th>Fecha</th><th>Recomendacion</th><th>Precio</th><th>Score</th><th>Analista</th></tr></thead>
               <tbody>
                 {% for analysis in selected_analyses %}
                   <tr>
@@ -384,9 +402,10 @@
                     <td>{{ analysis.get_recommendation_display }}</td>
                     <td>{{ analysis.suggested_purchase_price|floatformat:0 }} EUR</td>
                     <td>{{ analysis.score_pct|floatformat:0 }} %</td>
+                    <td>{{ analysis.agent_label }}</td>
                   </tr>
                 {% empty %}
-                  <tr><td colspan="4" class="muted">Sin valoraciones guardadas.</td></tr>
+                  <tr><td colspan="5" class="muted">Sin valoraciones guardadas.</td></tr>
                 {% endfor %}
               </tbody>
             </table>

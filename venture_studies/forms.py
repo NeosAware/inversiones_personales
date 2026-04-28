@@ -265,6 +265,76 @@ class VentureBalanceAnalysisForm(forms.Form):
         )
 
 
+class VentureDossierAnalysisForm(forms.Form):
+    opportunity = forms.ModelChoiceField(
+        queryset=VentureOpportunity.objects.none(),
+        label="Empresa",
+    )
+    title = forms.CharField(
+        max_length=180,
+        required=False,
+        label="Titulo del dossier",
+        help_text="Opcional. Por ejemplo: Dossier comercial 2026, plan financiero o deck de ventas.",
+    )
+    fiscal_year = forms.IntegerField(
+        required=False,
+        min_value=1990,
+        max_value=2100,
+        label="Ano fiscal",
+    )
+    document_date = forms.DateField(
+        required=False,
+        label="Fecha del documento",
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
+    file = forms.FileField(
+        label="PDF financiero/comercial",
+        widget=forms.ClearableFileInput(attrs={"accept": ".pdf,application/pdf"}),
+    )
+    use_ai = forms.BooleanField(
+        required=False,
+        initial=True,
+        label="Analizar con Claude si esta configurado",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["opportunity"].queryset = VentureOpportunity.objects.order_by("company_name")
+
+    def clean_file(self):
+        uploaded_file = self.cleaned_data["file"]
+        suffix = Path(str(getattr(uploaded_file, "name", "") or "")).suffix.lower()
+        if suffix != ".pdf":
+            raise ValidationError("Solo se admiten dossiers en PDF.")
+        max_file_bytes = max(int(getattr(settings, "VENTURE_DOCUMENT_MAX_FILE_BYTES", 12 * 1024 * 1024) or 0), 1024)
+        if getattr(uploaded_file, "size", 0) and uploaded_file.size > max_file_bytes:
+            max_file_mb = max_file_bytes / (1024 * 1024)
+            raise ValidationError(f"El PDF supera el limite de {max_file_mb:.1f} MB.")
+        return uploaded_file
+
+    def build_document_title(self):
+        title = str(self.cleaned_data.get("title") or "").strip()
+        if title:
+            return title
+        fiscal_year = self.cleaned_data.get("fiscal_year")
+        if fiscal_year:
+            return f"Dossier financiero/comercial {fiscal_year}"
+        document_date = self.cleaned_data.get("document_date")
+        if document_date:
+            return f"Dossier financiero/comercial {document_date:%Y-%m-%d}"
+        return "Dossier financiero/comercial"
+
+    def save_document(self):
+        return VentureDocument.objects.create(
+            opportunity=self.cleaned_data["opportunity"],
+            document_kind=VentureDocument.DocumentKind.DOSSIER,
+            title=self.build_document_title(),
+            fiscal_year=self.cleaned_data.get("fiscal_year"),
+            document_date=self.cleaned_data.get("document_date"),
+            file=self.cleaned_data["file"],
+        )
+
+
 class VentureInformaImportForm(forms.Form):
     opportunity = forms.ModelChoiceField(
         queryset=VentureOpportunity.objects.none(),

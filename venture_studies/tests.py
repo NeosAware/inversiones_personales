@@ -3,11 +3,11 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from .models import VentureAnalysisSnapshot, VentureDiscoveryCandidate, VentureDocument, VentureOpportunity
-from .services import import_informa_report, run_document_analysis
+from .services import import_informa_report, run_document_analysis, try_ai_venture_analysis
 
 
 class VentureStudiesViewTests(TestCase):
@@ -111,6 +111,7 @@ class VentureStudiesViewTests(TestCase):
         self.assertContains(response, "Pestana de empresa")
         self.assertContains(response, "Subir informacion")
         self.assertContains(response, "Importar Informa en esta empresa")
+        self.assertContains(response, "Analizar dossier con Claude")
         self.assertContains(response, "Analizar balance de esta empresa")
         self.assertContains(response, "Documentos de la empresa")
         self.assertContains(response, "Vigilancia web")
@@ -207,6 +208,50 @@ class VentureStudiesViewTests(TestCase):
         self.assertEqual(analysis.recommendation, VentureAnalysisSnapshot.Recommendation.BUY)
         self.assertEqual(analysis.suggested_purchase_price, Decimal("180000.00"))
 
+    def test_staff_user_can_upload_financial_commercial_dossier_for_claude_analysis(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Dossier Comercial SL",
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+        )
+        self.client.force_login(self.staff_user)
+
+        def fake_analysis(document, use_ai=True):
+            return VentureAnalysisSnapshot.objects.create(
+                opportunity=document.opportunity,
+                source_document=document,
+                recommendation=VentureAnalysisSnapshot.Recommendation.WATCH,
+                confidence=VentureAnalysisSnapshot.Confidence.HIGH,
+                score_pct=Decimal("68.00"),
+                suggested_purchase_price=Decimal("95000.00"),
+                summary="Claude revisa ventas, cartera comercial y tension de caja.",
+                agent_provider="anthropic",
+                agent_label="Claude test",
+            )
+
+        with patch("venture_studies.views.run_document_analysis", side_effect=fake_analysis) as mocked_analysis:
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "upload_dossier",
+                    "opportunity": str(opportunity.id),
+                    "title": "Dossier financiero y comercial",
+                    "fiscal_year": "2026",
+                    "file": SimpleUploadedFile("dossier.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf"),
+                    "use_ai": "on",
+                },
+            )
+
+        document = VentureDocument.objects.get(opportunity=opportunity)
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
+        self.assertEqual(document.document_kind, VentureDocument.DocumentKind.DOSSIER)
+        self.assertEqual(document.title, "Dossier financiero y comercial")
+        mocked_analysis.assert_called_once_with(document, use_ai=True)
+        analysis = VentureAnalysisSnapshot.objects.get(opportunity=opportunity)
+        self.assertEqual(analysis.agent_provider, "anthropic")
+        self.assertEqual(analysis.agent_label, "Claude test")
+
     def test_document_analysis_creates_snapshot_from_extracted_balance_text(self):
         opportunity = VentureOpportunity.objects.create(
             company_name="Aditivos Minerales SL",
@@ -246,6 +291,86 @@ class VentureStudiesViewTests(TestCase):
         self.assertGreater(snapshot.suggested_purchase_price, Decimal("0"))
         self.assertEqual(snapshot.annual_revenue, Decimal("420000.00"))
         self.assertEqual(snapshot.ebitda, Decimal("80000.00"))
+
+    @override_settings(
+        AI_LLM_PROVIDER="anthropic",
+        ANTHROPIC_API_KEY="test-anthropic-key",
+        CLAUDE_DEFAULT_MODEL="claude-test",
+        CLAUDE_MAX_TOKENS=512,
+    )
+    def test_claude_venture_analysis_receives_dossier_context(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Contexto Comercial SL",
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+        )
+        document = VentureDocument.objects.create(
+            opportunity=opportunity,
+            document_kind=VentureDocument.DocumentKind.DOSSIER,
+            title="Dossier comercial",
+            file="venture_studies/test/dossier.pdf",
+            extracted_text="Ventas recurrentes 300.000, pipeline comercial 120.000 y dependencia de dos clientes.",
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+        core_payload = {
+            "recommendation": VentureAnalysisSnapshot.Recommendation.WATCH,
+            "confidence": VentureAnalysisSnapshot.Confidence.MEDIUM,
+            "score_pct": Decimal("60.00"),
+            "valuation_low": Decimal("75000.00"),
+            "valuation_base": Decimal("100000.00"),
+            "valuation_high": Decimal("125000.00"),
+            "suggested_purchase_price": Decimal("85000.00"),
+            "suggested_ticket": Decimal("25000.00"),
+            "target_ownership_pct": Decimal("25.00"),
+            "annual_revenue": Decimal("300000.00"),
+            "ebitda": None,
+            "net_equity": None,
+            "net_debt": None,
+            "cash_need": None,
+            "summary": "Lectura interna.",
+            "valuation_note": "Valoracion interna.",
+            "web_summary": "",
+            "drivers": ["Pipeline comercial"],
+            "risks": ["Dependencia de clientes"],
+            "assumptions": ["Sin EBITDA"],
+            "agent_provider": "core",
+            "agent_label": "Analisis interno",
+            "analysis_payload": {},
+        }
+
+        def fake_claude(config, *, system_prompt, user_prompt):
+            self.assertIn("dossier financiero/comercial", system_prompt)
+            self.assertIn('"kind":"Dossier financiero/comercial"', user_prompt)
+            self.assertIn("pipeline comercial", user_prompt)
+            return (
+                {
+                    "recommendation": "watch",
+                    "confidence": "high",
+                    "score_pct": "72.00",
+                    "summary": "Claude cruza finanzas y senales comerciales.",
+                    "drivers": ["Pipeline comercial validable"],
+                    "risks": ["Dependencia de dos clientes"],
+                    "assumptions": ["Cifras extraidas del dossier"],
+                },
+                {"input_tokens": 100, "output_tokens": 50, "estimated_cost_usd": Decimal("0.0010")},
+            )
+
+        with patch("venture_studies.services.call_anthropic_agent", side_effect=fake_claude):
+            payload = try_ai_venture_analysis(
+                opportunity,
+                {"annual_revenue": Decimal("300000.00")},
+                {"note": "", "top_items": [], "website": {}},
+                core_payload,
+                document.extracted_text,
+                document=document,
+                enabled=True,
+            )
+
+        self.assertEqual(payload["agent_provider"], "anthropic")
+        self.assertEqual(payload["agent_label"], "Claude claude-test")
+        self.assertEqual(payload["confidence"], VentureAnalysisSnapshot.Confidence.HIGH)
+        self.assertEqual(payload["score_pct"], Decimal("72.00"))
 
     def test_informa_report_can_create_and_fill_company_fields(self):
         informa_text = """

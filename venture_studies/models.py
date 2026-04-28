@@ -135,6 +135,7 @@ class VentureDocument(models.Model):
     class DocumentKind(models.TextChoices):
         BALANCE = "balance", "Balance o cuentas anuales"
         INFORMA = "informa", "Informe Informa"
+        DOSSIER = "dossier", "Dossier financiero/comercial"
         PITCH = "pitch", "Presentacion"
         CONTRACT = "contract", "Contrato o pedido"
         OTHER = "other", "Otro documento"

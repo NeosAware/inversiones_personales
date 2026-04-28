@@ -6,7 +6,13 @@ from django.views.generic import TemplateView
 
 from portfolio.user_management import can_user_manage_financial_data
 
-from .forms import VentureBalanceAnalysisForm, VentureInformaImportForm, VentureOpportunityForm, VentureWebDiscoveryForm
+from .forms import (
+    VentureBalanceAnalysisForm,
+    VentureDossierAnalysisForm,
+    VentureInformaImportForm,
+    VentureOpportunityForm,
+    VentureWebDiscoveryForm,
+)
 from .models import VentureDiscoveryCandidate, VentureDocument, VentureOpportunity
 from .services import (
     build_venture_study_context,
@@ -55,6 +61,20 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
                 data[field_name] = str(value)
         return data
 
+    def _posted_opportunity(self, request):
+        opportunity_id = str(request.POST.get("opportunity") or "").strip()
+        if not opportunity_id:
+            return None
+        return VentureOpportunity.objects.filter(pk=opportunity_id).first()
+
+    def _context_with_posted_opportunity(self, request, **forms):
+        opportunity = self._posted_opportunity(request)
+        kwargs = dict(forms)
+        if opportunity:
+            kwargs["creating_new_company"] = False
+            kwargs["selected_opportunity_override"] = opportunity
+        return self.get_context_data(**kwargs)
+
     def get_context_data(self, **kwargs):
         creating_new_company = kwargs.pop("creating_new_company", None)
         selected_opportunity_override = kwargs.pop("selected_opportunity_override", None)
@@ -98,6 +118,7 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             VentureOpportunityForm(instance=selected_opportunity) if selected_opportunity else None,
         )
         context.setdefault("analysis_form", VentureBalanceAnalysisForm())
+        context.setdefault("dossier_form", VentureDossierAnalysisForm())
         context.setdefault("informa_form", VentureInformaImportForm())
         context.setdefault("discovery_form", VentureWebDiscoveryForm())
         context.update(build_venture_study_context(opportunities))
@@ -111,6 +132,8 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         action = request.POST.get("action", "save_opportunity")
         if action == "upload_balance":
             return self._upload_balance(request)
+        if action == "upload_dossier":
+            return self._upload_dossier(request)
         if action == "upload_informa":
             return self._upload_informa(request)
         if action == "delete_opportunity":
@@ -163,7 +186,7 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
     def _upload_balance(self, request):
         form = VentureBalanceAnalysisForm(request.POST, request.FILES)
         if not form.is_valid():
-            context = self.get_context_data(analysis_form=form)
+            context = self._context_with_posted_opportunity(request, analysis_form=form)
             return self.render_to_response(context, status=400)
 
         document = form.save_document()
@@ -186,10 +209,41 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             )
         return self._redirect_to_company(document.opportunity_id)
 
+    def _upload_dossier(self, request):
+        form = VentureDossierAnalysisForm(request.POST, request.FILES)
+        if not form.is_valid():
+            context = self._context_with_posted_opportunity(request, dossier_form=form)
+            return self.render_to_response(context, status=400)
+
+        document = form.save_document()
+        snapshot = run_document_analysis(
+            document,
+            use_ai=form.cleaned_data.get("use_ai", True),
+        )
+        messages.success(
+            request,
+            (
+                f"Dossier de {document.opportunity.company_name} analizado por {snapshot.agent_label}. "
+                f"Recomendacion: {snapshot.get_recommendation_display()} "
+                f"y precio orientativo {snapshot.suggested_purchase_price or 0:.2f} EUR."
+            ),
+        )
+        if form.cleaned_data.get("use_ai", True) and snapshot.agent_provider != "anthropic":
+            messages.warning(
+                request,
+                "Claude no ha intervenido en este analisis. Revisa AI_LLM_PROVIDER=anthropic y ANTHROPIC_API_KEY si quieres lectura Claude.",
+            )
+        if document.extraction_status == VentureDocument.ExtractionStatus.FAILED:
+            messages.warning(
+                request,
+                "El PDF se ha guardado, pero no se pudo extraer texto. Si es un escaneo, sube una version con OCR para que Claude pueda leerlo.",
+            )
+        return self._redirect_to_company(document.opportunity_id)
+
     def _upload_informa(self, request):
         form = VentureInformaImportForm(request.POST, request.FILES)
         if not form.is_valid():
-            context = self.get_context_data(informa_form=form)
+            context = self._context_with_posted_opportunity(request, informa_form=form)
             return self.render_to_response(context, status=400)
 
         try:
@@ -202,7 +256,7 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             )
         except Exception as exc:
             messages.error(request, f"No se ha podido importar el informe Informa: {exc}")
-            context = self.get_context_data(informa_form=form)
+            context = self._context_with_posted_opportunity(request, informa_form=form)
             return self.render_to_response(context, status=400)
 
         opportunity = result["opportunity"]

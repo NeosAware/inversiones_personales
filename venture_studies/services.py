@@ -866,7 +866,14 @@ def build_core_valuation(opportunity: VentureOpportunity, metrics: dict, web_con
     }
 
 
-def _analysis_json_payload(opportunity: VentureOpportunity, metrics: dict, web_context: dict, core_payload: dict, text: str) -> dict:
+def _analysis_json_payload(
+    opportunity: VentureOpportunity,
+    metrics: dict,
+    web_context: dict,
+    core_payload: dict,
+    text: str,
+    document: VentureDocument | None = None,
+) -> dict:
     return {
         "company": {
             "name": opportunity.company_name,
@@ -887,6 +894,12 @@ def _analysis_json_payload(opportunity: VentureOpportunity, metrics: dict, web_c
             "fit_summary": trim_text(opportunity.fit_summary, 800),
             "synergy_notes": trim_text(opportunity.synergy_notes, 800),
             "red_flags": trim_text(opportunity.red_flags, 800),
+        },
+        "source_document": {
+            "title": document.title if document else "",
+            "kind": document.get_document_kind_display() if document else "",
+            "fiscal_year": document.fiscal_year if document else None,
+            "document_date": document.document_date.isoformat() if document and document.document_date else "",
         },
         "parsed_balance_metrics": {key: str(value) for key, value in metrics.items() if value is not None},
         "core_valuation": {
@@ -918,6 +931,7 @@ def _analysis_json_payload(opportunity: VentureOpportunity, metrics: dict, web_c
                 for item in (web_context.get("top_items") or [])[:8]
             ],
         },
+        "document_text_excerpt": trim_text(text, 14000),
         "balance_text_excerpt": trim_text(text, 14000),
     }
 
@@ -934,7 +948,7 @@ def _normalize_ai_list(value, fallback):
     return rows[:5] or fallback
 
 
-def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, text, *, enabled=True) -> dict | None:
+def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, text, *, document=None, enabled=True) -> dict | None:
     if not enabled:
         return None
     config = resolve_ai_provider_config()
@@ -943,13 +957,16 @@ def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, tex
 
     system_prompt = (
         "Eres un analista de inversion en empresas no cotizadas industriales complementarias a Neos Ceramica y Neos Additives. "
-        "Trabajas solo con el JSON recibido: datos manuales, texto extraido del balance PDF y contexto web. "
+        "Trabajas solo con el JSON recibido: datos manuales, texto extraido del PDF y contexto web. "
+        "El PDF puede ser un balance, cuentas anuales, un dossier financiero/comercial, un deck comercial o un informe mixto. "
+        "Evalua finanzas, calidad comercial, clientes, recurrencia, cartera de pedidos, pipeline, pricing, canales, dependencia de clientes, equipo y encaje industrial con Neos. "
         "No inventes cifras. Si una cifra no aparece, dilo. Devuelve solo JSON valido. "
         "La recomendacion debe ser buy o watch. El precio sugerido es orientativo para el 100 % de la empresa, con margen de seguridad."
     )
-    user_payload = _analysis_json_payload(opportunity, metrics, web_context, core_payload, text)
+    user_payload = _analysis_json_payload(opportunity, metrics, web_context, core_payload, text, document=document)
     user_prompt = (
-        "Analiza esta oportunidad no cotizada. Devuelve JSON con: recommendation, confidence, score_pct, "
+        "Analiza esta oportunidad no cotizada usando la informacion financiera y comercial disponible. "
+        "Devuelve JSON con: recommendation, confidence, score_pct, "
         "suggested_purchase_price, valuation_low, valuation_base, valuation_high, suggested_ticket, target_ownership_pct, "
         "summary, valuation_note, web_summary, drivers, risks y assumptions. JSON de entrada: "
         f"{json.dumps(user_payload, ensure_ascii=True, separators=(',', ':'))}"
@@ -1026,6 +1043,7 @@ def run_document_analysis(document: VentureDocument, *, use_ai: bool = True) -> 
         web_context,
         core_payload,
         text,
+        document=document,
         enabled=use_ai,
     ) or core_payload
 
