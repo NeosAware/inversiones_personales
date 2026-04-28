@@ -581,12 +581,18 @@ def build_discovery_query(*, geography: str, sector_focus: str) -> str:
 
 def discover_web_candidates(*, geography: str = "Castellon", sector_focus: str = "", max_candidates: int = 8) -> dict:
     query = build_discovery_query(geography=geography, sector_focus=sector_focus)
-    signal = fetch_news_signal_for_query(
-        query,
-        label="Radar web",
-        lookback_days=60,
-        max_items=max(int(max_candidates or 8), 3),
-    )
+    try:
+        signal = fetch_news_signal_for_query(
+            query,
+            label="Radar web",
+            lookback_days=60,
+            max_items=max(int(max_candidates or 8), 3),
+        )
+    except Exception as exc:
+        signal = build_unavailable_news_signal(
+            "Radar web",
+            f"No se ha podido leer la web en este momento: {trim_text(str(exc), 220)}",
+        )
     candidates = []
     created_count = 0
     updated_count = 0
@@ -609,7 +615,7 @@ def discover_web_candidates(*, geography: str = "Castellon", sector_focus: str =
             "score_pct": score_pct,
             "tags": tags,
         }
-        source_url = str(item.get("link") or "").strip()
+        source_url = str(item.get("link") or "").strip()[:1000]
         candidate, created = VentureDiscoveryCandidate.objects.update_or_create(
             company_name=company_name,
             source_url=source_url,

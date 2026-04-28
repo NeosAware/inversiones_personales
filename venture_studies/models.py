@@ -251,7 +251,7 @@ class VentureDiscoveryCandidate(models.Model):
     sector = models.CharField(max_length=140, blank=True)
     geography = models.CharField(max_length=120, blank=True)
     source_title = models.CharField(max_length=240, blank=True)
-    source_url = models.URLField(blank=True)
+    source_url = models.URLField(max_length=1000, blank=True)
     source_label = models.CharField(max_length=120, blank=True)
     summary = models.TextField(blank=True)
     rationale = models.TextField(blank=True)

@@ -325,13 +325,16 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             sector_focus=form.cleaned_data["sector_focus"],
             max_candidates=form.cleaned_data["max_candidates"],
         )
-        messages.success(
-            request,
-            (
-                f"Radar web actualizado: {result['created_count']} candidato(s) nuevo(s) "
-                f"y {result['updated_count']} revisado(s)."
-            ),
-        )
+        if result.get("signal", {}).get("available") is False and not result.get("candidates"):
+            messages.warning(request, result["signal"].get("note") or "No se han encontrado candidatos web.")
+        else:
+            messages.success(
+                request,
+                (
+                    f"Radar web actualizado: {result['created_count']} candidato(s) nuevo(s) "
+                    f"y {result['updated_count']} revisado(s)."
+                ),
+            )
         return redirect("venture_studies:list")
 
     def _promote_candidate(self, request):

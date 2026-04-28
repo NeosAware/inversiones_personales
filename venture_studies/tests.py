@@ -7,7 +7,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from .models import VentureAnalysisSnapshot, VentureDiscoveryCandidate, VentureDocument, VentureOpportunity
-from .services import import_informa_report, run_document_analysis, try_ai_venture_analysis
+from .services import discover_web_candidates, import_informa_report, run_document_analysis, try_ai_venture_analysis
 
 
 class VentureStudiesViewTests(TestCase):
@@ -632,6 +632,45 @@ class VentureStudiesViewTests(TestCase):
         candidate.refresh_from_db()
         self.assertEqual(candidate.status, VentureDiscoveryCandidate.Status.PROMOTED)
         self.assertEqual(candidate.promoted_opportunity, opportunity)
+
+    def test_web_discovery_stores_long_google_news_links(self):
+        long_link = "https://news.google.com/rss/articles/" + ("abc" * 120)
+
+        with patch("venture_studies.services.fetch_news_signal_for_query") as fetch_signal:
+            fetch_signal.return_value = {
+                "available": True,
+                "items": [
+                    {
+                        "title": "Candidato Largo SL amplia su planta en Castellon",
+                        "description": "Empresa de materiales ceramicos con inversion industrial.",
+                        "link": long_link,
+                        "source": "Prensa",
+                    }
+                ],
+            }
+            result = discover_web_candidates(
+                geography="Castellon",
+                sector_focus="ceramica materiales",
+                max_candidates=3,
+            )
+
+        self.assertEqual(result["created_count"], 1)
+        candidate = VentureDiscoveryCandidate.objects.get(company_name="Candidato Largo SL")
+        self.assertEqual(candidate.source_url, long_link)
+        self.assertLessEqual(len(candidate.source_url), 1000)
+
+    def test_web_discovery_returns_empty_signal_when_news_fetch_fails(self):
+        with patch("venture_studies.services.fetch_news_signal_for_query", side_effect=TimeoutError("timeout")):
+            result = discover_web_candidates(
+                geography="Castellon",
+                sector_focus="ceramica materiales",
+                max_candidates=3,
+            )
+
+        self.assertFalse(result["signal"]["available"])
+        self.assertEqual(result["created_count"], 0)
+        self.assertEqual(result["updated_count"], 0)
+        self.assertFalse(VentureDiscoveryCandidate.objects.exists())
 
     def test_staff_user_can_launch_web_discovery(self):
         candidate = VentureDiscoveryCandidate.objects.create(
