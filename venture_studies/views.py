@@ -142,6 +142,8 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             return self._upload_dossier(request)
         if action == "upload_informa":
             return self._upload_informa(request)
+        if action == "analyze_document":
+            return self._analyze_existing_document(request)
         if action == "delete_opportunity":
             return self._delete_opportunity(request)
         if action == "discover_web":
@@ -394,9 +396,58 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             messages.success(request, f"Informe Informa importado y empresa {opportunity.company_name} creada.")
         else:
             messages.success(request, f"Informe Informa importado para {opportunity.company_name}: {updated_labels}.")
+        snapshot = None
+        if result["document"].extraction_status == VentureDocument.ExtractionStatus.EXTRACTED:
+            try:
+                snapshot = run_document_analysis(
+                    result["document"],
+                    use_ai=form.cleaned_data.get("use_ai", True),
+                )
+            except Exception as exc:
+                self._document_analysis_failed(request, result["document"], exc)
+        if snapshot:
+            messages.success(
+                request,
+                (
+                    f"Informe Informa analizado por {snapshot.agent_label}. "
+                    f"Recomendacion: {snapshot.get_recommendation_display()} "
+                    f"y precio orientativo {snapshot.suggested_purchase_price or 0:.2f} EUR."
+                ),
+            )
+            if form.cleaned_data.get("use_ai", True) and snapshot.agent_provider != "anthropic":
+                messages.warning(
+                    request,
+                    "Claude no ha intervenido en este analisis. Revisa AI_LLM_PROVIDER=anthropic y ANTHROPIC_API_KEY si quieres lectura Claude.",
+                )
         if result["document"].extraction_status == VentureDocument.ExtractionStatus.FAILED:
             messages.warning(request, "El PDF se ha guardado, pero no contiene texto extraible. Prueba con una version OCR.")
         return self._redirect_to_company(opportunity.id)
+
+    def _analyze_existing_document(self, request):
+        document_id = str(request.POST.get("document_id") or "").strip()
+        document = get_object_or_404(
+            VentureDocument.objects.select_related("opportunity"),
+            pk=document_id,
+        )
+        try:
+            snapshot = run_document_analysis(document, use_ai=True)
+        except Exception as exc:
+            self._document_analysis_failed(request, document, exc)
+            return self._redirect_to_company(document.opportunity_id)
+        messages.success(
+            request,
+            (
+                f"Documento {document.title} analizado por {snapshot.agent_label}. "
+                f"Recomendacion: {snapshot.get_recommendation_display()} "
+                f"y precio orientativo {snapshot.suggested_purchase_price or 0:.2f} EUR."
+            ),
+        )
+        if snapshot.agent_provider != "anthropic":
+            messages.warning(
+                request,
+                "Claude no ha intervenido en este analisis. Revisa AI_LLM_PROVIDER=anthropic y ANTHROPIC_API_KEY si quieres lectura Claude.",
+            )
+        return self._redirect_to_company(document.opportunity_id)
 
     def _delete_opportunity(self, request):
         opportunity = get_object_or_404(VentureOpportunity, pk=request.POST.get("opportunity_id"))

@@ -361,6 +361,11 @@ class VentureInformaImportForm(forms.Form):
         initial=False,
         label="Sobrescribir campos ya rellenados",
     )
+    use_ai = forms.BooleanField(
+        required=False,
+        initial=True,
+        label="Analizar con Claude al importar",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

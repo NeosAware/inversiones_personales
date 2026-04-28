@@ -117,7 +117,7 @@ class VentureStudiesViewTests(TestCase):
         self.assertContains(response, "Neos Additives")
         self.assertContains(response, "Pestana de empresa")
         self.assertContains(response, "Subir informacion")
-        self.assertContains(response, "Importar Informa en esta empresa")
+        self.assertContains(response, "Importar Informa y analizar")
         self.assertContains(response, "Analizar dossier con Claude")
         self.assertContains(response, "Analizar balance de esta empresa")
         self.assertContains(response, "Documentos de la empresa")
@@ -464,6 +464,51 @@ class VentureStudiesViewTests(TestCase):
         self.assertEqual(analysis.agent_provider, "anthropic")
         self.assertEqual(analysis.agent_label, "Claude test")
 
+    def test_staff_user_can_analyze_existing_document_from_document_table(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Documento Pendiente SL",
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+        )
+        document = VentureDocument.objects.create(
+            opportunity=opportunity,
+            document_kind=VentureDocument.DocumentKind.INFORMA,
+            title="Informe ya cargado",
+            file="venture_studies/test/informa.pdf",
+            extracted_text="Ventas balance 500.000 EUR EBITDA 60.000 EUR",
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+        self.client.force_login(self.staff_user)
+
+        def fake_analysis(document, use_ai=True):
+            return VentureAnalysisSnapshot.objects.create(
+                opportunity=document.opportunity,
+                source_document=document,
+                recommendation=VentureAnalysisSnapshot.Recommendation.WATCH,
+                confidence=VentureAnalysisSnapshot.Confidence.MEDIUM,
+                score_pct=Decimal("66.00"),
+                suggested_purchase_price=Decimal("140000.00"),
+                summary="Documento existente analizado.",
+                agent_provider="anthropic",
+                agent_label="Claude test",
+            )
+
+        with patch("venture_studies.views.run_document_analysis", side_effect=fake_analysis) as mocked_analysis:
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "analyze_document",
+                    "document_id": str(document.id),
+                },
+            )
+
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
+        mocked_analysis.assert_called_once_with(document, use_ai=True)
+        analysis = VentureAnalysisSnapshot.objects.get(opportunity=opportunity)
+        self.assertEqual(analysis.recommendation, VentureAnalysisSnapshot.Recommendation.WATCH)
+        self.assertEqual(analysis.suggested_purchase_price, Decimal("140000.00"))
+
     def test_document_analysis_creates_snapshot_from_extracted_balance_text(self):
         opportunity = VentureOpportunity.objects.create(
             company_name="Aditivos Minerales SL",
@@ -740,7 +785,23 @@ class VentureStudiesViewTests(TestCase):
         """
         self.client.force_login(self.staff_user)
 
-        with patch("venture_studies.services.extract_pdf_text_from_file", return_value=informa_text):
+        def fake_analysis(document, use_ai=True):
+            return VentureAnalysisSnapshot.objects.create(
+                opportunity=document.opportunity,
+                source_document=document,
+                recommendation=VentureAnalysisSnapshot.Recommendation.BUY,
+                confidence=VentureAnalysisSnapshot.Confidence.MEDIUM,
+                score_pct=Decimal("78.00"),
+                suggested_purchase_price=Decimal("175000.00"),
+                summary="Informe Informa analizado.",
+                agent_provider="anthropic",
+                agent_label="Claude test",
+            )
+
+        with (
+            patch("venture_studies.services.extract_pdf_text_from_file", return_value=informa_text),
+            patch("venture_studies.views.run_document_analysis", side_effect=fake_analysis) as mocked_analysis,
+        ):
             response = self.client.post(
                 reverse("venture_studies:list"),
                 {
@@ -755,6 +816,10 @@ class VentureStudiesViewTests(TestCase):
         self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
         self.assertEqual(opportunity.tax_id, "B87654321")
         self.assertEqual(opportunity.cnae_code, "2331")
+        mocked_analysis.assert_called_once()
+        analysis = VentureAnalysisSnapshot.objects.get(opportunity=opportunity)
+        self.assertEqual(analysis.recommendation, VentureAnalysisSnapshot.Recommendation.BUY)
+        self.assertEqual(analysis.suggested_purchase_price, Decimal("175000.00"))
 
     def test_staff_user_can_delete_opportunity_from_radar(self):
         opportunity = VentureOpportunity.objects.create(company_name="Eliminar SL")

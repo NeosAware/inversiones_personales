@@ -314,10 +314,11 @@
                     <div><label>PDF Informa</label><input type="file" name="file" accept=".pdf,application/pdf" required></div>
                   </div>
                   <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="overwrite_existing"> Sobrescribir campos ya rellenados</label>
+                  <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="use_ai" checked> Analizar con Claude y generar recomendacion</label>
                   {% if informa_form.errors %}
                     <div class="message error">Revisa el informe Informa antes de importarlo.</div>
                   {% endif %}
-                  <button class="button" type="submit">Importar Informa en esta empresa</button>
+                  <button class="button" type="submit">Importar Informa y analizar</button>
                 </form>
 
                 <form method="post" enctype="multipart/form-data" class="stack">
@@ -447,7 +448,7 @@
         <section class="soft-panel" style="margin-top:18px;">
           <p class="section-title">Documentos de la empresa</p>
           <table>
-            <thead><tr><th>Documento</th><th>Tipo</th><th>Fecha</th><th>Lectura</th></tr></thead>
+            <thead><tr><th>Documento</th><th>Tipo</th><th>Fecha</th><th>Lectura</th>{% if can_manage_finances %}<th>Analisis</th>{% endif %}</tr></thead>
             <tbody>
               {% for document in selected_documents %}
                 <tr>
@@ -455,9 +456,19 @@
                   <td>{{ document.get_document_kind_display }}</td>
                   <td>{% if document.document_date %}{{ document.document_date|date:"Y-m-d" }}{% elif document.fiscal_year %}{{ document.fiscal_year }}{% else %}{{ document.uploaded_at|date:"Y-m-d" }}{% endif %}</td>
                   <td>{{ document.get_extraction_status_display }}</td>
+                  {% if can_manage_finances %}
+                    <td>
+                      <form method="post" style="margin:0;">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="analyze_document">
+                        <input type="hidden" name="document_id" value="{{ document.id }}">
+                        <button class="button secondary" type="submit">Analizar ahora</button>
+                      </form>
+                    </td>
+                  {% endif %}
                 </tr>
               {% empty %}
-                <tr><td colspan="4" class="muted">Sin documentos todavia.</td></tr>
+                <tr><td colspan="{% if can_manage_finances %}5{% else %}4{% endif %}" class="muted">Sin documentos todavia.</td></tr>
               {% endfor %}
             </tbody>
           </table>
