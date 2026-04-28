@@ -8,6 +8,7 @@ from decimal import Decimal
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from django.utils.dateparse import parse_date
 from django.utils import timezone
 from pypdf import PdfReader
 
@@ -36,6 +37,46 @@ COMPANY_SUFFIX_RE = re.compile(
     r"\b([^\W_][\w&.,' -]{2,90}?\s+(?:S\.?L\.?|S\.?A\.?|SOCIEDAD LIMITADA|SOCIEDAD ANONIMA))\b",
     re.I,
 )
+AI_TEXT_UPDATE_FIELDS = {
+    "legal_name": 180,
+    "tax_id": 24,
+    "website": 200,
+    "sector": 140,
+    "geography": 120,
+    "address": 240,
+    "phone": 60,
+    "email": 254,
+    "cnae_code": 16,
+    "cnae_label": 180,
+    "contact_name": 140,
+    "source": 160,
+    "fit_summary": 1200,
+    "growth_issue": 1200,
+    "synergy_notes": 1200,
+    "diligence_notes": 1200,
+    "red_flags": 1200,
+    "next_steps": 1200,
+}
+AI_DECIMAL_UPDATE_FIELDS = (
+    "ticket_min",
+    "ticket_max",
+    "estimated_valuation",
+    "annual_revenue",
+    "ebitda",
+    "cash_need",
+)
+AI_SCORE_UPDATE_FIELDS = (
+    "neos_fit_score",
+    "market_score",
+    "team_score",
+    "financial_score",
+    "risk_control_score",
+)
+AI_CHOICE_UPDATE_FIELDS = {
+    "stage": VentureOpportunity.Stage.choices,
+    "status": VentureOpportunity.Status.choices,
+    "strategic_fit": VentureOpportunity.StrategicFit.choices,
+}
 
 
 def _sum_optional(values):
@@ -73,6 +114,20 @@ def decimal_or_none(value):
         return None
 
 
+def int_or_none(value):
+    if value in (None, ""):
+        return None
+    try:
+        text = str(value).strip().replace(" ", "")
+        if "," in text:
+            text = text.replace(".", "").replace(",", ".")
+        elif text.count(".") > 1:
+            text = text.replace(".", "")
+        return int(Decimal(text))
+    except Exception:
+        return None
+
+
 def parse_spanish_decimal(raw_value: str) -> Decimal | None:
     text = str(raw_value or "").strip().replace("\xa0", "").replace(" ", "")
     if not text:
@@ -89,6 +144,73 @@ def normalize_search_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", str(value or ""))
     normalized = "".join(char for char in normalized if not unicodedata.combining(char))
     return " ".join(normalized.lower().split())
+
+
+def normalize_website_url(value: str) -> str:
+    cleaned = re.sub(r"\s+", "", str(value or "").strip().strip(" -|"))[:200]
+    if not cleaned or "." not in cleaned or "@" in cleaned:
+        return ""
+    if not cleaned.lower().startswith(("http://", "https://")):
+        cleaned = f"https://{cleaned}"
+    return cleaned
+
+
+def normalize_ai_text_value(value, *, max_length: int) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, (list, tuple)):
+        value = "; ".join(str(item) for item in value if str(item).strip())
+    elif isinstance(value, dict):
+        return ""
+    return trim_text(" ".join(str(value).split()), max_length).strip()
+
+
+def normalize_ai_choice_value(field_name: str, value) -> str:
+    text = normalize_search_text(value)
+    if not text:
+        return ""
+    for choice_value, label in AI_CHOICE_UPDATE_FIELDS[field_name]:
+        if text in {normalize_search_text(choice_value), normalize_search_text(label)}:
+            return choice_value
+    aliases = {
+        "stage": {
+            "inicial": VentureOpportunity.Stage.EARLY,
+            "early": VentureOpportunity.Stage.EARLY,
+            "crecimiento": VentureOpportunity.Stage.GROWTH_ISSUES,
+            "problemas crecimiento": VentureOpportunity.Stage.GROWTH_ISSUES,
+            "growth": VentureOpportunity.Stage.GROWTH_ISSUES,
+            "reestructuracion": VentureOpportunity.Stage.TURNAROUND,
+            "turnaround": VentureOpportunity.Stage.TURNAROUND,
+            "escalado": VentureOpportunity.Stage.SCALEUP,
+            "scaleup": VentureOpportunity.Stage.SCALEUP,
+        },
+        "status": {
+            "screening": VentureOpportunity.Status.SCREENING,
+            "primer filtro": VentureOpportunity.Status.SCREENING,
+            "analisis": VentureOpportunity.Status.RESEARCH,
+            "en analisis": VentureOpportunity.Status.RESEARCH,
+            "research": VentureOpportunity.Status.RESEARCH,
+            "due diligence": VentureOpportunity.Status.DUE_DILIGENCE,
+            "diligence": VentureOpportunity.Status.DUE_DILIGENCE,
+            "negociacion": VentureOpportunity.Status.NEGOTIATION,
+            "negotiation": VentureOpportunity.Status.NEGOTIATION,
+            "pausa": VentureOpportunity.Status.ON_HOLD,
+            "aprobada": VentureOpportunity.Status.APPROVED,
+            "descartada": VentureOpportunity.Status.REJECTED,
+        },
+        "strategic_fit": {
+            "ceramica": VentureOpportunity.StrategicFit.CERAMICA,
+            "neos ceramica": VentureOpportunity.StrategicFit.CERAMICA,
+            "additives": VentureOpportunity.StrategicFit.ADDITIVES,
+            "neos additives": VentureOpportunity.StrategicFit.ADDITIVES,
+            "ceramica additives": VentureOpportunity.StrategicFit.BOTH,
+            "ceramica + additives": VentureOpportunity.StrategicFit.BOTH,
+            "ambas": VentureOpportunity.StrategicFit.BOTH,
+            "grupo": VentureOpportunity.StrategicFit.GROUP,
+            "grupo neos": VentureOpportunity.StrategicFit.GROUP,
+        },
+    }
+    return aliases.get(field_name, {}).get(text, "")
 
 
 def extract_pdf_text(document: VentureDocument, *, max_chars: int = 70000) -> str:
@@ -948,6 +1070,132 @@ def _normalize_ai_list(value, fallback):
     return rows[:5] or fallback
 
 
+def normalize_ai_opportunity_updates(payload: dict) -> dict:
+    raw_updates = (
+        payload.get("opportunity_updates")
+        or payload.get("company_updates")
+        or payload.get("form_fields")
+        or {}
+    )
+    if not isinstance(raw_updates, dict):
+        raw_updates = {}
+
+    updates = {}
+    for field_name, max_length in AI_TEXT_UPDATE_FIELDS.items():
+        value = normalize_ai_text_value(raw_updates.get(field_name), max_length=max_length)
+        if field_name == "website":
+            value = normalize_website_url(value)
+        if field_name == "tax_id":
+            value = value.upper()
+        if value:
+            updates[field_name] = value
+
+    employees = int_or_none(raw_updates.get("employees"))
+    if employees is not None and employees >= 0:
+        updates["employees"] = employees
+
+    next_review_on = raw_updates.get("next_review_on")
+    if next_review_on:
+        parsed_review_date = parse_date(str(next_review_on).strip())
+        if parsed_review_date:
+            updates["next_review_on"] = parsed_review_date.isoformat()
+
+    for field_name in AI_DECIMAL_UPDATE_FIELDS:
+        value = decimal_or_none(raw_updates.get(field_name))
+        if value is not None:
+            updates[field_name] = str(value)
+
+    for field_name in AI_SCORE_UPDATE_FIELDS:
+        value = int_or_none(raw_updates.get(field_name))
+        if value is not None:
+            updates[field_name] = min(max(value, 1), 5)
+
+    for field_name in AI_CHOICE_UPDATE_FIELDS:
+        value = normalize_ai_choice_value(field_name, raw_updates.get(field_name))
+        if value:
+            updates[field_name] = value
+
+    return updates
+
+
+def apply_ai_opportunity_updates(opportunity: VentureOpportunity, payload: dict) -> list[str]:
+    updates = dict(payload.get("opportunity_updates") or {})
+    for field_name in ("annual_revenue", "ebitda", "cash_need"):
+        if payload.get(field_name) is not None and field_name not in updates:
+            updates[field_name] = str(payload[field_name])
+    if payload.get("valuation_base") is not None and "estimated_valuation" not in updates:
+        updates["estimated_valuation"] = str(payload["valuation_base"])
+    if payload.get("suggested_ticket") is not None and "ticket_max" not in updates:
+        updates["ticket_max"] = str(payload["suggested_ticket"])
+
+    changed_fields = []
+    protected_statuses = {VentureOpportunity.Status.APPROVED, VentureOpportunity.Status.REJECTED}
+
+    for field_name, raw_value in updates.items():
+        if field_name in AI_TEXT_UPDATE_FIELDS:
+            current_value = getattr(opportunity, field_name)
+            if current_value:
+                continue
+            value = normalize_ai_text_value(raw_value, max_length=AI_TEXT_UPDATE_FIELDS[field_name])
+            if field_name == "website":
+                value = normalize_website_url(value)
+            if field_name == "tax_id":
+                value = value.upper()
+            if value:
+                setattr(opportunity, field_name, value)
+                changed_fields.append(field_name)
+            continue
+
+        if field_name == "employees":
+            if opportunity.employees is not None:
+                continue
+            value = int_or_none(raw_value)
+            if value is not None and value >= 0:
+                opportunity.employees = value
+                changed_fields.append(field_name)
+            continue
+
+        if field_name == "next_review_on":
+            if opportunity.next_review_on:
+                continue
+            value = parse_date(str(raw_value).strip())
+            if value:
+                opportunity.next_review_on = value
+                changed_fields.append(field_name)
+            continue
+
+        if field_name in AI_DECIMAL_UPDATE_FIELDS:
+            current_value = getattr(opportunity, field_name)
+            if current_value is not None:
+                continue
+            value = decimal_or_none(raw_value)
+            if value is not None:
+                setattr(opportunity, field_name, value)
+                changed_fields.append(field_name)
+            continue
+
+        if field_name in AI_SCORE_UPDATE_FIELDS:
+            value = int_or_none(raw_value)
+            if value is not None:
+                value = min(max(value, 1), 5)
+                if getattr(opportunity, field_name) != value:
+                    setattr(opportunity, field_name, value)
+                    changed_fields.append(field_name)
+            continue
+
+        if field_name in AI_CHOICE_UPDATE_FIELDS:
+            if field_name == "status" and opportunity.status in protected_statuses:
+                continue
+            value = normalize_ai_choice_value(field_name, raw_value)
+            if value and getattr(opportunity, field_name) != value:
+                setattr(opportunity, field_name, value)
+                changed_fields.append(field_name)
+
+    if changed_fields:
+        opportunity.save(update_fields=sorted(set(changed_fields + ["updated_at"])))
+    return sorted(set(changed_fields))
+
+
 def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, text, *, document=None, enabled=True) -> dict | None:
     if not enabled:
         return None
@@ -968,7 +1216,13 @@ def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, tex
         "Analiza esta oportunidad no cotizada usando la informacion financiera y comercial disponible. "
         "Devuelve JSON con: recommendation, confidence, score_pct, "
         "suggested_purchase_price, valuation_low, valuation_base, valuation_high, suggested_ticket, target_ownership_pct, "
-        "summary, valuation_note, web_summary, drivers, risks y assumptions. JSON de entrada: "
+        "annual_revenue, ebitda, cash_need, summary, valuation_note, web_summary, drivers, risks y assumptions. "
+        "Incluye tambien opportunity_updates con los campos del formulario que puedas completar sin inventar: "
+        "legal_name, tax_id, website, sector, geography, address, phone, email, cnae_code, cnae_label, employees, "
+        "stage, status, strategic_fit, contact_name, source, next_review_on, ticket_min, ticket_max, estimated_valuation, "
+        "annual_revenue, ebitda, cash_need, neos_fit_score, market_score, team_score, financial_score, risk_control_score, "
+        "fit_summary, growth_issue, synergy_notes, diligence_notes, red_flags y next_steps. "
+        "Usa fechas ISO YYYY-MM-DD, importes numericos sin simbolos, scores enteros de 1 a 5, y deja vacio cualquier campo no soportado por la informacion. JSON de entrada: "
         f"{json.dumps(user_payload, ensure_ascii=True, separators=(',', ':'))}"
     )
     try:
@@ -1011,6 +1265,9 @@ def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, tex
         "suggested_purchase_price": _parse_ai_decimal(payload, "suggested_purchase_price") or core_payload["suggested_purchase_price"],
         "suggested_ticket": _parse_ai_decimal(payload, "suggested_ticket") or core_payload["suggested_ticket"],
         "target_ownership_pct": _parse_ai_decimal(payload, "target_ownership_pct") or core_payload["target_ownership_pct"],
+        "annual_revenue": _parse_ai_decimal(payload, "annual_revenue") or core_payload["annual_revenue"],
+        "ebitda": _parse_ai_decimal(payload, "ebitda") or core_payload["ebitda"],
+        "cash_need": _parse_ai_decimal(payload, "cash_need") or core_payload["cash_need"],
         "summary": trim_text(payload.get("summary") or core_payload["summary"], 700),
         "valuation_note": trim_text(payload.get("valuation_note") or core_payload["valuation_note"], 700),
         "web_summary": trim_text(payload.get("web_summary") or core_payload["web_summary"], 500),
@@ -1026,7 +1283,9 @@ def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, tex
                 "output_tokens": int(usage.get("output_tokens") or 0),
                 "estimated_cost_usd": str(usage.get("estimated_cost_usd") or ZERO),
             },
+            "opportunity_updates": normalize_ai_opportunity_updates(payload),
         },
+        "opportunity_updates": normalize_ai_opportunity_updates(payload),
     }
     return enriched
 
@@ -1075,19 +1334,13 @@ def run_document_analysis(document: VentureDocument, *, use_ai: bool = True) -> 
         agent_provider=payload["agent_provider"],
         agent_label=payload["agent_label"],
     )
-    update_fields = []
-    if payload["annual_revenue"] is not None and opportunity.annual_revenue is None:
-        opportunity.annual_revenue = payload["annual_revenue"]
-        update_fields.append("annual_revenue")
-    if payload["ebitda"] is not None and opportunity.ebitda is None:
-        opportunity.ebitda = payload["ebitda"]
-        update_fields.append("ebitda")
-    if payload["cash_need"] is not None and opportunity.cash_need is None:
-        opportunity.cash_need = payload["cash_need"]
-        update_fields.append("cash_need")
-    if update_fields:
-        update_fields.append("updated_at")
-        opportunity.save(update_fields=update_fields)
+    updated_fields = apply_ai_opportunity_updates(opportunity, payload)
+    if updated_fields:
+        snapshot.analysis_payload = {
+            **(snapshot.analysis_payload or {}),
+            "applied_opportunity_updates": updated_fields,
+        }
+        snapshot.save(update_fields=["analysis_payload"])
     return snapshot
 
 

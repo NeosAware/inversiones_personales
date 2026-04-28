@@ -392,15 +392,22 @@ class VentureStudiesViewTests(TestCase):
             self.assertIn("dossier financiero/comercial", system_prompt)
             self.assertIn('"kind":"Dossier financiero/comercial"', user_prompt)
             self.assertIn("pipeline comercial", user_prompt)
+            self.assertIn("opportunity_updates", user_prompt)
             return (
                 {
                     "recommendation": "watch",
                     "confidence": "high",
                     "score_pct": "72.00",
+                    "annual_revenue": "300000.00",
                     "summary": "Claude cruza finanzas y senales comerciales.",
                     "drivers": ["Pipeline comercial validable"],
                     "risks": ["Dependencia de dos clientes"],
                     "assumptions": ["Cifras extraidas del dossier"],
+                    "opportunity_updates": {
+                        "sector": "Aditivos ceramicos",
+                        "status": "En analisis",
+                        "financial_score": 4,
+                    },
                 },
                 {"input_tokens": 100, "output_tokens": 50, "estimated_cost_usd": Decimal("0.0010")},
             )
@@ -420,6 +427,111 @@ class VentureStudiesViewTests(TestCase):
         self.assertEqual(payload["agent_label"], "Claude claude-test")
         self.assertEqual(payload["confidence"], VentureAnalysisSnapshot.Confidence.HIGH)
         self.assertEqual(payload["score_pct"], Decimal("72.00"))
+        self.assertEqual(payload["annual_revenue"], Decimal("300000.00"))
+        self.assertEqual(payload["opportunity_updates"]["sector"], "Aditivos ceramicos")
+        self.assertEqual(payload["opportunity_updates"]["status"], VentureOpportunity.Status.RESEARCH)
+
+    @override_settings(
+        AI_LLM_PROVIDER="anthropic",
+        ANTHROPIC_API_KEY="test-anthropic-key",
+        CLAUDE_DEFAULT_MODEL="claude-test",
+        CLAUDE_MAX_TOKENS=512,
+    )
+    def test_claude_analysis_fills_company_form_fields(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Ficha Claude SL",
+            stage=VentureOpportunity.Stage.EARLY,
+            status=VentureOpportunity.Status.SCREENING,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+            notes="Nota manual que no debe cambiar.",
+        )
+        document = VentureDocument.objects.create(
+            opportunity=opportunity,
+            document_kind=VentureDocument.DocumentKind.DOSSIER,
+            title="Dossier comercial",
+            file="venture_studies/test/dossier.pdf",
+            extracted_text="CIF B11223344. Ventas 520.000 EBITDA 95.000. Fabrica en Castellon y canal esmalteras.",
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+
+        def fake_claude(config, *, system_prompt, user_prompt):
+            return (
+                {
+                    "recommendation": "buy",
+                    "confidence": "high",
+                    "score_pct": "86.00",
+                    "suggested_purchase_price": "310000.00",
+                    "valuation_base": "380000.00",
+                    "suggested_ticket": "90000.00",
+                    "annual_revenue": "520000.00",
+                    "ebitda": "95000.00",
+                    "summary": "Claude detecta buen encaje industrial y comercial.",
+                    "drivers": ["Canal esmalteras"],
+                    "risks": ["Dependencia comercial"],
+                    "assumptions": ["Datos del dossier"],
+                    "opportunity_updates": {
+                        "legal_name": "FICHA CLAUDE SOCIEDAD LIMITADA",
+                        "tax_id": "b11223344",
+                        "website": "www.fichaclaude.example",
+                        "sector": "Aditivos para ceramica",
+                        "geography": "Castellon",
+                        "address": "Calle Industria 7",
+                        "employees": "18",
+                        "stage": "Problemas de crecimiento",
+                        "status": "En analisis",
+                        "strategic_fit": "Neos Additives",
+                        "annual_revenue": "520000.00",
+                        "ebitda": "95000.00",
+                        "estimated_valuation": "380000.00",
+                        "ticket_max": "90000.00",
+                        "neos_fit_score": 5,
+                        "market_score": 4,
+                        "team_score": 4,
+                        "financial_score": 4,
+                        "risk_control_score": 3,
+                        "fit_summary": "Complementa la cartera de aditivos.",
+                        "growth_issue": "Tiene demanda pero necesita caja comercial.",
+                        "synergy_notes": "Canal compartido con Neos Additives.",
+                        "diligence_notes": "Validar concentracion de clientes.",
+                        "red_flags": "Dependencia de dos cuentas principales.",
+                        "next_steps": "Pedir contratos y detalle de margen.",
+                    },
+                },
+                {"input_tokens": 100, "output_tokens": 50, "estimated_cost_usd": Decimal("0.0010")},
+            )
+
+        with (
+            patch("venture_studies.services.fetch_venture_web_context") as web_context,
+            patch("venture_studies.services.call_anthropic_agent", side_effect=fake_claude),
+        ):
+            web_context.return_value = {
+                "available": False,
+                "note": "Sin contexto web en test.",
+                "top_items": [],
+                "website": {},
+            }
+            snapshot = run_document_analysis(document, use_ai=True)
+
+        opportunity.refresh_from_db()
+        self.assertEqual(opportunity.legal_name, "FICHA CLAUDE SOCIEDAD LIMITADA")
+        self.assertEqual(opportunity.tax_id, "B11223344")
+        self.assertEqual(opportunity.website, "https://www.fichaclaude.example")
+        self.assertEqual(opportunity.sector, "Aditivos para ceramica")
+        self.assertEqual(opportunity.geography, "Castellon")
+        self.assertEqual(opportunity.employees, 18)
+        self.assertEqual(opportunity.stage, VentureOpportunity.Stage.GROWTH_ISSUES)
+        self.assertEqual(opportunity.status, VentureOpportunity.Status.RESEARCH)
+        self.assertEqual(opportunity.strategic_fit, VentureOpportunity.StrategicFit.ADDITIVES)
+        self.assertEqual(opportunity.annual_revenue, Decimal("520000.00"))
+        self.assertEqual(opportunity.ebitda, Decimal("95000.00"))
+        self.assertEqual(opportunity.estimated_valuation, Decimal("380000.00"))
+        self.assertEqual(opportunity.ticket_max, Decimal("90000.00"))
+        self.assertEqual(opportunity.neos_fit_score, 5)
+        self.assertEqual(opportunity.financial_score, 4)
+        self.assertEqual(opportunity.fit_summary, "Complementa la cartera de aditivos.")
+        self.assertEqual(opportunity.notes, "Nota manual que no debe cambiar.")
+        self.assertIn("legal_name", snapshot.analysis_payload["applied_opportunity_updates"])
+        self.assertIn("estimated_valuation", snapshot.analysis_payload["applied_opportunity_updates"])
 
     def test_informa_report_can_create_and_fill_company_fields(self):
         informa_text = """
