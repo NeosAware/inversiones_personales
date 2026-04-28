@@ -10,8 +10,10 @@
     }
     .venture-page > *,
     .venture-kpi-grid > *,
-    .venture-split > *,
-    .venture-panel-grid > *{
+    .venture-workspace > *,
+    .venture-form-grid > *,
+    .venture-score-grid > *,
+    .venture-data-grid > *{
       min-width:0;
     }
     .venture-hero{
@@ -20,7 +22,7 @@
     .venture-hero h2{
       margin:0 0 10px;
       font-size:clamp(32px, 2.25vw, 42px);
-      letter-spacing:-.03em;
+      letter-spacing:0;
     }
     .venture-kpi-grid{
       display:grid;
@@ -31,48 +33,74 @@
     .venture-kpi{
       padding:18px;
       border:1px solid #e4ecf2;
-      border-radius:16px;
+      border-radius:8px;
       background:linear-gradient(180deg, #ffffff 0%, #f7fafc 100%);
     }
     .venture-kpi .metric-value{
-      font-size:clamp(30px, 2vw, 42px);
+      font-size:clamp(28px, 1.8vw, 38px);
     }
-    .venture-split{
-      display:grid;
-      gap:18px;
-      grid-template-columns:1.2fr .8fr;
+    .venture-tabs{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      padding:10px;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:rgba(255,255,255,.94);
+      box-shadow:var(--shadow-soft);
     }
-    .venture-panel-grid{
-      display:grid;
-      gap:12px;
-    }
-    .venture-breakdown-row{
-      display:grid;
-      grid-template-columns:minmax(0, 1fr) auto auto;
-      gap:12px;
-      align-items:center;
-      padding:12px 0;
-      border-bottom:1px solid #e8eef3;
-    }
-    .venture-breakdown-row:last-child{
-      border-bottom:none;
-    }
-    .venture-score{
+    .venture-tab{
       display:inline-flex;
       align-items:center;
-      justify-content:center;
-      min-width:68px;
-      padding:7px 10px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      background:#fff;
+      gap:8px;
+      min-height:44px;
+      max-width:260px;
+      padding:9px 12px;
+      border-radius:8px;
+      border:1px solid transparent;
+      color:var(--ink-soft);
       font-weight:800;
-      font-variant-numeric:tabular-nums;
+      background:transparent;
+      line-height:1.2;
     }
-    .venture-note{
-      max-width:56ch;
-      color:var(--muted);
-      line-height:1.45;
+    .venture-tab:hover{
+      border-color:#d8e4ec;
+      background:#f7fafc;
+    }
+    .venture-tab.active{
+      border-color:#b9cddd;
+      color:var(--accent);
+      background:#eef5fa;
+      box-shadow:0 8px 16px rgba(15,33,46,.05);
+    }
+    .venture-tab-name{
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .venture-workspace{
+      display:grid;
+      gap:18px;
+      grid-template-columns:1.05fr .95fr;
+    }
+    .venture-workspace.single{
+      grid-template-columns:1fr;
+    }
+    .venture-data-grid{
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+    }
+    .venture-data-item{
+      padding:14px;
+      border:1px solid #e4ecf2;
+      border-radius:8px;
+      background:#fff;
+    }
+    .venture-upload-grid{
+      display:grid;
+      gap:14px;
+      grid-template-columns:1fr;
     }
     .venture-form-grid{
       display:grid;
@@ -89,10 +117,27 @@
     }
     .venture-chart{
       width:100%;
-      height:120px;
+      height:126px;
       border:1px solid var(--line);
-      border-radius:16px;
+      border-radius:8px;
       background:#f7fafc;
+    }
+    .venture-score{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-width:68px;
+      padding:7px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:#fff;
+      font-weight:800;
+      font-variant-numeric:tabular-nums;
+    }
+    .venture-note{
+      max-width:62ch;
+      color:var(--muted);
+      line-height:1.45;
     }
     .venture-mini-list{
       margin:0;
@@ -103,48 +148,13 @@
     .venture-mini-list li{
       margin:0 0 5px;
     }
-    .venture-tabs{
+    .venture-section-head{
       display:flex;
-      gap:10px;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:16px;
       flex-wrap:wrap;
-      padding:10px;
-      border:1px solid var(--line);
-      border-radius:18px;
-      background:rgba(255,255,255,.92);
-      box-shadow:var(--shadow-soft);
-    }
-    .venture-tab{
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      padding:10px 14px;
-      border-radius:14px;
-      border:1px solid transparent;
-      color:var(--ink-soft);
-      font-weight:800;
-      background:transparent;
-    }
-    .venture-tab.active{
-      border-color:#b9cddd;
-      color:var(--accent);
-      background:linear-gradient(180deg, #ffffff 0%, #eef5fa 100%);
-      box-shadow:0 8px 16px rgba(15,33,46,.05);
-    }
-    .venture-detail-grid{
-      display:grid;
-      gap:18px;
-      grid-template-columns:1.05fr .95fr;
-    }
-    .venture-data-grid{
-      display:grid;
-      gap:12px;
-      grid-template-columns:repeat(2, minmax(0, 1fr));
-    }
-    .venture-data-item{
-      padding:14px;
-      border:1px solid #e4ecf2;
-      border-radius:14px;
-      background:#fff;
+      margin-bottom:16px;
     }
     .venture-inline-actions{
       display:flex;
@@ -152,14 +162,28 @@
       flex-wrap:wrap;
       align-items:center;
     }
+    .venture-edit-panel summary{
+      cursor:pointer;
+      font-weight:900;
+      color:var(--accent);
+    }
+    .venture-edit-panel[open] summary{
+      margin-bottom:16px;
+    }
+    .venture-empty{
+      padding:28px;
+      text-align:center;
+    }
     @media (max-width: 1180px){
-      .venture-split,
+      .venture-workspace,
       .venture-form-grid,
       .venture-form-grid.two,
       .venture-score-grid,
-      .venture-detail-grid,
       .venture-data-grid{
         grid-template-columns:1fr;
+      }
+      .venture-tab{
+        max-width:100%;
       }
     }
   </style>
@@ -169,7 +193,7 @@
       <p class="section-title">{{ page_title }}</p>
       <h2>Radar privado de oportunidades industriales</h2>
       <p class="muted" style="margin:0;max-width:84ch;">
-        Empresas en fase inicial, con tension de crecimiento o con una pieza tecnologica/comercial que pueda reforzar Neos Ceramica, Neos Additives o el grupo.
+        Cada empresa tiene su propia pestana para guardar Informa, balances, valoraciones, tesis, riesgos y evolucion.
       </p>
       <div class="venture-kpi-grid">
         <section class="venture-kpi">
@@ -195,43 +219,130 @@
       </div>
     </section>
 
-    <nav class="venture-tabs">
+    <nav class="venture-tabs" aria-label="Empresas no cotizadas">
       {% for opportunity in priority_rows %}
         <a class="venture-tab {% if selected_opportunity and selected_opportunity.id == opportunity.id %}active{% endif %}" href="?company={{ opportunity.id }}">
-          {{ opportunity.company_name }}
+          <span class="venture-tab-name">{{ opportunity.company_name }}</span>
           {% if opportunity.latest_analysis %}
             <span class="pill">{{ opportunity.latest_analysis.get_recommendation_display }}</span>
+          {% else %}
+            <span class="pill">{{ opportunity.score_pct|floatformat:0 }} %</span>
           {% endif %}
         </a>
       {% empty %}
         <span class="venture-tab active">Sin empresas</span>
       {% endfor %}
       {% if can_manage_finances %}
-        <a class="venture-tab" href="#new-company">+ Nueva empresa</a>
+        <a class="venture-tab {% if creating_new_company %}active{% endif %}" href="?new=1">+ Nueva empresa</a>
       {% endif %}
+      <a class="venture-tab" href="#web-radar">Vigilancia web</a>
     </nav>
 
     {% if selected_opportunity %}
-      <section class="card">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;">
+      <section class="card" id="company-{{ selected_opportunity.id }}">
+        <div class="venture-section-head">
           <div>
-            <p class="section-title">Empresa seleccionada</p>
+            <p class="section-title">Pestana de empresa</p>
             <h2 style="margin-top:0;">{{ selected_opportunity.company_name }}</h2>
-            <p class="muted" style="margin-top:0;max-width:78ch;">{{ selected_opportunity.fit_summary|default:"Ficha de trabajo para concentrar documentos, valoraciones, contexto web, tesis y proximas acciones de esta empresa no cotizada." }}</p>
+            <p class="muted" style="margin-top:0;max-width:78ch;">
+              {{ selected_opportunity.fit_summary|default:"Ficha de trabajo para concentrar documentos, valoraciones, contexto web, tesis y proximas acciones de esta empresa no cotizada." }}
+            </p>
           </div>
-          {% if can_manage_finances %}
-            <form method="post">
-              {% csrf_token %}
-              <input type="hidden" name="action" value="delete_opportunity">
-              <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
-              <button class="button danger" type="submit">Eliminar empresa</button>
-            </form>
-          {% endif %}
+          <div class="venture-inline-actions">
+            <span class="venture-score {{ selected_opportunity.score_tone }}">{{ selected_opportunity.score_pct|floatformat:0 }} %</span>
+            <span class="pill">{{ selected_opportunity.get_status_display }}</span>
+            <span class="pill">{{ selected_opportunity.get_strategic_fit_display }}</span>
+          </div>
         </div>
 
-        <div class="venture-detail-grid" style="margin-top:18px;">
+        <div class="venture-kpi-grid">
+          <section class="venture-kpi">
+            <div class="metric-label">Recomendacion</div>
+            {% if selected_opportunity.latest_analysis %}
+              <div class="metric-value">{{ selected_opportunity.latest_analysis.get_recommendation_display }}</div>
+              <div class="metric-sub">Confianza {{ selected_opportunity.latest_analysis.get_confidence_display }}</div>
+            {% else %}
+              <div class="metric-value">Pendiente</div>
+              <div class="metric-sub">Sube un balance PDF para crear el primer analisis.</div>
+            {% endif %}
+          </section>
+          <section class="venture-kpi">
+            <div class="metric-label">Precio compra aprox.</div>
+            {% if selected_opportunity.latest_analysis %}
+              <div class="metric-value">{{ selected_opportunity.latest_analysis.suggested_purchase_price|floatformat:0 }} EUR</div>
+              <div class="metric-sub">
+                {% if selected_opportunity.latest_analysis.suggested_ticket %}
+                  Ticket {{ selected_opportunity.latest_analysis.suggested_ticket|floatformat:0 }} EUR.
+                {% else %}
+                  Ticket pendiente de ajustar.
+                {% endif %}
+              </div>
+            {% else %}
+              <div class="metric-value">-</div>
+              <div class="metric-sub">Sin valoracion todavia.</div>
+            {% endif %}
+          </section>
+          <section class="venture-kpi">
+            <div class="metric-label">Documentos</div>
+            <div class="metric-value">{{ selected_documents|length }}</div>
+            <div class="metric-sub">Informes, balances y otros PDFs de esta empresa.</div>
+          </section>
+          <section class="venture-kpi">
+            <div class="metric-label">Proxima revision</div>
+            <div class="metric-value">{% if selected_opportunity.next_review_on %}{{ selected_opportunity.next_review_on|date:"d/m" }}{% else %}-{% endif %}</div>
+            <div class="metric-sub">{{ selected_opportunity.get_stage_display }}</div>
+          </section>
+        </div>
+
+        <div class="venture-workspace" style="margin-top:18px;">
           <section class="soft-panel">
-            <p class="section-title">Ficha</p>
+            <div class="venture-section-head">
+              <div>
+                <p class="section-title">Subir informacion</p>
+                <h3 style="margin:0;">Documentos de {{ selected_opportunity.company_name }}</h3>
+              </div>
+            </div>
+            {% if can_manage_finances %}
+              <div class="venture-upload-grid">
+                <form method="post" enctype="multipart/form-data" class="stack">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="upload_informa">
+                  <input type="hidden" name="opportunity" value="{{ selected_opportunity.id }}">
+                  <div class="venture-form-grid">
+                    <div><label>Titulo informe</label><input type="text" name="title" placeholder="Informe Informa"></div>
+                    <div><label>Fecha informe</label><input type="date" name="document_date"></div>
+                    <div><label>PDF Informa</label><input type="file" name="file" accept=".pdf,application/pdf" required></div>
+                  </div>
+                  <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="overwrite_existing"> Sobrescribir campos ya rellenados</label>
+                  {% if informa_form.errors %}
+                    <div class="message error">Revisa el informe Informa antes de importarlo.</div>
+                  {% endif %}
+                  <button class="button" type="submit">Importar Informa en esta empresa</button>
+                </form>
+
+                <form method="post" enctype="multipart/form-data" class="stack">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="upload_balance">
+                  <input type="hidden" name="opportunity" value="{{ selected_opportunity.id }}">
+                  <div class="venture-form-grid">
+                    <div><label>Titulo balance</label><input type="text" name="title" placeholder="Balance"></div>
+                    <div><label>Ano fiscal</label><input type="number" name="fiscal_year" min="1990" max="2100"></div>
+                    <div><label>PDF balance</label><input type="file" name="file" accept=".pdf,application/pdf" required></div>
+                  </div>
+                  <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="use_ai" checked> Usar analista IA si esta configurado</label>
+                  {% if analysis_form.errors %}
+                    <div class="message error">Revisa el PDF y la empresa seleccionada antes de analizar.</div>
+                  {% endif %}
+                  <button class="button" type="submit">Analizar balance de esta empresa</button>
+                </form>
+              </div>
+            {% else %}
+              <div class="message info">Solo usuarios autorizados pueden subir documentos o modificar la ficha.</div>
+            {% endif %}
+          </section>
+
+          <section class="soft-panel">
+            <p class="section-title">Ficha importada</p>
             <div class="venture-data-grid">
               <div class="venture-data-item"><div class="metric-label">Razon social</div><strong>{{ selected_opportunity.legal_name|default:"-" }}</strong></div>
               <div class="venture-data-item"><div class="metric-label">NIF/CIF</div><strong>{{ selected_opportunity.tax_id|default:"-" }}</strong></div>
@@ -241,58 +352,28 @@
               <div class="venture-data-item"><div class="metric-label">Empleados</div><strong>{{ selected_opportunity.employees|default:"-" }}</strong></div>
               <div class="venture-data-item"><div class="metric-label">Contacto</div><strong>{{ selected_opportunity.contact_name|default:selected_opportunity.phone|default:"-" }}</strong><div class="metric-sub">{{ selected_opportunity.email|default:"" }}</div></div>
               <div class="venture-data-item"><div class="metric-label">Web</div>{% if selected_opportunity.website %}<a class="link" href="{{ selected_opportunity.website }}" target="_blank" rel="noopener">{{ selected_opportunity.website }}</a>{% else %}<strong>-</strong>{% endif %}</div>
+              <div class="venture-data-item"><div class="metric-label">Ventas</div><strong>{% if selected_opportunity.annual_revenue %}{{ selected_opportunity.annual_revenue|floatformat:0 }} EUR{% else %}-{% endif %}</strong></div>
+              <div class="venture-data-item"><div class="metric-label">EBITDA</div><strong>{% if selected_opportunity.ebitda %}{{ selected_opportunity.ebitda|floatformat:0 }} EUR{% else %}-{% endif %}</strong></div>
             </div>
-          </section>
-
-          <section class="soft-panel">
-            <p class="section-title">Ultima lectura</p>
-            {% if selected_opportunity.latest_analysis %}
-              <div class="venture-kpi-grid" style="margin-top:0;">
-                <section class="venture-kpi">
-                  <div class="metric-label">Recomendacion</div>
-                  <div class="metric-value">{{ selected_opportunity.latest_analysis.get_recommendation_display }}</div>
-                  <div class="metric-sub">Confianza {{ selected_opportunity.latest_analysis.get_confidence_display }}</div>
-                </section>
-                <section class="venture-kpi">
-                  <div class="metric-label">Precio compra aprox.</div>
-                  <div class="metric-value">{{ selected_opportunity.latest_analysis.suggested_purchase_price|floatformat:0 }} EUR</div>
-                  <div class="metric-sub">Ticket {{ selected_opportunity.latest_analysis.suggested_ticket|floatformat:0 }} EUR</div>
-                </section>
-              </div>
-              <p class="muted" style="margin-bottom:0;">{{ selected_opportunity.latest_analysis.summary }}</p>
-            {% else %}
-              <div class="message info">Sube un balance PDF para generar recomendacion, rango de valoracion y evolucion.</div>
-            {% endif %}
           </section>
         </div>
 
-        <div class="venture-detail-grid" style="margin-top:18px;">
+        <div class="venture-workspace" style="margin-top:18px;">
           <section class="soft-panel">
-            <p class="section-title">Documentos</p>
-            <table>
-              <thead><tr><th>Documento</th><th>Tipo</th><th>Fecha</th><th>Lectura</th></tr></thead>
-              <tbody>
-                {% for document in selected_documents %}
-                  <tr>
-                    <td>{{ document.title }}</td>
-                    <td>{{ document.get_document_kind_display }}</td>
-                    <td>{% if document.document_date %}{{ document.document_date|date:"Y-m-d" }}{% elif document.fiscal_year %}{{ document.fiscal_year }}{% else %}{{ document.uploaded_at|date:"Y-m-d" }}{% endif %}</td>
-                    <td>{{ document.get_extraction_status_display }}</td>
-                  </tr>
-                {% empty %}
-                  <tr><td colspan="4" class="muted">Sin documentos todavia.</td></tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </section>
-
-          <section class="soft-panel">
-            <p class="section-title">Evolucion</p>
-            {% if selected_opportunity.valuation_line %}
-              <svg viewBox="0 0 720 160" class="venture-chart" preserveAspectRatio="none">
-                <line x1="16" y1="144" x2="704" y2="144" stroke="#d3e1ea" stroke-width="1" />
-                <polyline fill="none" stroke="#0f5f88" stroke-width="5" points="{{ selected_opportunity.valuation_line }}" />
-              </svg>
+            <p class="section-title">Analisis y evolucion</p>
+            {% if selected_opportunity.latest_analysis %}
+              <p class="venture-note">{{ selected_opportunity.latest_analysis.summary }}</p>
+              {% if selected_opportunity.latest_analysis.valuation_note %}
+                <p class="metric-sub">{{ selected_opportunity.latest_analysis.valuation_note }}</p>
+              {% endif %}
+              {% if selected_opportunity.valuation_line %}
+                <svg viewBox="0 0 720 160" class="venture-chart" preserveAspectRatio="none">
+                  <line x1="16" y1="144" x2="704" y2="144" stroke="#d3e1ea" stroke-width="1" />
+                  <polyline fill="none" stroke="#0f5f88" stroke-width="5" points="{{ selected_opportunity.valuation_line }}" />
+                </svg>
+              {% endif %}
+            {% else %}
+              <div class="message info">Sube un balance PDF para generar recomendacion, rango de valoracion, precio aproximado y serie historica.</div>
             {% endif %}
             <table style="margin-top:12px;">
               <thead><tr><th>Fecha</th><th>Recomendacion</th><th>Precio</th><th>Score</th></tr></thead>
@@ -310,69 +391,217 @@
               </tbody>
             </table>
           </section>
+
+          <section class="soft-panel">
+            <p class="section-title">Tesis, riesgos y acciones</p>
+            <div class="venture-data-grid">
+              <div class="venture-data-item"><div class="metric-label">Problema de crecimiento</div><div class="venture-note">{{ selected_opportunity.growth_issue|default:"Pendiente de concretar" }}</div></div>
+              <div class="venture-data-item"><div class="metric-label">Sinergias</div><div class="venture-note">{{ selected_opportunity.synergy_notes|default:"Pendiente" }}</div></div>
+              <div class="venture-data-item"><div class="metric-label">Due diligence</div><div class="venture-note">{{ selected_opportunity.diligence_notes|default:"Pendiente" }}</div></div>
+              <div class="venture-data-item"><div class="metric-label">Riesgos</div><div class="venture-note">{{ selected_opportunity.red_flags|default:"Pendiente" }}</div></div>
+              <div class="venture-data-item"><div class="metric-label">Proximos pasos</div><div class="venture-note">{{ selected_opportunity.next_steps|default:"Pendiente de definir" }}</div></div>
+              <div class="venture-data-item"><div class="metric-label">Notas</div><div class="venture-note">{{ selected_opportunity.notes|default:"-" }}</div></div>
+            </div>
+            {% if selected_opportunity.latest_analysis %}
+              <div style="margin-top:14px;">
+                <p class="metric-label">Drivers detectados</p>
+                <ul class="venture-mini-list">
+                  {% for driver in selected_opportunity.latest_analysis.drivers %}
+                    <li>{{ driver }}</li>
+                  {% empty %}
+                    <li>Sin drivers automaticos.</li>
+                  {% endfor %}
+                </ul>
+                <p class="metric-label" style="margin-top:12px;">Riesgos detectados</p>
+                <ul class="venture-mini-list">
+                  {% for risk in selected_opportunity.latest_analysis.risks %}
+                    <li>{{ risk }}</li>
+                  {% empty %}
+                    <li>Sin riesgos automaticos.</li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endif %}
+          </section>
         </div>
 
-        {% if can_manage_finances %}
-          <div class="venture-detail-grid" style="margin-top:18px;">
-            <section class="soft-panel">
-              <p class="section-title">Subir documentos</p>
-              <form method="post" enctype="multipart/form-data" class="stack">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="upload_informa">
-                <input type="hidden" name="opportunity" value="{{ selected_opportunity.id }}">
-                <div class="venture-form-grid">
-                  <div><label>Titulo informe</label><input type="text" name="title" placeholder="Informe Informa"></div>
-                  <div><label>Fecha informe</label><input type="date" name="document_date"></div>
-                  <div><label>PDF Informa</label><input type="file" name="file" accept=".pdf,application/pdf"></div>
-                </div>
-                <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="overwrite_existing"> Sobrescribir campos ya rellenados</label>
-                <button class="button" type="submit">Importar Informa en esta empresa</button>
-              </form>
-              <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="upload_balance">
-                <input type="hidden" name="opportunity" value="{{ selected_opportunity.id }}">
-                <div class="venture-form-grid">
-                  <div><label>Titulo balance</label><input type="text" name="title" placeholder="Balance"></div>
-                  <div><label>Ano fiscal</label><input type="number" name="fiscal_year" min="1990" max="2100"></div>
-                  <div><label>PDF balance</label><input type="file" name="file" accept=".pdf,application/pdf"></div>
-                </div>
-                <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="use_ai" checked> Usar analista IA si esta configurado</label>
-                <button class="button" type="submit">Analizar balance de esta empresa</button>
-              </form>
-            </section>
+        <section class="soft-panel" style="margin-top:18px;">
+          <p class="section-title">Documentos de la empresa</p>
+          <table>
+            <thead><tr><th>Documento</th><th>Tipo</th><th>Fecha</th><th>Lectura</th></tr></thead>
+            <tbody>
+              {% for document in selected_documents %}
+                <tr>
+                  <td>{{ document.title }}</td>
+                  <td>{{ document.get_document_kind_display }}</td>
+                  <td>{% if document.document_date %}{{ document.document_date|date:"Y-m-d" }}{% elif document.fiscal_year %}{{ document.fiscal_year }}{% else %}{{ document.uploaded_at|date:"Y-m-d" }}{% endif %}</td>
+                  <td>{{ document.get_extraction_status_display }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="4" class="muted">Sin documentos todavia.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </section>
 
-            <section class="soft-panel">
-              <p class="section-title">Actualizar ficha</p>
-              {% if selected_company_form %}
-                <form method="post" class="stack">
-                  {% csrf_token %}
-                  <input type="hidden" name="action" value="save_opportunity">
-                  <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
-                  <div class="venture-form-grid">
-                    <div><label for="{{ selected_company_form.company_name.id_for_label }}">{{ selected_company_form.company_name.label }}</label>{{ selected_company_form.company_name }}</div>
-                    <div><label for="{{ selected_company_form.legal_name.id_for_label }}">{{ selected_company_form.legal_name.label }}</label>{{ selected_company_form.legal_name }}</div>
-                    <div><label for="{{ selected_company_form.tax_id.id_for_label }}">{{ selected_company_form.tax_id.label }}</label>{{ selected_company_form.tax_id }}</div>
-                    <div><label for="{{ selected_company_form.website.id_for_label }}">{{ selected_company_form.website.label }}</label>{{ selected_company_form.website }}</div>
-                    <div><label for="{{ selected_company_form.sector.id_for_label }}">{{ selected_company_form.sector.label }}</label>{{ selected_company_form.sector }}</div>
-                    <div><label for="{{ selected_company_form.geography.id_for_label }}">{{ selected_company_form.geography.label }}</label>{{ selected_company_form.geography }}</div>
-                    <div><label for="{{ selected_company_form.stage.id_for_label }}">{{ selected_company_form.stage.label }}</label>{{ selected_company_form.stage }}</div>
-                    <div><label for="{{ selected_company_form.status.id_for_label }}">{{ selected_company_form.status.label }}</label>{{ selected_company_form.status }}</div>
-                    <div><label for="{{ selected_company_form.strategic_fit.id_for_label }}">{{ selected_company_form.strategic_fit.label }}</label>{{ selected_company_form.strategic_fit }}</div>
-                  </div>
+        {% if can_manage_finances and selected_company_form %}
+          <section class="soft-panel" style="margin-top:18px;">
+            <details class="venture-edit-panel" {% if selected_company_form.errors %}open{% endif %}>
+              <summary>Editar todos los campos de esta empresa</summary>
+              <form method="post" class="stack">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="save_opportunity">
+                <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
+                <div class="venture-form-grid">
+                  <div><label for="{{ selected_company_form.company_name.id_for_label }}">{{ selected_company_form.company_name.label }}</label>{{ selected_company_form.company_name }}</div>
+                  <div><label for="{{ selected_company_form.legal_name.id_for_label }}">{{ selected_company_form.legal_name.label }}</label>{{ selected_company_form.legal_name }}</div>
+                  <div><label for="{{ selected_company_form.tax_id.id_for_label }}">{{ selected_company_form.tax_id.label }}</label>{{ selected_company_form.tax_id }}</div>
+                  <div><label for="{{ selected_company_form.website.id_for_label }}">{{ selected_company_form.website.label }}</label>{{ selected_company_form.website }}</div>
+                  <div><label for="{{ selected_company_form.sector.id_for_label }}">{{ selected_company_form.sector.label }}</label>{{ selected_company_form.sector }}</div>
+                  <div><label for="{{ selected_company_form.geography.id_for_label }}">{{ selected_company_form.geography.label }}</label>{{ selected_company_form.geography }}</div>
+                  <div><label for="{{ selected_company_form.address.id_for_label }}">{{ selected_company_form.address.label }}</label>{{ selected_company_form.address }}</div>
+                  <div><label for="{{ selected_company_form.phone.id_for_label }}">{{ selected_company_form.phone.label }}</label>{{ selected_company_form.phone }}</div>
+                  <div><label for="{{ selected_company_form.email.id_for_label }}">{{ selected_company_form.email.label }}</label>{{ selected_company_form.email }}</div>
+                  <div><label for="{{ selected_company_form.cnae_code.id_for_label }}">{{ selected_company_form.cnae_code.label }}</label>{{ selected_company_form.cnae_code }}</div>
+                  <div><label for="{{ selected_company_form.cnae_label.id_for_label }}">{{ selected_company_form.cnae_label.label }}</label>{{ selected_company_form.cnae_label }}</div>
+                  <div><label for="{{ selected_company_form.employees.id_for_label }}">{{ selected_company_form.employees.label }}</label>{{ selected_company_form.employees }}</div>
+                  <div><label for="{{ selected_company_form.stage.id_for_label }}">{{ selected_company_form.stage.label }}</label>{{ selected_company_form.stage }}</div>
+                  <div><label for="{{ selected_company_form.status.id_for_label }}">{{ selected_company_form.status.label }}</label>{{ selected_company_form.status }}</div>
+                  <div><label for="{{ selected_company_form.strategic_fit.id_for_label }}">{{ selected_company_form.strategic_fit.label }}</label>{{ selected_company_form.strategic_fit }}</div>
+                  <div><label for="{{ selected_company_form.contact_name.id_for_label }}">{{ selected_company_form.contact_name.label }}</label>{{ selected_company_form.contact_name }}</div>
+                  <div><label for="{{ selected_company_form.source.id_for_label }}">{{ selected_company_form.source.label }}</label>{{ selected_company_form.source }}</div>
+                  <div><label for="{{ selected_company_form.identified_on.id_for_label }}">{{ selected_company_form.identified_on.label }}</label>{{ selected_company_form.identified_on }}</div>
+                  <div><label for="{{ selected_company_form.next_review_on.id_for_label }}">{{ selected_company_form.next_review_on.label }}</label>{{ selected_company_form.next_review_on }}</div>
+                </div>
+                <div class="venture-form-grid">
+                  <div><label for="{{ selected_company_form.ticket_min.id_for_label }}">{{ selected_company_form.ticket_min.label }}</label>{{ selected_company_form.ticket_min }}</div>
+                  <div><label for="{{ selected_company_form.ticket_max.id_for_label }}">{{ selected_company_form.ticket_max.label }}</label>{{ selected_company_form.ticket_max }}</div>
+                  <div><label for="{{ selected_company_form.estimated_valuation.id_for_label }}">{{ selected_company_form.estimated_valuation.label }}</label>{{ selected_company_form.estimated_valuation }}</div>
+                  <div><label for="{{ selected_company_form.annual_revenue.id_for_label }}">{{ selected_company_form.annual_revenue.label }}</label>{{ selected_company_form.annual_revenue }}</div>
+                  <div><label for="{{ selected_company_form.ebitda.id_for_label }}">{{ selected_company_form.ebitda.label }}</label>{{ selected_company_form.ebitda }}</div>
+                  <div><label for="{{ selected_company_form.cash_need.id_for_label }}">{{ selected_company_form.cash_need.label }}</label>{{ selected_company_form.cash_need }}</div>
+                </div>
+                <div class="venture-score-grid">
+                  <div><label for="{{ selected_company_form.neos_fit_score.id_for_label }}">{{ selected_company_form.neos_fit_score.label }}</label>{{ selected_company_form.neos_fit_score }}</div>
+                  <div><label for="{{ selected_company_form.market_score.id_for_label }}">{{ selected_company_form.market_score.label }}</label>{{ selected_company_form.market_score }}</div>
+                  <div><label for="{{ selected_company_form.team_score.id_for_label }}">{{ selected_company_form.team_score.label }}</label>{{ selected_company_form.team_score }}</div>
+                  <div><label for="{{ selected_company_form.financial_score.id_for_label }}">{{ selected_company_form.financial_score.label }}</label>{{ selected_company_form.financial_score }}</div>
+                  <div><label for="{{ selected_company_form.risk_control_score.id_for_label }}">{{ selected_company_form.risk_control_score.label }}</label>{{ selected_company_form.risk_control_score }}</div>
+                </div>
+                <div class="venture-form-grid two">
                   <div><label for="{{ selected_company_form.fit_summary.id_for_label }}">{{ selected_company_form.fit_summary.label }}</label>{{ selected_company_form.fit_summary }}</div>
+                  <div><label for="{{ selected_company_form.growth_issue.id_for_label }}">{{ selected_company_form.growth_issue.label }}</label>{{ selected_company_form.growth_issue }}</div>
+                  <div><label for="{{ selected_company_form.synergy_notes.id_for_label }}">{{ selected_company_form.synergy_notes.label }}</label>{{ selected_company_form.synergy_notes }}</div>
+                  <div><label for="{{ selected_company_form.diligence_notes.id_for_label }}">{{ selected_company_form.diligence_notes.label }}</label>{{ selected_company_form.diligence_notes }}</div>
+                  <div><label for="{{ selected_company_form.red_flags.id_for_label }}">{{ selected_company_form.red_flags.label }}</label>{{ selected_company_form.red_flags }}</div>
                   <div><label for="{{ selected_company_form.next_steps.id_for_label }}">{{ selected_company_form.next_steps.label }}</label>{{ selected_company_form.next_steps }}</div>
+                </div>
+                <div>
+                  <label for="{{ selected_company_form.notes.id_for_label }}">{{ selected_company_form.notes.label }}</label>
+                  {{ selected_company_form.notes }}
+                </div>
+                {% if selected_company_form.errors %}
+                  <div class="message error">Revisa los campos de la ficha antes de guardar.</div>
+                {% endif %}
+                <div class="venture-inline-actions">
                   <button class="button" type="submit">Guardar ficha de {{ selected_opportunity.company_name }}</button>
-                </form>
-              {% endif %}
-            </section>
-          </div>
+                </div>
+              </form>
+            </details>
+          </section>
+
+          <section class="soft-panel" style="margin-top:18px;">
+            <div class="venture-section-head" style="margin-bottom:0;">
+              <div>
+                <p class="section-title">Quitar empresa</p>
+                <p class="muted" style="margin:0;">Elimina esta pestana y todos sus documentos y analisis asociados.</p>
+              </div>
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="delete_opportunity">
+                <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
+                <button class="button danger" type="submit">Eliminar empresa</button>
+              </form>
+            </div>
+          </section>
         {% endif %}
       </section>
     {% endif %}
 
-    <section class="card">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+    {% if creating_new_company %}
+      <section class="card" id="new-company">
+        <div class="venture-section-head">
+          <div>
+            <p class="section-title">Nueva pestana</p>
+            <h2 style="margin-top:0;">Anadir empresa no cotizada</h2>
+            <p class="muted" style="margin-top:0;max-width:74ch;">Al guardar se crea una nueva pestana de empresa. Despues podras subir sus informes Informa y balances dentro de esa pestana.</p>
+          </div>
+        </div>
+        {% if can_manage_finances %}
+          <form method="post" class="stack">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save_opportunity">
+            <div class="venture-form-grid">
+              <div><label for="{{ form.company_name.id_for_label }}">{{ form.company_name.label }}</label>{{ form.company_name }}</div>
+              <div><label for="{{ form.legal_name.id_for_label }}">{{ form.legal_name.label }}</label>{{ form.legal_name }}</div>
+              <div><label for="{{ form.tax_id.id_for_label }}">{{ form.tax_id.label }}</label>{{ form.tax_id }}</div>
+              <div><label for="{{ form.website.id_for_label }}">{{ form.website.label }}</label>{{ form.website }}</div>
+              <div><label for="{{ form.sector.id_for_label }}">{{ form.sector.label }}</label>{{ form.sector }}</div>
+              <div><label for="{{ form.geography.id_for_label }}">{{ form.geography.label }}</label>{{ form.geography }}</div>
+              <div><label for="{{ form.address.id_for_label }}">{{ form.address.label }}</label>{{ form.address }}</div>
+              <div><label for="{{ form.phone.id_for_label }}">{{ form.phone.label }}</label>{{ form.phone }}</div>
+              <div><label for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>{{ form.email }}</div>
+              <div><label for="{{ form.cnae_code.id_for_label }}">{{ form.cnae_code.label }}</label>{{ form.cnae_code }}</div>
+              <div><label for="{{ form.cnae_label.id_for_label }}">{{ form.cnae_label.label }}</label>{{ form.cnae_label }}</div>
+              <div><label for="{{ form.employees.id_for_label }}">{{ form.employees.label }}</label>{{ form.employees }}</div>
+              <div><label for="{{ form.stage.id_for_label }}">{{ form.stage.label }}</label>{{ form.stage }}</div>
+              <div><label for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>{{ form.status }}</div>
+              <div><label for="{{ form.strategic_fit.id_for_label }}">{{ form.strategic_fit.label }}</label>{{ form.strategic_fit }}</div>
+              <div><label for="{{ form.contact_name.id_for_label }}">{{ form.contact_name.label }}</label>{{ form.contact_name }}</div>
+              <div><label for="{{ form.source.id_for_label }}">{{ form.source.label }}</label>{{ form.source }}</div>
+              <div><label for="{{ form.identified_on.id_for_label }}">{{ form.identified_on.label }}</label>{{ form.identified_on }}</div>
+              <div><label for="{{ form.next_review_on.id_for_label }}">{{ form.next_review_on.label }}</label>{{ form.next_review_on }}</div>
+            </div>
+            <div class="venture-form-grid">
+              <div><label for="{{ form.ticket_min.id_for_label }}">{{ form.ticket_min.label }}</label>{{ form.ticket_min }}</div>
+              <div><label for="{{ form.ticket_max.id_for_label }}">{{ form.ticket_max.label }}</label>{{ form.ticket_max }}</div>
+              <div><label for="{{ form.estimated_valuation.id_for_label }}">{{ form.estimated_valuation.label }}</label>{{ form.estimated_valuation }}</div>
+              <div><label for="{{ form.annual_revenue.id_for_label }}">{{ form.annual_revenue.label }}</label>{{ form.annual_revenue }}</div>
+              <div><label for="{{ form.ebitda.id_for_label }}">{{ form.ebitda.label }}</label>{{ form.ebitda }}</div>
+              <div><label for="{{ form.cash_need.id_for_label }}">{{ form.cash_need.label }}</label>{{ form.cash_need }}</div>
+            </div>
+            <div class="venture-score-grid">
+              <div><label for="{{ form.neos_fit_score.id_for_label }}">{{ form.neos_fit_score.label }}</label>{{ form.neos_fit_score }}</div>
+              <div><label for="{{ form.market_score.id_for_label }}">{{ form.market_score.label }}</label>{{ form.market_score }}</div>
+              <div><label for="{{ form.team_score.id_for_label }}">{{ form.team_score.label }}</label>{{ form.team_score }}</div>
+              <div><label for="{{ form.financial_score.id_for_label }}">{{ form.financial_score.label }}</label>{{ form.financial_score }}</div>
+              <div><label for="{{ form.risk_control_score.id_for_label }}">{{ form.risk_control_score.label }}</label>{{ form.risk_control_score }}</div>
+            </div>
+            <div class="venture-form-grid two">
+              <div><label for="{{ form.fit_summary.id_for_label }}">{{ form.fit_summary.label }}</label>{{ form.fit_summary }}</div>
+              <div><label for="{{ form.growth_issue.id_for_label }}">{{ form.growth_issue.label }}</label>{{ form.growth_issue }}</div>
+              <div><label for="{{ form.synergy_notes.id_for_label }}">{{ form.synergy_notes.label }}</label>{{ form.synergy_notes }}</div>
+              <div><label for="{{ form.diligence_notes.id_for_label }}">{{ form.diligence_notes.label }}</label>{{ form.diligence_notes }}</div>
+              <div><label for="{{ form.red_flags.id_for_label }}">{{ form.red_flags.label }}</label>{{ form.red_flags }}</div>
+              <div><label for="{{ form.next_steps.id_for_label }}">{{ form.next_steps.label }}</label>{{ form.next_steps }}</div>
+            </div>
+            <div>
+              <label for="{{ form.notes.id_for_label }}">{{ form.notes.label }}</label>
+              {{ form.notes }}
+            </div>
+            {% if form.errors %}
+              <div class="message error">Revisa los campos del formulario antes de guardar.</div>
+            {% endif %}
+            <button class="button" type="submit">Guardar empresa</button>
+          </form>
+        {% else %}
+          <div class="venture-empty muted">No hay empresas seleccionadas.</div>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    <section class="card" id="web-radar">
+      <div class="venture-section-head">
         <div>
           <p class="section-title">Vigilancia web</p>
           <h2 style="margin-top:0;">Empresas interesantes en la zona</h2>
@@ -400,7 +629,7 @@
                 <td><strong>{{ candidate.company_name }}</strong><div class="metric-sub">{{ candidate.get_status_display }}</div></td>
                 <td>{{ candidate.geography|default:"-" }}<div class="metric-sub">{{ candidate.sector|default:"-" }}</div></td>
                 <td><span class="venture-score {{ candidate.score_tone }}">{{ candidate.score_pct|floatformat:0 }} %</span></td>
-                <td><div class="venture-note">{{ candidate.rationale }}</div></td>
+                <td><div class="venture-note">{{ candidate.rationale|default:candidate.summary }}</div></td>
                 <td>
                   <div class="venture-note">{{ candidate.source_title|default:"-" }}</div>
                   {% if candidate.source_url %}<a class="link" href="{{ candidate.source_url }}" target="_blank" rel="noopener">Abrir fuente</a>{% endif %}
@@ -435,402 +664,5 @@
         </table>
       </section>
     </section>
-
-    <div class="venture-split">
-      <section class="card table-card">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:baseline;flex-wrap:wrap;">
-          <div>
-            <p class="section-title">Pipeline</p>
-            <h2 style="margin-top:0;">Empresas priorizadas</h2>
-          </div>
-          <span class="pill">Score: encaje + mercado + equipo + finanzas + riesgo</span>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Empresa</th>
-              <th>Estado</th>
-              <th>Encaje</th>
-              <th>Score</th>
-              <th>Analisis</th>
-              <th>Ticket</th>
-              <th>Problema</th>
-              <th>Proximo paso</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for opportunity in priority_rows %}
-              <tr>
-                <td>
-                  <strong>{{ opportunity.company_name }}</strong>
-                  {% if opportunity.tax_id %}<div class="metric-sub">{{ opportunity.tax_id }}</div>{% endif %}
-                  <div class="metric-sub">{{ opportunity.sector|default:"Sector pendiente" }}{% if opportunity.geography %} - {{ opportunity.geography }}{% endif %}</div>
-                  {% if opportunity.website %}<div class="metric-sub"><a class="link" href="{{ opportunity.website }}" target="_blank" rel="noopener">Web</a></div>{% endif %}
-                </td>
-                <td>{{ opportunity.get_status_display }}<div class="metric-sub">{{ opportunity.get_stage_display }}</div></td>
-                <td>{{ opportunity.get_strategic_fit_display }}</td>
-                <td><span class="venture-score {{ opportunity.score_tone }}">{{ opportunity.score_pct|floatformat:0 }} %</span><div class="metric-sub">{{ opportunity.score_label }}</div></td>
-                <td>
-                  {% if opportunity.latest_analysis %}
-                    <span class="venture-score {{ opportunity.latest_analysis.recommendation_tone }}">{{ opportunity.latest_analysis.get_recommendation_display }}</span>
-                    <div class="metric-sub">Precio {{ opportunity.latest_analysis.suggested_purchase_price|floatformat:0 }} EUR</div>
-                    <div class="metric-sub">Confianza {{ opportunity.latest_analysis.get_confidence_display }}</div>
-                  {% else %}
-                    <span class="pill">Sin balance</span>
-                  {% endif %}
-                </td>
-                <td>
-                  {% if opportunity.ticket_min or opportunity.ticket_max %}
-                    {% if opportunity.ticket_min %}{{ opportunity.ticket_min|floatformat:0 }}{% else %}-{% endif %} - {% if opportunity.ticket_max %}{{ opportunity.ticket_max|floatformat:0 }}{% else %}-{% endif %}
-                  {% else %}
-                    -
-                  {% endif %}
-                </td>
-                <td><div class="venture-note">{{ opportunity.growth_issue|default:"Pendiente de concretar" }}</div></td>
-                <td>
-                  <div class="venture-note">{{ opportunity.next_steps|default:"Pendiente de definir" }}</div>
-                  {% if opportunity.next_review_on %}<div class="metric-sub">Revision {{ opportunity.next_review_on|date:"Y-m-d" }}</div>{% endif %}
-                </td>
-              </tr>
-            {% empty %}
-              <tr><td colspan="8" class="muted">Todavia no hay empresas en el radar.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </section>
-
-      <section class="card">
-        <p class="section-title">Lectura rapida</p>
-        <h2 style="margin-top:0;">Encaje y proceso</h2>
-        <div class="venture-panel-grid">
-          {% for row in fit_rows %}
-            {% if row.count %}
-              <div class="venture-breakdown-row">
-                <strong>{{ row.label }}</strong>
-                <span class="pill">{{ row.count }}</span>
-                <span class="venture-score">{{ row.avg_score|floatformat:0 }} %</span>
-              </div>
-            {% endif %}
-          {% empty %}
-          {% endfor %}
-        </div>
-        <div style="height:18px;"></div>
-        <p class="section-title">Estados</p>
-        <div class="venture-panel-grid">
-          {% for row in status_rows %}
-            {% if row.count %}
-              <div class="venture-breakdown-row">
-                <strong>{{ row.label }}</strong>
-                <span class="pill">{{ row.count }}</span>
-                <span class="venture-score">{{ row.avg_score|floatformat:0 }} %</span>
-              </div>
-            {% endif %}
-          {% endfor %}
-        </div>
-        {% if review_due_rows %}
-          <div class="message info" style="margin-top:18px;">
-            Revisiones proximas:
-            {% for opportunity in review_due_rows %}
-              {{ opportunity.company_name }}{% if opportunity.next_review_on %} ({{ opportunity.next_review_on|date:"Y-m-d" }}){% endif %}{% if not forloop.last %}, {% endif %}
-            {% endfor %}
-          </div>
-        {% endif %}
-      </section>
-    </div>
-
-    <section class="card table-card">
-      <div style="display:flex;justify-content:space-between;gap:12px;align-items:baseline;flex-wrap:wrap;">
-        <div>
-          <p class="section-title">Analisis de balances</p>
-          <h2 style="margin-top:0;">Precio de compra y recomendacion</h2>
-        </div>
-        <span class="pill">Compra / Vigilancia</span>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Empresa</th>
-            <th>Recomendacion</th>
-            <th>Precio compra aprox.</th>
-            <th>Rango valoracion</th>
-            <th>Ticket sugerido</th>
-            <th>Lectura</th>
-            <th>Drivers</th>
-            <th>Riesgos</th>
-            <th>Evolucion</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for analysis in latest_analyses %}
-            <tr>
-              <td>
-                <strong>{{ analysis.opportunity.company_name }}</strong>
-                <div class="metric-sub">{{ analysis.analysis_date|date:"Y-m-d" }} - {{ analysis.agent_label }}</div>
-                {% if analysis.source_document %}<div class="metric-sub">{{ analysis.source_document.title }}</div>{% endif %}
-              </td>
-              <td><span class="venture-score {{ analysis.recommendation_tone }}">{{ analysis.get_recommendation_display }}</span><div class="metric-sub">Confianza {{ analysis.get_confidence_display }}</div></td>
-              <td><strong>{{ analysis.suggested_purchase_price|floatformat:2 }} EUR</strong></td>
-              <td>{{ analysis.valuation_low|floatformat:0 }} - {{ analysis.valuation_high|floatformat:0 }} EUR<div class="metric-sub">Base {{ analysis.valuation_base|floatformat:0 }} EUR</div></td>
-              <td>
-                {% if analysis.suggested_ticket %}{{ analysis.suggested_ticket|floatformat:2 }} EUR{% else %}-{% endif %}
-                {% if analysis.target_ownership_pct %}<div class="metric-sub">{{ analysis.target_ownership_pct|floatformat:2 }} % aprox.</div>{% endif %}
-              </td>
-              <td><div class="venture-note">{{ analysis.summary }}</div><div class="metric-sub">{{ analysis.web_summary }}</div></td>
-              <td>
-                <ul class="venture-mini-list">
-                  {% for driver in analysis.drivers %}
-                    <li>{{ driver }}</li>
-                  {% endfor %}
-                </ul>
-              </td>
-              <td>
-                <ul class="venture-mini-list">
-                  {% for risk in analysis.risks %}
-                    <li>{{ risk }}</li>
-                  {% endfor %}
-                </ul>
-              </td>
-              <td>
-                {% if analysis.opportunity.valuation_line %}
-                  <svg viewBox="0 0 720 160" class="venture-chart" preserveAspectRatio="none">
-                    <line x1="16" y1="144" x2="704" y2="144" stroke="#d3e1ea" stroke-width="1" />
-                    <polyline fill="none" stroke="#0f5f88" stroke-width="5" points="{{ analysis.opportunity.valuation_line }}" />
-                  </svg>
-                {% else %}
-                  <span class="muted">Primera foto</span>
-                {% endif %}
-              </td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="9" class="muted">Sube un balance PDF para generar el primer analisis y empezar la serie historica.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
-
-    <section class="card table-card">
-      <p class="section-title">Evolucion</p>
-      <h2 style="margin-top:0;">Historico de analisis</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Fecha</th>
-            <th>Empresa</th>
-            <th>Documento</th>
-            <th>Recomendacion</th>
-            <th>Score</th>
-            <th>Precio compra aprox.</th>
-            <th>Ventas</th>
-            <th>EBITDA</th>
-            <th>Deuda neta</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for analysis in analysis_history %}
-            <tr>
-              <td>{{ analysis.analysis_date|date:"Y-m-d" }}<div class="metric-sub">{{ analysis.created_at|date:"Y-m-d H:i" }}</div></td>
-              <td>{{ analysis.opportunity.company_name }}</td>
-              <td>{% if analysis.source_document %}{{ analysis.source_document.title }}{% else %}-{% endif %}</td>
-              <td>{{ analysis.get_recommendation_display }}<div class="metric-sub">{{ analysis.get_confidence_display }}</div></td>
-              <td>{{ analysis.score_pct|floatformat:0 }} %</td>
-              <td>{{ analysis.suggested_purchase_price|floatformat:2 }} EUR</td>
-              <td>{{ analysis.annual_revenue|floatformat:2 }}</td>
-              <td>{{ analysis.ebitda|floatformat:2 }}</td>
-              <td>{{ analysis.net_debt|floatformat:2 }}</td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="9" class="muted">Todavia no hay historico de valoraciones.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
-
-    <section class="card table-card">
-      <p class="section-title">Tesis</p>
-      <h2 style="margin-top:0;">Encaje con Neos y riesgos</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Empresa</th>
-            <th>Tesis de encaje</th>
-            <th>Sinergias</th>
-            <th>Due diligence</th>
-            <th>Riesgos</th>
-            <th>Documentos</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for opportunity in opportunities %}
-            <tr>
-              <td><strong>{{ opportunity.company_name }}</strong><div class="metric-sub">{{ opportunity.get_strategic_fit_display }}</div></td>
-              <td><div class="venture-note">{{ opportunity.fit_summary|default:"-" }}</div></td>
-              <td><div class="venture-note">{{ opportunity.synergy_notes|default:"-" }}</div></td>
-              <td><div class="venture-note">{{ opportunity.diligence_notes|default:"-" }}</div></td>
-              <td><div class="venture-note">{{ opportunity.red_flags|default:"-" }}</div></td>
-              <td>{{ opportunity.documents.count }}</td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="6" class="muted">Cuando registres empresas, aqui veras la tesis y las dudas clave.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
-
-    <section class="card table-card">
-      <p class="section-title">Ficha empresa</p>
-      <h2 style="margin-top:0;">Datos importados de Informa</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Empresa</th>
-            <th>Razon social</th>
-            <th>NIF/CIF</th>
-            <th>Actividad</th>
-            <th>Domicilio</th>
-            <th>Contacto</th>
-            <th>Empleados</th>
-            <th>Finanzas detectadas</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for opportunity in opportunities %}
-            <tr>
-              <td><strong>{{ opportunity.company_name }}</strong></td>
-              <td>{{ opportunity.legal_name|default:"-" }}</td>
-              <td>{{ opportunity.tax_id|default:"-" }}</td>
-              <td>
-                {{ opportunity.sector|default:"-" }}
-                {% if opportunity.cnae_code or opportunity.cnae_label %}
-                  <div class="metric-sub">CNAE {{ opportunity.cnae_code|default:"-" }} {{ opportunity.cnae_label }}</div>
-                {% endif %}
-              </td>
-              <td>{{ opportunity.address|default:"-" }}{% if opportunity.geography %}<div class="metric-sub">{{ opportunity.geography }}</div>{% endif %}</td>
-              <td>
-                {{ opportunity.phone|default:"-" }}
-                {% if opportunity.email %}<div class="metric-sub">{{ opportunity.email }}</div>{% endif %}
-                {% if opportunity.website %}<div class="metric-sub"><a class="link" href="{{ opportunity.website }}" target="_blank" rel="noopener">Web</a></div>{% endif %}
-              </td>
-              <td>{{ opportunity.employees|default:"-" }}</td>
-              <td>
-                Ventas {{ opportunity.annual_revenue|floatformat:2 }}<br>
-                EBITDA {{ opportunity.ebitda|floatformat:2 }}
-              </td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="8" class="muted">Sube un informe Informa para completar automaticamente la ficha.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
-
-    {% if can_manage_finances %}
-      <section class="card">
-        <p class="section-title">Informes Informa</p>
-        <h2 style="margin-top:0;">Subir informe y rellenar ficha</h2>
-        <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="upload_informa">
-          <div class="venture-form-grid">
-            <div><label for="{{ informa_form.opportunity.id_for_label }}">{{ informa_form.opportunity.label }}</label>{{ informa_form.opportunity }}</div>
-            <div><label for="{{ informa_form.title.id_for_label }}">{{ informa_form.title.label }}</label>{{ informa_form.title }}</div>
-            <div><label for="{{ informa_form.document_date.id_for_label }}">{{ informa_form.document_date.label }}</label>{{ informa_form.document_date }}</div>
-            <div><label for="{{ informa_form.file.id_for_label }}">{{ informa_form.file.label }}</label>{{ informa_form.file }}</div>
-            <div>
-              <label for="{{ informa_form.overwrite_existing.id_for_label }}">{{ informa_form.overwrite_existing.label }}</label>
-              {{ informa_form.overwrite_existing }}
-            </div>
-          </div>
-          {% if informa_form.errors %}
-            <div class="message error">Revisa el informe Informa antes de importarlo.</div>
-          {% endif %}
-          <button class="button" type="submit">Importar Informa</button>
-        </form>
-      </section>
-
-      <section class="card">
-        <p class="section-title">Balances PDF</p>
-        <h2 style="margin-top:0;">Subir balance y lanzar analisis</h2>
-        <form method="post" enctype="multipart/form-data" class="stack" style="margin-top:18px;">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="upload_balance">
-          <div class="venture-form-grid">
-            <div><label for="{{ analysis_form.opportunity.id_for_label }}">{{ analysis_form.opportunity.label }}</label>{{ analysis_form.opportunity }}</div>
-            <div><label for="{{ analysis_form.title.id_for_label }}">{{ analysis_form.title.label }}</label>{{ analysis_form.title }}</div>
-            <div><label for="{{ analysis_form.fiscal_year.id_for_label }}">{{ analysis_form.fiscal_year.label }}</label>{{ analysis_form.fiscal_year }}</div>
-            <div><label for="{{ analysis_form.document_date.id_for_label }}">{{ analysis_form.document_date.label }}</label>{{ analysis_form.document_date }}</div>
-            <div><label for="{{ analysis_form.file.id_for_label }}">{{ analysis_form.file.label }}</label>{{ analysis_form.file }}</div>
-            <div>
-              <label for="{{ analysis_form.use_ai.id_for_label }}">{{ analysis_form.use_ai.label }}</label>
-              {{ analysis_form.use_ai }}
-            </div>
-          </div>
-          {% if analysis_form.errors %}
-            <div class="message error">Revisa el PDF y la empresa seleccionada antes de analizar.</div>
-          {% endif %}
-          <button class="button" type="submit">Analizar balance</button>
-        </form>
-      </section>
-
-      <section class="card">
-        <p class="section-title">Alta o actualizacion</p>
-        <h2 style="margin-top:0;">Registrar empresa en estudio</h2>
-        <form method="post" class="stack" style="margin-top:18px;">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="save_opportunity">
-          <div class="venture-form-grid">
-            <div><label for="{{ form.company_name.id_for_label }}">{{ form.company_name.label }}</label>{{ form.company_name }}</div>
-            <div><label for="{{ form.legal_name.id_for_label }}">{{ form.legal_name.label }}</label>{{ form.legal_name }}</div>
-            <div><label for="{{ form.tax_id.id_for_label }}">{{ form.tax_id.label }}</label>{{ form.tax_id }}</div>
-            <div><label for="{{ form.website.id_for_label }}">{{ form.website.label }}</label>{{ form.website }}</div>
-            <div><label for="{{ form.sector.id_for_label }}">{{ form.sector.label }}</label>{{ form.sector }}</div>
-            <div><label for="{{ form.geography.id_for_label }}">{{ form.geography.label }}</label>{{ form.geography }}</div>
-            <div><label for="{{ form.address.id_for_label }}">{{ form.address.label }}</label>{{ form.address }}</div>
-            <div><label for="{{ form.phone.id_for_label }}">{{ form.phone.label }}</label>{{ form.phone }}</div>
-            <div><label for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>{{ form.email }}</div>
-            <div><label for="{{ form.cnae_code.id_for_label }}">{{ form.cnae_code.label }}</label>{{ form.cnae_code }}</div>
-            <div><label for="{{ form.cnae_label.id_for_label }}">{{ form.cnae_label.label }}</label>{{ form.cnae_label }}</div>
-            <div><label for="{{ form.employees.id_for_label }}">{{ form.employees.label }}</label>{{ form.employees }}</div>
-            <div><label for="{{ form.stage.id_for_label }}">{{ form.stage.label }}</label>{{ form.stage }}</div>
-            <div><label for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>{{ form.status }}</div>
-            <div><label for="{{ form.strategic_fit.id_for_label }}">{{ form.strategic_fit.label }}</label>{{ form.strategic_fit }}</div>
-            <div><label for="{{ form.contact_name.id_for_label }}">{{ form.contact_name.label }}</label>{{ form.contact_name }}</div>
-            <div><label for="{{ form.source.id_for_label }}">{{ form.source.label }}</label>{{ form.source }}</div>
-            <div><label for="{{ form.identified_on.id_for_label }}">{{ form.identified_on.label }}</label>{{ form.identified_on }}</div>
-            <div><label for="{{ form.next_review_on.id_for_label }}">{{ form.next_review_on.label }}</label>{{ form.next_review_on }}</div>
-          </div>
-          <div class="venture-form-grid">
-            <div><label for="{{ form.ticket_min.id_for_label }}">{{ form.ticket_min.label }}</label>{{ form.ticket_min }}</div>
-            <div><label for="{{ form.ticket_max.id_for_label }}">{{ form.ticket_max.label }}</label>{{ form.ticket_max }}</div>
-            <div><label for="{{ form.estimated_valuation.id_for_label }}">{{ form.estimated_valuation.label }}</label>{{ form.estimated_valuation }}</div>
-            <div><label for="{{ form.annual_revenue.id_for_label }}">{{ form.annual_revenue.label }}</label>{{ form.annual_revenue }}</div>
-            <div><label for="{{ form.ebitda.id_for_label }}">{{ form.ebitda.label }}</label>{{ form.ebitda }}</div>
-            <div><label for="{{ form.cash_need.id_for_label }}">{{ form.cash_need.label }}</label>{{ form.cash_need }}</div>
-          </div>
-          <div class="venture-score-grid">
-            <div><label for="{{ form.neos_fit_score.id_for_label }}">{{ form.neos_fit_score.label }}</label>{{ form.neos_fit_score }}</div>
-            <div><label for="{{ form.market_score.id_for_label }}">{{ form.market_score.label }}</label>{{ form.market_score }}</div>
-            <div><label for="{{ form.team_score.id_for_label }}">{{ form.team_score.label }}</label>{{ form.team_score }}</div>
-            <div><label for="{{ form.financial_score.id_for_label }}">{{ form.financial_score.label }}</label>{{ form.financial_score }}</div>
-            <div><label for="{{ form.risk_control_score.id_for_label }}">{{ form.risk_control_score.label }}</label>{{ form.risk_control_score }}</div>
-          </div>
-          <div class="venture-form-grid two">
-            <div><label for="{{ form.fit_summary.id_for_label }}">{{ form.fit_summary.label }}</label>{{ form.fit_summary }}</div>
-            <div><label for="{{ form.growth_issue.id_for_label }}">{{ form.growth_issue.label }}</label>{{ form.growth_issue }}</div>
-            <div><label for="{{ form.synergy_notes.id_for_label }}">{{ form.synergy_notes.label }}</label>{{ form.synergy_notes }}</div>
-            <div><label for="{{ form.diligence_notes.id_for_label }}">{{ form.diligence_notes.label }}</label>{{ form.diligence_notes }}</div>
-            <div><label for="{{ form.red_flags.id_for_label }}">{{ form.red_flags.label }}</label>{{ form.red_flags }}</div>
-            <div><label for="{{ form.next_steps.id_for_label }}">{{ form.next_steps.label }}</label>{{ form.next_steps }}</div>
-          </div>
-          <div>
-            <label for="{{ form.notes.id_for_label }}">{{ form.notes.label }}</label>
-            {{ form.notes }}
-          </div>
-          {% if form.errors %}
-            <div class="message error">Revisa los campos del formulario antes de guardar.</div>
-          {% endif %}
-          <button class="button" type="submit">Guardar empresa</button>
-        </form>
-      </section>
-    {% endif %}
   </div>
 {% endblock %}

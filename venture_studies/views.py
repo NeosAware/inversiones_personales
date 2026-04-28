@@ -20,6 +20,9 @@ from .services import (
 class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
     template_name = "venture_studies/ventureopportunity_list.html"
 
+    def _is_new_company_mode(self):
+        return str(self.request.GET.get("new") or "").strip() in {"1", "true", "yes"}
+
     def _redirect_to_company(self, opportunity_id=None):
         url = reverse("venture_studies:list")
         if opportunity_id:
@@ -27,6 +30,8 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         return redirect("venture_studies:list")
 
     def _selected_opportunity(self, opportunities):
+        if self._is_new_company_mode():
+            return None
         selected_id = str(self.request.GET.get("company") or "").strip()
         if selected_id:
             for opportunity in opportunities:
@@ -34,7 +39,25 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
                     return opportunity
         return opportunities[0] if opportunities else None
 
+    def _opportunity_form_data(self, post_data, opportunity=None):
+        data = post_data.copy()
+        if not opportunity:
+            return data
+        for field_name in VentureOpportunityForm.Meta.fields:
+            if field_name in data:
+                continue
+            value = getattr(opportunity, field_name)
+            if value is None:
+                data[field_name] = ""
+            elif hasattr(value, "isoformat"):
+                data[field_name] = value.isoformat()
+            else:
+                data[field_name] = str(value)
+        return data
+
     def get_context_data(self, **kwargs):
+        creating_new_company = kwargs.pop("creating_new_company", None)
+        selected_opportunity_override = kwargs.pop("selected_opportunity_override", None)
         context = super().get_context_data(**kwargs)
         opportunities = list(
             VentureOpportunity.objects.prefetch_related(
@@ -42,10 +65,22 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
                 "analysis_snapshots",
             )
         )
-        selected_opportunity = self._selected_opportunity(opportunities)
+        selected_opportunity = None
+        if selected_opportunity_override:
+            selected_opportunity = next(
+                (item for item in opportunities if item.id == selected_opportunity_override.id),
+                selected_opportunity_override,
+            )
+        if not selected_opportunity:
+            selected_opportunity = self._selected_opportunity(opportunities)
+        if creating_new_company is None:
+            creating_new_company = self._is_new_company_mode() or not selected_opportunity
+        if creating_new_company:
+            selected_opportunity = None
         context["page_title"] = "Radar de empresas no cotizadas"
         context["opportunities"] = opportunities
         context["selected_opportunity"] = selected_opportunity
+        context["creating_new_company"] = creating_new_company
         context["selected_documents"] = list(selected_opportunity.documents.all()) if selected_opportunity else []
         context["selected_analyses"] = list(selected_opportunity.analysis_snapshots.all()) if selected_opportunity else []
         context["documents"] = list(VentureDocument.objects.select_related("opportunity").order_by("-uploaded_at", "-id")[:30])
@@ -87,19 +122,28 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         if action == "reject_candidate":
             return self._reject_candidate(request)
 
-        form = VentureOpportunityForm(request.POST)
+        opportunity_id = request.POST.get("opportunity_id", "").strip()
+        opportunity_instance = get_object_or_404(VentureOpportunity, pk=opportunity_id) if opportunity_id else None
+        form = VentureOpportunityForm(
+            self._opportunity_form_data(request.POST, opportunity_instance),
+            instance=opportunity_instance,
+        )
         if not form.is_valid():
-            context = self.get_context_data(form=form)
+            context_key = "selected_company_form" if opportunity_instance else "form"
+            context = self.get_context_data(
+                **{context_key: form},
+                creating_new_company=not opportunity_instance,
+                selected_opportunity_override=opportunity_instance,
+            )
             return self.render_to_response(context, status=400)
 
-        opportunity_id = request.POST.get("opportunity_id", "").strip()
         defaults = {
             field_name: form.cleaned_data[field_name]
             for field_name in VentureOpportunityForm.Meta.fields
             if field_name != "company_name"
         }
-        if opportunity_id:
-            opportunity = get_object_or_404(VentureOpportunity, pk=opportunity_id)
+        if opportunity_instance:
+            opportunity = opportunity_instance
             opportunity.company_name = form.cleaned_data["company_name"]
             for field_name, value in defaults.items():
                 setattr(opportunity, field_name, value)

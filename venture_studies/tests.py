@@ -108,10 +108,56 @@ class VentureStudiesViewTests(TestCase):
         self.assertContains(response, "Radar de empresas no cotizadas")
         self.assertContains(response, "Aditivos Funcionales SL")
         self.assertContains(response, "Neos Additives")
-        self.assertContains(response, "Analisis de balances")
-        self.assertContains(response, "Datos importados de Informa")
-        self.assertContains(response, "Empresa seleccionada")
+        self.assertContains(response, "Pestana de empresa")
+        self.assertContains(response, "Subir informacion")
+        self.assertContains(response, "Importar Informa en esta empresa")
+        self.assertContains(response, "Analizar balance de esta empresa")
+        self.assertContains(response, "Documentos de la empresa")
         self.assertContains(response, "Vigilancia web")
+
+    def test_new_company_tab_shows_creation_form(self):
+        VentureOpportunity.objects.create(company_name="Empresa Existente SL")
+        self.client.force_login(self.staff_user)
+
+        response = self.client.get(f"{reverse('venture_studies:list')}?new=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Nueva pestana")
+        self.assertContains(response, "Guardar empresa")
+        self.assertContains(response, 'href="?company=')
+
+    def test_staff_user_can_update_selected_company_from_partial_tab_form(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Empresa Parcial SL",
+            sector="Ceramica",
+            stage=VentureOpportunity.Stage.EARLY,
+            status=VentureOpportunity.Status.SCREENING,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+            neos_fit_score=4,
+            market_score=3,
+            team_score=3,
+            financial_score=2,
+            risk_control_score=3,
+        )
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            f"{reverse('venture_studies:list')}?company={opportunity.id}",
+            {
+                "action": "save_opportunity",
+                "opportunity_id": str(opportunity.id),
+                "company_name": "Empresa Parcial Actualizada SL",
+                "sector": "Aditivos ceramicos",
+                "fit_summary": "Mejora el encaje con Neos Additives.",
+            },
+        )
+
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
+        opportunity.refresh_from_db()
+        self.assertEqual(opportunity.company_name, "Empresa Parcial Actualizada SL")
+        self.assertEqual(opportunity.sector, "Aditivos ceramicos")
+        self.assertEqual(opportunity.neos_fit_score, 4)
+        self.assertEqual(opportunity.status, VentureOpportunity.Status.SCREENING)
 
     def test_staff_user_can_upload_balance_pdf_for_analysis(self):
         opportunity = VentureOpportunity.objects.create(
