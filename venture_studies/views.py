@@ -107,7 +107,28 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         context["opportunities"] = opportunities
         context["selected_opportunity"] = selected_opportunity
         context["creating_new_company"] = creating_new_company
-        context["selected_documents"] = list(selected_opportunity.documents.all()) if selected_opportunity else []
+        selected_documents = list(selected_opportunity.documents.all()) if selected_opportunity else []
+        context["selected_documents"] = selected_documents
+        analysis_kind_priority = {
+            VentureDocument.DocumentKind.BALANCE: 0,
+            VentureDocument.DocumentKind.INFORMA: 1,
+            VentureDocument.DocumentKind.DOSSIER: 2,
+            VentureDocument.DocumentKind.PITCH: 3,
+            VentureDocument.DocumentKind.CONTRACT: 4,
+            VentureDocument.DocumentKind.OTHER: 5,
+        }
+        context["selected_analysis_document"] = (
+            sorted(
+                selected_documents,
+                key=lambda item: (
+                    item.extraction_status != VentureDocument.ExtractionStatus.EXTRACTED,
+                    analysis_kind_priority.get(item.document_kind, 9),
+                    -item.uploaded_at.timestamp(),
+                ),
+            )[0]
+            if selected_documents
+            else None
+        )
         context["selected_analyses"] = list(selected_opportunity.analysis_snapshots.all()) if selected_opportunity else []
         context["documents"] = list(VentureDocument.objects.select_related("opportunity").order_by("-uploaded_at", "-id")[:30])
         context["discovery_candidates"] = list(

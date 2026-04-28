@@ -509,6 +509,29 @@ class VentureStudiesViewTests(TestCase):
         self.assertEqual(analysis.recommendation, VentureAnalysisSnapshot.Recommendation.WATCH)
         self.assertEqual(analysis.suggested_purchase_price, Decimal("140000.00"))
 
+    def test_company_tab_prompts_analysis_when_documents_have_no_snapshot(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Pendiente Analisis SL",
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+        )
+        VentureDocument.objects.create(
+            opportunity=opportunity,
+            document_kind=VentureDocument.DocumentKind.BALANCE,
+            title="Balance pendiente",
+            file="venture_studies/test/balance.pdf",
+            extracted_text="Ventas balance 500.000 EUR",
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+        self.client.force_login(self.staff_user)
+
+        response = self.client.get(f"{reverse('venture_studies:list')}?company={opportunity.id}")
+
+        self.assertContains(response, "Hay PDFs cargados pendientes de valorar")
+        self.assertContains(response, "Analizar documentos y generar recomendacion")
+        self.assertContains(response, "Pendiente Analisis SL")
+
     def test_document_analysis_creates_snapshot_from_extracted_balance_text(self):
         opportunity = VentureOpportunity.objects.create(
             company_name="Aditivos Minerales SL",

@@ -41,9 +41,9 @@
     }
     .venture-tabs{
       display:flex;
-      gap:8px;
+      gap:12px;
       flex-wrap:wrap;
-      padding:10px;
+      padding:14px;
       border:1px solid var(--line);
       border-radius:8px;
       background:rgba(255,255,255,.94);
@@ -53,15 +53,16 @@
       display:inline-flex;
       align-items:center;
       gap:8px;
-      min-height:44px;
-      max-width:260px;
-      padding:9px 12px;
+      min-height:54px;
+      max-width:none;
+      padding:12px 16px;
       border-radius:8px;
       border:1px solid transparent;
       color:var(--ink-soft);
       font-weight:800;
       background:transparent;
       line-height:1.2;
+      font-size:15px;
     }
     .venture-tab:hover{
       border-color:#d8e4ec;
@@ -74,9 +75,27 @@
       box-shadow:0 8px 16px rgba(15,33,46,.05);
     }
     .venture-tab-name{
-      overflow:hidden;
-      text-overflow:ellipsis;
-      white-space:nowrap;
+      white-space:normal;
+      overflow-wrap:anywhere;
+    }
+    .venture-analysis-cta{
+      display:flex;
+      justify-content:space-between;
+      gap:18px;
+      align-items:center;
+      padding:18px;
+      margin-top:18px;
+      border:1px solid #b9d7e9;
+      border-radius:8px;
+      background:#f2f8fc;
+    }
+    .venture-analysis-cta h3{
+      margin:0 0 6px;
+    }
+    .venture-analysis-cta p{
+      margin:0;
+      color:var(--muted);
+      max-width:72ch;
     }
     .venture-workspace{
       display:grid;
@@ -294,6 +313,21 @@
           </section>
         </div>
 
+        {% if can_manage_finances and selected_documents and not selected_opportunity.latest_analysis and selected_analysis_document %}
+          <section class="venture-analysis-cta">
+            <div>
+              <h3>Hay PDFs cargados pendientes de valorar</h3>
+              <p>Se analizara primero {{ selected_analysis_document.title }} para generar recomendacion, precio de compra orientativo, drivers, riesgos y evolucion.</p>
+            </div>
+            <form method="post" style="margin:0;">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="analyze_document">
+              <input type="hidden" name="document_id" value="{{ selected_analysis_document.id }}">
+              <button class="button" type="submit">Analizar documentos y generar recomendacion</button>
+            </form>
+          </section>
+        {% endif %}
+
         <div class="venture-workspace" style="margin-top:18px;">
           <section class="soft-panel">
             <div class="venture-section-head">
@@ -392,7 +426,11 @@
                 </svg>
               {% endif %}
             {% else %}
-              <div class="message info">Sube un balance PDF para generar recomendacion, rango de valoracion, precio aproximado y serie historica.</div>
+              {% if selected_documents %}
+                <div class="message info">Hay PDFs con texto extraido. Pulsa Analizar documentos y generar recomendacion o el boton Analizar ahora de la tabla de documentos.</div>
+              {% else %}
+                <div class="message info">Sube un balance PDF para generar recomendacion, rango de valoracion, precio aproximado y serie historica.</div>
+              {% endif %}
             {% endif %}
             <table style="margin-top:12px;">
               <thead><tr><th>Fecha</th><th>Recomendacion</th><th>Precio</th><th>Score</th><th>Analista</th></tr></thead>
