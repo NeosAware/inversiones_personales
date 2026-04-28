@@ -1545,25 +1545,16 @@ def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, tex
     return enriched
 
 
-def run_document_analysis(document: VentureDocument, *, use_ai: bool = True) -> VentureAnalysisSnapshot:
-    text = document.extracted_text or extract_pdf_text(document)
-    metrics = parse_balance_metrics(text)
-    opportunity = document.opportunity
-    web_context = fetch_venture_web_context(opportunity)
-    core_payload = build_core_valuation(opportunity, metrics, web_context, text)
-    payload = try_ai_venture_analysis(
-        opportunity,
-        metrics,
-        web_context,
-        core_payload,
-        text,
-        document=document,
-        enabled=use_ai,
-    ) or core_payload
-
+def create_venture_analysis_snapshot(
+    *,
+    opportunity: VentureOpportunity,
+    source_document: VentureDocument | None,
+    web_context: dict,
+    payload: dict,
+) -> VentureAnalysisSnapshot:
     snapshot = VentureAnalysisSnapshot.objects.create(
         opportunity=opportunity,
-        source_document=document,
+        source_document=source_document,
         recommendation=payload["recommendation"],
         confidence=payload["confidence"],
         score_pct=payload["score_pct"],
@@ -1597,6 +1588,92 @@ def run_document_analysis(document: VentureDocument, *, use_ai: bool = True) -> 
         }
         snapshot.save(update_fields=["analysis_payload"])
     return snapshot
+
+
+def build_analysis_payload_for_text(
+    opportunity: VentureOpportunity,
+    text: str,
+    *,
+    document: VentureDocument | None = None,
+    use_ai: bool = True,
+) -> tuple[dict, dict]:
+    metrics = parse_balance_metrics(text)
+    web_context = fetch_venture_web_context(opportunity)
+    core_payload = build_core_valuation(opportunity, metrics, web_context, text)
+    payload = try_ai_venture_analysis(
+        opportunity,
+        metrics,
+        web_context,
+        core_payload,
+        text,
+        document=document,
+        enabled=use_ai,
+    ) or core_payload
+    return payload, web_context
+
+
+def run_document_analysis(document: VentureDocument, *, use_ai: bool = True) -> VentureAnalysisSnapshot:
+    text = document.extracted_text or extract_pdf_text(document)
+    opportunity = document.opportunity
+    payload, web_context = build_analysis_payload_for_text(
+        opportunity,
+        text,
+        document=document,
+        use_ai=use_ai,
+    )
+    return create_venture_analysis_snapshot(
+        opportunity=opportunity,
+        source_document=document,
+        web_context=web_context,
+        payload=payload,
+    )
+
+
+def run_opportunity_documents_analysis(
+    opportunity: VentureOpportunity,
+    documents,
+    *,
+    use_ai: bool = True,
+) -> VentureAnalysisSnapshot:
+    documents = list(documents)
+    if not documents:
+        raise ValueError("No hay documentos para analizar.")
+
+    text_parts = []
+    for document in documents:
+        document_text = document.extracted_text or extract_pdf_text(document)
+        if not document_text:
+            continue
+        text_parts.append(
+            "\n".join(
+                (
+                    f"Documento: {document.title}",
+                    f"Tipo: {document.get_document_kind_display()}",
+                    f"Ano fiscal: {document.fiscal_year or ''}",
+                    f"Fecha documento: {document.document_date or ''}",
+                    document_text,
+                )
+            )
+        )
+    combined_text = "\n\n---\n\n".join(text_parts)
+    source_document = documents[0]
+    payload, web_context = build_analysis_payload_for_text(
+        opportunity,
+        combined_text,
+        document=source_document,
+        use_ai=use_ai,
+    )
+    payload["analysis_payload"] = {
+        **payload.get("analysis_payload", {}),
+        "combined_document_ids": [document.id for document in documents],
+        "combined_document_titles": [document.title for document in documents],
+    }
+    return create_venture_analysis_snapshot(
+        opportunity=opportunity,
+        source_document=source_document,
+        web_context=web_context,
+        payload=payload,
+    )
 
 
 def build_svg_polyline(values, width: int = 720, height: int = 160, padding: int = 16) -> str:

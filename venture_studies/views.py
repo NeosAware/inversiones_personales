@@ -23,6 +23,7 @@ from .services import (
     import_informa_report,
     promote_discovery_candidate,
     run_document_analysis,
+    run_opportunity_documents_analysis,
 )
 
 
@@ -31,6 +32,25 @@ logger = logging.getLogger(__name__)
 
 class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
     template_name = "venture_studies/ventureopportunity_list.html"
+
+    analysis_kind_priority = {
+        VentureDocument.DocumentKind.BALANCE: 0,
+        VentureDocument.DocumentKind.INFORMA: 1,
+        VentureDocument.DocumentKind.DOSSIER: 2,
+        VentureDocument.DocumentKind.PITCH: 3,
+        VentureDocument.DocumentKind.CONTRACT: 4,
+        VentureDocument.DocumentKind.OTHER: 5,
+    }
+
+    def _sort_documents_for_analysis(self, documents):
+        return sorted(
+            documents,
+            key=lambda item: (
+                item.extraction_status != VentureDocument.ExtractionStatus.EXTRACTED,
+                self.analysis_kind_priority.get(item.document_kind, 9),
+                -item.uploaded_at.timestamp(),
+            ),
+        )
 
     def _is_new_company_mode(self):
         return str(self.request.GET.get("new") or "").strip() in {"1", "true", "yes"}
@@ -109,23 +129,8 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
         context["creating_new_company"] = creating_new_company
         selected_documents = list(selected_opportunity.documents.all()) if selected_opportunity else []
         context["selected_documents"] = selected_documents
-        analysis_kind_priority = {
-            VentureDocument.DocumentKind.BALANCE: 0,
-            VentureDocument.DocumentKind.INFORMA: 1,
-            VentureDocument.DocumentKind.DOSSIER: 2,
-            VentureDocument.DocumentKind.PITCH: 3,
-            VentureDocument.DocumentKind.CONTRACT: 4,
-            VentureDocument.DocumentKind.OTHER: 5,
-        }
         context["selected_analysis_document"] = (
-            sorted(
-                selected_documents,
-                key=lambda item: (
-                    item.extraction_status != VentureDocument.ExtractionStatus.EXTRACTED,
-                    analysis_kind_priority.get(item.document_kind, 9),
-                    -item.uploaded_at.timestamp(),
-                ),
-            )[0]
+            self._sort_documents_for_analysis(selected_documents)[0]
             if selected_documents
             else None
         )
@@ -165,6 +170,8 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             return self._upload_informa(request)
         if action == "analyze_document":
             return self._analyze_existing_document(request)
+        if action == "analyze_opportunity_documents":
+            return self._analyze_opportunity_documents(request)
         if action == "delete_opportunity":
             return self._delete_opportunity(request)
         if action == "discover_web":
@@ -469,6 +476,46 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
                 "Claude no ha intervenido en este analisis. Revisa AI_LLM_PROVIDER=anthropic y ANTHROPIC_API_KEY si quieres lectura Claude.",
             )
         return self._redirect_to_company(document.opportunity_id)
+
+    def _analyze_opportunity_documents(self, request):
+        opportunity = get_object_or_404(
+            VentureOpportunity.objects.prefetch_related("documents"),
+            pk=request.POST.get("opportunity_id"),
+        )
+        documents = self._sort_documents_for_analysis(list(opportunity.documents.all()))
+        if not documents:
+            messages.warning(request, "Esta empresa todavia no tiene PDFs cargados para analizar.")
+            return self._redirect_to_company(opportunity.id)
+        try:
+            snapshot = run_opportunity_documents_analysis(
+                opportunity,
+                documents,
+                use_ai=True,
+            )
+        except Exception as exc:
+            logger.exception("Error analysing venture opportunity documents %s", opportunity.pk)
+            messages.warning(
+                request,
+                (
+                    "Los documentos estan guardados, pero no se ha podido generar el analisis automatico. "
+                    f"Detalle: {str(exc)[:220]}"
+                ),
+            )
+            return self._redirect_to_company(opportunity.id)
+        messages.success(
+            request,
+            (
+                f"Analisis combinado de {opportunity.company_name} generado por {snapshot.agent_label}. "
+                f"Recomendacion: {snapshot.get_recommendation_display()} "
+                f"y precio orientativo {snapshot.suggested_purchase_price or 0:.2f} EUR."
+            ),
+        )
+        if snapshot.agent_provider != "anthropic":
+            messages.warning(
+                request,
+                "Claude no ha intervenido en este analisis. Revisa AI_LLM_PROVIDER=anthropic y ANTHROPIC_API_KEY si quieres lectura Claude.",
+            )
+        return self._redirect_to_company(opportunity.id)
 
     def _delete_opportunity(self, request):
         opportunity = get_object_or_404(VentureOpportunity, pk=request.POST.get("opportunity_id"))

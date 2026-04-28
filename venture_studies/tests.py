@@ -529,8 +529,66 @@ class VentureStudiesViewTests(TestCase):
         response = self.client.get(f"{reverse('venture_studies:list')}?company={opportunity.id}")
 
         self.assertContains(response, "Hay PDFs cargados pendientes de valorar")
-        self.assertContains(response, "Analizar documentos y generar recomendacion")
+        self.assertContains(response, "Analizar todos los PDFs y decidir")
+        self.assertContains(response, "Informacion clave")
         self.assertContains(response, "Pendiente Analisis SL")
+
+    def test_staff_user_can_analyze_all_company_documents_together(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Analisis Combinado SL",
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+        )
+        balance = VentureDocument.objects.create(
+            opportunity=opportunity,
+            document_kind=VentureDocument.DocumentKind.BALANCE,
+            title="Balance 2024",
+            file="venture_studies/test/balance.pdf",
+            extracted_text="Ventas balance 500.000 EUR EBITDA 60.000 EUR",
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+        VentureDocument.objects.create(
+            opportunity=opportunity,
+            document_kind=VentureDocument.DocumentKind.INFORMA,
+            title="Informe Informa",
+            file="venture_studies/test/informa.pdf",
+            extracted_text="CNAE 4675 Comercio al por mayor de productos quimicos",
+            extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+        )
+        self.client.force_login(self.staff_user)
+
+        def fake_analysis(opportunity, documents, use_ai=True):
+            documents = list(documents)
+            snapshot = VentureAnalysisSnapshot.objects.create(
+                opportunity=opportunity,
+                source_document=documents[0],
+                recommendation=VentureAnalysisSnapshot.Recommendation.BUY,
+                confidence=VentureAnalysisSnapshot.Confidence.MEDIUM,
+                score_pct=Decimal("80.00"),
+                suggested_purchase_price=Decimal("220000.00"),
+                summary="Analisis combinado generado.",
+                agent_provider="anthropic",
+                agent_label="Claude test",
+            )
+            self.assertEqual(documents[0], balance)
+            self.assertEqual(len(documents), 2)
+            return snapshot
+
+        with patch("venture_studies.views.run_opportunity_documents_analysis", side_effect=fake_analysis) as mocked_analysis:
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "analyze_opportunity_documents",
+                    "opportunity_id": str(opportunity.id),
+                },
+            )
+
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
+        mocked_analysis.assert_called_once()
+        analysis = VentureAnalysisSnapshot.objects.get(opportunity=opportunity)
+        self.assertEqual(analysis.recommendation, VentureAnalysisSnapshot.Recommendation.BUY)
+        self.assertEqual(analysis.suggested_purchase_price, Decimal("220000.00"))
 
     def test_document_analysis_creates_snapshot_from_extracted_balance_text(self):
         opportunity = VentureOpportunity.objects.create(

@@ -97,6 +97,31 @@
       color:var(--muted);
       max-width:72ch;
     }
+    .venture-decision-grid{
+      display:grid;
+      gap:18px;
+      grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
+      margin-top:18px;
+    }
+    .venture-decision-value{
+      font-size:clamp(30px, 2vw, 42px);
+      font-weight:900;
+      letter-spacing:0;
+      color:var(--ink);
+      margin:0;
+    }
+    .venture-key-grid{
+      display:grid;
+      gap:10px;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+      margin-top:12px;
+    }
+    .venture-key-grid div{
+      padding:12px;
+      border:1px solid #e4ecf2;
+      border-radius:8px;
+      background:#fff;
+    }
     .venture-workspace{
       display:grid;
       gap:18px;
@@ -195,9 +220,11 @@
     }
     @media (max-width: 1180px){
       .venture-workspace,
+      .venture-decision-grid,
       .venture-form-grid,
       .venture-form-grid.two,
       .venture-score-grid,
+      .venture-key-grid,
       .venture-data-grid{
         grid-template-columns:1fr;
       }
@@ -313,17 +340,53 @@
           </section>
         </div>
 
+        <div class="venture-decision-grid">
+          <section class="soft-panel">
+            <p class="section-title">Decision de inversion</p>
+            {% if selected_opportunity.latest_analysis %}
+              <p class="venture-decision-value">{{ selected_opportunity.latest_analysis.get_recommendation_display }}</p>
+              <p class="metric-sub">Precio compra aprox.: {{ selected_opportunity.latest_analysis.suggested_purchase_price|floatformat:0 }} EUR - Score {{ selected_opportunity.latest_analysis.score_pct|floatformat:0 }} % - {{ selected_opportunity.latest_analysis.agent_label }}</p>
+              <p class="venture-note">{{ selected_opportunity.latest_analysis.summary }}</p>
+            {% elif selected_documents and selected_analysis_document %}
+              <p class="venture-decision-value">Pendiente</p>
+              <p class="venture-note">Hay {{ selected_documents|length }} PDF(s) cargados. Genera la recomendacion para ver si es compra o vigilancia y el precio orientativo.</p>
+              {% if can_manage_finances %}
+                <form method="post" style="margin-top:14px;">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="analyze_opportunity_documents">
+                  <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
+                  <button class="button" type="submit">Analizar todos los PDFs y decidir</button>
+                </form>
+              {% endif %}
+            {% else %}
+              <p class="venture-decision-value">Pendiente</p>
+              <p class="venture-note">Sube un informe Informa, balance o dossier para generar la primera decision.</p>
+            {% endif %}
+          </section>
+          <section class="soft-panel">
+            <p class="section-title">Informacion clave</p>
+            <div class="venture-key-grid">
+              <div><span class="metric-label">NIF/CIF</span><strong>{{ selected_opportunity.tax_id|default:"-" }}</strong></div>
+              <div><span class="metric-label">Sector</span><strong>{{ selected_opportunity.sector|default:"-" }}</strong></div>
+              <div><span class="metric-label">Ventas</span><strong>{% if selected_opportunity.annual_revenue %}{{ selected_opportunity.annual_revenue|floatformat:0 }} EUR{% else %}-{% endif %}</strong></div>
+              <div><span class="metric-label">EBITDA</span><strong>{% if selected_opportunity.ebitda %}{{ selected_opportunity.ebitda|floatformat:0 }} EUR{% else %}-{% endif %}</strong></div>
+              <div><span class="metric-label">CNAE</span><strong>{{ selected_opportunity.cnae_code|default:"-" }}</strong></div>
+              <div><span class="metric-label">Zona</span><strong>{{ selected_opportunity.geography|default:"-" }}</strong></div>
+            </div>
+          </section>
+        </div>
+
         {% if can_manage_finances and selected_documents and not selected_opportunity.latest_analysis and selected_analysis_document %}
           <section class="venture-analysis-cta">
             <div>
               <h3>Hay PDFs cargados pendientes de valorar</h3>
-              <p>Se analizara primero {{ selected_analysis_document.title }} para generar recomendacion, precio de compra orientativo, drivers, riesgos y evolucion.</p>
+              <p>Se analizaran juntos Informa, balance y dossier para generar recomendacion, precio de compra orientativo, drivers, riesgos y evolucion.</p>
             </div>
             <form method="post" style="margin:0;">
               {% csrf_token %}
-              <input type="hidden" name="action" value="analyze_document">
-              <input type="hidden" name="document_id" value="{{ selected_analysis_document.id }}">
-              <button class="button" type="submit">Analizar documentos y generar recomendacion</button>
+              <input type="hidden" name="action" value="analyze_opportunity_documents">
+              <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
+              <button class="button" type="submit">Analizar todos los PDFs y decidir</button>
             </form>
           </section>
         {% endif %}
@@ -427,7 +490,7 @@
               {% endif %}
             {% else %}
               {% if selected_documents %}
-                <div class="message info">Hay PDFs con texto extraido. Pulsa Analizar documentos y generar recomendacion o el boton Analizar ahora de la tabla de documentos.</div>
+                <div class="message info">Hay PDFs con texto extraido. Pulsa Analizar todos los PDFs y decidir o el boton Analizar ahora de la tabla de documentos.</div>
               {% else %}
                 <div class="message info">Sube un balance PDF para generar recomendacion, rango de valoracion, precio aproximado y serie historica.</div>
               {% endif %}
