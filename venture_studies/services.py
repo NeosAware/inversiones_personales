@@ -29,7 +29,7 @@ from .models import VentureAnalysisSnapshot, VentureDiscoveryCandidate, VentureD
 
 
 ZERO = Decimal("0")
-MONEY_RE = re.compile(r"[-+]?\d{1,3}(?:[.\s]\d{3})*(?:,\d+)?|[-+]?\d+(?:[.,]\d+)?")
+MONEY_RE = re.compile(r"(?<![\d.,])[-+]?(?:\d{1,3}(?:[.\s]\d{3})+|\d+)(?:,\d+)?(?![\d.,])")
 EMAIL_RE = re.compile(r"[\w.\-+]+@[\w.\-]+\.[A-Za-z]{2,}", re.I)
 URL_RE = re.compile(r"(?:https?://)?(?:www\.)?[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+(?:/[^\s]*)?", re.I)
 PHONE_RE = re.compile(r"(?:\+34\s*)?(?:\d[\s.-]?){9,12}")
@@ -133,6 +133,10 @@ def parse_spanish_decimal(raw_value: str) -> Decimal | None:
     text = str(raw_value or "").strip().replace("\xa0", "").replace(" ", "")
     if not text:
         return None
+    if re.fullmatch(r"[-+]?\d{1,3}(?:\.\d{3})+", text):
+        text = text.replace(".", "")
+    elif re.fullmatch(r"[-+]?\d{1,3}(?:\s\d{3})+", str(raw_value or "").strip().replace("\xa0", " ")):
+        text = text.replace(" ", "")
     if "," in text:
         text = text.replace(".", "").replace(",", ".")
     try:
@@ -267,20 +271,94 @@ def clean_informa_value(value: str, *, max_length: int = 240) -> str:
     return cleaned[:max_length].strip()
 
 
+INFORMA_NOISE_VALUES = {
+    "actividad cnae",
+    "banco bilbao",
+    "cnae",
+    "contacto",
+    "domicilio",
+    "domicilio social",
+    "email",
+    "email corporativo",
+    "empresa",
+    "entidad sucursal direccion localidad provincia",
+    "fecha",
+    "informacion comercial",
+    "informacion financiera",
+    "localidad",
+    "municipio",
+    "nombre de la empresa",
+    "numero de empleados",
+    "pagina web",
+    "poblacion",
+    "provincia",
+    "razon social",
+    "sector",
+    "telefono",
+    "telefonos",
+    "web",
+}
+
+
+def compact_informa_value_key(value: str) -> str:
+    return normalize_search_text(value).strip(" .,:;-/|()[]{}")
+
+
+def is_informa_noise_value(value: str) -> bool:
+    cleaned = compact_informa_value_key(value)
+    if not cleaned:
+        return True
+    if len(cleaned) <= 1 and not cleaned.isdigit():
+        return True
+    if cleaned in INFORMA_NOISE_VALUES:
+        return True
+    if cleaned.startswith(("informa financiero -", "informa d&b", "highcharts.com")):
+        return True
+    if "usuario:" in cleaned and "informa financiero" in cleaned:
+        return True
+    return False
+
+
+def is_valid_company_name_candidate(value: str) -> bool:
+    cleaned = normalize_company_name_candidate(value)
+    normalized = compact_informa_value_key(cleaned)
+    if not cleaned or is_informa_noise_value(cleaned):
+        return False
+    if normalized.startswith(("informe", "fecha", "riesgo", "score", "nota informa")):
+        return False
+    return len(cleaned) >= 3
+
+
+def label_matches_line(line: str, label: str) -> bool:
+    normalized_line = normalize_search_text(line)
+    normalized_label = normalize_search_text(label)
+    if not normalized_line or not normalized_label:
+        return False
+    if normalized_line == normalized_label:
+        return True
+    return bool(re.match(rf"^{re.escape(normalized_label)}(?:\b|[\s:()\-/])", normalized_line))
+
+
+def extract_same_line_value(line: str, label: str) -> str:
+    words = [re.escape(piece) for piece in str(label or "").split()]
+    if not words:
+        return ""
+    match = re.match(r"^\s*" + r"\s+".join(words) + r"\s*[:\-|)]?\s*(.+)$", line, flags=re.I)
+    return match.group(1) if match else ""
+
+
 def find_value_after_label(text: str, labels: tuple[str, ...], *, max_length: int = 240) -> str:
     lines = normalize_lines(text)
-    normalized_labels = [normalize_search_text(label) for label in labels]
     for index, line in enumerate(lines):
-        normalized_line = normalize_search_text(line)
-        for label, normalized_label in zip(labels, normalized_labels):
-            if normalized_label not in normalized_line:
+        for label in labels:
+            if not label_matches_line(line, label):
                 continue
-            after = line[normalized_line.find(normalized_label) + len(label) :].strip(" :-|")
-            if after and normalize_search_text(after) != normalized_label:
-                return clean_informa_value(after, max_length=max_length)
-            if index + 1 < len(lines):
-                candidate = clean_informa_value(lines[index + 1], max_length=max_length)
-                if candidate and normalize_search_text(candidate) not in normalized_labels:
+            after = clean_informa_value(extract_same_line_value(line, label), max_length=max_length)
+            if after and not is_informa_noise_value(after):
+                return after
+            for next_line in lines[index + 1 : index + 7]:
+                candidate = clean_informa_value(next_line, max_length=max_length)
+                if candidate and not is_informa_noise_value(candidate):
                     return candidate
     return ""
 
@@ -293,13 +371,14 @@ def find_company_name_from_informa(text: str) -> str:
         "empresa",
     )
     value = find_value_after_label(text, labels, max_length=180)
-    if value and not normalize_search_text(value).startswith("informe"):
+    if is_valid_company_name_candidate(value):
         return value
-    for line in normalize_lines(text)[:30]:
+    for line in normalize_lines(text)[:80]:
         cleaned = clean_informa_value(line, max_length=180)
         normalized = normalize_search_text(cleaned)
         if (
             len(cleaned) >= 5
+            and is_valid_company_name_candidate(cleaned)
             and not normalized.startswith("informe")
             and not normalized.startswith("fecha")
             and any(token in normalized for token in (" sl", " s.l", " sa", " s.a", " sociedad limitada", " sociedad anonima"))
@@ -313,6 +392,13 @@ def find_tax_id_from_informa(text: str) -> str:
     match = TAX_ID_RE.search(labelled or "")
     if match:
         return match.group(0).upper()
+    prefixed = re.search(
+        r"(?:NIF|CIF|NIF/CIF)\s*([ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]|[XYZ]?\d{7,8}[A-Z])",
+        text or "",
+        flags=re.I,
+    )
+    if prefixed:
+        return prefixed.group(1).upper()
     match = TAX_ID_RE.search(text or "")
     return match.group(0).upper() if match else ""
 
@@ -345,7 +431,7 @@ def find_email_from_informa(text: str) -> str:
 
 
 def find_phone_from_informa(text: str) -> str:
-    labelled = find_value_after_label(text, ("telefono", "tel.", "tel "), max_length=80)
+    labelled = find_value_after_label(text, ("telefono", "telefonos", "tel.", "tel "), max_length=80)
     match = PHONE_RE.search(labelled or "")
     if match:
         return clean_informa_value(match.group(0), max_length=60)
@@ -353,14 +439,86 @@ def find_phone_from_informa(text: str) -> str:
     return clean_informa_value(match.group(0), max_length=60) if match else ""
 
 
+def find_informa_address(text: str) -> str:
+    lines = normalize_lines(text)
+    for index, line in enumerate(lines):
+        if not any(label_matches_line(line, label) for label in ("domicilio social", "domicilio", "direccion", "sede social")):
+            continue
+        pieces = []
+        for next_line in lines[index + 1 : index + 5]:
+            candidate = clean_informa_value(next_line, max_length=240)
+            normalized = compact_informa_value_key(candidate)
+            if not candidate or is_informa_noise_value(candidate):
+                continue
+            if normalized in {"numero de sucursales", "telefonos", "telefono", "fax"}:
+                break
+            pieces.append(candidate)
+            if len(pieces) >= 2:
+                break
+        if pieces:
+            return clean_informa_value(" ".join(pieces), max_length=240)
+    return find_value_after_label(
+        text,
+        (
+            "domicilio social",
+            "domicilio",
+            "direccion",
+            "sede social",
+        ),
+        max_length=240,
+    )
+
+
+def find_geography_from_address_block(text: str) -> str:
+    lines = normalize_lines(text)
+    for index, line in enumerate(lines):
+        if not any(label_matches_line(line, label) for label in ("domicilio social", "domicilio", "direccion", "sede social")):
+            continue
+        for next_line in lines[index + 1 : index + 5]:
+            candidate = clean_informa_value(next_line, max_length=120)
+            match = re.match(r"^\d{5}\s+(.+)$", candidate)
+            if match:
+                return clean_informa_value(match.group(1), max_length=120)
+    return ""
+
+
 def find_cnae_from_informa(text: str) -> tuple[str, str]:
-    raw = find_value_after_label(text, ("cnae", "actividad cnae", "actividad principal"), max_length=220)
-    match = re.search(r"\b(\d{3,4})\b", raw)
-    if match:
+    lines = normalize_lines(text)
+    for preferred_year in ("2009", ""):
+        for index, line in enumerate(lines):
+            normalized = normalize_search_text(line)
+            if "actividad" not in normalized or "cnae" not in normalized:
+                continue
+            if preferred_year and preferred_year not in normalized:
+                continue
+            for offset, next_line in enumerate(lines[index + 1 : index + 6], start=1):
+                code_candidate = clean_informa_value(next_line, max_length=20).replace(" ", "")
+                if not re.fullmatch(r"\d{3,5}", code_candidate):
+                    continue
+                if code_candidate in {"2009", "2025"}:
+                    continue
+                label = ""
+                for label_line in lines[index + offset + 1 : index + offset + 5]:
+                    candidate = clean_informa_value(label_line, max_length=180)
+                    if not candidate or is_informa_noise_value(candidate):
+                        continue
+                    if re.fullmatch(r"\d{3,5}", candidate.replace(" ", "")):
+                        continue
+                    if "cnae" in normalize_search_text(candidate):
+                        break
+                    label = candidate
+                    break
+                return code_candidate, label
+    raw = find_value_after_label(text, ("actividad cnae", "actividad principal", "cnae"), max_length=220)
+    for match in re.finditer(r"\b(\d{3,5})\b", raw):
         code = match.group(1)
+        if code in {"2009", "2025"}:
+            continue
         label = clean_informa_value(raw.replace(code, " ", 1), max_length=180)
+        if is_informa_noise_value(label):
+            label = ""
         return code, label
-    return "", raw
+    return "", "" if is_informa_noise_value(raw) else raw
 
 
 def find_employees_from_informa(text: str):
@@ -377,22 +535,21 @@ def find_employees_from_informa(text: str):
 def parse_informa_company_fields(text: str) -> dict:
     cnae_code, cnae_label = find_cnae_from_informa(text)
     legal_name = find_company_name_from_informa(text)
-    address = find_value_after_label(
-        text,
-        (
-            "domicilio social",
-            "domicilio",
-            "direccion",
-            "sede social",
-        ),
-        max_length=240,
-    )
+    address = find_informa_address(text)
     city = find_value_after_label(text, ("localidad", "municipio", "poblacion"), max_length=100)
     province = find_value_after_label(text, ("provincia",), max_length=100)
+    if is_informa_noise_value(city):
+        city = ""
+    if is_informa_noise_value(province) or "banco" in normalize_search_text(province):
+        province = ""
     geography = " - ".join(item for item in (city, province) if item)
     if not geography:
-        geography = province or city
+        geography = find_geography_from_address_block(text) or province or city
     sector = cnae_label or find_value_after_label(text, ("actividad", "objeto social"), max_length=140)
+    if is_informa_noise_value(sector):
+        sector = ""
+    if is_informa_noise_value(cnae_label):
+        cnae_label = ""
     metrics = parse_balance_metrics(text)
     return {
         "company_name": legal_name,
@@ -530,11 +687,11 @@ def normalize_company_name_candidate(value: str) -> str:
 
 def guess_company_name_from_upload(uploaded_file, text: str = "", fallback_name: str = "") -> str:
     fallback_name = normalize_company_name_candidate(fallback_name)
-    if fallback_name:
+    if is_valid_company_name_candidate(fallback_name):
         return fallback_name
 
     parsed_name = find_company_name_from_informa(text)
-    if parsed_name:
+    if is_valid_company_name_candidate(parsed_name):
         return parsed_name
 
     filename = Path(str(getattr(uploaded_file, "name", "") or "")).stem
@@ -710,6 +867,47 @@ def promote_discovery_candidate(candidate: VentureDiscoveryCandidate) -> Venture
     return opportunity
 
 
+def _looks_like_year_decimal(value: Decimal) -> bool:
+    return value == value.to_integral_value() and Decimal("1900") <= abs(value) <= Decimal("2100")
+
+
+def _money_values_from_window(window: str, *, allow_chart_values: bool = False) -> list[Decimal]:
+    normalized_window = normalize_search_text(window)
+    if not allow_chart_values and "highcharts.com" in normalized_window and "eur" not in normalized_window and "\u20ac" not in window:
+        return []
+    values = []
+    for match in MONEY_RE.finditer(window):
+        value = parse_spanish_decimal(match.group(0))
+        if value is None or _looks_like_year_decimal(value):
+            continue
+        values.append(value)
+    return values
+
+
+def _first_plausible_money_value(window: str, *, allow_chart_values: bool = False) -> Decimal | None:
+    values = _money_values_from_window(window, allow_chart_values=allow_chart_values)
+    plausible = [value for value in values if abs(value) >= Decimal("100")]
+    if plausible:
+        return plausible[0]
+    return values[0] if values else None
+
+
+def _find_informa_summary_money(text: str, labels: tuple[str, ...]) -> Decimal | None:
+    lines = normalize_lines(text)
+    for index, line in enumerate(lines):
+        normalized_line = normalize_search_text(line)
+        if not any(normalize_search_text(label) in normalized_line for label in labels):
+            continue
+        same_line_value = _first_plausible_money_value(line)
+        if same_line_value is not None:
+            return same_line_value
+        for next_line in lines[index + 1 : index + 4]:
+            value = _first_plausible_money_value(next_line)
+            if value is not None:
+                return value
+    return None
+
+
 def _find_metric_after_labels(text: str, labels: tuple[str, ...]) -> Decimal | None:
     normalized = " ".join(str(text or "").split())
     lowered = normalize_search_text(normalized)
@@ -718,19 +916,18 @@ def _find_metric_after_labels(text: str, labels: tuple[str, ...]) -> Decimal | N
         if position < 0:
             continue
         window = normalized[position : position + 320]
-        matches = MONEY_RE.findall(window)
-        values = [value for value in (parse_spanish_decimal(match) for match in matches) if value is not None]
-        plausible = [value for value in values if abs(value) >= Decimal("100")]
-        if plausible:
-            return plausible[0]
-        if values:
-            return values[0]
+        value = _first_plausible_money_value(window)
+        if value is not None:
+            return value
     return None
 
 
 def parse_balance_metrics(text: str) -> dict:
+    annual_revenue = _find_informa_summary_money(text, ("ventas balance",))
+    total_assets = _find_informa_summary_money(text, ("activo total",))
+    profit = _find_informa_summary_money(text, ("resultados balance",))
     return {
-        "annual_revenue": _find_metric_after_labels(
+        "annual_revenue": annual_revenue or _find_metric_after_labels(
             text,
             (
                 "importe neto de la cifra de negocios",
@@ -749,7 +946,7 @@ def parse_balance_metrics(text: str) -> dict:
                 "capital y reservas",
             ),
         ),
-        "total_assets": _find_metric_after_labels(text, ("total activo", "activo total")),
+        "total_assets": total_assets or _find_metric_after_labels(text, ("total activo", "activo total")),
         "total_liabilities": _find_metric_after_labels(text, ("total pasivo", "pasivo total")),
         "debt": _find_metric_after_labels(
             text,
@@ -776,7 +973,7 @@ def parse_balance_metrics(text: str) -> dict:
                 "beneficio despues de impuestos",
                 "resultado despues de impuestos",
             ),
-        ),
+        ) or profit,
     }
 
 

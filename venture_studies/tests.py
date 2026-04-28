@@ -7,7 +7,14 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from .models import VentureAnalysisSnapshot, VentureDiscoveryCandidate, VentureDocument, VentureOpportunity
-from .services import discover_web_candidates, import_informa_report, run_document_analysis, try_ai_venture_analysis
+from .services import (
+    discover_web_candidates,
+    guess_company_name_from_upload,
+    import_informa_report,
+    parse_informa_company_fields,
+    run_document_analysis,
+    try_ai_venture_analysis,
+)
 
 
 class VentureStudiesViewTests(TestCase):
@@ -268,6 +275,69 @@ class VentureStudiesViewTests(TestCase):
         self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
         document = VentureDocument.objects.get(opportunity=opportunity)
         self.assertIn("Claude timeout", document.extraction_error)
+
+    def test_informa_parser_ignores_report_labels_and_chart_numbers(self):
+        text = """
+        DOMICILIO SOCIAL
+        CARRETERA CASTELLON-TERUEL ,
+        12110 L'ALCORA CASTELLON/CASTELLO
+        TELEFONOS
+        964362417
+        EMAIL CORPORATIVO
+        comcer@comcer.com
+        PAGINA WEB
+        www.comcer.com
+        Empresa
+        Sector
+        COMPUESTOS CERAMICOS SL
+        NIFB12462826 Numero D-U-N-S 862778222
+        VENTAS BALANCE (2024)
+        577.352 EUR
+        RESULTADOS BALANCE (2024)
+        -52.915 EUR
+        ACTIVO TOTAL (2024)
+        319.513 EUR
+        ACTIVIDAD (CNAE 2009)
+        4675
+        Comercio al por mayor de productos quimicos
+        EMPLEADOS
+        4
+        Bancos
+        Entidad Sucursal Direccion Localidad Provincia
+        BANCO BILBAO
+        VIZCAYA
+        EBITDA
+        2020 2021 2022 2023 2024
+        -500k
+        0
+        500k
+        Highcharts.com
+        """
+
+        parsed = parse_informa_company_fields(text)
+
+        self.assertEqual(parsed["company_name"], "COMPUESTOS CERAMICOS SL")
+        self.assertEqual(parsed["legal_name"], "COMPUESTOS CERAMICOS SL")
+        self.assertEqual(parsed["tax_id"], "B12462826")
+        self.assertEqual(parsed["website"], "https://www.comcer.com")
+        self.assertEqual(parsed["cnae_code"], "4675")
+        self.assertEqual(parsed["cnae_label"], "Comercio al por mayor de productos quimicos")
+        self.assertEqual(parsed["sector"], "Comercio al por mayor de productos quimicos")
+        self.assertEqual(parsed["employees"], 4)
+        self.assertEqual(parsed["annual_revenue"], Decimal("577352"))
+        self.assertIsNone(parsed["ebitda"])
+        self.assertNotIn("BANCO", parsed["geography"].upper())
+
+    def test_company_name_guess_ignores_label_fallback_from_informa(self):
+        uploaded_file = SimpleUploadedFile(
+            "Informa Financiero - COMPUESTOS CERAMICOS SL.pdf",
+            b"",
+            content_type="application/pdf",
+        )
+
+        company_name = guess_company_name_from_upload(uploaded_file, fallback_name="Sector")
+
+        self.assertEqual(company_name, "COMPUESTOS CERAMICOS SL")
 
     def test_staff_user_can_update_selected_company_from_partial_tab_form(self):
         opportunity = VentureOpportunity.objects.create(
