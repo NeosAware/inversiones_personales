@@ -122,6 +122,44 @@
       border-radius:8px;
       background:#fff;
     }
+    .venture-memo{
+      margin-top:18px;
+      border:1px solid #b9d7e9;
+      background:#f5f9fc;
+    }
+    .venture-memo-grid{
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(4, minmax(0, 1fr));
+      margin-top:14px;
+    }
+    .venture-memo-card{
+      padding:14px;
+      border:1px solid #dbe9f1;
+      border-radius:8px;
+      background:#fff;
+    }
+    .venture-memo-card strong{
+      display:block;
+      margin-top:4px;
+      font-size:18px;
+    }
+    .venture-primary-analysis{
+      display:flex;
+      justify-content:space-between;
+      gap:18px;
+      align-items:center;
+      padding:18px;
+      margin-top:16px;
+      border:1px solid #aacde2;
+      border-radius:8px;
+      background:#eaf5fb;
+    }
+    .venture-primary-analysis .button{
+      min-height:46px;
+      padding-inline:20px;
+      font-size:14px;
+    }
     .venture-workspace{
       display:grid;
       gap:18px;
@@ -221,6 +259,7 @@
     @media (max-width: 1180px){
       .venture-workspace,
       .venture-decision-grid,
+      .venture-memo-grid,
       .venture-form-grid,
       .venture-form-grid.two,
       .venture-score-grid,
@@ -230,6 +269,10 @@
       }
       .venture-tab{
         max-width:100%;
+      }
+      .venture-primary-analysis{
+        align-items:stretch;
+        flex-direction:column;
       }
     }
   </style>
@@ -339,6 +382,77 @@
             <div class="metric-sub">{{ selected_opportunity.get_stage_display }}</div>
           </section>
         </div>
+
+        <section class="soft-panel venture-memo">
+          <div class="venture-section-head">
+            <div>
+              <p class="section-title">Analisis detallado de compra o participacion</p>
+              <h3 style="margin:0;">Memo de inversion de {{ selected_opportunity.company_name }}</h3>
+            </div>
+            {% if selected_opportunity.latest_analysis %}
+              <span class="venture-score {{ selected_opportunity.latest_analysis.tone }}">{{ selected_opportunity.latest_analysis.get_recommendation_display }}</span>
+            {% else %}
+              <span class="venture-score">Pendiente</span>
+            {% endif %}
+          </div>
+
+          {% if selected_opportunity.latest_analysis %}
+            <div class="venture-memo-grid">
+              <div class="venture-memo-card"><span class="metric-label">Decision</span><strong>{{ selected_opportunity.latest_analysis.get_recommendation_display }}</strong><div class="metric-sub">Confianza {{ selected_opportunity.latest_analysis.get_confidence_display }}</div></div>
+              <div class="venture-memo-card"><span class="metric-label">Precio max. 100 %</span><strong>{% if selected_opportunity.latest_analysis.suggested_purchase_price %}{{ selected_opportunity.latest_analysis.suggested_purchase_price|floatformat:0 }} EUR{% else %}-{% endif %}</strong><div class="metric-sub">Precio orientativo con margen de seguridad.</div></div>
+              <div class="venture-memo-card"><span class="metric-label">Ticket participacion</span><strong>{% if selected_opportunity.latest_analysis.suggested_ticket %}{{ selected_opportunity.latest_analysis.suggested_ticket|floatformat:0 }} EUR{% else %}-{% endif %}</strong><div class="metric-sub">{% if selected_opportunity.latest_analysis.target_ownership_pct %}Objetivo {{ selected_opportunity.latest_analysis.target_ownership_pct|floatformat:1 }} %{% else %}Pendiente de negociar{% endif %}</div></div>
+              <div class="venture-memo-card"><span class="metric-label">Rango valoracion</span><strong>{% if selected_opportunity.latest_analysis.valuation_low and selected_opportunity.latest_analysis.valuation_high %}{{ selected_opportunity.latest_analysis.valuation_low|floatformat:0 }} - {{ selected_opportunity.latest_analysis.valuation_high|floatformat:0 }} EUR{% else %}-{% endif %}</strong><div class="metric-sub">{% if selected_opportunity.latest_analysis.valuation_base %}Base {{ selected_opportunity.latest_analysis.valuation_base|floatformat:0 }} EUR{% else %}Base pendiente{% endif %}</div></div>
+            </div>
+            <p class="venture-note" style="margin-top:14px;">{{ selected_opportunity.latest_analysis.summary }}</p>
+            {% if selected_opportunity.latest_analysis.valuation_note %}
+              <p class="venture-note">{{ selected_opportunity.latest_analysis.valuation_note }}</p>
+            {% endif %}
+            <div class="venture-decision-grid">
+              <div>
+                <p class="metric-label">Motivos para comprar o participar</p>
+                <ul class="venture-mini-list">
+                  {% for driver in selected_opportunity.latest_analysis.drivers %}
+                    <li>{{ driver }}</li>
+                  {% empty %}
+                    <li>Sin motivos automaticos guardados.</li>
+                  {% endfor %}
+                </ul>
+              </div>
+              <div>
+                <p class="metric-label">Riesgos y condiciones</p>
+                <ul class="venture-mini-list">
+                  {% for risk in selected_opportunity.latest_analysis.risks %}
+                    <li>{{ risk }}</li>
+                  {% empty %}
+                    <li>Sin riesgos automaticos guardados.</li>
+                  {% endfor %}
+                </ul>
+              </div>
+            </div>
+          {% else %}
+            <p class="venture-note">La ficha ya tiene datos basicos y {{ selected_documents|length }} PDF(s) cargados, pero todavia no existe un memo de inversion guardado. El siguiente paso crea una valoracion combinada con todos los documentos: Informa, balance y dossier.</p>
+            <div class="venture-memo-grid">
+              <div class="venture-memo-card"><span class="metric-label">Ventas detectadas</span><strong>{% if selected_opportunity.annual_revenue %}{{ selected_opportunity.annual_revenue|floatformat:0 }} EUR{% else %}-{% endif %}</strong><div class="metric-sub">Base para multiples de ventas.</div></div>
+              <div class="venture-memo-card"><span class="metric-label">EBITDA</span><strong>{% if selected_opportunity.ebitda %}{{ selected_opportunity.ebitda|floatformat:0 }} EUR{% else %}Pendiente{% endif %}</strong><div class="metric-sub">Si no aparece, se valora con mas prudencia.</div></div>
+              <div class="venture-memo-card"><span class="metric-label">Encaje Neos</span><strong>{{ selected_opportunity.get_strategic_fit_display }}</strong><div class="metric-sub">Score actual {{ selected_opportunity.score_pct|floatformat:0 }} %.</div></div>
+              <div class="venture-memo-card"><span class="metric-label">Documentos</span><strong>{{ selected_documents|length }}</strong><div class="metric-sub">PDFs con informacion financiera/comercial.</div></div>
+            </div>
+            {% if can_manage_finances and selected_documents and selected_analysis_document %}
+              <div class="venture-primary-analysis">
+                <div>
+                  <strong>Generar decision de compra o participacion</strong>
+                  <p class="metric-sub" style="margin:4px 0 0;">El sistema leera todos los PDFs de esta empresa, cruzara la ficha y devolvera recomendacion, precio maximo, ticket sugerido, porcentaje objetivo, drivers, riesgos y proximos pasos.</p>
+                </div>
+                <form method="post" style="margin:0;">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="analyze_opportunity_documents">
+                  <input type="hidden" name="opportunity_id" value="{{ selected_opportunity.id }}">
+                  <button class="button" type="submit">Generar analisis detallado</button>
+                </form>
+              </div>
+            {% endif %}
+          {% endif %}
+        </section>
 
         <div class="venture-decision-grid">
           <section class="soft-panel">

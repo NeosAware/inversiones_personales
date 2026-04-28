@@ -531,7 +531,43 @@ class VentureStudiesViewTests(TestCase):
         self.assertContains(response, "Hay PDFs cargados pendientes de valorar")
         self.assertContains(response, "Analizar todos los PDFs y decidir")
         self.assertContains(response, "Informacion clave")
+        self.assertContains(response, "Analisis detallado de compra o participacion")
+        self.assertContains(response, "Generar analisis detallado")
         self.assertContains(response, "Pendiente Analisis SL")
+
+    def test_company_tab_shows_investment_memo_after_analysis(self):
+        opportunity = VentureOpportunity.objects.create(
+            company_name="Memo Inversion SL",
+            annual_revenue=Decimal("550000.00"),
+            ebitda=Decimal("70000.00"),
+            stage=VentureOpportunity.Stage.GROWTH_ISSUES,
+            status=VentureOpportunity.Status.RESEARCH,
+            strategic_fit=VentureOpportunity.StrategicFit.BOTH,
+        )
+        VentureAnalysisSnapshot.objects.create(
+            opportunity=opportunity,
+            recommendation=VentureAnalysisSnapshot.Recommendation.BUY,
+            confidence=VentureAnalysisSnapshot.Confidence.MEDIUM,
+            score_pct=Decimal("81.00"),
+            valuation_low=Decimal("180000.00"),
+            valuation_base=Decimal("240000.00"),
+            valuation_high=Decimal("300000.00"),
+            suggested_purchase_price=Decimal("190000.00"),
+            suggested_ticket=Decimal("50000.00"),
+            target_ownership_pct=Decimal("26.32"),
+            summary="Interesa participar con control de riesgos.",
+            drivers=["Encaje industrial"],
+            risks=["Validar deuda"],
+        )
+        self.client.force_login(self.staff_user)
+
+        response = self.client.get(f"{reverse('venture_studies:list')}?company={opportunity.id}")
+
+        self.assertContains(response, "Memo de inversion de Memo Inversion SL")
+        self.assertContains(response, "Ticket participacion")
+        self.assertContains(response, "Motivos para comprar o participar")
+        self.assertContains(response, "Riesgos y condiciones")
+        self.assertContains(response, "Interesa participar con control de riesgos.")
 
     def test_staff_user_can_analyze_all_company_documents_together(self):
         opportunity = VentureOpportunity.objects.create(
