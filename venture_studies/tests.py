@@ -955,6 +955,12 @@ class VentureStudiesViewTests(TestCase):
         self.assertEqual(metrics["operating_result"], Decimal("-53943.42"))
         self.assertEqual(metrics["supplier_payment_days"], Decimal("90"))
         self.assertEqual(metrics["collection_days"], Decimal("128.09"))
+        self.assertEqual(metrics["previous_revenue"], Decimal("576080.81"))
+        self.assertEqual(metrics["previous_profit"], Decimal("-21582.62"))
+        self.assertEqual(metrics["revenue_growth_pct"], Decimal("0.22"))
+        self.assertEqual(metrics["profit_change"], Decimal("-31332.98"))
+        self.assertEqual(metrics["current_ratio"], Decimal("2.75"))
+        self.assertEqual(metrics["working_capital"], Decimal("188760.59"))
 
     def test_annual_accounts_analysis_uses_memoria_for_decision(self):
         opportunity = VentureOpportunity.objects.create(
@@ -1001,6 +1007,11 @@ class VentureStudiesViewTests(TestCase):
         self.assertIn("Periodo medio de pago", " ".join(snapshot.risks))
         self.assertIn("memoria", snapshot.valuation_note.lower())
         self.assertEqual(snapshot.analysis_payload["metrics"]["operating_result"], "-53943.42")
+        memo = snapshot.analysis_payload["memo"]
+        self.assertIn("Vigilancia", memo["decision_rationale"])
+        self.assertIn("2023", " ".join(memo["financial_diagnosis"]))
+        self.assertIn("precio maximo", " ".join(memo["participation_conditions"]).lower())
+        self.assertIn("clientes", " ".join(memo["diligence_questions"]).lower())
 
     @override_settings(
         AI_LLM_PROVIDER="anthropic",
@@ -1054,6 +1065,7 @@ class VentureStudiesViewTests(TestCase):
             self.assertIn('"kind":"Dossier financiero/comercial"', user_prompt)
             self.assertIn("pipeline comercial", user_prompt)
             self.assertIn("opportunity_updates", user_prompt)
+            self.assertIn("decision_rationale", user_prompt)
             self.assertIn('"quality_score":"0.50"', user_prompt)
             return (
                 {
@@ -1065,6 +1077,12 @@ class VentureStudiesViewTests(TestCase):
                     "drivers": ["Pipeline comercial validable"],
                     "risks": ["Dependencia de dos clientes"],
                     "assumptions": ["Cifras extraidas del dossier"],
+                    "memo": {
+                        "decision_rationale": "Vigilancia hasta confirmar recurrencia.",
+                        "financial_diagnosis": ["Ventas recurrentes y pipeline pendiente de validar."],
+                        "participation_conditions": ["Entrar por tramos."],
+                        "diligence_questions": ["Concentracion de clientes."],
+                    },
                     "opportunity_updates": {
                         "sector": "Aditivos ceramicos",
                         "status": "En analisis",
@@ -1094,6 +1112,7 @@ class VentureStudiesViewTests(TestCase):
         self.assertEqual(payload["confidence"], VentureAnalysisSnapshot.Confidence.HIGH)
         self.assertEqual(payload["score_pct"], Decimal("72.00"))
         self.assertEqual(payload["annual_revenue"], Decimal("300000.00"))
+        self.assertEqual(payload["analysis_payload"]["memo"]["decision_rationale"], "Vigilancia hasta confirmar recurrencia.")
         self.assertEqual(payload["opportunity_updates"]["sector"], "Aditivos ceramicos")
         self.assertEqual(payload["opportunity_updates"]["status"], VentureOpportunity.Status.RESEARCH)
 

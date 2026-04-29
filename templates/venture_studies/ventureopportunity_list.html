@@ -419,6 +419,58 @@
                 </div>
               {% endif %}
             {% endwith %}
+            {% with memo=selected_opportunity.latest_analysis.analysis_payload.memo %}
+              {% if memo %}
+                {% if memo.decision_rationale %}
+                  <p class="metric-label" style="margin-top:14px;">Decision razonada</p>
+                  <p class="venture-note">{{ memo.decision_rationale }}</p>
+                {% endif %}
+                <div class="venture-decision-grid">
+                  {% if memo.financial_diagnosis %}
+                    <div>
+                      <p class="metric-label">Diagnostico financiero de la memoria</p>
+                      <ul class="venture-mini-list">
+                        {% for item in memo.financial_diagnosis %}
+                          <li>{{ item }}</li>
+                        {% endfor %}
+                      </ul>
+                    </div>
+                  {% endif %}
+                  {% if memo.valuation_bridge %}
+                    <div>
+                      <p class="metric-label">Puente de valoracion</p>
+                      <ul class="venture-mini-list">
+                        {% for item in memo.valuation_bridge %}
+                          <li>{{ item }}</li>
+                        {% endfor %}
+                      </ul>
+                    </div>
+                  {% endif %}
+                </div>
+                <div class="venture-decision-grid">
+                  {% if memo.participation_conditions %}
+                    <div>
+                      <p class="metric-label">Condiciones para comprar o participar</p>
+                      <ul class="venture-mini-list">
+                        {% for item in memo.participation_conditions %}
+                          <li>{{ item }}</li>
+                        {% endfor %}
+                      </ul>
+                    </div>
+                  {% endif %}
+                  {% if memo.diligence_questions %}
+                    <div>
+                      <p class="metric-label">Due diligence prioritaria</p>
+                      <ul class="venture-mini-list">
+                        {% for item in memo.diligence_questions %}
+                          <li>{{ item }}</li>
+                        {% endfor %}
+                      </ul>
+                    </div>
+                  {% endif %}
+                </div>
+              {% endif %}
+            {% endwith %}
             <div class="venture-decision-grid">
               <div>
                 <p class="metric-label">Motivos para comprar o participar</p>

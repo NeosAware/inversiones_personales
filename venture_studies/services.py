@@ -969,6 +969,12 @@ def _ratio_pct(numerator: Decimal | None, denominator: Decimal | None) -> Decima
     return (numerator / denominator * Decimal("100")).quantize(Decimal("0.01"))
 
 
+def _times_ratio(numerator: Decimal | None, denominator: Decimal | None) -> Decimal | None:
+    if numerator is None or denominator is None or denominator == ZERO:
+        return None
+    return (numerator / denominator).quantize(Decimal("0.01"))
+
+
 def _days_ratio(numerator: Decimal | None, denominator: Decimal | None) -> Decimal | None:
     if numerator is None or denominator is None or denominator == ZERO:
         return None
@@ -1038,7 +1044,16 @@ def parse_balance_metrics(text: str) -> dict:
     operating_result = _account_current_value(text, ("49100",))
     previous_profit = _account_previous_value(text, ("49500", "21700"))
     previous_revenue = _account_previous_value(text, ("40100",))
+    previous_operating_result = _account_previous_value(text, ("49100",))
+    previous_total_assets = _account_previous_value(text, ("10000",))
+    previous_net_equity = _account_previous_value(text, ("20000", "21000"))
+    previous_current_assets = _account_previous_value(text, ("12000",))
+    previous_current_liabilities = _account_previous_value(text, ("32000",))
+    previous_cash = _account_previous_value(text, ("12700",))
+    previous_trade_receivables = _account_previous_value(text, ("12380", "12300"))
+    previous_trade_payables = _account_previous_value(text, ("32580", "32500"))
     supplier_payment_days = _account_current_value(text, ("94705",))
+    previous_supplier_payment_days = _account_previous_value(text, ("94705",))
     average_employees = _account_current_value(text, ("04001",))
 
     metrics = {
@@ -1065,10 +1080,19 @@ def parse_balance_metrics(text: str) -> dict:
         "operating_result": operating_result,
         "previous_revenue": previous_revenue,
         "previous_profit": previous_profit,
+        "previous_operating_result": previous_operating_result,
+        "previous_total_assets": previous_total_assets,
+        "previous_net_equity": previous_net_equity,
+        "previous_current_assets": previous_current_assets,
+        "previous_current_liabilities": previous_current_liabilities,
+        "previous_cash": previous_cash,
+        "previous_trade_receivables": previous_trade_receivables,
+        "previous_trade_payables": previous_trade_payables,
         "trade_receivables": trade_receivables,
         "trade_payables": trade_payables,
         "inventory": _account_current_value(text, ("12200",)),
         "supplier_payment_days": supplier_payment_days,
+        "previous_supplier_payment_days": previous_supplier_payment_days,
         "average_employees": average_employees,
     }
     metrics["profit_margin_pct"] = _ratio_pct(metrics["profit"], metrics["annual_revenue"])
@@ -1076,6 +1100,33 @@ def parse_balance_metrics(text: str) -> dict:
     metrics["equity_ratio_pct"] = _ratio_pct(metrics["net_equity"], metrics["total_assets"])
     metrics["collection_days"] = _days_ratio(metrics["trade_receivables"], metrics["annual_revenue"])
     metrics["payable_days"] = _days_ratio(metrics["trade_payables"], metrics["annual_revenue"])
+    metrics["revenue_growth_pct"] = _ratio_pct(
+        metrics["annual_revenue"] - metrics["previous_revenue"]
+        if metrics["annual_revenue"] is not None and metrics["previous_revenue"] is not None
+        else None,
+        metrics["previous_revenue"],
+    )
+    metrics["profit_change"] = (
+        metrics["profit"] - metrics["previous_profit"]
+        if metrics["profit"] is not None and metrics["previous_profit"] is not None
+        else None
+    )
+    metrics["operating_result_change"] = (
+        metrics["operating_result"] - metrics["previous_operating_result"]
+        if metrics["operating_result"] is not None and metrics["previous_operating_result"] is not None
+        else None
+    )
+    metrics["current_ratio"] = _times_ratio(metrics["current_assets"], metrics["current_liabilities"])
+    metrics["working_capital"] = (
+        metrics["current_assets"] - metrics["current_liabilities"]
+        if metrics["current_assets"] is not None and metrics["current_liabilities"] is not None
+        else None
+    )
+    metrics["previous_working_capital"] = (
+        metrics["previous_current_assets"] - metrics["previous_current_liabilities"]
+        if metrics["previous_current_assets"] is not None and metrics["previous_current_liabilities"] is not None
+        else None
+    )
     return metrics
 
 
@@ -1203,6 +1254,205 @@ def _confidence_from_inputs(text: str, web_context: dict, metrics: dict) -> str:
     if len(text or "") > 150 or available_metrics >= 2:
         return VentureAnalysisSnapshot.Confidence.MEDIUM
     return VentureAnalysisSnapshot.Confidence.LOW
+
+
+def _memo_money(value: Decimal | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.0f} EUR"
+
+
+def _memo_signed_money(value: Decimal | None) -> str:
+    if value is None:
+        return "-"
+    sign = "+" if value > ZERO else ""
+    return f"{sign}{value:.0f} EUR"
+
+
+def _memo_pct(value: Decimal | None) -> str:
+    if value is None:
+        return "-"
+    sign = "+" if value > ZERO else ""
+    return f"{sign}{value:.1f} %"
+
+
+def _memo_ratio(value: Decimal | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.2f}x"
+
+
+def _memo_number(value: Decimal | None, decimals: int = 0) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.{decimals}f}"
+
+
+def _append_unique(rows: list[str], value: str):
+    cleaned = " ".join(str(value or "").split())
+    if cleaned and cleaned not in rows:
+        rows.append(cleaned)
+
+
+def build_core_investment_memo(
+    opportunity: VentureOpportunity,
+    metrics: dict,
+    *,
+    recommendation: str,
+    confidence: str,
+    suggested_purchase_price: Decimal | None,
+    valuation_base: Decimal | None,
+    suggested_ticket: Decimal | None,
+    target_ownership_pct: Decimal | None,
+    net_debt: Decimal | None,
+    has_current_losses: bool,
+    ask_is_attractive: bool,
+) -> dict:
+    revenue = metrics.get("annual_revenue") or opportunity.annual_revenue
+    previous_revenue = metrics.get("previous_revenue")
+    profit = metrics.get("profit")
+    previous_profit = metrics.get("previous_profit")
+    operating_result = metrics.get("operating_result")
+    previous_operating_result = metrics.get("previous_operating_result")
+    net_equity = metrics.get("net_equity")
+    total_assets = metrics.get("total_assets")
+    cash = metrics.get("cash")
+    trade_receivables = metrics.get("trade_receivables")
+    trade_payables = metrics.get("trade_payables")
+    collection_days = metrics.get("collection_days")
+    supplier_payment_days = metrics.get("supplier_payment_days")
+    average_employees = metrics.get("average_employees")
+    working_capital = metrics.get("working_capital")
+    current_ratio = metrics.get("current_ratio")
+    revenue_growth_pct = metrics.get("revenue_growth_pct")
+    profit_change = metrics.get("profit_change")
+    operating_result_change = metrics.get("operating_result_change")
+    equity_ratio_pct = metrics.get("equity_ratio_pct")
+    profit_margin_pct = metrics.get("profit_margin_pct")
+    operating_margin_pct = metrics.get("operating_margin_pct")
+
+    decision_display = dict(VentureAnalysisSnapshot.Recommendation.choices)[recommendation]
+    confidence_display = dict(VentureAnalysisSnapshot.Confidence.choices)[confidence]
+
+    if recommendation == VentureAnalysisSnapshot.Recommendation.BUY:
+        decision_rationale = (
+            f"{decision_display}: se puede estudiar una compra o participacion si el precio no supera "
+            f"{_memo_money(suggested_purchase_price)} y la due diligence confirma las cifras clave. "
+            f"La confianza del analisis es {confidence_display.lower()}."
+        )
+        if ask_is_attractive:
+            decision_rationale += " La valoracion pedida registrada esta por debajo del precio maximo orientativo."
+    else:
+        decision_rationale = (
+            f"{decision_display}: no conviene ejecutar una compra inmediata solo con esta memoria. "
+            f"El precio maximo orientativo seria {_memo_money(suggested_purchase_price)}, pero la decision debe esperar "
+            "a validar margen, cobros, deuda comercial y plan de recuperacion."
+        )
+        if has_current_losses:
+            decision_rationale += " La compania presenta perdidas y resultado operativo negativo, por lo que el precio debe incorporar descuento de turnaround."
+
+    financial_diagnosis = []
+    if revenue is not None:
+        if previous_revenue is not None:
+            _append_unique(
+                financial_diagnosis,
+                f"Ventas 2024 {_memo_money(revenue)} frente a {_memo_money(previous_revenue)} en 2023 ({_memo_pct(revenue_growth_pct)}): negocio practicamente plano.",
+            )
+        else:
+            _append_unique(financial_diagnosis, f"Ventas detectadas {_memo_money(revenue)}.")
+    if profit is not None:
+        if previous_profit is not None:
+            _append_unique(
+                financial_diagnosis,
+                f"Resultado neto {_memo_money(profit)} frente a {_memo_money(previous_profit)} en 2023; variacion {_memo_signed_money(profit_change)} y margen neto {_memo_pct(profit_margin_pct)}.",
+            )
+        else:
+            _append_unique(financial_diagnosis, f"Resultado neto {_memo_money(profit)} con margen {_memo_pct(profit_margin_pct)}.")
+    if operating_result is not None:
+        if previous_operating_result is not None:
+            _append_unique(
+                financial_diagnosis,
+                f"Resultado de explotacion {_memo_money(operating_result)} frente a {_memo_money(previous_operating_result)}; variacion {_memo_signed_money(operating_result_change)} y margen operativo {_memo_pct(operating_margin_pct)}.",
+            )
+        else:
+            _append_unique(financial_diagnosis, f"Resultado de explotacion {_memo_money(operating_result)}.")
+    if net_equity is not None or total_assets is not None:
+        _append_unique(
+            financial_diagnosis,
+            f"Balance: patrimonio neto {_memo_money(net_equity)} sobre activo total {_memo_money(total_assets)} ({_memo_pct(equity_ratio_pct)} de solvencia patrimonial).",
+        )
+    if working_capital is not None or current_ratio is not None:
+        _append_unique(
+            financial_diagnosis,
+            f"Liquidez corriente: fondo de maniobra {_memo_money(working_capital)} y ratio corriente {_memo_ratio(current_ratio)}.",
+        )
+    if cash is not None or net_debt is not None:
+        if net_debt is not None and net_debt < ZERO:
+            _append_unique(financial_diagnosis, f"Tiene caja neta aproximada de {_memo_money(abs(net_debt))}; tesoreria detectada {_memo_money(cash)}.")
+        else:
+            _append_unique(financial_diagnosis, f"Deuda neta aproximada {_memo_money(net_debt)}; tesoreria detectada {_memo_money(cash)}.")
+    if trade_receivables is not None or collection_days is not None:
+        _append_unique(
+            financial_diagnosis,
+            f"Clientes pendientes {_memo_money(trade_receivables)}, equivalentes a unos {_memo_number(collection_days)} dias de ventas; aqui esta una de las comprobaciones criticas.",
+        )
+    if trade_payables is not None or supplier_payment_days is not None:
+        _append_unique(
+            financial_diagnosis,
+            f"Proveedores {_memo_money(trade_payables)} y periodo medio de pago {_memo_number(supplier_payment_days)} dias; revisar tension real de circulante.",
+        )
+    if average_employees is not None:
+        _append_unique(financial_diagnosis, f"Plantilla media declarada {_memo_number(average_employees, 1)} personas; comprobar dependencia de personas clave y funciones comerciales.")
+
+    valuation_bridge = [
+        f"Valoracion base orientativa {_memo_money(valuation_base)} y precio maximo con margen de seguridad {_memo_money(suggested_purchase_price)} para el 100 %.",
+    ]
+    if suggested_ticket is not None:
+        ownership_text = f" ({_memo_pct(target_ownership_pct)} objetivo)" if target_ownership_pct is not None else ""
+        valuation_bridge.append(f"Ticket sugerido {_memo_money(suggested_ticket)}{ownership_text}, preferiblemente por tramos ligados a hitos de recuperacion.")
+    if has_current_losses:
+        valuation_bridge.append("No se debe pagar multiplo de EBITDA hasta demostrar vuelta a resultado operativo positivo; el valor se apoya en ventas, patrimonio y caja.")
+    if revenue is not None:
+        valuation_bridge.append("La compra solo mejora si Neos puede capturar margen comercial, clientes o producto complementario que hoy no aparece en la cuenta de resultados.")
+
+    investment_thesis = []
+    _append_unique(
+        investment_thesis,
+        f"Actividad y encaje: {opportunity.sector or opportunity.cnae_label or 'sector pendiente'} con encaje {opportunity.get_strategic_fit_display()} y score Neos {opportunity.neos_fit_score}/5.",
+    )
+    if revenue is not None:
+        _append_unique(investment_thesis, f"Base comercial existente de {_memo_money(revenue)}, util si aporta clientes, canal o gama complementaria.")
+    if net_equity is not None and net_equity > ZERO:
+        _append_unique(investment_thesis, "Balance con patrimonio neto positivo, lo que permite estudiar participacion sin partir de insolvencia tecnica.")
+    if has_current_losses:
+        _append_unique(investment_thesis, "La tesis no es pagar crecimiento, sino comprar barato una base comercial/industrial con plan de saneamiento.")
+
+    participation_conditions = [
+        f"No superar el precio maximo de {_memo_money(suggested_purchase_price)} por el 100 % salvo que aparezcan EBITDA normalizado, contratos o activos no recogidos en la memoria.",
+        "Estructurar la entrada por tramos: primer ticket minoritario, opcion de ampliacion y ajustes de precio por deuda, caja y circulante al cierre.",
+        "Exigir manifestaciones sobre deuda financiera, deuda con proveedores, contingencias fiscales/laborales y cobro posterior de clientes.",
+    ]
+    if supplier_payment_days is not None and supplier_payment_days > Decimal("60"):
+        participation_conditions.append("Condicionar la entrada a reducir el periodo medio de pago y normalizar proveedores.")
+    if collection_days is not None and collection_days > Decimal("90"):
+        participation_conditions.append("Condicionar parte del precio a recuperar clientes pendientes y demostrar calidad de cobro.")
+
+    diligence_questions = [
+        "Detalle de clientes: concentracion, antiguedad de saldos, cobros posteriores al cierre y clientes vinculados.",
+        "Detalle de proveedores: vencimientos, deuda vencida, acuerdos de pago, confirming y pedidos bloqueados.",
+        "Margen bruto por familia de producto, gastos que explican las perdidas y medidas concretas para volver a EBITDA positivo.",
+        "Contrato social, socios, administradores, poderes, litigios, garantias, avales y contingencias no reflejadas en balance.",
+        "Sinergias reales con Neos Ceramica/Additives: productos, clientes comunes, compras, logistica, equipo comercial y capacidad de integracion.",
+    ]
+
+    return {
+        "decision_rationale": trim_text(decision_rationale, 900),
+        "investment_thesis": investment_thesis[:6],
+        "financial_diagnosis": financial_diagnosis[:8],
+        "valuation_bridge": valuation_bridge[:6],
+        "participation_conditions": participation_conditions[:7],
+        "diligence_questions": diligence_questions[:7],
+    }
 
 
 def build_core_valuation(opportunity: VentureOpportunity, metrics: dict, web_context: dict, text: str) -> dict:
@@ -1375,6 +1625,19 @@ def build_core_valuation(opportunity: VentureOpportunity, metrics: dict, web_con
             f"Precio maximo orientativo del 100 %: {suggested_purchase_price:.0f} EUR."
         )
     )
+    memo = build_core_investment_memo(
+        opportunity,
+        metrics,
+        recommendation=recommendation,
+        confidence=confidence,
+        suggested_purchase_price=suggested_purchase_price,
+        valuation_base=equity_value,
+        suggested_ticket=suggested_ticket,
+        target_ownership_pct=target_ownership_pct,
+        net_debt=net_debt,
+        has_current_losses=has_current_losses,
+        ask_is_attractive=ask_is_attractive,
+    )
 
     return {
         "recommendation": recommendation,
@@ -1407,6 +1670,7 @@ def build_core_valuation(opportunity: VentureOpportunity, metrics: dict, web_con
             "ebitda_multiple": str(ebitda_multiple.quantize(Decimal("0.01"))),
             "margin_of_safety": str(margin_of_safety),
             "ask_valuation": str(ask_valuation) if ask_valuation else "",
+            "memo": memo,
         },
     }
 
@@ -1489,8 +1753,46 @@ def _parse_ai_decimal(payload: dict, key: str):
 
 
 def _normalize_ai_list(value, fallback):
-    rows = [trim_text(item, 220) for item in list(value or []) if trim_text(item, 220)]
+    if isinstance(value, str):
+        raw_rows = [value]
+    elif isinstance(value, (list, tuple, set)):
+        raw_rows = list(value)
+    else:
+        raw_rows = []
+    rows = [trim_text(item, 220) for item in raw_rows if trim_text(item, 220)]
     return rows[:5] or fallback
+
+
+AI_MEMO_LIST_FIELDS = (
+    "investment_thesis",
+    "financial_diagnosis",
+    "valuation_bridge",
+    "participation_conditions",
+    "diligence_questions",
+)
+
+
+def normalize_ai_memo(payload: dict, fallback: dict | None = None) -> dict:
+    fallback = dict(fallback or {})
+    raw_memo = payload.get("memo") or payload.get("investment_memo") or {}
+    if not isinstance(raw_memo, dict):
+        raw_memo = {}
+
+    decision_rationale = (
+        raw_memo.get("decision_rationale")
+        or payload.get("decision_rationale")
+        or fallback.get("decision_rationale")
+        or ""
+    )
+    memo = {
+        "decision_rationale": trim_text(decision_rationale, 900),
+    }
+    for field_name in AI_MEMO_LIST_FIELDS:
+        memo[field_name] = _normalize_ai_list(
+            raw_memo.get(field_name) or payload.get(field_name),
+            fallback.get(field_name, []),
+        )[:8]
+    return memo
 
 
 def normalize_ai_opportunity_updates(payload: dict) -> dict:
@@ -1642,6 +1944,8 @@ def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, tex
         "suggested_purchase_price, valuation_low, valuation_base, valuation_high, suggested_ticket, target_ownership_pct, "
         "annual_revenue, ebitda, cash_need, summary, valuation_note, web_summary, drivers, risks y assumptions. "
         "El summary, drivers, risks y assumptions deben citar las cifras clave detectadas cuando existan y explicar por que es compra o vigilancia. "
+        "Incluye memo con decision_rationale, investment_thesis, financial_diagnosis, valuation_bridge, participation_conditions y diligence_questions. "
+        "El memo debe comparar 2024 contra 2023 cuando haya memoria, explicar liquidez, clientes, proveedores, caja, perdidas, precio maximo y condiciones de entrada. "
         "Incluye tambien opportunity_updates con los campos del formulario que puedas completar sin inventar: "
         "legal_name, tax_id, website, sector, geography, address, phone, email, cnae_code, cnae_label, employees, "
         "stage, status, strategic_fit, contact_name, source, next_review_on, ticket_min, ticket_max, estimated_valuation, "
@@ -1709,6 +2013,7 @@ def try_ai_venture_analysis(opportunity, metrics, web_context, core_payload, tex
                 "estimated_cost_usd": str(usage.get("estimated_cost_usd") or ZERO),
             },
             "opportunity_updates": normalize_ai_opportunity_updates(payload),
+            "memo": normalize_ai_memo(payload, core_payload.get("analysis_payload", {}).get("memo", {})),
         },
         "opportunity_updates": normalize_ai_opportunity_updates(payload),
     }

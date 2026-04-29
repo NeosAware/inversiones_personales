@@ -115,6 +115,32 @@
   {% if analysis and analysis.valuation_note %}
     <p>{{ analysis.valuation_note }}</p>
   {% endif %}
+  {% if analysis %}
+    {% with memo=analysis.analysis_payload.memo %}
+      {% if memo %}
+        {% if memo.decision_rationale %}
+          <h2>Decision razonada</h2>
+          <p>{{ memo.decision_rationale }}</p>
+        {% endif %}
+        {% if memo.financial_diagnosis %}
+          <h2>Diagnostico financiero de la memoria</h2>
+          <ul>
+            {% for item in memo.financial_diagnosis %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        {% if memo.valuation_bridge %}
+          <h2>Puente de valoracion</h2>
+          <ul>
+            {% for item in memo.valuation_bridge %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      {% endif %}
+    {% endwith %}
+  {% endif %}
 
   <h2>Datos de empresa</h2>
   <table>
@@ -225,6 +251,34 @@
         <li>Sin supuestos automaticos guardados.</li>
       {% endfor %}
     </ul>
+    {% with memo=analysis.analysis_payload.memo %}
+      {% if memo %}
+        {% if memo.investment_thesis %}
+          <h2>Tesis de inversion</h2>
+          <ul>
+            {% for item in memo.investment_thesis %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        {% if memo.participation_conditions %}
+          <h2>Condiciones para comprar o participar</h2>
+          <ul>
+            {% for item in memo.participation_conditions %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        {% if memo.diligence_questions %}
+          <h2>Due diligence prioritaria</h2>
+          <ul>
+            {% for item in memo.diligence_questions %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      {% endif %}
+    {% endwith %}
   {% endif %}
 
   <h2>Tesis y proximos pasos</h2>
