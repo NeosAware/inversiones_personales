@@ -63,6 +63,7 @@ from .services import (
     SPAIN_GAS_CONSUMPTION_SYMBOL,
     ZERO,
     apply_expert_consensus_adjustments_to_dashboard,
+    apply_expectation_review_memory_to_card,
     apply_optimizer_expectation_review_adjustment,
     apply_news_context_adjustments_to_dashboard,
     build_candidate_purchase_timing_plan,
@@ -71,6 +72,7 @@ from .services import (
     build_equity_decision_rows,
     build_equity_history_cards,
     build_equity_investment_journey_context,
+    build_optimizer_expectation_review_signal,
     build_reference_correlation,
     build_reference_cycle_template_from_series,
     build_candlestick_metrics,
@@ -467,6 +469,118 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(adjusted["deferred_for_stability"])
         self.assertEqual(adjusted["adjusted_return_pct"], Decimal("8.00"))
         self.assertEqual(adjusted["adjustment_pct"], ZERO)
+
+    def test_expectation_review_signal_measures_recent_real_deviation(self):
+        run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2026, 4, 24),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+        )
+        reviews = []
+        for index, review_date in enumerate((date(2026, 4, 10), date(2026, 4, 17), date(2026, 4, 24)), start=1):
+            reviews.append(
+                EquityExpectationReview.objects.create(
+                    run=run,
+                    analysis_date=review_date,
+                    review_kind=EquityExpectationReview.ReviewKind.SCHEDULED,
+                    scope=EquityExpectationReview.Scope.IBEX,
+                    analysis_key=f"ibex:SAN:{index}",
+                    ticker="SAN",
+                    quote_symbol="SAN.MC",
+                    company_name="Banco Santander",
+                    current_price=Decimal("100.0000"),
+                    expected_return_pct_1y=Decimal("-5.00"),
+                    expected_return_pct_5y=Decimal("-10.00"),
+                )
+            )
+
+        signal = build_optimizer_expectation_review_signal(
+            reviews,
+            current_price=Decimal("98.0000"),
+            current_date=date(2026, 5, 1),
+        )
+
+        feedback = signal["1y"]["reality_feedback"]
+        self.assertTrue(feedback["available"])
+        self.assertEqual(feedback["sample_count"], 3)
+        self.assertLess(feedback["latest_gap_pct"], ZERO)
+        self.assertLess(feedback["bias_adjustment_pct"], ZERO)
+        self.assertGreater(feedback["mean_absolute_error_pct"], Decimal("1.00"))
+
+    def test_expectation_memory_adjustment_cools_new_projection_with_weekly_miss(self):
+        run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2026, 4, 24),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+        )
+        for index, review_date in enumerate((date(2026, 4, 10), date(2026, 4, 17), date(2026, 4, 24)), start=1):
+            EquityExpectationReview.objects.create(
+                run=run,
+                analysis_date=review_date,
+                review_kind=EquityExpectationReview.ReviewKind.SCHEDULED,
+                scope=EquityExpectationReview.Scope.IBEX,
+                analysis_key=f"ibex:SAN:{index}",
+                ticker="SAN",
+                quote_symbol="SAN.MC",
+                company_name="Banco Santander",
+                current_price=Decimal("100.0000"),
+                expected_return_pct_1y=Decimal("-5.00"),
+                expected_return_pct_5y=Decimal("-10.00"),
+            )
+        position = EquityPosition(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            company_name="Banco Santander",
+            shares=ZERO,
+            average_cost_per_share=ZERO,
+            current_price_per_share=Decimal("98.0000"),
+        )
+        card = {
+            "position": position,
+            "end_date": date(2026, 5, 1),
+            "status_key": "ibex",
+            "status_label": "Radar IBEX",
+            "reference_label": "IBEX 35",
+            "trade_alert": {"label": "Vigilar", "tone": "watch", "note": ""},
+            "projection_reliability": {"label": "Alta", "score": Decimal("82.00")},
+            "projection": {
+                "available": True,
+                "latest_price": Decimal("98.0000"),
+                "base_return_pct": ZERO,
+                "price_return_pct": ZERO,
+                "low_return_pct": Decimal("-8.00"),
+                "high_return_pct": Decimal("8.00"),
+                "price_low_return_pct": Decimal("-8.00"),
+                "price_high_return_pct": Decimal("8.00"),
+                "projected_price": Decimal("98.0000"),
+                "confidence_label": "Alta",
+                "confidence_score_pct": Decimal("82.00"),
+                "safety_score": Decimal("76.00"),
+                "net_income_yield_pct": ZERO,
+                "transaction_drag_pct": ZERO,
+                "annualized_volatility_pct": Decimal("18.00"),
+                "positive_year_ratio_pct": Decimal("52.00"),
+                "years_covered": Decimal("10.00"),
+                "cycle_phase": "Transicion",
+                "current_drawdown_pct": Decimal("-4.00"),
+                "max_drawdown_pct": Decimal("-25.00"),
+            },
+            "cycle_projection_5y": {"available": False},
+            "six_month_snapshot": {"available": False},
+            "period_snapshots": [],
+            "correlation": {},
+            "relative_trend": {},
+            "valuation": {},
+            "technical_signal": {"available": False},
+        }
+
+        apply_expectation_review_memory_to_card(card)
+
+        memory = card["projection"]["historical_memory_adjustment"]
+        self.assertTrue(memory["applied"])
+        self.assertLess(card["projection"]["base_return_pct"], ZERO)
+        self.assertLess(card["projection"]["projected_price"], Decimal("98.0000"))
+        self.assertTrue(memory["reality_feedback"]["available"])
+        self.assertLess(card["projection_reliability"]["score"], Decimal("82.00"))
 
     def test_cycle_projection_5y_builds_multifactor_model_with_bce_forward_signal(self):
         position = EquityPosition.objects.create(

@@ -256,6 +256,8 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
     news_context = card.get("news_context") or {}
     expert_consensus = card.get("expert_consensus") or {}
     technical_signal = card.get("technical_signal") or {}
+    historical_memory = projection.get("historical_memory_adjustment") or {}
+    memory_feedback = historical_memory.get("reality_feedback") or {}
     snapshots_by_label = {
         snapshot.get("label"): snapshot
         for snapshot in (card.get("period_snapshots") or [])
@@ -335,6 +337,20 @@ def build_card_llm_context(card: dict, *, analysis_date: date, scope: str) -> di
                 "price_return_adjustment_pct": json_ready_number((projection.get("news_adjustment") or {}).get("price_return_adjustment_pct")),
                 "band_multiplier": json_ready_number((projection.get("news_adjustment") or {}).get("band_multiplier"), "0.01"),
                 "note": trim_text((projection.get("news_adjustment") or {}).get("note") or "", 220),
+            },
+            "historical_memory_adjustment": {
+                "applied": bool(historical_memory.get("applied")),
+                "sample_count": int(historical_memory.get("sample_count") or 0),
+                "raw_return_pct": json_ready_number(historical_memory.get("raw_return_pct")),
+                "adjusted_return_pct": json_ready_number(historical_memory.get("adjusted_return_pct")),
+                "adjustment_pct": json_ready_number(historical_memory.get("adjustment_pct")),
+                "latest_historical_return_pct": json_ready_number(historical_memory.get("latest_return_pct")),
+                "average_historical_return_pct": json_ready_number(historical_memory.get("average_return_pct")),
+                "recent_delta_pct": json_ready_number(historical_memory.get("recent_delta_pct")),
+                "observed_gap_pct": json_ready_number(memory_feedback.get("latest_gap_pct")),
+                "mean_absolute_error_pct": json_ready_number(memory_feedback.get("mean_absolute_error_pct")),
+                "direction_hit_rate_pct": json_ready_number(memory_feedback.get("direction_hit_rate_pct")),
+                "note": trim_text(historical_memory.get("note") or "", 220),
             },
         },
         "five_year_view": {
