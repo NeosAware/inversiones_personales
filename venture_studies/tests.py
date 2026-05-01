@@ -454,6 +454,7 @@ class VentureStudiesViewTests(TestCase):
         04001 75,00 65,00
         04002 29,00 15,00
         CUENTA DE PÉRDIDAS Y GANANCIAS NORMAL P1.1
+        (enmilesdeeuros)
         1. Importenetodelacifradenegocios 40100 63.123,71 53.626,80
         A.1)RESULTADODE EXPLOTACIÓN 49100 14.840,12 13.270,96
         A.5)RESULTADODELEJERCICIO 49500 11.525,39 10.001,79
@@ -470,7 +471,7 @@ class VentureStudiesViewTests(TestCase):
         self.assertEqual(parsed["address"], "POL.IND.ELCOLOMER,AVDA.EXTREMADURA, S/N")
         self.assertEqual(parsed["cnae_code"], "2059")
         self.assertEqual(parsed["employees"], 104)
-        self.assertEqual(parsed["annual_revenue"], Decimal("63123.71"))
+        self.assertEqual(parsed["annual_revenue"], Decimal("63123710.00"))
         self.assertEqual(parsed["source"], "Cuentas anuales")
 
         upload = SimpleUploadedFile("Acrilatos 2024.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf")
@@ -479,6 +480,7 @@ class VentureStudiesViewTests(TestCase):
 
         self.assertEqual(seed["company_name"], "ACRILATOS, S.A.U.")
         self.assertEqual(seed["fields"]["legal_name"], "ACRILATOS, S.A.U.")
+        self.assertEqual(seed["fields"]["annual_revenue"], Decimal("63123710.00"))
         self.assertEqual(seed["fields"]["source"], "Cuentas anuales")
 
     def test_company_name_guess_ignores_label_fallback_from_informa(self):
@@ -1112,6 +1114,45 @@ class VentureStudiesViewTests(TestCase):
         self.assertEqual(metrics["current_ratio"], Decimal("2.75"))
         self.assertEqual(metrics["working_capital"], Decimal("188760.59"))
 
+    def test_parse_spanish_annual_accounts_scales_thousand_euro_units(self):
+        text = """
+        CUENTA DE PERDIDAS Y GANANCIAS NORMAL
+        (en miles de euros)
+        INFORMACION SOBRE EL PERIODO MEDIO DE PAGO A PROVEEDORES DURANTE EL EJERCICIO
+        94705 90 85
+        ACTIVO NOTASDELAMEMORIA EJERCICIO2024 EJERCICIO2023
+        B) ACTIVOCORRIENTE 12000 296.437,33 379.959,42
+        I. Existencias 12200 45.200,00 62.359,34
+        1. Clientesporventasyprestacionesdeservicios 12380 202.616,83 202.690,54
+        VI.Efectivoy otrosactivosliquidosequivalentes 12700 47.544,40 48.647,20
+        TOTALACTIVO(A+ B) 10000 319.513,19 403.376,61
+        PATRIMONIONETOY PASIVO NOTASDELAMEMORIA EJERCICIO2024 EJERCICIO2023
+        A) PATRIMONIONETO 20000 211.836,45 264.976,67
+        VII.Resultadodelejercicio 21700 -52.915,60 -21.582,62
+        C) PASIVOCORRIENTE 32000 107.676,74 138.399,94
+        IV.Acreedorescomercialesy otrascuentasa pagar 32500 107.676,74 138.399,94
+        1. Proveedores 32580 88.635,33 90.077,26
+        1. Importenetodelacifradenegocios 40100 577.352,12 576.080,81
+        A) RESULTADODE EXPLOTACION 49100 -53.943,42 -20.350,49
+        D) RESULTADODELEJERCICIO 49500 -52.915,60 -21.582,62
+        PERSONALASALARIADO
+        04001 3,75 3,75
+        """
+
+        metrics = parse_balance_metrics(text)
+
+        self.assertEqual(metrics["annual_revenue"], Decimal("577352120.00"))
+        self.assertEqual(metrics["cash"], Decimal("47544400.00"))
+        self.assertEqual(metrics["net_equity"], Decimal("211836450.00"))
+        self.assertEqual(metrics["total_assets"], Decimal("319513190.00"))
+        self.assertEqual(metrics["profit"], Decimal("-52915600.00"))
+        self.assertEqual(metrics["supplier_payment_days"], Decimal("90"))
+        self.assertEqual(metrics["collection_days"], Decimal("128.09"))
+        self.assertEqual(metrics["revenue_growth_pct"], Decimal("0.22"))
+        self.assertEqual(metrics["profit_change"], Decimal("-31332980.00"))
+        self.assertEqual(metrics["current_ratio"], Decimal("2.75"))
+        self.assertEqual(metrics["working_capital"], Decimal("188760590.00"))
+
     def test_annual_accounts_analysis_uses_memoria_for_decision(self):
         opportunity = VentureOpportunity.objects.create(
             company_name="Compuestos Ceramicos SL",
@@ -1124,6 +1165,7 @@ class VentureStudiesViewTests(TestCase):
             title="Memoria 2024",
             file="venture_studies/test/memoria.pdf",
             extracted_text=(
+                "(en miles de euros)\n"
                 "94705 90 85\n"
                 "B) ACTIVOCORRIENTE 12000 296.437,33 379.959,42\n"
                 "1. Clientesporventasyprestacionesdeservicios 12380 202.616,83 202.690,54\n"
@@ -1149,14 +1191,14 @@ class VentureStudiesViewTests(TestCase):
             snapshot = run_document_analysis(document, use_ai=False)
 
         self.assertEqual(snapshot.recommendation, VentureAnalysisSnapshot.Recommendation.WATCH)
-        self.assertEqual(snapshot.annual_revenue, Decimal("577352.12"))
-        self.assertEqual(snapshot.net_equity, Decimal("211836.45"))
-        self.assertEqual(snapshot.net_debt, Decimal("-47544.40"))
+        self.assertEqual(snapshot.annual_revenue, Decimal("577352120.00"))
+        self.assertEqual(snapshot.net_equity, Decimal("211836450.00"))
+        self.assertEqual(snapshot.net_debt, Decimal("-47544400.00"))
         self.assertGreater(snapshot.suggested_purchase_price, Decimal("0"))
         self.assertIn("Resultado neto negativo", " ".join(snapshot.risks))
         self.assertIn("Periodo medio de pago", " ".join(snapshot.risks))
         self.assertIn("memoria", snapshot.valuation_note.lower())
-        self.assertEqual(snapshot.analysis_payload["metrics"]["operating_result"], "-53943.42")
+        self.assertEqual(snapshot.analysis_payload["metrics"]["operating_result"], "-53943420.00")
         memo = snapshot.analysis_payload["memo"]
         self.assertIn("Vigilancia", memo["decision_rationale"])
         self.assertIn("2023", " ".join(memo["financial_diagnosis"]))

@@ -1139,9 +1139,115 @@ def _days_ratio(numerator: Decimal | None, denominator: Decimal | None) -> Decim
     return (numerator / denominator * Decimal("365")).quantize(Decimal("0.01"))
 
 
+FINANCIAL_STATEMENT_CODE_RE = re.compile(
+    r"(?<!\d)(10000|12000|12200|12380|12700|20000|21000|21700|31000|32000|32500|32580|40100|49100|49500)(?!\d)"
+)
+FINANCIAL_STATEMENT_MONEY_KEYS = frozenset(
+    (
+        "annual_revenue",
+        "ebitda",
+        "net_equity",
+        "total_assets",
+        "total_liabilities",
+        "current_assets",
+        "current_liabilities",
+        "debt",
+        "cash",
+        "profit",
+        "operating_result",
+        "previous_revenue",
+        "previous_profit",
+        "previous_operating_result",
+        "previous_total_assets",
+        "previous_net_equity",
+        "previous_current_assets",
+        "previous_current_liabilities",
+        "previous_cash",
+        "previous_trade_receivables",
+        "previous_trade_payables",
+        "trade_receivables",
+        "trade_payables",
+        "inventory",
+    )
+)
+
+
+def looks_like_financial_statement(text: str) -> bool:
+    if looks_like_annual_accounts_deposit(text):
+        return True
+    normalized = normalize_search_text(text)
+    if any(
+        marker in normalized
+        for marker in (
+            "cuenta de perdidas y ganancias",
+            "balance de situacion",
+            "activo notas de la memoria",
+            "activo notasdelamemoria",
+            "patrimonio neto y pasivo",
+            "patrimonioneto y pasivo",
+        )
+    ):
+        return True
+    codes = {match.group(1) for match in FINANCIAL_STATEMENT_CODE_RE.finditer(str(text or "")[:80000])}
+    balance_codes = codes & {"10000", "12000", "20000", "21000", "31000", "32000"}
+    income_codes = codes & {"40100", "49100", "49500", "21700"}
+    return len(balance_codes) >= 3 or ("40100" in income_codes and len(balance_codes | income_codes) >= 3)
+
+
+def detect_financial_statement_unit_multiplier(text: str) -> Decimal:
+    if not looks_like_financial_statement(text):
+        return Decimal("1")
+    compact = re.sub(r"[^a-z0-9\u20ac]", "", normalize_search_text(text))
+    if any(
+        marker in compact
+        for marker in (
+            "enmillonesdeeuros",
+            "enmillonesdeeur",
+            "enmillonesde\u20ac",
+            "inmillionsofeuros",
+        )
+    ):
+        return Decimal("1000000")
+    if any(
+        marker in compact
+        for marker in (
+            "enmilesdeeuros",
+            "enmilesdeeur",
+            "enmilesde\u20ac",
+            "inthousandsofeuros",
+        )
+    ):
+        return Decimal("1000")
+    return Decimal("1")
+
+
+def scale_financial_statement_money_metrics(metrics: dict, multiplier: Decimal) -> dict:
+    if multiplier == Decimal("1"):
+        return metrics
+    for key in FINANCIAL_STATEMENT_MONEY_KEYS:
+        value = metrics.get(key)
+        if isinstance(value, Decimal):
+            metrics[key] = value * multiplier
+    return metrics
+
+
 def parse_balance_metrics(text: str) -> dict:
-    annual_revenue = _find_informa_summary_money(text, ("ventas balance",)) or _account_current_value(text, ("40100",))
-    total_assets = _find_informa_summary_money(text, ("activo total",)) or _account_current_value(text, ("10000",))
+    unit_multiplier = detect_financial_statement_unit_multiplier(text)
+    prefer_statement_codes = unit_multiplier != Decimal("1")
+    annual_revenue_from_code = _account_current_value(text, ("40100",))
+    annual_revenue_from_summary = _find_informa_summary_money(text, ("ventas balance",))
+    annual_revenue = (
+        annual_revenue_from_code
+        if prefer_statement_codes and annual_revenue_from_code is not None
+        else annual_revenue_from_summary or annual_revenue_from_code
+    )
+    total_assets_from_code = _account_current_value(text, ("10000",))
+    total_assets_from_summary = _find_informa_summary_money(text, ("activo total",))
+    total_assets = (
+        total_assets_from_code
+        if prefer_statement_codes and total_assets_from_code is not None
+        else total_assets_from_summary or total_assets_from_code
+    )
     net_equity = _account_current_value(text, ("20000", "21000")) or _find_metric_after_labels(
         text,
         (
@@ -1253,6 +1359,7 @@ def parse_balance_metrics(text: str) -> dict:
         "previous_supplier_payment_days": previous_supplier_payment_days,
         "average_employees": average_employees,
     }
+    scale_financial_statement_money_metrics(metrics, unit_multiplier)
     metrics["profit_margin_pct"] = _ratio_pct(metrics["profit"], metrics["annual_revenue"])
     metrics["operating_margin_pct"] = _ratio_pct(metrics["operating_result"], metrics["annual_revenue"])
     metrics["equity_ratio_pct"] = _ratio_pct(metrics["net_equity"], metrics["total_assets"])

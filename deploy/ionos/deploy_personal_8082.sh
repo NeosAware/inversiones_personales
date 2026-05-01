@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_ROOT="/var/www/personal.neosaware.ai"
+APP_ROOT="${APP_ROOT:-/root/personal}"
 APP_DIR="$APP_ROOT/app"
 VENV_DIR="$APP_ROOT/venv"
-SERVICE_NAME="personal-neosaware-ai"
+SERVICE_NAME="${SERVICE_NAME:-neos-personal.service}"
 
 cd "$APP_DIR"
 git pull origin main
@@ -19,8 +19,10 @@ python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements-prod.txt
 
 set -a
-# shellcheck disable=SC1091
-source "$APP_ROOT/.env"
+if [ -f "$APP_ROOT/.env" ]; then
+  # shellcheck disable=SC1091
+  source "$APP_ROOT/.env"
+fi
 set +a
 
 python3 manage.py migrate
