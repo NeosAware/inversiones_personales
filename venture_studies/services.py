@@ -35,7 +35,7 @@ URL_RE = re.compile(r"(?:https?://)?(?:www\.)?[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)
 PHONE_RE = re.compile(r"(?:\+34\s*)?(?:\d[\s.-]?){9,12}")
 TAX_ID_RE = re.compile(r"\b(?:[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]|[XYZ]?\d{7,8}[A-Z])\b", re.I)
 COMPANY_SUFFIX_RE = re.compile(
-    r"\b([^\W_][\w&.,' -]{2,90}?\s+(?:S\.?L\.?|S\.?A\.?|SOCIEDAD LIMITADA|SOCIEDAD ANONIMA))\b",
+    r"\b([^\W_][\w&.,' -]{2,90}?\s+(?:S\.?L\.?U?\.?|S\.?A\.?U?\.?|SOCIEDAD LIMITADA|SOCIEDAD ANONIMA))\b",
     re.I,
 )
 AI_TEXT_UPDATE_FIELDS = {
@@ -336,6 +336,12 @@ def is_valid_company_name_candidate(value: str) -> bool:
     normalized = compact_informa_value_key(cleaned)
     if not cleaned or is_informa_noise_value(cleaned):
         return False
+    if "@" in cleaned or "©" in cleaned or EMAIL_RE.search(cleaned.replace("©", "@")):
+        return False
+    if URL_RE.fullmatch(cleaned):
+        return False
+    if re.match(r"^\d{4,}", cleaned) or normalized.startswith(("010", "020", "090")):
+        return False
     if normalized.startswith(("informe", "fecha", "riesgo", "score", "nota informa")):
         return False
     return len(cleaned) >= 3
@@ -404,6 +410,13 @@ def find_tax_id_from_informa(text: str) -> str:
     match = TAX_ID_RE.search(labelled or "")
     if match:
         return match.group(0).upper()
+    annual_code_match = re.search(
+        r"(?<!\d)01010\s*([ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]|[XYZ]?\d{7,8}[A-Z])",
+        text or "",
+        flags=re.I,
+    )
+    if annual_code_match:
+        return annual_code_match.group(1).upper()
     prefixed = re.search(
         r"(?:NIF|CIF|NIF/CIF)\s*([ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]|[XYZ]?\d{7,8}[A-Z])",
         text or "",
@@ -544,7 +557,152 @@ def find_employees_from_informa(text: str):
         return None
 
 
+ANNUAL_ACCOUNTS_CODE_RE = re.compile(r"(?<!\d)(01010|01020|01022|01023|01024|01025|02001|02009|04001|04002|40100)(?!\d)")
+
+
+def looks_like_annual_accounts_deposit(text: str) -> bool:
+    normalized = normalize_search_text(text)
+    if "datos generales de identificacion" in normalized and "presentacion de cuentas" in normalized:
+        return True
+    codes = {match.group(1) for match in ANNUAL_ACCOUNTS_CODE_RE.finditer(str(text or "")[:12000])}
+    return {"01020", "40100"}.issubset(codes) or {"01020", "02001"}.issubset(codes)
+
+
+def clean_annual_accounts_value(value: str, *, max_length: int = 240) -> str:
+    cleaned = clean_informa_value(value, max_length=max_length)
+    cleaned = re.sub(r"^(?:01010|01020|01022|01023|01024|01025|02001|02009|04001|04002)\s*", "", cleaned)
+    cleaned = cleaned.replace("©", "@")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -:|")
+    return cleaned[:max_length].strip()
+
+
+def clean_annual_company_name(value: str) -> str:
+    cleaned = clean_annual_accounts_value(value, max_length=180)
+    cleaned = re.sub(r",(?=\s*S\.?\s*[AL])", ", ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bS\.?\s*A\.?\s*0\b\.?", "S.A.U.", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bS\.?\s*L\.?\s*0\b\.?", "S.L.U.", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bS\.?\s*A\.?\s*U\b\.?", "S.A.U.", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bS\.?\s*L\.?\s*U\b\.?", "S.L.U.", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bS\.?\s*A\b\.?", "S.A.", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bS\.?\s*L\b\.?", "S.L.", cleaned, flags=re.I)
+    return normalize_company_name_candidate(cleaned)
+
+
+def find_annual_accounts_value_by_code(text: str, code: str, *, max_length: int = 240) -> str:
+    code_pattern = re.compile(rf"(?<!\d){re.escape(code)}(?!\d)\s*([^\n\r]+)")
+    for match in code_pattern.finditer(str(text or "")):
+        candidate = clean_annual_accounts_value(match.group(1), max_length=max_length)
+        if candidate and not is_informa_noise_value(candidate):
+            return candidate
+    return ""
+
+
+def find_annual_accounts_company_name(text: str) -> str:
+    coded_name = clean_annual_company_name(find_annual_accounts_value_by_code(text, "01020", max_length=180))
+    if is_valid_company_name_candidate(coded_name):
+        return coded_name
+
+    suffix_pattern = re.compile(
+        r"\b([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ0-9&.,' -]{2,90}?,?\s*S\.?\s*[AL]\.?\s*U?\.?)\b",
+        re.I,
+    )
+    for match in suffix_pattern.finditer(str(text or "")[:50000]):
+        candidate = clean_annual_company_name(match.group(1))
+        if is_valid_company_name_candidate(candidate):
+            return candidate
+    return ""
+
+
+def find_annual_accounts_geography(text: str) -> tuple[str, str]:
+    match = re.search(
+        r"01023\s*([A-ZÁÉÍÓÚÜÑ' -]{2,80})\s+Provincia:?\s*01025\s*([A-ZÁÉÍÓÚÜÑ' -]{2,80})",
+        str(text or ""),
+        flags=re.I,
+    )
+    if match:
+        return (
+            clean_annual_accounts_value(match.group(1), max_length=80).title(),
+            clean_annual_accounts_value(match.group(2), max_length=80).title(),
+        )
+    city = clean_annual_accounts_value(find_annual_accounts_value_by_code(text, "01023", max_length=80), max_length=80)
+    province = clean_annual_accounts_value(find_annual_accounts_value_by_code(text, "01025", max_length=80), max_length=80)
+    return city.title(), province.title()
+
+
+def clean_annual_accounts_activity(value: str) -> str:
+    cleaned = clean_annual_accounts_value(value, max_length=180)
+    cleaned = re.sub(r"\s*\(\d+\)\s*$", "", cleaned)
+    replacements = (
+        ("Fabricaciónde", "Fabricacion de "),
+        ("Fabricacionde", "Fabricacion de "),
+        ("otrosproductos", "otros productos"),
+        ("productosquímicos", "productos quimicos"),
+        ("productosquimicos", "productos quimicos"),
+        ("químicosn.c.o.p", "quimicos n.c.o.p"),
+        ("quimicosn.c.o.p", "quimicos n.c.o.p"),
+    )
+    for old, new in replacements:
+        cleaned = re.sub(old, new, cleaned, flags=re.I)
+    return clean_informa_value(cleaned, max_length=180)
+
+
+def find_annual_accounts_cnae(text: str) -> tuple[str, str]:
+    code = ""
+    label = ""
+    match = re.search(r"02009\s*([^\n\r]+)\s+02001\s*(\d{4,5})", str(text or ""), flags=re.I)
+    if match:
+        label = clean_annual_accounts_activity(match.group(1))
+        code = match.group(2)
+    if not code:
+        raw_code = find_annual_accounts_value_by_code(text, "02001", max_length=40).replace(" ", "")
+        code_match = re.search(r"\d{4,5}", raw_code)
+        code = code_match.group(0) if code_match else ""
+    if not label:
+        label = clean_annual_accounts_activity(find_annual_accounts_value_by_code(text, "02009", max_length=180))
+    return code, label
+
+
+def find_annual_accounts_employees(text: str):
+    fixed = _account_current_value(text, ("04001",))
+    temporary = _account_current_value(text, ("04002",))
+    total = sum((value for value in (fixed, temporary) if value is not None), ZERO)
+    if total > ZERO:
+        return int(total)
+    return None
+
+
+def parse_annual_accounts_company_fields(text: str) -> dict:
+    if not looks_like_annual_accounts_deposit(text):
+        return {}
+    company_name = find_annual_accounts_company_name(text)
+    cnae_code, cnae_label = find_annual_accounts_cnae(text)
+    city, province = find_annual_accounts_geography(text)
+    geography = " - ".join(item for item in (city, province) if item)
+    metrics = parse_balance_metrics(text)
+    return {
+        "company_name": company_name,
+        "legal_name": company_name,
+        "tax_id": find_tax_id_from_informa(text),
+        "website": "",
+        "sector": cnae_label,
+        "geography": geography,
+        "address": find_annual_accounts_value_by_code(text, "01022", max_length=240),
+        "phone": "",
+        "email": "",
+        "cnae_code": cnae_code,
+        "cnae_label": cnae_label,
+        "employees": find_annual_accounts_employees(text),
+        "annual_revenue": metrics.get("annual_revenue"),
+        "ebitda": metrics.get("ebitda"),
+        "source": "Cuentas anuales",
+    }
+
+
 def parse_informa_company_fields(text: str) -> dict:
+    annual_accounts_fields = parse_annual_accounts_company_fields(text)
+    if annual_accounts_fields:
+        return annual_accounts_fields
+
     cnae_code, cnae_label = find_cnae_from_informa(text)
     legal_name = find_company_name_from_informa(text)
     address = find_informa_address(text)

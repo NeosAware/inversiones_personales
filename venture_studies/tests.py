@@ -10,6 +10,7 @@ from django.urls import reverse
 
 from .models import VentureAnalysisSnapshot, VentureDiscoveryCandidate, VentureDocument, VentureOpportunity
 from .services import (
+    build_opportunity_seed_from_pdf,
     discover_web_candidates,
     guess_company_name_from_upload,
     import_informa_report,
@@ -427,6 +428,58 @@ class VentureStudiesViewTests(TestCase):
         self.assertEqual(parsed["annual_revenue"], Decimal("577352"))
         self.assertIsNone(parsed["ebitda"])
         self.assertNotIn("BANCO", parsed["geography"].upper())
+
+    def test_annual_accounts_deposit_parser_reads_acrilatos_style_pdf(self):
+        text = """
+        DATOS GENERALES DE IDENTIFICACIÓN ID
+        IDENTIFICACIÓNDE LA EMPRESA
+        NIF:
+        01010A12520870 IRUS:01008
+        FormajurídicaSA:
+        01013S.A.0
+        Denominaciónsocial:
+        Domiciliosocial:
+        01020ACRILATOS,S.A.0
+        01022POL.IND.ELCOLOMER,AVDA.EXTREMADURA, S/N
+        Municipio: 01023ONDA Provincia:01025CASTELLON
+        Códigopostal:0102412200 Teléfono:01031
+        empresa:01037fisconcarvi©fisconcarvi.com
+        ACTIVIDAD
+        Actividadprincipal:
+        CódigoCNAE 2009:
+        02009Fabricaciónde otrosproductosquímicosn.c.o.p. (6)
+        020012059 (1) CódigoCNAE 2025:020142059 (6)
+        PRESENTACIÓNDE CUENTAS
+        PERSONALASALARIADO
+        04001 75,00 65,00
+        04002 29,00 15,00
+        CUENTA DE PÉRDIDAS Y GANANCIAS NORMAL P1.1
+        1. Importenetodelacifradenegocios 40100 63.123,71 53.626,80
+        A.1)RESULTADODE EXPLOTACIÓN 49100 14.840,12 13.270,96
+        A.5)RESULTADODELEJERCICIO 49500 11.525,39 10.001,79
+        """
+
+        parsed = parse_informa_company_fields(text)
+
+        self.assertEqual(parsed["company_name"], "ACRILATOS, S.A.U.")
+        self.assertEqual(parsed["legal_name"], "ACRILATOS, S.A.U.")
+        self.assertEqual(parsed["tax_id"], "A12520870")
+        self.assertEqual(parsed["website"], "")
+        self.assertEqual(parsed["sector"], "Fabricacion de otros productos quimicos n.c.o.p.")
+        self.assertEqual(parsed["geography"], "Onda - Castellon")
+        self.assertEqual(parsed["address"], "POL.IND.ELCOLOMER,AVDA.EXTREMADURA, S/N")
+        self.assertEqual(parsed["cnae_code"], "2059")
+        self.assertEqual(parsed["employees"], 104)
+        self.assertEqual(parsed["annual_revenue"], Decimal("63123.71"))
+        self.assertEqual(parsed["source"], "Cuentas anuales")
+
+        upload = SimpleUploadedFile("Acrilatos 2024.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf")
+        with patch("venture_studies.services.extract_pdf_text_from_file", return_value=text):
+            seed = build_opportunity_seed_from_pdf(upload)
+
+        self.assertEqual(seed["company_name"], "ACRILATOS, S.A.U.")
+        self.assertEqual(seed["fields"]["legal_name"], "ACRILATOS, S.A.U.")
+        self.assertEqual(seed["fields"]["source"], "Cuentas anuales")
 
     def test_company_name_guess_ignores_label_fallback_from_informa(self):
         uploaded_file = SimpleUploadedFile(
