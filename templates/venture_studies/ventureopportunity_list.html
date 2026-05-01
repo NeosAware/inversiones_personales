@@ -256,6 +256,12 @@
       padding:28px;
       text-align:center;
     }
+    .venture-field-error{
+      margin-top:6px;
+      color:#a44f3f;
+      font-size:13px;
+      font-weight:800;
+    }
     @media (max-width: 1180px){
       .venture-workspace,
       .venture-decision-grid,
@@ -875,7 +881,7 @@
           <div>
             <p class="section-title">Nueva pestana</p>
             <h2 style="margin-top:0;">Anadir empresa no cotizada</h2>
-            <p class="muted" style="margin-top:0;max-width:74ch;">Puedes guardar solo la ficha o adjuntar ya un PDF financiero/comercial para que Claude lo analice al crear la pestana.</p>
+            <p class="muted" style="margin-top:0;max-width:74ch;">Guarda primero una ficha limpia y sube la informacion inicial en la misma pantalla: Informa, dossier, balance y magnitudes manuales.</p>
           </div>
         </div>
         {% if can_manage_finances %}
@@ -883,68 +889,87 @@
             {% csrf_token %}
             <input type="hidden" name="action" value="save_opportunity">
             <section class="soft-panel">
-              <p class="section-title">PDF financiero/comercial para Claude</p>
+              <p class="section-title">Ficha inicial</p>
               <div class="venture-form-grid">
-                <div><label>Titulo del PDF</label><input type="text" name="title" placeholder="Dossier financiero/comercial"></div>
-                <div><label>Ano fiscal</label><input type="number" name="fiscal_year" min="1990" max="2100"></div>
-                <div><label>Fecha del documento</label><input type="date" name="document_date"></div>
-                <div><label>Subir PDF con informacion financiera y comercial</label><input type="file" name="file" accept=".pdf,application/pdf"></div>
+                <div>
+                  <label for="{{ form.company_name.id_for_label }}">{{ form.company_name.label }}</label>
+                  {{ form.company_name }}
+                  {% for error in form.company_name.errors %}<div class="venture-field-error">{{ error }}</div>{% endfor %}
+                </div>
+                <div><label for="{{ form.legal_name.id_for_label }}">{{ form.legal_name.label }}</label>{{ form.legal_name }}</div>
+                <div><label for="{{ form.tax_id.id_for_label }}">{{ form.tax_id.label }}</label>{{ form.tax_id }}</div>
+                <div><label for="{{ form.sector.id_for_label }}">{{ form.sector.label }}</label>{{ form.sector }}</div>
+                <div><label for="{{ form.geography.id_for_label }}">{{ form.geography.label }}</label>{{ form.geography }}</div>
+                <div><label for="{{ form.website.id_for_label }}">{{ form.website.label }}</label>{{ form.website }}</div>
+              </div>
+            </section>
+
+            <section class="soft-panel">
+              <p class="section-title">Carga inicial</p>
+              <div class="venture-form-grid">
+                <div><label>Titulo Informa</label><input type="text" name="informa_title" placeholder="Informe Informa"></div>
+                <div><label>Fecha Informa</label><input type="date" name="informa_document_date"></div>
+                <div><label>PDF Informa</label><input type="file" name="informa_file" accept=".pdf,application/pdf"></div>
+                <div><label>Titulo dossier</label><input type="text" name="dossier_title" placeholder="Dossier financiero/comercial"></div>
+                <div><label>Ano fiscal dossier</label><input type="number" name="dossier_fiscal_year" min="1990" max="2100"></div>
+                <div><label>PDF financiero/comercial</label><input type="file" name="dossier_file" accept=".pdf,application/pdf"></div>
+                <div><label>Titulo balance</label><input type="text" name="balance_title" placeholder="Balance"></div>
+                <div><label>Ano fiscal balance</label><input type="number" name="balance_fiscal_year" min="1990" max="2100"></div>
+                <div><label>PDF balance</label><input type="file" name="balance_file" accept=".pdf,application/pdf"></div>
+              </div>
+              <div class="venture-form-grid" style="margin-top:14px;">
+                <div><label for="{{ form.annual_revenue.id_for_label }}">{{ form.annual_revenue.label }}</label>{{ form.annual_revenue }}</div>
+                <div><label for="{{ form.ebitda.id_for_label }}">{{ form.ebitda.label }}</label>{{ form.ebitda }}</div>
+                <div><label for="{{ form.estimated_valuation.id_for_label }}">{{ form.estimated_valuation.label }}</label>{{ form.estimated_valuation }}</div>
+                <div><label for="{{ form.cash_need.id_for_label }}">{{ form.cash_need.label }}</label>{{ form.cash_need }}</div>
+                <div><label for="{{ form.ticket_min.id_for_label }}">{{ form.ticket_min.label }}</label>{{ form.ticket_min }}</div>
+                <div><label for="{{ form.ticket_max.id_for_label }}">{{ form.ticket_max.label }}</label>{{ form.ticket_max }}</div>
               </div>
               <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="use_ai" checked> Analizar con Claude al guardar la empresa</label>
-              <p class="metric-sub" style="margin-bottom:0;">Si dejas Empresa vacio, se intentara detectar el nombre desde el PDF o desde el nombre del archivo. Tambien podras subir mas PDFs despues dentro de la pestana de esta empresa.</p>
+              <p class="metric-sub" style="margin-bottom:0;">Si dejas Empresa vacio, se intentara detectar desde el primer PDF o desde su nombre de archivo.</p>
             </section>
-            <div class="venture-form-grid">
-              <div><label for="{{ form.company_name.id_for_label }}">{{ form.company_name.label }}</label>{{ form.company_name }}</div>
-              <div><label for="{{ form.legal_name.id_for_label }}">{{ form.legal_name.label }}</label>{{ form.legal_name }}</div>
-              <div><label for="{{ form.tax_id.id_for_label }}">{{ form.tax_id.label }}</label>{{ form.tax_id }}</div>
-              <div><label for="{{ form.website.id_for_label }}">{{ form.website.label }}</label>{{ form.website }}</div>
-              <div><label for="{{ form.sector.id_for_label }}">{{ form.sector.label }}</label>{{ form.sector }}</div>
-              <div><label for="{{ form.geography.id_for_label }}">{{ form.geography.label }}</label>{{ form.geography }}</div>
-              <div><label for="{{ form.address.id_for_label }}">{{ form.address.label }}</label>{{ form.address }}</div>
-              <div><label for="{{ form.phone.id_for_label }}">{{ form.phone.label }}</label>{{ form.phone }}</div>
-              <div><label for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>{{ form.email }}</div>
-              <div><label for="{{ form.cnae_code.id_for_label }}">{{ form.cnae_code.label }}</label>{{ form.cnae_code }}</div>
-              <div><label for="{{ form.cnae_label.id_for_label }}">{{ form.cnae_label.label }}</label>{{ form.cnae_label }}</div>
-              <div><label for="{{ form.employees.id_for_label }}">{{ form.employees.label }}</label>{{ form.employees }}</div>
-              <div><label for="{{ form.stage.id_for_label }}">{{ form.stage.label }}</label>{{ form.stage }}</div>
-              <div><label for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>{{ form.status }}</div>
-              <div><label for="{{ form.strategic_fit.id_for_label }}">{{ form.strategic_fit.label }}</label>{{ form.strategic_fit }}</div>
-              <div><label for="{{ form.contact_name.id_for_label }}">{{ form.contact_name.label }}</label>{{ form.contact_name }}</div>
-              <div><label for="{{ form.source.id_for_label }}">{{ form.source.label }}</label>{{ form.source }}</div>
-              <div><label for="{{ form.identified_on.id_for_label }}">{{ form.identified_on.label }}</label>{{ form.identified_on }}</div>
-              <div><label for="{{ form.next_review_on.id_for_label }}">{{ form.next_review_on.label }}</label>{{ form.next_review_on }}</div>
-            </div>
-            <div class="venture-form-grid">
-              <div><label for="{{ form.ticket_min.id_for_label }}">{{ form.ticket_min.label }}</label>{{ form.ticket_min }}</div>
-              <div><label for="{{ form.ticket_max.id_for_label }}">{{ form.ticket_max.label }}</label>{{ form.ticket_max }}</div>
-              <div><label for="{{ form.estimated_valuation.id_for_label }}">{{ form.estimated_valuation.label }}</label>{{ form.estimated_valuation }}</div>
-              <div><label for="{{ form.annual_revenue.id_for_label }}">{{ form.annual_revenue.label }}</label>{{ form.annual_revenue }}</div>
-              <div><label for="{{ form.ebitda.id_for_label }}">{{ form.ebitda.label }}</label>{{ form.ebitda }}</div>
-              <div><label for="{{ form.cash_need.id_for_label }}">{{ form.cash_need.label }}</label>{{ form.cash_need }}</div>
-            </div>
-            <div class="venture-score-grid">
-              <div><label for="{{ form.neos_fit_score.id_for_label }}">{{ form.neos_fit_score.label }}</label>{{ form.neos_fit_score }}</div>
-              <div><label for="{{ form.market_score.id_for_label }}">{{ form.market_score.label }}</label>{{ form.market_score }}</div>
-              <div><label for="{{ form.team_score.id_for_label }}">{{ form.team_score.label }}</label>{{ form.team_score }}</div>
-              <div><label for="{{ form.financial_score.id_for_label }}">{{ form.financial_score.label }}</label>{{ form.financial_score }}</div>
-              <div><label for="{{ form.risk_control_score.id_for_label }}">{{ form.risk_control_score.label }}</label>{{ form.risk_control_score }}</div>
-            </div>
-            <div class="venture-form-grid two">
-              <div><label for="{{ form.fit_summary.id_for_label }}">{{ form.fit_summary.label }}</label>{{ form.fit_summary }}</div>
-              <div><label for="{{ form.growth_issue.id_for_label }}">{{ form.growth_issue.label }}</label>{{ form.growth_issue }}</div>
-              <div><label for="{{ form.synergy_notes.id_for_label }}">{{ form.synergy_notes.label }}</label>{{ form.synergy_notes }}</div>
-              <div><label for="{{ form.diligence_notes.id_for_label }}">{{ form.diligence_notes.label }}</label>{{ form.diligence_notes }}</div>
-              <div><label for="{{ form.red_flags.id_for_label }}">{{ form.red_flags.label }}</label>{{ form.red_flags }}</div>
-              <div><label for="{{ form.next_steps.id_for_label }}">{{ form.next_steps.label }}</label>{{ form.next_steps }}</div>
-            </div>
-            <div>
-              <label for="{{ form.notes.id_for_label }}">{{ form.notes.label }}</label>
-              {{ form.notes }}
-            </div>
+
+            <details class="venture-edit-panel" {% if form.errors %}open{% endif %}>
+              <summary>Campos avanzados de la ficha</summary>
+              <div class="venture-form-grid">
+                <div><label for="{{ form.address.id_for_label }}">{{ form.address.label }}</label>{{ form.address }}</div>
+                <div><label for="{{ form.phone.id_for_label }}">{{ form.phone.label }}</label>{{ form.phone }}</div>
+                <div><label for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>{{ form.email }}</div>
+                <div><label for="{{ form.cnae_code.id_for_label }}">{{ form.cnae_code.label }}</label>{{ form.cnae_code }}</div>
+                <div><label for="{{ form.cnae_label.id_for_label }}">{{ form.cnae_label.label }}</label>{{ form.cnae_label }}</div>
+                <div><label for="{{ form.employees.id_for_label }}">{{ form.employees.label }}</label>{{ form.employees }}</div>
+                <div><label for="{{ form.stage.id_for_label }}">{{ form.stage.label }}</label>{{ form.stage }}</div>
+                <div><label for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>{{ form.status }}</div>
+                <div><label for="{{ form.strategic_fit.id_for_label }}">{{ form.strategic_fit.label }}</label>{{ form.strategic_fit }}</div>
+                <div><label for="{{ form.contact_name.id_for_label }}">{{ form.contact_name.label }}</label>{{ form.contact_name }}</div>
+                <div><label for="{{ form.source.id_for_label }}">{{ form.source.label }}</label>{{ form.source }}</div>
+                <div><label for="{{ form.identified_on.id_for_label }}">{{ form.identified_on.label }}</label>{{ form.identified_on }}</div>
+                <div><label for="{{ form.next_review_on.id_for_label }}">{{ form.next_review_on.label }}</label>{{ form.next_review_on }}</div>
+              </div>
+              <div class="venture-score-grid">
+                <div><label for="{{ form.neos_fit_score.id_for_label }}">{{ form.neos_fit_score.label }}</label>{{ form.neos_fit_score }}</div>
+                <div><label for="{{ form.market_score.id_for_label }}">{{ form.market_score.label }}</label>{{ form.market_score }}</div>
+                <div><label for="{{ form.team_score.id_for_label }}">{{ form.team_score.label }}</label>{{ form.team_score }}</div>
+                <div><label for="{{ form.financial_score.id_for_label }}">{{ form.financial_score.label }}</label>{{ form.financial_score }}</div>
+                <div><label for="{{ form.risk_control_score.id_for_label }}">{{ form.risk_control_score.label }}</label>{{ form.risk_control_score }}</div>
+              </div>
+              <div class="venture-form-grid two">
+                <div><label for="{{ form.fit_summary.id_for_label }}">{{ form.fit_summary.label }}</label>{{ form.fit_summary }}</div>
+                <div><label for="{{ form.growth_issue.id_for_label }}">{{ form.growth_issue.label }}</label>{{ form.growth_issue }}</div>
+                <div><label for="{{ form.synergy_notes.id_for_label }}">{{ form.synergy_notes.label }}</label>{{ form.synergy_notes }}</div>
+                <div><label for="{{ form.diligence_notes.id_for_label }}">{{ form.diligence_notes.label }}</label>{{ form.diligence_notes }}</div>
+                <div><label for="{{ form.red_flags.id_for_label }}">{{ form.red_flags.label }}</label>{{ form.red_flags }}</div>
+                <div><label for="{{ form.next_steps.id_for_label }}">{{ form.next_steps.label }}</label>{{ form.next_steps }}</div>
+              </div>
+              <div>
+                <label for="{{ form.notes.id_for_label }}">{{ form.notes.label }}</label>
+                {{ form.notes }}
+              </div>
+            </details>
             {% if form.errors %}
               <div class="message error">Revisa los campos del formulario antes de guardar.</div>
             {% endif %}
-            <button class="button" type="submit">Guardar empresa</button>
+            <button class="button" type="submit">Guardar empresa e informacion</button>
           </form>
         {% else %}
           <div class="venture-empty muted">No hay empresas seleccionadas.</div>

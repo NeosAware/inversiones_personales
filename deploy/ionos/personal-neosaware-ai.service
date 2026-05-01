@@ -1,0 +1,14 @@
+[Unit]
+Description=Personal investments Django app for personal.neosaware.ai
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/personal.neosaware.ai/app
+EnvironmentFile=/var/www/personal.neosaware.ai/.env
+ExecStart=/var/www/personal.neosaware.ai/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8082 --workers 3 --timeout 120
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

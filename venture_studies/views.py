@@ -196,7 +196,7 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
     def _opportunity_form_data(self, post_data, opportunity=None):
         data = post_data.copy()
         if not opportunity:
-            return data
+            opportunity = VentureOpportunity()
         for field_name in VentureOpportunityForm.Meta.fields:
             if field_name in data:
                 continue
@@ -208,6 +208,124 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             else:
                 data[field_name] = str(value)
         return data
+
+    def _initial_uploads(self, request):
+        uploads = []
+        for field_name, document_kind in (
+            ("informa_file", VentureDocument.DocumentKind.INFORMA),
+            ("dossier_file", VentureDocument.DocumentKind.DOSSIER),
+            ("balance_file", VentureDocument.DocumentKind.BALANCE),
+        ):
+            uploaded_file = request.FILES.get(field_name)
+            if uploaded_file:
+                uploads.append((field_name, document_kind, uploaded_file))
+
+        legacy_file = request.FILES.get("file")
+        if legacy_file and not uploads:
+            uploads.append(("file", VentureDocument.DocumentKind.DOSSIER, legacy_file))
+        return uploads
+
+    def _has_initial_upload(self, request):
+        return bool(self._initial_uploads(request))
+
+    def _prefixed_post_value(self, request, prefix, field_name, fallback_field_name=None):
+        value = request.POST.get(f"{prefix}_{field_name}")
+        if value not in (None, ""):
+            return value
+        if fallback_field_name:
+            return request.POST.get(fallback_field_name, "")
+        return ""
+
+    def _document_form_payload(self, request, opportunity, prefix):
+        data = request.POST.copy()
+        data["opportunity"] = str(opportunity.id)
+        data["title"] = self._prefixed_post_value(request, prefix, "title", "title")
+        data["document_date"] = self._prefixed_post_value(request, prefix, "document_date", "document_date")
+        data["fiscal_year"] = self._prefixed_post_value(request, prefix, "fiscal_year", "fiscal_year")
+        return data
+
+    def _save_initial_informa_document(self, request, opportunity, uploaded_file):
+        data = self._document_form_payload(request, opportunity, "informa")
+        form = VentureInformaImportForm(data, {"file": uploaded_file})
+        if not form.is_valid():
+            messages.warning(
+                request,
+                "La empresa se ha guardado, pero el informe Informa no se pudo importar. Revisa que sea un PDF valido.",
+            )
+            return None
+        try:
+            result = import_informa_report(
+                form.cleaned_data["file"],
+                selected_opportunity=opportunity,
+                title=form.cleaned_data.get("title", ""),
+                document_date=form.cleaned_data.get("document_date"),
+                overwrite_existing=form.cleaned_data.get("overwrite_existing", False),
+            )
+        except Exception as exc:
+            messages.warning(request, f"La empresa se ha guardado, pero el informe Informa no se pudo importar: {exc}")
+            return None
+        return result["document"]
+
+    def _save_initial_document(self, request, opportunity, document_kind, uploaded_file):
+        if document_kind == VentureDocument.DocumentKind.INFORMA:
+            return self._save_initial_informa_document(request, opportunity, uploaded_file)
+
+        prefix = "balance" if document_kind == VentureDocument.DocumentKind.BALANCE else "dossier"
+        form_class = VentureBalanceAnalysisForm if document_kind == VentureDocument.DocumentKind.BALANCE else VentureDossierAnalysisForm
+        data = self._document_form_payload(request, opportunity, prefix)
+        form = form_class(data, {"file": uploaded_file})
+        if not form.is_valid():
+            label = "balance" if document_kind == VentureDocument.DocumentKind.BALANCE else "dossier"
+            messages.warning(
+                request,
+                f"La empresa se ha guardado, pero el {label} PDF no se pudo guardar. Revisa que sea un PDF valido.",
+            )
+            return None
+        return form.save_document()
+
+    def _save_initial_documents(self, request, opportunity):
+        saved_documents = []
+        for _field_name, document_kind, uploaded_file in self._initial_uploads(request):
+            document = self._save_initial_document(request, opportunity, document_kind, uploaded_file)
+            if document:
+                saved_documents.append(document)
+
+        if not saved_documents:
+            return None
+
+        if len(saved_documents) > 1:
+            messages.success(request, f"Se han guardado {len(saved_documents)} PDF(s) iniciales para {opportunity.company_name}.")
+        else:
+            messages.success(request, f"Se ha guardado el PDF inicial de {opportunity.company_name}.")
+
+        use_ai = request.POST.get("use_ai") == "on"
+        try:
+            if len(saved_documents) == 1:
+                snapshot = run_document_analysis(saved_documents[0], use_ai=use_ai)
+            else:
+                snapshot = run_opportunity_documents_analysis(
+                    opportunity,
+                    self._sort_documents_for_analysis(saved_documents),
+                    use_ai=use_ai,
+                )
+        except Exception as exc:
+            self._document_analysis_failed(request, saved_documents[0], exc)
+            return None
+
+        messages.success(
+            request,
+            (
+                f"Informacion inicial de {opportunity.company_name} analizada por {snapshot.agent_label}. "
+                f"Recomendacion: {snapshot.get_recommendation_display()} "
+                f"y precio orientativo {snapshot.suggested_purchase_price or 0:.2f} EUR."
+            ),
+        )
+        if use_ai and snapshot.agent_provider != "anthropic":
+            messages.warning(
+                request,
+                "Claude no ha intervenido en este analisis. Revisa AI_LLM_PROVIDER=anthropic y ANTHROPIC_API_KEY si quieres lectura Claude.",
+            )
+        return snapshot
 
     def _posted_opportunity(self, request):
         opportunity_id = str(request.POST.get("opportunity") or "").strip()
@@ -307,7 +425,7 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
 
         opportunity_id = request.POST.get("opportunity_id", "").strip()
         opportunity_instance = get_object_or_404(VentureOpportunity, pk=opportunity_id) if opportunity_id else None
-        if not opportunity_instance and request.FILES.get("file") and not request.POST.get("company_name", "").strip():
+        if not opportunity_instance and self._has_initial_upload(request) and not request.POST.get("company_name", "").strip():
             return self._create_opportunity_from_initial_pdf(request)
         form = VentureOpportunityForm(
             self._opportunity_form_data(request.POST, opportunity_instance),
@@ -343,13 +461,14 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             messages.success(request, f"La empresa {opportunity.company_name} se ha incorporado al radar.")
         else:
             messages.success(request, f"La empresa {opportunity.company_name} se ha actualizado correctamente.")
-        self._analyze_attached_dossier(request, opportunity)
+        self._save_initial_documents(request, opportunity)
         return self._redirect_to_company(opportunity.id)
 
     def _create_opportunity_from_initial_pdf(self, request):
+        seed_upload = self._initial_uploads(request)[0][2]
         try:
             seed = build_opportunity_seed_from_pdf(
-                request.FILES["file"],
+                seed_upload,
                 fallback_company_name=request.POST.get("company_name", ""),
             )
         except Exception as exc:
@@ -361,7 +480,7 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
                 "error": str(exc),
             }
         if not seed["company_name"]:
-            form = VentureOpportunityForm(request.POST)
+            form = VentureOpportunityForm(self._opportunity_form_data(request.POST))
             form.add_error("company_name", "No se ha podido detectar la empresa en el PDF. Escribe el nombre y vuelve a guardar.")
             if seed.get("error"):
                 messages.warning(request, f"No se pudo leer el PDF automaticamente: {seed['error']}")
@@ -392,7 +511,7 @@ class VentureOpportunityListView(LoginRequiredMixin, TemplateView):
             messages.success(request, f"La empresa {opportunity.company_name} se ha creado desde el PDF.")
         else:
             messages.success(request, f"La empresa {opportunity.company_name} se ha localizado y actualizado desde el PDF.")
-        self._analyze_attached_dossier(request, opportunity, extracted_text=seed.get("text", ""))
+        self._save_initial_documents(request, opportunity)
         return self._redirect_to_company(opportunity.id)
 
     def _document_analysis_failed(self, request, document, exc):

@@ -134,12 +134,109 @@ class VentureStudiesViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Nueva pestana")
-        self.assertContains(response, "PDF financiero/comercial para Claude")
-        self.assertContains(response, "Subir PDF con informacion financiera y comercial")
+        self.assertContains(response, "Ficha inicial")
+        self.assertContains(response, "Carga inicial")
+        self.assertContains(response, "PDF Informa")
+        self.assertContains(response, "PDF financiero/comercial")
+        self.assertContains(response, "PDF balance")
+        self.assertContains(response, "Campos avanzados de la ficha")
         self.assertContains(response, "Si dejas Empresa vacio")
         self.assertContains(response, 'class="stack" novalidate')
-        self.assertContains(response, "Guardar empresa")
+        self.assertContains(response, "Guardar empresa e informacion")
         self.assertContains(response, 'href="?company=')
+
+    def test_staff_user_can_create_minimal_opportunity_from_new_form(self):
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("venture_studies:list"),
+            {
+                "action": "save_opportunity",
+                "company_name": "Alta Simple SL",
+            },
+        )
+
+        opportunity = VentureOpportunity.objects.get(company_name="Alta Simple SL")
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
+        self.assertEqual(opportunity.status, VentureOpportunity.Status.SCREENING)
+        self.assertEqual(opportunity.stage, VentureOpportunity.Stage.EARLY)
+        self.assertEqual(opportunity.strategic_fit, VentureOpportunity.StrategicFit.BOTH)
+        self.assertEqual(opportunity.neos_fit_score, 3)
+
+    def test_staff_user_can_create_company_with_initial_document_set(self):
+        self.client.force_login(self.staff_user)
+
+        def fake_import_informa(uploaded_file, *, selected_opportunity=None, title="", document_date=None, overwrite_existing=False):
+            document = VentureDocument.objects.create(
+                opportunity=selected_opportunity,
+                document_kind=VentureDocument.DocumentKind.INFORMA,
+                title=title or "Informe Informa",
+                document_date=document_date,
+                file=uploaded_file,
+                extracted_text="Informe Informa inicial.",
+                extraction_status=VentureDocument.ExtractionStatus.EXTRACTED,
+            )
+            return {
+                "opportunity": selected_opportunity,
+                "created": False,
+                "updated_fields": [],
+                "document": document,
+            }
+
+        def fake_analysis(opportunity, documents, use_ai=True):
+            documents = list(documents)
+            self.assertEqual(
+                {document.document_kind for document in documents},
+                {
+                    VentureDocument.DocumentKind.BALANCE,
+                    VentureDocument.DocumentKind.INFORMA,
+                    VentureDocument.DocumentKind.DOSSIER,
+                },
+            )
+            self.assertTrue(use_ai)
+            return VentureAnalysisSnapshot.objects.create(
+                opportunity=opportunity,
+                source_document=documents[0],
+                recommendation=VentureAnalysisSnapshot.Recommendation.BUY,
+                confidence=VentureAnalysisSnapshot.Confidence.MEDIUM,
+                score_pct=Decimal("83.00"),
+                suggested_purchase_price=Decimal("240000.00"),
+                summary="Analisis inicial conjunto.",
+                agent_provider="anthropic",
+                agent_label="Claude test",
+            )
+
+        with (
+            patch("venture_studies.views.import_informa_report", side_effect=fake_import_informa) as mocked_informa,
+            patch("venture_studies.views.run_opportunity_documents_analysis", side_effect=fake_analysis) as mocked_analysis,
+        ):
+            response = self.client.post(
+                reverse("venture_studies:list"),
+                {
+                    "action": "save_opportunity",
+                    "company_name": "Alta Documental SL",
+                    "annual_revenue": "320.000,00",
+                    "ebitda": "45.000,00",
+                    "informa_title": "Informa inicial",
+                    "dossier_title": "Dossier inicial",
+                    "balance_title": "Balance inicial",
+                    "balance_fiscal_year": "2025",
+                    "use_ai": "on",
+                    "informa_file": SimpleUploadedFile("informa.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf"),
+                    "dossier_file": SimpleUploadedFile("dossier.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf"),
+                    "balance_file": SimpleUploadedFile("balance.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf"),
+                },
+            )
+
+        opportunity = VentureOpportunity.objects.get(company_name="Alta Documental SL")
+        self.assertRedirects(response, f"{reverse('venture_studies:list')}?company={opportunity.id}")
+        self.assertEqual(opportunity.annual_revenue, Decimal("320000.00"))
+        self.assertEqual(opportunity.ebitda, Decimal("45000.00"))
+        self.assertEqual(opportunity.documents.count(), 3)
+        mocked_informa.assert_called_once()
+        mocked_analysis.assert_called_once()
+        analysis = VentureAnalysisSnapshot.objects.get(opportunity=opportunity)
+        self.assertEqual(analysis.suggested_purchase_price, Decimal("240000.00"))
 
     def test_staff_user_can_create_company_with_initial_dossier_pdf(self):
         self.client.force_login(self.staff_user)

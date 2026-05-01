@@ -206,7 +206,7 @@ Typical server flow:
 python manage.py migrate
 python manage.py collectstatic --noinput
 python manage.py createsuperuser
-gunicorn config.wsgi:application --bind 127.0.0.1:8000
+gunicorn config.wsgi:application --bind 127.0.0.1:8082
 ```
 
 ## Banking extract import

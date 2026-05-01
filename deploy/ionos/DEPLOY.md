@@ -1,6 +1,7 @@
 # Despliegue en IONOS: `personal.neosaware.ai`
 
 Este proyecto queda preparado para subirlo a un servidor Linux con Django + Gunicorn + PostgreSQL.
+Debe correr como servicio independiente en `127.0.0.1:8082`, separado de cualquier otra aplicacion del servidor.
 
 ## 1. Estructura recomendada en el servidor
 
@@ -52,7 +53,7 @@ Crear `/var/www/personal.neosaware.ai/.env` a partir de `.env.example` y ajustar
 DJANGO_SECRET_KEY=poner-una-clave-larga-y-aleatoria
 DJANGO_DEBUG=0
 APP_ALLOWED_HOSTS=personal.neosaware.ai
-APP_CSRF_TRUSTED_ORIGINS=https://personal.neosaware.ai
+APP_CSRF_TRUSTED_ORIGINS=https://personal.neosaware.ai,http://personal.neosaware.ai:8082,https://personal.neosaware.ai:8082
 DB_ENGINE=postgresql
 POSTGRES_DB=inversiones_personales
 POSTGRES_USER=inversiones_personales
@@ -107,16 +108,16 @@ source ../venv/bin/activate
 set -a
 . ../.env
 set +a
-gunicorn config.wsgi:application --bind 127.0.0.1:8000
+gunicorn config.wsgi:application --bind 127.0.0.1:8082
 ```
 
-Si lo arrancas con `systemd`, el servicio debe cargar el `.env`. Ejemplo minimo:
+Si lo arrancas con `systemd`, el servicio debe cargar el `.env` y escuchar en `8082`. Hay una plantilla lista en `deploy/ionos/personal-neosaware-ai.service`. Ejemplo minimo:
 
 ```ini
 [Service]
 WorkingDirectory=/var/www/personal.neosaware.ai/app
 EnvironmentFile=/var/www/personal.neosaware.ai/.env
-ExecStart=/var/www/personal.neosaware.ai/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8000
+ExecStart=/var/www/personal.neosaware.ai/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8082
 ```
 
 ## 7.1. Analisis nocturno de acciones
@@ -150,7 +151,7 @@ Debe devolver `ok`.
 
 ## 8. Proxy inverso
 
-Ejemplo de bloque `server` con Nginx:
+Ejemplo de bloque `server` con Nginx. Hay una plantilla lista en `deploy/ionos/nginx-personal-neosaware-ai.conf`.
 
 ```nginx
 server {
@@ -174,7 +175,7 @@ server {
     }
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:8082;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
@@ -197,4 +198,5 @@ En IONOS tendreis que crear el host/subdominio `personal.neosaware.ai` y apuntar
 - `personal.neosaware.ai` apuntando a la IP correcta
 - HTTPS activo
 - `/health/` devolviendo `ok`
+- Gunicorn escuchando en `127.0.0.1:8082`
 - Login obligatorio al entrar en la web
