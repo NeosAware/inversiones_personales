@@ -87,15 +87,15 @@ source ../venv/bin/activate
 set -a
 . ../.env
 set +a
-python manage.py migrate
-python manage.py collectstatic --noinput
-python manage.py createsuperuser
+python3 manage.py migrate
+python3 manage.py collectstatic --noinput
+python3 manage.py createsuperuser
 ```
 
 Si quieres crear un usuario adicional para acceso normal:
 
 ```bash
-python manage.py ensure_household_user --username household --password CAMBIAR_PASSWORD
+python3 manage.py ensure_household_user --username household --password CAMBIAR_PASSWORD
 ```
 
 ## 7. Gunicorn
@@ -130,14 +130,25 @@ source ../venv/bin/activate
 set -a
 . ../.env
 set +a
-python manage.py run_equity_nightly_analysis
+python3 manage.py run_equity_nightly_analysis
 ```
 
 Ejemplo de `cron` diario a las `00:05`:
 
 ```cron
-5 0 * * * cd /var/www/personal.neosaware.ai/app && . ../venv/bin/activate && set -a && . ../.env && set +a && python manage.py run_equity_nightly_analysis >> /var/www/personal.neosaware.ai/nightly-equities.log 2>&1
+5 0 * * * cd /var/www/personal.neosaware.ai/app && . ../venv/bin/activate && set -a && . ../.env && set +a && python3 manage.py run_equity_nightly_analysis >> /var/www/personal.neosaware.ai/nightly-equities.log 2>&1
 ```
+
+## 7.2. Actualizar esta aplicacion sin tocar otras
+
+Hay un script preparado para actualizar solo `personal.neosaware.ai` en el puerto `8082`:
+
+```bash
+cd /var/www/personal.neosaware.ai/app
+bash deploy/ionos/deploy_personal_8082.sh
+```
+
+Hace `git pull`, instala dependencias en el venv propio, ejecuta `migrate`, `collectstatic`, reinicia `personal-neosaware-ai` y comprueba `http://127.0.0.1:8082/health/`.
 
 Durante el dia, la web y las optimizaciones reutilizan este cache nocturno siempre que siga siendo valido.
 

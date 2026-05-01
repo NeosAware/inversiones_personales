@@ -203,9 +203,9 @@ Server-ready items included in this project:
 Typical server flow:
 
 ```bash
-python manage.py migrate
-python manage.py collectstatic --noinput
-python manage.py createsuperuser
+python3 manage.py migrate
+python3 manage.py collectstatic --noinput
+python3 manage.py createsuperuser
 gunicorn config.wsgi:application --bind 127.0.0.1:8082
 ```
 
