@@ -99,6 +99,9 @@ OPTIMIZER_CONSERVATIVE_MIN_STRESS_RETURN_PCT = Decimal("-10.00")
 OPTIMIZER_CONSERVATIVE_MAX_VOLATILITY_PCT = Decimal("22.00")
 OPTIMIZER_CONSERVATIVE_MAX_UNCERTAINTY_PENALTY_PCT = Decimal("3.25")
 OPTIMIZER_EXPECTATION_REVIEW_RECENT_POINTS = 6
+OPTIMIZER_EXPECTATION_REVIEW_MEMORY_POINTS = 156
+OPTIMIZER_EXPECTATION_REVIEW_MEMORY_HALF_LIFE_DAYS = Decimal("120")
+OPTIMIZER_EXPECTATION_REVIEW_MIN_MEMORY_WEIGHT = Decimal("0.08")
 OPTIMIZER_EXPECTATION_REVIEW_STABLE_SPREAD_PCT = Decimal("10.00")
 OPTIMIZER_EXPECTATION_REVIEW_MAX_BONUS_PCT = Decimal("3.00")
 OPTIMIZER_EXPECTATION_REVIEW_MAX_PENALTY_PCT = Decimal("6.00")
@@ -9573,6 +9576,20 @@ def average_decimal(values: list[Decimal]) -> Decimal | None:
     return sum(filtered, ZERO) / Decimal(len(filtered))
 
 
+def weighted_average_decimal(values: list[tuple[Decimal | None, Decimal | None]]) -> Decimal | None:
+    filtered = [
+        (value, weight)
+        for value, weight in values
+        if value is not None and weight is not None and weight > ZERO
+    ]
+    if not filtered:
+        return None
+    total_weight = sum((weight for _, weight in filtered), ZERO)
+    if total_weight <= ZERO:
+        return None
+    return sum((value * weight for value, weight in filtered), ZERO) / total_weight
+
+
 def median_decimal(values: list[Decimal]) -> Decimal | None:
     filtered = sorted(value for value in values if value is not None)
     if not filtered:
@@ -14391,6 +14408,7 @@ def build_equity_history_card(
             },
             "reference_playbook": {"available": False, "candidates": []},
             "suggested_references": [],
+            "market_history_points": [],
             "historical_chart": {"available": False},
             "projection_12m_chart": {"available": False},
             "cycle_projection_5y_chart": {"available": False},
@@ -14629,6 +14647,14 @@ def build_equity_history_card(
         "fundamentals": fundamentals,
         "technical_signal": technical_signal,
         "suggested_references": suggested_references,
+        "market_history_points": [
+            {
+                "date": point.price_date,
+                "close": point.close_price,
+            }
+            for point in history
+            if point.price_date is not None and point.close_price is not None
+        ],
         "historical_chart": historical_chart,
         "best_correlation_chart": best_correlation_chart,
         "projection_12m_chart": projection_12m_chart,
@@ -16057,33 +16083,101 @@ def extract_expectation_review_return_pct(review: EquityExpectationReview, *, ho
     return None
 
 
+def select_expectation_review_memory_rows(reviews: list[EquityExpectationReview]) -> list[EquityExpectationReview]:
+    return list(reviews or [])[-OPTIMIZER_EXPECTATION_REVIEW_MEMORY_POINTS:]
+
+
+def build_expectation_review_memory_weight(analysis_date: date, anchor_date: date | None) -> Decimal:
+    if anchor_date is None:
+        return Decimal("1.0000")
+    age_days = max((anchor_date - analysis_date).days, 0)
+    half_life_days = float(OPTIMIZER_EXPECTATION_REVIEW_MEMORY_HALF_LIFE_DAYS)
+    raw_weight = Decimal(str(0.5 ** (age_days / half_life_days)))
+    return quantize_decimal(
+        clamp_decimal(raw_weight, OPTIMIZER_EXPECTATION_REVIEW_MIN_MEMORY_WEIGHT, Decimal("1.00")),
+        "0.0001",
+    ) or Decimal("1.0000")
+
+
+def resolve_card_memory_market_points(card: dict | None) -> list[dict]:
+    card = card or {}
+    points = []
+    for point in card.get("market_history_points") or []:
+        point_date = point.get("date")
+        close_price = quantize_decimal(point.get("close"), "0.0001")
+        if point_date is None or close_price is None:
+            continue
+        points.append({"date": point_date, "close": close_price})
+    if points:
+        return sorted(points, key=lambda item: item["date"])
+
+    position = card.get("position")
+    if getattr(position, "pk", None):
+        try:
+            return [
+                {
+                    "date": row.price_date,
+                    "close": quantize_decimal(row.close_price, "0.0001"),
+                }
+                for row in position.price_history.order_by("price_date")
+                if row.price_date is not None and row.close_price is not None
+            ]
+        except (OperationalError, ProgrammingError):
+            return []
+    return []
+
+
 def build_expectation_review_reality_feedback(
     reviews: list[EquityExpectationReview],
     *,
     horizon_years: int,
     current_price: Decimal | None = None,
     current_date: date | None = None,
+    market_points: list[dict] | None = None,
 ) -> dict:
     current_price = quantize_decimal(current_price, "0.0001")
     if current_price in {None, ZERO} or current_date is None:
         return {"available": False, "sample_count": 0, "rows": []}
 
+    market_points = [
+        {
+            "date": point.get("date"),
+            "close": quantize_decimal(point.get("close"), "0.0001"),
+        }
+        for point in list(market_points or [])
+        if point.get("date") is not None and point.get("close") is not None
+    ]
     rows = []
-    for review in reviews[-OPTIMIZER_EXPECTATION_REVIEW_RECENT_POINTS:]:
+    for review in select_expectation_review_memory_rows(reviews):
         start_price = quantize_decimal(review.current_price, "0.0001")
+        if start_price in {None, ZERO}:
+            start_point = find_closest_market_point(market_points, review.analysis_date)
+            start_price = quantize_decimal(start_point.get("close") if start_point else None, "0.0001")
         if start_price in {None, ZERO}:
             continue
         elapsed_days = (current_date - review.analysis_date).days
-        if elapsed_days < EXPECTATION_REVIEW_CORRECTION_MIN_ELAPSED_DAYS or elapsed_days > TRACKING_HORIZON_DAYS:
+        if elapsed_days < EXPECTATION_REVIEW_CORRECTION_MIN_ELAPSED_DAYS:
+            continue
+        observed_days = min(elapsed_days, TRACKING_HORIZON_DAYS)
+        observed_date = review.analysis_date + timedelta(days=observed_days)
+        actual_price = current_price
+        actual_price_date = current_date
+        if elapsed_days > TRACKING_HORIZON_DAYS:
+            end_point = find_closest_market_point(market_points, observed_date)
+            if not end_point:
+                continue
+            actual_price = quantize_decimal(end_point.get("close"), "0.0001")
+            actual_price_date = end_point.get("date") or observed_date
+        if actual_price in {None, ZERO}:
             continue
         expected_return_pct = extract_expectation_review_return_pct(review, horizon_years=horizon_years)
         if expected_return_pct is None:
             continue
         expected_progress_pct = quantize_decimal(
-            project_return_pct_to_elapsed_days(expected_return_pct, elapsed_days),
+            project_return_pct_to_elapsed_days(expected_return_pct, observed_days),
             "0.01",
         )
-        actual_return_pct = quantize_decimal(percentage_change(current_price, start_price), "0.01")
+        actual_return_pct = quantize_decimal(percentage_change(actual_price, start_price), "0.01")
         if expected_progress_pct is None or actual_return_pct is None:
             continue
         gap_pct = quantize_decimal(actual_return_pct - expected_progress_pct, "0.01")
@@ -16091,51 +16185,87 @@ def build_expectation_review_reality_feedback(
             (expected_progress_pct >= ZERO and actual_return_pct >= ZERO)
             or (expected_progress_pct < ZERO and actual_return_pct < ZERO)
         )
+        elapsed_weight = clamp_decimal(
+            Decimal(observed_days) / Decimal(TRACKING_EXPECTED_FEEDBACK_FULL_STRENGTH_DAYS),
+            Decimal("0.25"),
+            Decimal("1.00"),
+        )
+        memory_weight = quantize_decimal(
+            build_expectation_review_memory_weight(review.analysis_date, current_date) * elapsed_weight,
+            "0.0001",
+        ) or Decimal("1.0000")
         rows.append(
             {
                 "analysis_date": review.analysis_date,
                 "elapsed_days": elapsed_days,
+                "observed_days": observed_days,
+                "observed_date": observed_date,
+                "observed_date_label": observed_date.isoformat(),
                 "expected_progress_pct": expected_progress_pct,
                 "actual_return_pct": actual_return_pct,
+                "actual_price": actual_price,
+                "actual_price_date": actual_price_date,
+                "actual_price_date_label": actual_price_date.isoformat() if actual_price_date else "",
                 "gap_pct": gap_pct,
                 "absolute_error_pct": abs(gap_pct),
                 "direction_hit": direction_hit,
+                "memory_weight": memory_weight,
             }
         )
 
     if not rows:
         return {"available": False, "sample_count": 0, "rows": []}
 
-    average_gap_pct = quantize_decimal(average_decimal([row["gap_pct"] for row in rows]), "0.01")
+    average_gap_pct = quantize_decimal(
+        weighted_average_decimal([(row["gap_pct"], row["memory_weight"]) for row in rows]),
+        "0.01",
+    )
+    recent_rows = rows[-OPTIMIZER_EXPECTATION_REVIEW_RECENT_POINTS:]
+    recent_average_gap_pct = quantize_decimal(
+        weighted_average_decimal([(row["gap_pct"], row["memory_weight"]) for row in recent_rows]),
+        "0.01",
+    )
     latest_gap_pct = rows[-1]["gap_pct"]
     mean_absolute_error_pct = quantize_decimal(
-        average_decimal([row["absolute_error_pct"] for row in rows]),
+        weighted_average_decimal([(row["absolute_error_pct"], row["memory_weight"]) for row in rows]),
         "0.01",
     )
     direction_hit_rate_pct = quantize_decimal(
-        Decimal(sum(1 for row in rows if row["direction_hit"])) * ONE_HUNDRED / Decimal(len(rows)),
+        weighted_average_decimal(
+            [
+                (ONE_HUNDRED if row["direction_hit"] else ZERO, row["memory_weight"])
+                for row in rows
+            ]
+        ),
         "0.01",
     )
     bias_adjustment_pct = clamp_decimal(
-        ((average_gap_pct or ZERO) * Decimal("0.45")) + ((latest_gap_pct or ZERO) * Decimal("0.25")),
+        ((average_gap_pct or ZERO) * Decimal("0.50"))
+        + ((recent_average_gap_pct or ZERO) * Decimal("0.30"))
+        + ((latest_gap_pct or ZERO) * Decimal("0.20")),
         Decimal("-4.50"),
         Decimal("3.00"),
     )
     return {
         "available": True,
         "sample_count": len(rows),
+        "recent_sample_count": len(recent_rows),
         "average_gap_pct": average_gap_pct,
+        "recent_average_gap_pct": recent_average_gap_pct,
         "latest_gap_pct": latest_gap_pct,
         "mean_absolute_error_pct": mean_absolute_error_pct,
         "direction_hit_rate_pct": direction_hit_rate_pct,
         "bias_adjustment_pct": quantize_decimal(bias_adjustment_pct, "0.01"),
         "latest_elapsed_days": rows[-1]["elapsed_days"],
+        "oldest_analysis_date": rows[0]["analysis_date"],
+        "oldest_analysis_date_label": rows[0]["analysis_date"].isoformat(),
+        "memory_span_days": (rows[-1]["analysis_date"] - rows[0]["analysis_date"]).days,
         "rows": [
             {
                 **row,
                 "analysis_date_label": row["analysis_date"].isoformat(),
             }
-            for row in rows[-4:]
+            for row in rows[-OPTIMIZER_EXPECTATION_REVIEW_RECENT_POINTS:]
         ],
     }
 
@@ -16146,16 +16276,21 @@ def build_optimizer_expectation_review_horizon_signal(
     horizon_years: int,
     current_price: Decimal | None = None,
     current_date: date | None = None,
+    market_points: list[dict] | None = None,
 ) -> dict:
     value_rows = []
-    for review in reviews[-OPTIMIZER_EXPECTATION_REVIEW_RECENT_POINTS:]:
+    memory_reviews = select_expectation_review_memory_rows(reviews)
+    anchor_date = current_date or (memory_reviews[-1].analysis_date if memory_reviews else None)
+    for review in memory_reviews:
         expected_return_pct = extract_expectation_review_return_pct(review, horizon_years=horizon_years)
         if expected_return_pct is None:
             continue
+        memory_weight = build_expectation_review_memory_weight(review.analysis_date, anchor_date)
         value_rows.append(
             {
                 "analysis_date": review.analysis_date,
                 "value": expected_return_pct,
+                "memory_weight": memory_weight,
             }
         )
     reality_feedback = build_expectation_review_reality_feedback(
@@ -16163,6 +16298,7 @@ def build_optimizer_expectation_review_horizon_signal(
         horizon_years=horizon_years,
         current_price=current_price,
         current_date=current_date,
+        market_points=market_points,
     )
     if not value_rows:
         return {
@@ -16173,15 +16309,22 @@ def build_optimizer_expectation_review_horizon_signal(
             "trend_return_pct": None,
             "recent_delta_pct": None,
             "spread_pct": None,
+            "historical_spread_pct": None,
             "reality_feedback": reality_feedback,
         }
 
     values = [Decimal(str(row["value"])) for row in value_rows]
+    recent_values = values[-OPTIMIZER_EXPECTATION_REVIEW_RECENT_POINTS:]
     latest_return_pct = quantize_decimal(values[-1], "0.01")
-    average_return_pct = quantize_decimal(average_decimal(values), "0.01")
+    average_return_pct = quantize_decimal(
+        weighted_average_decimal([(Decimal(str(row["value"])), row["memory_weight"]) for row in value_rows]),
+        "0.01",
+    )
+    recent_average_return_pct = quantize_decimal(average_decimal(recent_values), "0.01")
     trend_return_pct = quantize_decimal(values[-1] - values[0], "0.01") if len(values) >= 2 else None
     recent_delta_pct = quantize_decimal(values[-1] - values[-2], "0.01") if len(values) >= 2 else None
-    spread_pct = quantize_decimal(max(values) - min(values), "0.01") if values else None
+    spread_pct = quantize_decimal(max(recent_values) - min(recent_values), "0.01") if recent_values else None
+    historical_spread_pct = quantize_decimal(max(values) - min(values), "0.01") if values else None
     date_span_days = (
         (value_rows[-1]["analysis_date"] - value_rows[0]["analysis_date"]).days
         if len(value_rows) >= 2
@@ -16191,11 +16334,14 @@ def build_optimizer_expectation_review_horizon_signal(
         "available": True,
         "horizon_years": horizon_years,
         "sample_count": len(value_rows),
+        "recent_sample_count": min(len(value_rows), OPTIMIZER_EXPECTATION_REVIEW_RECENT_POINTS),
         "latest_return_pct": latest_return_pct,
         "average_return_pct": average_return_pct,
+        "recent_average_return_pct": recent_average_return_pct,
         "trend_return_pct": trend_return_pct,
         "recent_delta_pct": recent_delta_pct,
         "spread_pct": spread_pct,
+        "historical_spread_pct": historical_spread_pct,
         "first_review_date": value_rows[0]["analysis_date"],
         "latest_review_date": value_rows[-1]["analysis_date"],
         "date_span_days": date_span_days,
@@ -16208,6 +16354,7 @@ def build_optimizer_expectation_review_signal(
     *,
     current_price: Decimal | None = None,
     current_date: date | None = None,
+    market_points: list[dict] | None = None,
 ) -> dict:
     sorted_reviews = sorted(
         list(reviews or []),
@@ -16224,12 +16371,14 @@ def build_optimizer_expectation_review_signal(
         horizon_years=1,
         current_price=current_price,
         current_date=current_date,
+        market_points=market_points,
     )
     five_year_signal = build_optimizer_expectation_review_horizon_signal(
         source_reviews,
         horizon_years=5,
         current_price=current_price,
         current_date=current_date,
+        market_points=market_points,
     )
     latest_review = source_reviews[-1]
     return {
@@ -16289,11 +16438,13 @@ def build_optimizer_expectation_review_signal_map(
     signal_map = {}
     current_cards_by_ticker = current_cards_by_ticker or {}
     for ticker in normalized_tickers:
-        current_price, current_date = resolve_card_memory_price_and_date(current_cards_by_ticker.get(ticker))
+        current_card = current_cards_by_ticker.get(ticker)
+        current_price, current_date = resolve_card_memory_price_and_date(current_card)
         signal_map[ticker] = build_optimizer_expectation_review_signal(
             grouped_reviews.get(ticker, []),
             current_price=current_price,
             current_date=current_date,
+            market_points=resolve_card_memory_market_points(current_card),
         )
     return signal_map
 
@@ -16566,7 +16717,7 @@ def apply_expectation_review_memory_to_card(card: dict, signal: dict | None = No
         "actual_feedback_adjustment_pct": projection_adjustment.get("actual_feedback_adjustment_pct"),
         "reality_error_penalty_pct": projection_adjustment.get("reality_error_penalty_pct"),
         "reality_feedback": reality_feedback,
-        "note": "Ajuste aplicado con el historico de revisiones y la desviacion real observada desde las ultimas lecturas.",
+        "note": "Ajuste aplicado con el historico completo de revisiones guardadas y sus desviaciones reales observadas.",
     }
     projection["explanation"] = (
         f"{str(projection.get('explanation') or '').strip()} "

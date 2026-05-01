@@ -506,6 +506,78 @@ class EquitiesServicesTests(TestCase):
         self.assertLess(feedback["bias_adjustment_pct"], ZERO)
         self.assertGreater(feedback["mean_absolute_error_pct"], Decimal("1.00"))
 
+    def test_expectation_review_signal_uses_full_historical_memory_not_only_recent_points(self):
+        run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2026, 3, 13),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+        )
+        reviews = []
+        for index in range(10):
+            review_date = date(2026, 1, 3) + timedelta(days=7 * index)
+            reviews.append(
+                EquityExpectationReview.objects.create(
+                    run=run,
+                    analysis_date=review_date,
+                    review_kind=EquityExpectationReview.ReviewKind.SCHEDULED,
+                    scope=EquityExpectationReview.Scope.IBEX,
+                    analysis_key=f"ibex:SAN:history:{index}",
+                    ticker="SAN",
+                    quote_symbol="SAN.MC",
+                    company_name="Banco Santander",
+                    current_price=Decimal("100.0000"),
+                    expected_return_pct_1y=Decimal("10.00"),
+                    expected_return_pct_5y=Decimal("25.00"),
+                )
+            )
+
+        signal = build_optimizer_expectation_review_signal(
+            reviews,
+            current_price=Decimal("94.0000"),
+            current_date=date(2026, 5, 1),
+        )
+
+        self.assertEqual(signal["1y"]["sample_count"], 10)
+        feedback = signal["1y"]["reality_feedback"]
+        self.assertEqual(feedback["sample_count"], 10)
+        self.assertEqual(feedback["oldest_analysis_date"], date(2026, 1, 3))
+        self.assertGreaterEqual(feedback["memory_span_days"], 63)
+        self.assertLess(feedback["average_gap_pct"], ZERO)
+
+    def test_expectation_review_signal_uses_matured_market_history_when_available(self):
+        run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2025, 1, 2),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+        )
+        review = EquityExpectationReview.objects.create(
+            run=run,
+            analysis_date=date(2024, 1, 2),
+            review_kind=EquityExpectationReview.ReviewKind.SCHEDULED,
+            scope=EquityExpectationReview.Scope.IBEX,
+            analysis_key="ibex:SAN:matured",
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            company_name="Banco Santander",
+            current_price=Decimal("100.0000"),
+            expected_return_pct_1y=Decimal("10.00"),
+            expected_return_pct_5y=Decimal("25.00"),
+        )
+
+        signal = build_optimizer_expectation_review_signal(
+            [review],
+            current_price=Decimal("150.0000"),
+            current_date=date(2026, 5, 1),
+            market_points=[
+                {"date": date(2024, 1, 2), "close": Decimal("100.0000")},
+                {"date": date(2025, 1, 1), "close": Decimal("90.0000")},
+            ],
+        )
+
+        feedback = signal["1y"]["reality_feedback"]
+        self.assertTrue(feedback["available"])
+        self.assertEqual(feedback["sample_count"], 1)
+        self.assertEqual(feedback["latest_gap_pct"], Decimal("-20.00"))
+        self.assertEqual(feedback["rows"][0]["actual_price"], Decimal("90.0000"))
+
     def test_expectation_memory_adjustment_cools_new_projection_with_weekly_miss(self):
         run = EquityNightlyAnalysisRun.objects.create(
             analysis_date=date(2026, 4, 24),

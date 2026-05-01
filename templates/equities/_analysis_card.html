@@ -179,7 +179,8 @@
               Ajuste historico {{ memory.adjustment_pct|floatformat:1 }} pp sobre una lectura bruta de {{ memory.raw_return_pct|floatformat:1 }} %.
               {% if memory.sample_count %}Usa {{ memory.sample_count }} revision(es) guardadas.{% endif %}
               {% if feedback.available %}
-                Desviacion real reciente {{ feedback.latest_gap_pct|floatformat:1 }} pp; error medio {{ feedback.mean_absolute_error_pct|floatformat:1 }} pp.
+                Desviacion real reciente {{ feedback.latest_gap_pct|floatformat:1 }} pp; media historica {{ feedback.average_gap_pct|floatformat:1 }} pp; error medio {{ feedback.mean_absolute_error_pct|floatformat:1 }} pp.
+                {% if feedback.oldest_analysis_date_label %}Desde {{ feedback.oldest_analysis_date_label }}.{% endif %}
               {% endif %}
             </p>
           </div>
