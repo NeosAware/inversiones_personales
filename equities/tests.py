@@ -84,6 +84,7 @@ from .services import (
     build_scenario_expectation_table,
     build_equity_ticket_tracking_context,
     build_equity_ticket_tracking_item,
+    build_optimizer_purchase_discipline_review,
     build_ticket_expected_series,
     densify_projected_tracking_series,
     build_portfolio_correlation_context,
@@ -653,6 +654,68 @@ class EquitiesServicesTests(TestCase):
         self.assertLess(card["projection"]["projected_price"], Decimal("98.0000"))
         self.assertTrue(memory["reality_feedback"]["available"])
         self.assertLess(card["projection_reliability"]["score"], Decimal("82.00"))
+
+    def test_purchase_discipline_penalizes_unreliable_model_memory(self):
+        position = EquityPosition(
+            position_kind=EquityPosition.PositionKind.WATCHLIST,
+            ticker="SAN",
+            quote_symbol="SAN.MC",
+            company_name="Banco Santander",
+            shares=ZERO,
+            average_cost_per_share=ZERO,
+            current_price_per_share=Decimal("10.0000"),
+        )
+        base_candidate = {
+            "position": position,
+            "sector_label": "Banca",
+            "primary_signal_pct": Decimal("8.00"),
+            "scenario_expected_return_pct": Decimal("12.00"),
+            "annualized_target_gap_pct": Decimal("4.00"),
+            "safety_score": Decimal("78.00"),
+            "reliability_score": Decimal("82.00"),
+            "low_return_pct": Decimal("-6.00"),
+            "downside_stress_return_pct": Decimal("-5.00"),
+            "annualized_volatility_pct": Decimal("14.00"),
+            "uncertainty_penalty_pct": Decimal("0.80"),
+            "holding_annualized_return_pct": Decimal("24.00"),
+            "annualized_target_return_pct": Decimal("20.00"),
+            "purchase_timing": {"available": True, "mode_label": "Comprar ya"},
+        }
+        reliable_candidate = {
+            **base_candidate,
+            "expectation_review_signal": {
+                "1y": {
+                    "reality_feedback": {
+                        "available": True,
+                        "sample_count": 12,
+                        "mean_absolute_error_pct": Decimal("1.20"),
+                        "average_gap_pct": Decimal("0.40"),
+                        "direction_hit_rate_pct": Decimal("74.00"),
+                    }
+                }
+            },
+        }
+        unreliable_candidate = {
+            **base_candidate,
+            "expectation_review_signal": {
+                "1y": {
+                    "reality_feedback": {
+                        "available": True,
+                        "sample_count": 12,
+                        "mean_absolute_error_pct": Decimal("8.00"),
+                        "average_gap_pct": Decimal("-7.00"),
+                        "direction_hit_rate_pct": Decimal("30.00"),
+                    }
+                }
+            },
+        }
+
+        reliable = build_optimizer_purchase_discipline_review(reliable_candidate)
+        unreliable = build_optimizer_purchase_discipline_review(unreliable_candidate)
+
+        self.assertGreater(reliable["score"], unreliable["score"])
+        self.assertEqual(unreliable["memory_label"], "Memoria penaliza")
+        self.assertLess(unreliable["memory_score"], Decimal("58.00"))
 
     def test_cycle_projection_5y_builds_multifactor_model_with_bce_forward_signal(self):
         position = EquityPosition.objects.create(

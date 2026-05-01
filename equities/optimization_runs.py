@@ -32,9 +32,11 @@ from .services import (
     build_equity_analysis_dashboard,
     build_equity_optimizer_candidate,
     build_ibex_universe_card,
+    build_purchase_discipline_portfolio_context,
     clear_market_data_caches,
     find_ibex_universe_company,
     get_optimizer_strategy_config,
+    apply_purchase_discipline_to_optimizer_candidates,
     projection_reliability_score,
     quantize_decimal,
     sync_all_equities_market_data,
@@ -814,11 +816,14 @@ def build_optimizer_candidate_preview(
     limit: int = 5,
     strategy_mode: str = OPTIMIZER_STRATEGY_12M_PRIMARY,
 ) -> list[dict]:
-    candidates = [
-        candidate
-        for candidate in (build_equity_optimizer_candidate(card, strategy_mode) for card in cards)
-        if candidate and candidate.get("optimization_score") is not None
-    ]
+    candidates = apply_purchase_discipline_to_optimizer_candidates(
+        [
+            candidate
+            for candidate in (build_equity_optimizer_candidate(card, strategy_mode) for card in cards)
+            if candidate and candidate.get("optimization_score") is not None
+        ],
+        build_purchase_discipline_portfolio_context(cards),
+    )
     ranked = sorted(
         candidates,
         key=lambda item: (
@@ -843,6 +848,9 @@ def build_optimizer_candidate_preview(
                 "net_return_pct": float(item["base_return_pct"]),
                 "safety_score": float(item["safety_score"]),
                 "external_signal_label": item.get("external_signal_label", ""),
+                "purchase_discipline_label": item.get("purchase_discipline_label", ""),
+                "purchase_discipline_score": float(item["purchase_discipline_score"]) if item.get("purchase_discipline_score") is not None else None,
+                "purchase_discipline_reason": item.get("purchase_discipline_reason", ""),
             }
         )
     return preview
@@ -950,6 +958,15 @@ def serialize_summary_data(run: EquityOptimizationRun, plan: dict, dashboard: di
         "weighted_stress_return_pct": float(plan.get("weighted_stress_return_pct", 0) or 0) if plan.get("weighted_stress_return_pct") is not None else None,
         "weighted_safety_score": float(plan.get("weighted_safety_score", 0) or 0) if plan.get("weighted_safety_score") is not None else None,
         "weighted_reliability_score": float(plan.get("weighted_reliability_score", 0) or 0) if plan.get("weighted_reliability_score") is not None else None,
+        "weighted_purchase_discipline_score": float(plan.get("weighted_purchase_discipline_score", 0) or 0) if plan.get("weighted_purchase_discipline_score") is not None else None,
+        "purchase_discipline_rows": [
+            {
+                **row,
+                "score": float(row["score"]) if row.get("score") is not None else None,
+                "holding_annualized_return_pct": float(row["holding_annualized_return_pct"]) if row.get("holding_annualized_return_pct") is not None else None,
+            }
+            for row in plan.get("purchase_discipline_rows", [])
+        ],
         "weighted_cycle_return_annual_pct": float(plan.get("weighted_cycle_return_annual_pct", 0) or 0) if plan.get("weighted_cycle_return_annual_pct") is not None else None,
         "weighted_cycle_return_5y_pct": float(plan.get("weighted_cycle_return_5y_pct", 0) or 0) if plan.get("weighted_cycle_return_5y_pct") is not None else None,
         "target_holding_annualized_return_pct": float(plan.get("target_holding_annualized_return_pct", 0) or 0) if plan.get("target_holding_annualized_return_pct") is not None else None,
@@ -1022,7 +1039,22 @@ def serialize_allocations_data(plan: dict) -> list[dict]:
                 "trade_alert_label": item["trade_alert_label"],
                 "reference_label": item["reference_label"],
                 "strategy_label": item.get("strategy_label", ""),
+                "base_optimization_score": float(item["base_optimization_score"]) if item.get("base_optimization_score") is not None else None,
                 "optimization_score": float(item["optimization_score"]),
+                "purchase_discipline_score": float(item["purchase_discipline_score"]) if item.get("purchase_discipline_score") is not None else None,
+                "purchase_discipline_label": item.get("purchase_discipline_label", ""),
+                "purchase_discipline_reason": item.get("purchase_discipline_reason", ""),
+                "purchase_discipline_adjustment_pct": float(item["purchase_discipline_adjustment_pct"]) if item.get("purchase_discipline_adjustment_pct") is not None else None,
+                "purchase_discipline": {
+                    **(item.get("purchase_discipline") or {}),
+                    "score": float((item.get("purchase_discipline") or {}).get("score")) if (item.get("purchase_discipline") or {}).get("score") is not None else None,
+                    "return_score": float((item.get("purchase_discipline") or {}).get("return_score")) if (item.get("purchase_discipline") or {}).get("return_score") is not None else None,
+                    "risk_score": float((item.get("purchase_discipline") or {}).get("risk_score")) if (item.get("purchase_discipline") or {}).get("risk_score") is not None else None,
+                    "memory_score": float((item.get("purchase_discipline") or {}).get("memory_score")) if (item.get("purchase_discipline") or {}).get("memory_score") is not None else None,
+                    "portfolio_fit_score": float((item.get("purchase_discipline") or {}).get("portfolio_fit_score")) if (item.get("purchase_discipline") or {}).get("portfolio_fit_score") is not None else None,
+                    "timing_score": float((item.get("purchase_discipline") or {}).get("timing_score")) if (item.get("purchase_discipline") or {}).get("timing_score") is not None else None,
+                    "adjustment_pct": float((item.get("purchase_discipline") or {}).get("adjustment_pct")) if (item.get("purchase_discipline") or {}).get("adjustment_pct") is not None else None,
+                },
                 "allocated_weight_pct": float(item["allocated_weight_pct"]),
                 "allocated_amount": float(item["allocated_amount"]),
                 "net_projected_return_pct": float(item["net_projected_return_pct"]),

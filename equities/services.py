@@ -107,6 +107,7 @@ OPTIMIZER_EXPECTATION_REVIEW_MAX_BONUS_PCT = Decimal("3.00")
 OPTIMIZER_EXPECTATION_REVIEW_MAX_PENALTY_PCT = Decimal("6.00")
 EXPECTATION_REVIEW_CORRECTION_MIN_POINTS = 3
 EXPECTATION_REVIEW_CORRECTION_MIN_ELAPSED_DAYS = 7
+PURCHASE_DISCIPLINE_TARGET_SCORE = Decimal("70.00")
 REFERENCE_CYCLE_TEMPLATE_RECENT_MONTHS = 18
 REFERENCE_CYCLE_TEMPLATE_MAX_MATCHES = 12
 
@@ -17165,6 +17166,301 @@ def build_optimizer_uncertainty_profile(
     }
 
 
+def score_optimizer_memory_quality(expectation_review_signal: dict | None) -> dict:
+    signal = expectation_review_signal or {}
+    feedback = ((signal.get("1y") or {}).get("reality_feedback") or {})
+    sample_count = int(feedback.get("sample_count") or 0)
+    if not feedback.get("available"):
+        return {
+            "score": Decimal("58.00"),
+            "sample_count": sample_count,
+            "label": "Sin memoria suficiente",
+            "reason": "Aun hay poca historia propia para premiar o penalizar el modelo.",
+        }
+
+    mean_absolute_error_pct = quantize_decimal(feedback.get("mean_absolute_error_pct"), "0.01") or ZERO
+    average_gap_pct = quantize_decimal(feedback.get("average_gap_pct"), "0.01") or ZERO
+    direction_hit_rate_pct = quantize_decimal(feedback.get("direction_hit_rate_pct"), "0.01") or Decimal("50.00")
+    score = clamp_decimal(
+        Decimal("68.00")
+        + (min(Decimal(sample_count), Decimal("18")) * Decimal("0.75"))
+        + ((direction_hit_rate_pct - Decimal("50.00")) * Decimal("0.18"))
+        - (mean_absolute_error_pct * Decimal("2.85"))
+        - (abs(average_gap_pct) * Decimal("1.25")),
+        Decimal("18.00"),
+        Decimal("92.00"),
+    )
+    if score >= Decimal("76.00"):
+        label = "Memoria fiable"
+        reason = "El historico del modelo acompana esta lectura."
+    elif score >= Decimal("58.00"):
+        label = "Memoria usable"
+        reason = "La memoria historica se usa, pero sin darle plena confianza."
+    else:
+        label = "Memoria penaliza"
+        reason = "Las desviaciones pasadas obligan a enfriar la recomendacion."
+    return {
+        "score": quantize_decimal(score),
+        "sample_count": sample_count,
+        "label": label,
+        "reason": reason,
+        "mean_absolute_error_pct": mean_absolute_error_pct,
+        "average_gap_pct": average_gap_pct,
+        "direction_hit_rate_pct": direction_hit_rate_pct,
+    }
+
+
+def build_purchase_discipline_portfolio_context(cards: list[dict]) -> dict:
+    sector_values: dict[str, Decimal] = defaultdict(lambda: ZERO)
+    owned_tickers = set()
+    owned_positions_count = 0
+    total_value = ZERO
+    for card in cards or []:
+        position = card.get("position")
+        if position is None or not getattr(position, "is_owned", False):
+            continue
+        owned_positions_count += 1
+        ticker = clean_ticker(getattr(position, "ticker", ""))
+        if ticker:
+            owned_tickers.add(ticker)
+        current_value = quantize_decimal(getattr(position, "current_value", None), "0.01") or ZERO
+        if current_value <= ZERO:
+            continue
+        sector_label = card.get("sector_label") or resolve_equity_sector_label(
+            company_name=getattr(position, "company_name", ""),
+            ticker=getattr(position, "ticker", ""),
+            quote_symbol=getattr(position, "quote_symbol", ""),
+        ) or "Sin sector"
+        sector_values[sector_label] += current_value
+        total_value += current_value
+    return {
+        "total_value": total_value,
+        "sector_values": dict(sector_values),
+        "owned_tickers": owned_tickers,
+        "owned_positions_count": owned_positions_count,
+    }
+
+
+def score_optimizer_portfolio_fit(candidate: dict, portfolio_context: dict | None) -> dict:
+    portfolio_context = portfolio_context or {}
+    position = candidate.get("position")
+    sector_label = candidate.get("sector_label") or "Sin sector"
+    total_value = quantize_decimal(portfolio_context.get("total_value"), "0.01") or ZERO
+    sector_value = quantize_decimal((portfolio_context.get("sector_values") or {}).get(sector_label), "0.01") or ZERO
+    ticker = clean_ticker(getattr(position, "ticker", ""))
+    owned_tickers = portfolio_context.get("owned_tickers") or set()
+    is_owned = bool(getattr(position, "is_owned", False))
+    sector_weight_pct = (sector_value / total_value) * ONE_HUNDRED if total_value > ZERO else ZERO
+    score = Decimal("72.00")
+    if is_owned or ticker in owned_tickers:
+        score += Decimal("5.00")
+    elif total_value <= ZERO:
+        score = Decimal("68.00")
+    elif sector_weight_pct <= Decimal("8.00"):
+        score += Decimal("7.00")
+    elif sector_weight_pct >= Decimal("30.00"):
+        score -= Decimal("18.00")
+    elif sector_weight_pct >= Decimal("22.00"):
+        score -= Decimal("10.00")
+    elif sector_weight_pct >= Decimal("15.00"):
+        score -= Decimal("4.00")
+
+    if portfolio_context.get("owned_positions_count", 0) <= 2 and not is_owned:
+        score += Decimal("4.00")
+    score = clamp_decimal(score, Decimal("25.00"), Decimal("90.00"))
+    if score >= Decimal("76.00"):
+        label = "Encaja bien"
+        reason = "Aporta diversificacion o refuerza una posicion ya controlada."
+    elif score >= Decimal("60.00"):
+        label = "Encaje neutro"
+        reason = "No mejora mucho la diversificacion, pero tampoco concentra en exceso."
+    else:
+        label = "Concentra cartera"
+        reason = "El sector ya pesa bastante y exige mas margen de seguridad."
+    return {
+        "score": quantize_decimal(score),
+        "label": label,
+        "reason": reason,
+        "sector_weight_pct": quantize_decimal(sector_weight_pct),
+    }
+
+
+def score_optimizer_return_quality(candidate: dict) -> dict:
+    primary_signal_pct = quantize_decimal(candidate.get("primary_signal_pct"), "0.01") or ZERO
+    scenario_expected_return_pct = quantize_decimal(candidate.get("scenario_expected_return_pct"), "0.01")
+    holding_gap_pct = quantize_decimal(candidate.get("annualized_target_gap_pct"), "0.01")
+    score = Decimal("50.00") + (primary_signal_pct * Decimal("2.05"))
+    if scenario_expected_return_pct is not None:
+        score += scenario_expected_return_pct * Decimal("0.45")
+    if holding_gap_pct is not None:
+        score += holding_gap_pct * Decimal("0.35")
+    score = clamp_decimal(score, Decimal("18.00"), Decimal("94.00"))
+    if score >= Decimal("76.00"):
+        label = "Retorno atractivo"
+        reason = "El retorno robusto supera claramente el coste de oportunidad."
+    elif score >= Decimal("60.00"):
+        label = "Retorno correcto"
+        reason = "El retorno acompana, pero no permite relajar otros filtros."
+    else:
+        label = "Retorno justo"
+        reason = "La rentabilidad esperada exige prudencia."
+    return {"score": quantize_decimal(score), "label": label, "reason": reason}
+
+
+def score_optimizer_risk_quality(candidate: dict) -> dict:
+    safety_score = quantize_decimal(candidate.get("safety_score"), "0.01") or ZERO
+    reliability_score = quantize_decimal(candidate.get("reliability_score"), "0.01") or ZERO
+    worst_return_pct = quantize_decimal(candidate.get("low_return_pct"), "0.01") or ZERO
+    stress_return_pct = quantize_decimal(candidate.get("downside_stress_return_pct"), "0.01") or worst_return_pct
+    volatility_pct = quantize_decimal(candidate.get("annualized_volatility_pct"), "0.01") or Decimal("18.00")
+    uncertainty_penalty_pct = quantize_decimal(candidate.get("uncertainty_penalty_pct"), "0.01") or ZERO
+    score = (
+        (safety_score * Decimal("0.34"))
+        + (reliability_score * Decimal("0.32"))
+        + (clamp_decimal(worst_return_pct + Decimal("20.00"), ZERO, Decimal("35.00")) * Decimal("0.80"))
+        + (clamp_decimal(stress_return_pct + Decimal("18.00"), ZERO, Decimal("32.00")) * Decimal("0.45"))
+        - (max(volatility_pct - Decimal("14.00"), ZERO) * Decimal("0.70"))
+        - (uncertainty_penalty_pct * Decimal("3.50"))
+        + Decimal("10.00")
+    )
+    score = clamp_decimal(score, Decimal("15.00"), Decimal("94.00"))
+    if score >= Decimal("76.00"):
+        label = "Riesgo controlado"
+        reason = "Seguridad, fiabilidad y peor escenario son compatibles con compra."
+    elif score >= Decimal("60.00"):
+        label = "Riesgo medio"
+        reason = "El riesgo es asumible solo si el retorno y el timing compensan."
+    else:
+        label = "Riesgo alto"
+        reason = "La proteccion es floja para abrir compra con conviccion."
+    return {"score": quantize_decimal(score), "label": label, "reason": reason}
+
+
+def score_optimizer_timing_quality(candidate: dict) -> dict:
+    purchase_timing = candidate.get("purchase_timing") or {}
+    holding_annualized_return_pct = quantize_decimal(candidate.get("holding_annualized_return_pct"), "0.01")
+    target_return_pct = quantize_decimal(candidate.get("annualized_target_return_pct"), "0.01") or OPTIMIZER_TARGET_HOLDING_ANNUALIZED_RETURN_PCT
+    score = Decimal("58.00")
+    if holding_annualized_return_pct is not None:
+        score = Decimal("62.00") + ((holding_annualized_return_pct - target_return_pct) * Decimal("0.95"))
+    if purchase_timing.get("available") and purchase_timing.get("mode_label") == "Comprar ya":
+        score += Decimal("5.00")
+    elif purchase_timing.get("available") and purchase_timing.get("mode_label") == "Entrada gradual":
+        score += Decimal("2.00")
+    elif purchase_timing.get("available") and purchase_timing.get("mode_label") == "Esperar correccion":
+        score -= Decimal("3.00")
+    score = clamp_decimal(score, Decimal("20.00"), Decimal("92.00"))
+    if score >= Decimal("76.00"):
+        label = "Timing favorable"
+        reason = "La ventana tactica permite actuar sin esperar mucho."
+    elif score >= Decimal("60.00"):
+        label = "Timing aceptable"
+        reason = "Se puede comprar por tramos o esperar precio."
+    else:
+        label = "Timing debil"
+        reason = "La entrada no esta clara todavia."
+    return {"score": quantize_decimal(score), "label": label, "reason": reason}
+
+
+def build_optimizer_purchase_discipline_review(candidate: dict, portfolio_context: dict | None = None) -> dict:
+    return_quality = score_optimizer_return_quality(candidate)
+    risk_quality = score_optimizer_risk_quality(candidate)
+    memory_quality = score_optimizer_memory_quality(candidate.get("expectation_review_signal") or {})
+    portfolio_fit = score_optimizer_portfolio_fit(candidate, portfolio_context)
+    timing_quality = score_optimizer_timing_quality(candidate)
+    score = (
+        (return_quality["score"] * Decimal("0.30"))
+        + (risk_quality["score"] * Decimal("0.25"))
+        + (memory_quality["score"] * Decimal("0.20"))
+        + (portfolio_fit["score"] * Decimal("0.15"))
+        + (timing_quality["score"] * Decimal("0.10"))
+    )
+    score = clamp_decimal(score, Decimal("10.00"), Decimal("95.00"))
+    weakest = min(
+        [
+            ("retorno", return_quality),
+            ("riesgo", risk_quality),
+            ("memoria", memory_quality),
+            ("cartera", portfolio_fit),
+            ("timing", timing_quality),
+        ],
+        key=lambda item: item[1]["score"],
+    )
+    strongest = max(
+        [
+            ("retorno", return_quality),
+            ("riesgo", risk_quality),
+            ("memoria", memory_quality),
+            ("cartera", portfolio_fit),
+            ("timing", timing_quality),
+        ],
+        key=lambda item: item[1]["score"],
+    )
+    if score >= Decimal("80.00"):
+        label = "Comprar"
+        action_label = "Comprar ahora" if (candidate.get("purchase_timing") or {}).get("mode_label") == "Comprar ya" else "Comprar por tramos"
+        tone = "buy"
+        reason = strongest[1]["reason"]
+    elif score >= PURCHASE_DISCIPLINE_TARGET_SCORE:
+        label = "Comprar por tramos"
+        action_label = "Comprar por tramos"
+        tone = "buy"
+        reason = strongest[1]["reason"]
+    elif score >= Decimal("58.00"):
+        label = "Vigilar precio"
+        action_label = "Esperar"
+        tone = "watch"
+        reason = weakest[1]["reason"]
+    else:
+        label = "No comprar"
+        action_label = "Descartar"
+        tone = "warn"
+        reason = weakest[1]["reason"]
+    adjustment_pct = clamp_decimal((score - PURCHASE_DISCIPLINE_TARGET_SCORE) * Decimal("0.055"), Decimal("-2.75"), Decimal("2.00"))
+    return {
+        "available": True,
+        "score": quantize_decimal(score),
+        "label": label,
+        "action_label": action_label,
+        "tone": tone,
+        "reason": reason,
+        "weakest_key": weakest[0],
+        "strongest_key": strongest[0],
+        "adjustment_pct": quantize_decimal(adjustment_pct),
+        "return_score": return_quality["score"],
+        "risk_score": risk_quality["score"],
+        "memory_score": memory_quality["score"],
+        "portfolio_fit_score": portfolio_fit["score"],
+        "timing_score": timing_quality["score"],
+        "memory_label": memory_quality["label"],
+        "portfolio_fit_label": portfolio_fit["label"],
+        "timing_label": timing_quality["label"],
+    }
+
+
+def apply_purchase_discipline_to_optimizer_candidates(
+    candidates: list[dict],
+    portfolio_context: dict | None = None,
+) -> list[dict]:
+    for candidate in candidates:
+        if candidate.get("purchase_discipline_applied"):
+            continue
+        base_score = quantize_decimal(candidate.get("optimization_score"), "0.01") or ZERO
+        discipline = build_optimizer_purchase_discipline_review(candidate, portfolio_context)
+        candidate["base_optimization_score"] = base_score
+        candidate["purchase_discipline"] = discipline
+        candidate["purchase_discipline_score"] = discipline.get("score")
+        candidate["purchase_discipline_label"] = discipline.get("label", "")
+        candidate["purchase_discipline_reason"] = discipline.get("reason", "")
+        candidate["purchase_discipline_adjustment_pct"] = discipline.get("adjustment_pct") or ZERO
+        candidate["optimization_score"] = quantize_decimal(
+            base_score + (discipline.get("adjustment_pct") or ZERO),
+            "0.01",
+        )
+        candidate["purchase_discipline_applied"] = True
+    return candidates
+
+
 def build_equity_optimizer_candidate(card: dict, strategy_mode: str = OPTIMIZER_STRATEGY_12M_PRIMARY) -> dict | None:
     projection = card.get("projection") or {}
     effective_projection = resolve_effective_projection_metrics(card)
@@ -17614,6 +17910,7 @@ def rank_optimizer_candidates(candidates: list[dict]) -> list[dict]:
             item.get("low_return_pct") if item.get("low_return_pct") is not None else Decimal("-9999"),
             -(item.get("annualized_volatility_pct") or Decimal("9999")),
             -(item.get("uncertainty_penalty_pct") or Decimal("9999")),
+            item.get("purchase_discipline_score") or ZERO,
             item["primary_signal_pct"],
             item["secondary_signal_pct"],
             item.get("scenario_expected_return_pct") if item.get("scenario_expected_return_pct") is not None else Decimal("-9999"),
@@ -18145,7 +18442,11 @@ def build_equity_allocation_plan(
         }
 
     company_cap_amount = (total_investment * max_company_pct) / Decimal("100")
-    candidates = [candidate for candidate in (build_equity_optimizer_candidate(card, strategy["mode"]) for card in history_cards) if candidate]
+    portfolio_context = build_purchase_discipline_portfolio_context(history_cards)
+    candidates = apply_purchase_discipline_to_optimizer_candidates(
+        [candidate for candidate in (build_equity_optimizer_candidate(card, strategy["mode"]) for card in history_cards) if candidate],
+        portfolio_context,
+    )
 
     if not candidates:
         return {
@@ -18416,7 +18717,13 @@ def build_equity_allocation_plan(
                 "reliability_label": candidate["reliability_label"],
                 "reliability_score": candidate["reliability_score"],
                 "safety_score": candidate["safety_score"],
+                "base_optimization_score": candidate.get("base_optimization_score", candidate["optimization_score"]),
                 "optimization_score": candidate["optimization_score"],
+                "purchase_discipline": candidate.get("purchase_discipline") or {},
+                "purchase_discipline_score": candidate.get("purchase_discipline_score"),
+                "purchase_discipline_label": candidate.get("purchase_discipline_label", ""),
+                "purchase_discipline_reason": candidate.get("purchase_discipline_reason", ""),
+                "purchase_discipline_adjustment_pct": candidate.get("purchase_discipline_adjustment_pct", ZERO),
                 "trade_alert_label": candidate["trade_alert_label"],
                 "trade_alert_tone": candidate["trade_alert_tone"],
                 "external_signal_label": candidate["external_signal_label"],
@@ -18501,6 +18808,19 @@ def build_equity_allocation_plan(
     )
     weighted_reliability_score = (
         sum((item["reliability_score"] * item["allocated_amount"] for item in allocations), ZERO) / allocated_amount_total
+        if allocated_amount_total
+        else None
+    )
+    weighted_purchase_discipline_score = (
+        sum(
+            (
+                ((item.get("purchase_discipline_score") or ZERO) * item["allocated_amount"])
+                for item in allocations
+                if item.get("purchase_discipline_score") is not None
+            ),
+            ZERO,
+        )
+        / allocated_amount_total
         if allocated_amount_total
         else None
     )
@@ -18741,6 +19061,21 @@ def build_equity_allocation_plan(
 
     top_pick = allocations[0] if allocations else None
     top_pick_purchase_timing = dict(top_pick.get("purchase_timing") or {}) if top_pick else {}
+    purchase_discipline_rows = [
+        {
+            "rank": item["rank"],
+            "ticker": item["position"].ticker,
+            "company_name": item["position"].company_name,
+            "label": item.get("purchase_discipline_label") or "",
+            "action_label": (item.get("purchase_discipline") or {}).get("action_label", ""),
+            "tone": (item.get("purchase_discipline") or {}).get("tone", ""),
+            "score": item.get("purchase_discipline_score"),
+            "reason": item.get("purchase_discipline_reason") or "",
+            "buy_window_label": (item.get("purchase_timing") or {}).get("buy_window_label", ""),
+            "holding_annualized_return_pct": (item.get("purchase_timing") or {}).get("holding_annualized_return_pct"),
+        }
+        for item in allocations[:5]
+    ]
     return {
         "available": bool(allocations),
         "reason": reason,
@@ -18769,6 +19104,8 @@ def build_equity_allocation_plan(
         "weighted_stress_return_pct": weighted_stress_return_pct,
         "weighted_safety_score": weighted_safety_score,
         "weighted_reliability_score": weighted_reliability_score,
+        "weighted_purchase_discipline_score": weighted_purchase_discipline_score,
+        "purchase_discipline_rows": purchase_discipline_rows,
         "weighted_cycle_return_annual_pct": weighted_cycle_return_annual_pct,
         "weighted_cycle_return_5y_pct": weighted_cycle_return_5y_pct,
         "target_holding_annualized_return_pct": target_holding_annualized_return_pct,

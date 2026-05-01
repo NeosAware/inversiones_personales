@@ -133,6 +133,7 @@
           <div class="card box"><span>Compras que cumplen</span><strong>{{ plan.allocations_meeting_target_count|default:0 }}/{{ plan.allocations_with_timing_count|default:0 }}</strong><small>{% if plan.weighted_target_compliance_pct is not None %}{{ plan.weighted_target_compliance_pct|floatformat:0 }} % del capital cumple el objetivo.{% else %}Sin tramos tacticos suficientes para medirlo.{% endif %}</small></div>
           <div class="card box"><span>Peor escenario</span><strong class="{% if plan.weighted_low_return_pct is not None and plan.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if plan.weighted_low_return_pct is not None %}{{ plan.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Lectura conservadora 12M.</small></div>
           <div class="card box"><span>Estres escenarios</span><strong class="{% if plan.weighted_stress_return_pct is not None and plan.weighted_stress_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if plan.weighted_stress_return_pct is not None %}{{ plan.weighted_stress_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Bajista ponderado.</small></div>
+          <div class="card box"><span>Disciplina compra</span><strong>{% if plan.weighted_purchase_discipline_score is not None %}{{ plan.weighted_purchase_discipline_score|floatformat:0 }}/100{% else %}-{% endif %}</strong><small>Retorno, riesgo, memoria, cartera y timing.</small></div>
           <div class="card box"><span>Ciclo 5A</span><strong>{% if plan.weighted_cycle_return_annual_pct is not None %}{{ plan.weighted_cycle_return_annual_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>{% if plan.weighted_cycle_return_5y_pct is not None %}Escenario acumulado {{ plan.weighted_cycle_return_5y_pct|floatformat:1 }} %.{% else %}Lectura larga usada como apoyo secundario.{% endif %}</small></div>
           <div class="card box"><span>Penalizacion shock</span><strong>{% if plan.weighted_uncertainty_penalty_pct is not None %}{{ plan.weighted_uncertainty_penalty_pct|floatformat:2 }} pts{% else %}-{% endif %}</strong><small>{{ plan.shock_adjusted_allocations_count|default:0 }} valor(es) ajustados.</small></div>
           <div class="card box"><span>Caja en reserva</span><strong>{{ plan.cash_reserve_amount|floatformat:0 }} EUR</strong><small>Capital no asignado por filtros de calidad.</small></div>
@@ -169,7 +170,7 @@
         <h2>Ranking Bruto Antes De Restricciones</h2>
         <div class="card">
           <table>
-            <thead><tr><th>Orden bruto</th><th>Empresa</th><th>Sector</th><th>Alerta</th><th>Retorno</th><th>Seguridad</th></tr></thead>
+            <thead><tr><th>Orden bruto</th><th>Empresa</th><th>Sector</th><th>Alerta</th><th>Disciplina</th><th>Retorno</th><th>Seguridad</th></tr></thead>
             <tbody>
               {% for item in run.progress_data.preview_candidates %}
                 <tr>
@@ -177,6 +178,7 @@
                   <td><strong>{{ item.company_name }}</strong><br><span class="muted">{{ item.ticker }}</span></td>
                   <td>{{ item.sector_label|default:"-" }}</td>
                   <td>{{ item.trade_alert_label|default:"-" }}</td>
+                  <td>{% if item.purchase_discipline_label %}<strong>{{ item.purchase_discipline_label }}</strong>{% if item.purchase_discipline_score is not None %}<br><span class="muted">{{ item.purchase_discipline_score|floatformat:0 }}/100</span>{% endif %}<br><span class="muted">{{ item.purchase_discipline_reason }}</span>{% else %}-{% endif %}</td>
                   <td>{% if item.net_return_pct is not None %}{{ item.net_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
                   <td>{% if item.safety_score is not None %}{{ item.safety_score|floatformat:0 }}/100{% else %}-{% endif %}</td>
                 </tr>
@@ -188,6 +190,27 @@
     {% endif %}
 
     {% if plan.available %}
+      {% if plan.purchase_discipline_rows %}
+        <section class="section">
+          <h2>Comite de compra</h2>
+          <div class="card">
+            <table>
+              <thead><tr><th>Orden</th><th>Empresa</th><th>Decision</th><th>Motivo</th><th>Entrada</th></tr></thead>
+              <tbody>
+                {% for row in plan.purchase_discipline_rows %}
+                  <tr>
+                    <td>{{ row.rank }}</td>
+                    <td><strong>{{ row.company_name }}</strong><br><span class="muted">{{ row.ticker }}</span></td>
+                    <td><strong>{{ row.label }}</strong>{% if row.score is not None %}<br><span class="muted">{{ row.score|floatformat:0 }}/100</span>{% endif %}</td>
+                    <td>{{ row.reason }}</td>
+                    <td>{% if row.buy_window_label %}{{ row.buy_window_label }}{% else %}-{% endif %}{% if row.holding_annualized_return_pct is not None %}<br><span class="muted">{{ row.holding_annualized_return_pct|floatformat:1 }} %/a</span>{% endif %}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      {% endif %}
       <section class="section">
         <h2>Vision global</h2>
         <div class="grid cols-3">
@@ -201,7 +224,7 @@
         <h2>Tabla de asignacion</h2>
         <div class="card">
           <table>
-            <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Plan 12M</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Retorno robusto</th><th>Peor escenario</th><th>Shock</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
+            <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Disciplina</th><th>Plan 12M</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Retorno robusto</th><th>Peor escenario</th><th>Shock</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
             <tbody>
               {% for item in plan.allocations %}
                 <tr>
@@ -210,6 +233,7 @@
                   <td>{{ item.sector_label }}</td>
                   <td>{{ item.status_label }}</td>
                   <td>{{ item.trade_alert_label }}</td>
+                  <td>{% if item.purchase_discipline_label %}<strong>{{ item.purchase_discipline_label }}</strong>{% if item.purchase_discipline_score is not None %}<br><span class="muted">{{ item.purchase_discipline_score|floatformat:0 }}/100</span>{% endif %}<br><span class="muted">{{ item.purchase_discipline_reason }}</span>{% else %}-{% endif %}</td>
                   <td>{% if item.purchase_timing.available %}<strong>{% if item.purchase_timing.buy_window_label %}{{ item.purchase_timing.buy_window_label }}{% elif item.purchase_timing.buy_date %}{{ item.purchase_timing.buy_date|date:"Y-m-d" }}{% else %}-{% endif %}</strong><br><span class="muted">Entrada {% if item.purchase_timing.buy_price is not None %}{{ item.purchase_timing.buy_price|floatformat:4 }} EUR{% else %}-{% endif %}{% if item.purchase_timing.mode_label %} | {{ item.purchase_timing.mode_label }}{% endif %}</span><br><span class="muted">Salida {% if item.purchase_timing.exit_window_label %}{{ item.purchase_timing.exit_window_label }}{% elif item.purchase_timing.expected_exit_window_label %}{{ item.purchase_timing.expected_exit_window_label }}{% elif item.purchase_timing.exit_date %}{{ item.purchase_timing.exit_date }}{% elif item.purchase_timing.expected_exit_date %}{{ item.purchase_timing.expected_exit_date }}{% else %}-{% endif %}{% if item.purchase_timing.exit_price is not None %} | {{ item.purchase_timing.exit_price|floatformat:4 }} EUR{% elif item.purchase_timing.expected_exit_price is not None %} | {{ item.purchase_timing.expected_exit_price|floatformat:4 }} EUR{% endif %}</span><br><span class="muted">{% if item.purchase_timing.holding_annualized_return_pct is not None %}{{ item.purchase_timing.holding_annualized_return_pct|floatformat:1 }} %/a{% elif item.purchase_timing.interval_return_pct is not None %}{{ item.purchase_timing.interval_return_pct|floatformat:1 }} %{% elif item.purchase_timing.expected_trade_return_pct is not None %}{{ item.purchase_timing.expected_trade_return_pct|floatformat:1 }} %{% else %}-{% endif %}{% if item.purchase_timing.interval_return_pct is not None %} | total {{ item.purchase_timing.interval_return_pct|floatformat:1 }} %{% elif item.purchase_timing.expected_trade_return_pct is not None %} | total {{ item.purchase_timing.expected_trade_return_pct|floatformat:1 }} %{% endif %}{% if item.purchase_timing.holding_months %} | {{ item.purchase_timing.holding_months }}M{% elif item.purchase_timing.expected_holding_months %} | {{ item.purchase_timing.expected_holding_months }}M{% endif %}</span>{% else %}<span class="muted">Sin ventana clara</span>{% endif %}</td>
                   <td>{{ item.external_signal_label }}{% if item.external_signal_score %}<br><span class="muted">{% if item.external_signal_score > 0 %}+{% endif %}{{ item.external_signal_score|floatformat:2 }}</span>{% endif %}</td>
                   <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>

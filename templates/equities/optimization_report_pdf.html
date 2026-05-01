@@ -61,7 +61,8 @@
       <tr>
         <td><strong>Peor escenario</strong><br>{% if plan.weighted_low_return_pct is not None %}{{ plan.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
         <td><strong>Ciclo 5A</strong><br>{% if plan.weighted_cycle_return_annual_pct is not None %}{{ plan.weighted_cycle_return_annual_pct|floatformat:2 }} % anual{% else %}-{% endif %}{% if plan.weighted_cycle_return_5y_pct is not None %}<br><span class="small">{{ plan.weighted_cycle_return_5y_pct|floatformat:1 }} % acumulado</span>{% endif %}</td>
-        <td colspan="2"><strong>Caja en reserva</strong><br>{{ plan.cash_reserve_amount|floatformat:0 }} EUR{% if plan.annualized_target_note %}<br><span class="small">{{ plan.annualized_target_note }}</span>{% endif %}</td>
+        <td><strong>Disciplina compra</strong><br>{% if plan.weighted_purchase_discipline_score is not None %}{{ plan.weighted_purchase_discipline_score|floatformat:0 }}/100{% else %}-{% endif %}</td>
+        <td><strong>Caja en reserva</strong><br>{{ plan.cash_reserve_amount|floatformat:0 }} EUR{% if plan.annualized_target_note %}<br><span class="small">{{ plan.annualized_target_note }}</span>{% endif %}</td>
       </tr>
       <tr>
         <td colspan="4"><strong>Sectores permitidos</strong><br>{% if plan.selected_sectors %}{{ plan.selected_sectors|join:", " }}{% else %}Todos los sectores del IBEX{% endif %}</td>
@@ -85,6 +86,25 @@
   </div>
 
   {% if plan.available %}
+    {% if plan.purchase_discipline_rows %}
+      <h2>Comite de compra</h2>
+      <table class="alloc-table">
+        <thead>
+          <tr><th>Orden</th><th>Empresa</th><th>Decision</th><th>Motivo</th><th>Entrada</th></tr>
+        </thead>
+        <tbody>
+          {% for row in plan.purchase_discipline_rows %}
+            <tr>
+              <td>{{ row.rank }}</td>
+              <td><strong>{{ row.company_name }}</strong><br><span class="small">{{ row.ticker }}</span></td>
+              <td><strong>{{ row.label }}</strong>{% if row.score is not None %}<br><span class="small">{{ row.score|floatformat:0 }}/100</span>{% endif %}</td>
+              <td>{{ row.reason }}</td>
+              <td>{% if row.buy_window_label %}{{ row.buy_window_label }}{% else %}-{% endif %}{% if row.holding_annualized_return_pct is not None %}<br><span class="small">{{ row.holding_annualized_return_pct|floatformat:1 }} %/a</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
     {% if weight_chart_svg %}
       <div class="chart-block">
         <div class="chart-title">Peso por valor (%)</div>
@@ -111,6 +131,7 @@
           <th>Orden</th>
           <th>Empresa</th>
           <th>Sector</th>
+          <th>Disciplina</th>
           <th>Plan 12M</th>
           <th>Peso</th>
           <th>Importe</th>
@@ -125,6 +146,7 @@
             <td>{{ item.rank }}</td>
             <td><strong>{{ item.position.company_name }}</strong><br><span class="muted">{{ item.position.ticker }} | {{ item.trade_alert_label }}{% if item.cycle_return_annual_pct is not None %} | 5A anual {{ item.cycle_return_annual_pct|floatformat:2 }} %{% endif %}</span></td>
             <td>{{ item.sector_label }}</td>
+            <td>{% if item.purchase_discipline_label %}{{ item.purchase_discipline_label }}{% if item.purchase_discipline_score is not None %}<br><span class="small">{{ item.purchase_discipline_score|floatformat:0 }}/100</span>{% endif %}<br><span class="small">{{ item.purchase_discipline_reason }}</span>{% else %}-{% endif %}</td>
             <td>{% if item.purchase_timing.available %}{% if item.purchase_timing.buy_window_label %}{{ item.purchase_timing.buy_window_label }}{% elif item.purchase_timing.buy_date %}{{ item.purchase_timing.buy_date|date:"Y-m-d" }}{% else %}-{% endif %}<br><span class="small">E {% if item.purchase_timing.buy_price is not None %}{{ item.purchase_timing.buy_price|floatformat:4 }} EUR{% endif %}</span><br><span class="small">S {% if item.purchase_timing.exit_window_label %}{{ item.purchase_timing.exit_window_label }}{% elif item.purchase_timing.expected_exit_window_label %}{{ item.purchase_timing.expected_exit_window_label }}{% elif item.purchase_timing.exit_date %}{{ item.purchase_timing.exit_date }}{% elif item.purchase_timing.expected_exit_date %}{{ item.purchase_timing.expected_exit_date }}{% else %}-{% endif %}{% if item.purchase_timing.exit_price is not None %} | {{ item.purchase_timing.exit_price|floatformat:4 }} EUR{% elif item.purchase_timing.expected_exit_price is not None %} | {{ item.purchase_timing.expected_exit_price|floatformat:4 }} EUR{% endif %}</span><br><span class="small">{% if item.purchase_timing.holding_annualized_return_pct is not None %}{{ item.purchase_timing.holding_annualized_return_pct|floatformat:1 }} %/a{% elif item.purchase_timing.interval_return_pct is not None %}{{ item.purchase_timing.interval_return_pct|floatformat:1 }} %{% endif %}</span>{% else %}-{% endif %}</td>
             <td>{{ item.allocated_weight_pct|floatformat:1 }} %</td>
             <td>{{ item.allocated_amount|floatformat:0 }} EUR</td>

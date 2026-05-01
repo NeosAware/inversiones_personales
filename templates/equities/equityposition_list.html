@@ -2759,6 +2759,7 @@
                 <div class="equity-box"><span>Peor escenario</span><strong class="{% if latest_completed_optimization.summary_data.weighted_low_return_pct is not None and latest_completed_optimization.summary_data.weighted_low_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if latest_completed_optimization.summary_data.weighted_low_return_pct is not None %}{{ latest_completed_optimization.summary_data.weighted_low_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong></div>
                 <div class="equity-box"><span>Seguridad media</span><strong>{% if latest_completed_optimization.summary_data.weighted_safety_score is not None %}{{ latest_completed_optimization.summary_data.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
                 <div class="equity-box"><span>Fiabilidad media</span><strong>{% if latest_completed_optimization.summary_data.weighted_reliability_score is not None %}{{ latest_completed_optimization.summary_data.weighted_reliability_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
+                <div class="equity-box"><span>Disciplina compra</span><strong>{% if latest_completed_optimization.summary_data.weighted_purchase_discipline_score is not None %}{{ latest_completed_optimization.summary_data.weighted_purchase_discipline_score|floatformat:0 }}/100{% else %}-{% endif %}</strong><small>Retorno, riesgo, memoria, cartera y timing.</small></div>
                 <div class="equity-box"><span>Dividendos netos</span><strong>{{ latest_completed_optimization.summary_data.net_dividend_income_total|floatformat:0 }} EUR</strong></div>
                 <div class="equity-box"><span>Costes totales</span><strong>{{ latest_completed_optimization.summary_data.annual_cost_total|floatformat:0 }} + {{ latest_completed_optimization.summary_data.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Mantenimiento anual + compra/venta.</small></div>
                 <div class="equity-box"><span>Caja en reserva</span><strong>{{ latest_completed_optimization.summary_data.cash_reserve_amount|floatformat:0 }} EUR</strong></div>
@@ -2778,13 +2779,21 @@
                 </div>
               {% endif %}
               {% include "equities/_optimization_purchase_timeline.html" %}
+              {% if latest_completed_optimization.summary_data.purchase_discipline_rows %}
+                <div class="equity-compact-note" style="margin-top:16px;">
+                  <strong style="display:block; margin-bottom:8px;">Comite de compra</strong>
+                  {% for row in latest_completed_optimization.summary_data.purchase_discipline_rows|slice:":3" %}
+                    <p style="margin:0 0 8px;"><strong>{{ row.ticker }}</strong> · {{ row.label }}{% if row.score is not None %} {{ row.score|floatformat:0 }}/100{% endif %}. {{ row.reason }}{% if row.buy_window_label %} Entrada: {{ row.buy_window_label }}.{% endif %}</p>
+                  {% endfor %}
+                </div>
+              {% endif %}
               <div class="equity-compact-note" style="margin-top:16px;">
                 El <strong>ranking bruto</strong> y la <strong>cartera final</strong> no tienen por que coincidir. El ranking solo ordena ideas por fuerza estadistica; la cartera final ya aplica limites de peso, maximo de empresas, diversificacion sectorial, costes y caja en reserva.
               </div>
               {% if latest_completed_optimization.progress_data.preview_candidates %}
                 <div class="equity-table-wrap" style="margin-top:18px;">
                   <table>
-                    <thead><tr><th>Orden bruto</th><th>Empresa</th><th>Sector</th><th>Alerta</th><th>Retorno</th><th>Seguridad</th></tr></thead>
+                    <thead><tr><th>Orden bruto</th><th>Empresa</th><th>Sector</th><th>Alerta</th><th>Disciplina</th><th>Retorno</th><th>Seguridad</th></tr></thead>
                     <tbody>
                       {% for item in latest_completed_optimization.progress_data.preview_candidates %}
                         <tr>
@@ -2792,6 +2801,7 @@
                           <td><strong>{{ item.company_name }}</strong><br><span class="metric-sub">{{ item.ticker }}</span></td>
                           <td>{{ item.sector_label|default:"-" }}</td>
                           <td>{{ item.trade_alert_label|default:"-" }}</td>
+                          <td>{% if item.purchase_discipline_label %}<strong>{{ item.purchase_discipline_label }}</strong>{% if item.purchase_discipline_score is not None %}<br><span class="metric-sub">{{ item.purchase_discipline_score|floatformat:0 }}/100</span>{% endif %}<br><span class="metric-sub">{{ item.purchase_discipline_reason }}</span>{% else %}-{% endif %}</td>
                           <td>{% if item.net_return_pct is not None %}{{ item.net_return_pct|floatformat:2 }} %{% else %}-{% endif %}</td>
                           <td>{% if item.safety_score is not None %}{{ item.safety_score|floatformat:0 }}/100{% else %}-{% endif %}</td>
                         </tr>
@@ -2803,7 +2813,7 @@
               {% if latest_completed_optimization.allocations_data %}
                 <div class="equity-table-wrap" style="margin-top:18px;">
                   <table>
-                    <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Plan 12M</th><th>Hoy</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
+                    <thead><tr><th>Orden</th><th>Empresa</th><th>Sector</th><th>Estado</th><th>Alerta</th><th>Disciplina</th><th>Referencia</th><th>Plan 12M</th><th>Hoy</th><th>Prensa</th><th>Peso</th><th>Importe</th><th>Retorno neto</th><th>Peor escenario</th><th>Dividendos netos</th><th>Costes</th></tr></thead>
                     <tbody>
                       {% for item in latest_completed_optimization.allocations_data %}
                         <tr>
@@ -2812,6 +2822,7 @@
                           <td>{{ item.sector_label }}</td>
                           <td>{{ item.status_label }}</td>
                           <td>{{ item.trade_alert_label }}</td>
+                          <td>{% if item.purchase_discipline_label %}<strong>{{ item.purchase_discipline_label }}</strong>{% if item.purchase_discipline_score is not None %}<br><span class="metric-sub">{{ item.purchase_discipline_score|floatformat:0 }}/100</span>{% endif %}<br><span class="metric-sub">{{ item.purchase_discipline_reason }}</span>{% else %}-{% endif %}</td>
                           <td>{{ item.reference_label }}</td>
                           <td>
                             {% if item.purchase_timing.available %}
@@ -2900,6 +2911,7 @@
                   <div class="equity-box"><span>Estres escenarios</span><strong class="{% if optimizer_plan.weighted_stress_return_pct is not None and optimizer_plan.weighted_stress_return_pct >= 0 %}good{% else %}warn{% endif %}">{% if optimizer_plan.weighted_stress_return_pct is not None %}{{ optimizer_plan.weighted_stress_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong><small>Caso bajista ponderado.</small></div>
                   <div class="equity-box"><span>Seguridad media</span><strong>{% if optimizer_plan.weighted_safety_score is not None %}{{ optimizer_plan.weighted_safety_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
                   <div class="equity-box"><span>Fiabilidad media</span><strong>{% if optimizer_plan.weighted_reliability_score is not None %}{{ optimizer_plan.weighted_reliability_score|floatformat:0 }}/100{% else %}-{% endif %}</strong></div>
+                  <div class="equity-box"><span>Disciplina compra</span><strong>{% if optimizer_plan.weighted_purchase_discipline_score is not None %}{{ optimizer_plan.weighted_purchase_discipline_score|floatformat:0 }}/100{% else %}-{% endif %}</strong><small>Resumen compacto del comite.</small></div>
                   <div class="equity-box"><span>Penalizacion shock</span><strong>{% if optimizer_plan.weighted_uncertainty_penalty_pct is not None %}{{ optimizer_plan.weighted_uncertainty_penalty_pct|floatformat:2 }} pts{% else %}-{% endif %}</strong><small>{{ optimizer_plan.shock_adjusted_allocations_count|default:0 }} valor(es) ajustados.</small></div>
                   <div class="equity-box"><span>Dividendos netos</span><strong>{{ optimizer_plan.net_dividend_income_total|floatformat:0 }} EUR</strong></div>
                   <div class="equity-box"><span>Costes totales</span><strong>{{ optimizer_plan.annual_cost_total|floatformat:0 }} + {{ optimizer_plan.roundtrip_cost_total|floatformat:0 }} EUR</strong><small>Mantenimiento anual + compra/venta.</small></div>
@@ -2915,6 +2927,14 @@
                   {% if optimizer_plan.material_event_allocations_count %} Hay {{ optimizer_plan.material_event_allocations_count }} valor(es) con ajuste expreso por evento material.{% endif %}
                   {% if optimizer_plan.external_signal_used_count %} La version rapida ya integra {{ optimizer_plan.external_signal_used_count }} senales externas recientes.{% endif %}
                 </div>
+                {% if optimizer_plan.purchase_discipline_rows %}
+                  <div class="equity-compact-note" style="margin-top:16px;">
+                    <strong style="display:block; margin-bottom:8px;">Comite de compra</strong>
+                    {% for row in optimizer_plan.purchase_discipline_rows|slice:":3" %}
+                      <p style="margin:0 0 8px;"><strong>{{ row.ticker }}</strong> · {{ row.label }}{% if row.score is not None %} {{ row.score|floatformat:0 }}/100{% endif %}. {{ row.reason }}{% if row.buy_window_label %} Entrada: {{ row.buy_window_label }}.{% endif %}</p>
+                    {% endfor %}
+                  </div>
+                {% endif %}
               {% elif optimizer_plan %}
                 <div class="message info" style="margin-top:16px;">{{ optimizer_plan.reason }}</div>
               {% endif %}
