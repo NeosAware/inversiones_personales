@@ -1,10 +1,13 @@
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.shortcuts import redirect
+from django.shortcuts import get_object_or_404, redirect
+from django.utils import timezone
 from django.views.generic import TemplateView
 
-from .forms import ACCESS_LEVEL_CHOICES, ManagedUserCreateForm
+from .forms import ACCESS_LEVEL_CHOICES, ManagedUserCreateForm, PlannedInvestmentPaymentForm, SalesForecastSnapshotForm
+from .models import PlannedInvestmentPayment
+from .planning import build_cashflow_management_context
 from .services import build_portfolio_dashboard, capture_portfolio_snapshot
 from .user_management import (
     can_user_manage_financial_data,
@@ -28,9 +31,96 @@ class PortfolioDashboardView(LoginRequiredMixin, TemplateView):
         if not can_user_manage_financial_data(request.user):
             messages.error(request, "Solo un administrador puede guardar fotos manuales de cartera.")
             return redirect("portfolio:dashboard")
+
         capture_portfolio_snapshot()
         messages.success(request, "Se ha guardado la foto de cartera de hoy.")
         return redirect("portfolio:dashboard")
+
+
+class CashflowManagementView(LoginRequiredMixin, TemplateView):
+    template_name = "portfolio/cashflow_management.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        if not can_user_manage_financial_data(request.user):
+            messages.error(request, "El cashflow de gestion solo esta disponible para administradores.")
+            return redirect("portfolio:dashboard")
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["page_title"] = "Cashflow de gestion"
+        context["can_manage_finances"] = True
+        context["planned_payment_form"] = kwargs.get("planned_payment_form") or PlannedInvestmentPaymentForm()
+        context["sales_forecast_form"] = kwargs.get("sales_forecast_form") or SalesForecastSnapshotForm()
+        context["cashflow_management"] = build_cashflow_management_context()
+        return context
+
+    def post(self, request, *args, **kwargs):
+        action = request.POST.get("action", "").strip()
+        if action == "save_planned_payment":
+            return self._save_planned_payment(request)
+        if action == "mark_planned_payment_paid":
+            return self._mark_planned_payment_paid(request)
+        if action == "cancel_planned_payment":
+            return self._cancel_planned_payment(request)
+        if action == "save_sales_forecast":
+            return self._save_sales_forecast(request)
+        messages.error(request, "La accion de cashflow no es valida.")
+        return redirect("portfolio:cashflow_management")
+
+    def _get_planned_payment(self, request):
+        return get_object_or_404(PlannedInvestmentPayment, pk=request.POST.get("payment_id"))
+
+    def _save_planned_payment(self, request):
+        form = PlannedInvestmentPaymentForm(request.POST)
+        if not form.is_valid():
+            context = self.get_context_data(planned_payment_form=form)
+            return self.render_to_response(context, status=400)
+
+        payment = PlannedInvestmentPayment.objects.create(
+            title=form.cleaned_data["title"],
+            investment_block=form.cleaned_data["investment_block"],
+            ownership_category=form.cleaned_data["ownership_category"],
+            flow_type=form.cleaned_data["flow_type"],
+            due_date=form.cleaned_data["due_date"],
+            amount=form.cleaned_data["amount"],
+            notes=form.cleaned_data["notes"],
+        )
+        messages.success(request, f"Pago previsto guardado: {payment.title}.")
+        return redirect("portfolio:cashflow_management")
+
+    def _mark_planned_payment_paid(self, request):
+        payment = self._get_planned_payment(request)
+        if payment.status != PlannedInvestmentPayment.Status.PLANNED:
+            messages.info(request, "Ese pago ya no esta pendiente.")
+            return redirect("portfolio:cashflow_management")
+
+        payment.status = PlannedInvestmentPayment.Status.PAID
+        payment.paid_date = timezone.localdate()
+        payment.paid_amount = payment.amount
+        payment.save(update_fields=["status", "paid_date", "paid_amount", "updated_at"])
+        messages.success(request, f"{payment.title} queda marcado como realizado.")
+        return redirect("portfolio:cashflow_management")
+
+    def _cancel_planned_payment(self, request):
+        payment = self._get_planned_payment(request)
+        if payment.status != PlannedInvestmentPayment.Status.PLANNED:
+            messages.info(request, "Ese pago ya no esta pendiente.")
+            return redirect("portfolio:cashflow_management")
+
+        payment.status = PlannedInvestmentPayment.Status.CANCELLED
+        payment.save(update_fields=["status", "updated_at"])
+        messages.success(request, f"{payment.title} se ha cancelado en la planificacion.")
+        return redirect("portfolio:cashflow_management")
+
+    def _save_sales_forecast(self, request):
+        form = SalesForecastSnapshotForm(request.POST)
+        if not form.is_valid():
+            context = self.get_context_data(sales_forecast_form=form)
+            return self.render_to_response(context, status=400)
+        snapshot = form.save()
+        messages.success(request, f"Prevision de ventas guardada para {snapshot.month:%Y-%m}.")
+        return redirect("portfolio:cashflow_management")
 
 
 class UserManagementView(LoginRequiredMixin, TemplateView):

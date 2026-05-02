@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+
+{% block title %}Cashflow | Centro de inversiones personales{% endblock %}
+
+{% block content %}
+  <style>
+    .cashflow-page{
+      display:grid;
+      gap:22px;
+    }
+    .cashflow-grid{
+      display:grid;
+      gap:18px;
+      grid-template-columns:repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+    }
+    .cashflow-split{
+      display:grid;
+      gap:18px;
+      grid-template-columns:repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+    }
+    .cashflow-card{
+      padding:22px;
+    }
+    .cashflow-kpi{
+      padding:18px;
+      border:1px solid #e4ecf2;
+      border-radius:16px;
+      background:linear-gradient(180deg, #ffffff 0%, #f7fafc 100%);
+      display:grid;
+      gap:8px;
+    }
+    .cashflow-kpi strong{
+      display:block;
+      font-size:clamp(28px, 2vw, 38px);
+      line-height:1.1;
+      overflow-wrap:anywhere;
+    }
+    .cashflow-form{
+      display:grid;
+      gap:12px;
+      grid-template-columns:repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+      margin-top:14px;
+    }
+    .cashflow-form-wide{
+      grid-column:1 / -1;
+    }
+    .cashflow-errors{
+      margin-top:6px;
+      color:var(--warn);
+      font-size:13px;
+    }
+    .cashflow-actions{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-items:center;
+    }
+    .cashflow-pill-row{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin-top:10px;
+    }
+    .cashflow-table-scroll{
+      overflow:auto;
+      max-width:100%;
+    }
+    .cashflow-table-scroll table{
+      min-width:980px;
+    }
+    details.cashflow-details summary{
+      cursor:pointer;
+      font-weight:800;
+      color:var(--accent);
+    }
+  </style>
+
+  <div class="cashflow-page">
+    <section class="card cashflow-card">
+      <p class="section-title">Cashflow de gestion</p>
+      <h2 style="margin-top:0;">Momento recomendado para invertir</h2>
+      <div class="cashflow-grid">
+        <section class="cashflow-kpi">
+          <span class="metric-label">Mejor ventana</span>
+          <strong>{% if cashflow_management.best_window %}{{ cashflow_management.best_window.short_label }}{% else %}-{% endif %}</strong>
+          <span class="metric-sub">{% if cashflow_management.best_window %}{{ cashflow_management.best_window.decision }} - score {{ cashflow_management.best_window.score|floatformat:0 }}/100{% else %}Sin meses suficientes para recomendar.{% endif %}</span>
+        </section>
+        <section class="cashflow-kpi">
+          <span class="metric-label">Importe prudente</span>
+          <strong>{{ cashflow_management.summary.prudent_amount|floatformat:0 }} EUR</strong>
+          <span class="metric-sub">Despues de reservar caja y desviacion historica.</span>
+        </section>
+        <section class="cashflow-kpi">
+          <span class="metric-label">Reserva minima</span>
+          <strong>{{ cashflow_management.summary.reserve_with_deviation|floatformat:0 }} EUR</strong>
+          <span class="metric-sub">Incluye desviacion ventas/caja {{ cashflow_management.summary.sales_deviation_pct|floatformat:0 }} %.</span>
+        </section>
+        <section class="cashflow-kpi">
+          <span class="metric-label">Pagos inversion 90 dias</span>
+          <strong class="{% if cashflow_management.investment_plan.summary.next_90_days_net >= 0 %}good{% else %}warn{% endif %}">{{ cashflow_management.investment_plan.summary.next_90_days_net|floatformat:0 }} EUR</strong>
+          <span class="metric-sub">{{ cashflow_management.investment_plan.summary.open_count }} movimiento(s) pendientes.</span>
+        </section>
+      </div>
+    </section>
+
+    <div class="cashflow-split">
+      <details class="card cashflow-card cashflow-details" open>
+        <summary>Nuevo pago o cobro previsto</summary>
+        <form method="post" class="cashflow-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="save_planned_payment">
+          {% if planned_payment_form.non_field_errors %}
+            <div class="cashflow-errors cashflow-form-wide">{{ planned_payment_form.non_field_errors }}</div>
+          {% endif %}
+          <div>
+            <label for="{{ planned_payment_form.title.id_for_label }}">{{ planned_payment_form.title.label }}</label>
+            {{ planned_payment_form.title }}
+            {% if planned_payment_form.title.errors %}<div class="cashflow-errors">{{ planned_payment_form.title.errors }}</div>{% endif %}
+          </div>
+          <div>
+            <label for="{{ planned_payment_form.due_date.id_for_label }}">{{ planned_payment_form.due_date.label }}</label>
+            {{ planned_payment_form.due_date }}
+            {% if planned_payment_form.due_date.errors %}<div class="cashflow-errors">{{ planned_payment_form.due_date.errors }}</div>{% endif %}
+          </div>
+          <div>
+            <label for="{{ planned_payment_form.amount.id_for_label }}">{{ planned_payment_form.amount.label }}</label>
+            {{ planned_payment_form.amount }}
+            {% if planned_payment_form.amount.errors %}<div class="cashflow-errors">{{ planned_payment_form.amount.errors }}</div>{% endif %}
+          </div>
+          <div>
+            <label for="{{ planned_payment_form.flow_type.id_for_label }}">{{ planned_payment_form.flow_type.label }}</label>
+            {{ planned_payment_form.flow_type }}
+            {% if planned_payment_form.flow_type.errors %}<div class="cashflow-errors">{{ planned_payment_form.flow_type.errors }}</div>{% endif %}
+          </div>
+          <div>
+            <label for="{{ planned_payment_form.investment_block.id_for_label }}">{{ planned_payment_form.investment_block.label }}</label>
+            {{ planned_payment_form.investment_block }}
+            {% if planned_payment_form.investment_block.errors %}<div class="cashflow-errors">{{ planned_payment_form.investment_block.errors }}</div>{% endif %}
+          </div>
+          <div>
+            <label for="{{ planned_payment_form.ownership_category.id_for_label }}">{{ planned_payment_form.ownership_category.label }}</label>
+            {{ planned_payment_form.ownership_category }}
+            {% if planned_payment_form.ownership_category.errors %}<div class="cashflow-errors">{{ planned_payment_form.ownership_category.errors }}</div>{% endif %}
+          </div>
+          <div class="cashflow-form-wide">
+            <label for="{{ planned_payment_form.notes.id_for_label }}">{{ planned_payment_form.notes.label }}</label>
+            {{ planned_payment_form.notes }}
+            {% if planned_payment_form.notes.errors %}<div class="cashflow-errors">{{ planned_payment_form.notes.errors }}</div>{% endif %}
+          </div>
+          <div class="cashflow-form-wide">
+            <button class="button" type="submit">Guardar pago previsto</button>
+          </div>
+        </form>
+      </details>
+
+      <details class="card cashflow-card cashflow-details">
+        <summary>Prevision mensual de ventas</summary>
+        <form method="post" class="cashflow-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="save_sales_forecast">
+          {% if sales_forecast_form.non_field_errors %}
+            <div class="cashflow-errors cashflow-form-wide">{{ sales_forecast_form.non_field_errors }}</div>
+          {% endif %}
+          <div>
+            <label for="{{ sales_forecast_form.month.id_for_label }}">{{ sales_forecast_form.month.label }}</label>
+            {{ sales_forecast_form.month }}
+            {% if sales_forecast_form.month.errors %}<div class="cashflow-errors">{{ sales_forecast_form.month.errors }}</div>{% endif %}
+          </div>
+          <div>
+            <label for="{{ sales_forecast_form.forecast_revenue.id_for_label }}">{{ sales_forecast_form.forecast_revenue.label }}</label>
+            {{ sales_forecast_form.forecast_revenue }}
+          </div>
+          <div>
+            <label for="{{ sales_forecast_form.forecast_purchase_cost.id_for_label }}">{{ sales_forecast_form.forecast_purchase_cost.label }}</label>
+            {{ sales_forecast_form.forecast_purchase_cost }}
+          </div>
+          <div>
+            <label for="{{ sales_forecast_form.forecast_units.id_for_label }}">{{ sales_forecast_form.forecast_units.label }}</label>
+            {{ sales_forecast_form.forecast_units }}
+          </div>
+          <div>
+            <label for="{{ sales_forecast_form.forecast_average_purchase_price.id_for_label }}">{{ sales_forecast_form.forecast_average_purchase_price.label }}</label>
+            {{ sales_forecast_form.forecast_average_purchase_price }}
+          </div>
+          <div>
+            <label for="{{ sales_forecast_form.forecast_average_sale_price.id_for_label }}">{{ sales_forecast_form.forecast_average_sale_price.label }}</label>
+            {{ sales_forecast_form.forecast_average_sale_price }}
+          </div>
+          <div>
+            <label for="{{ sales_forecast_form.actual_revenue.id_for_label }}">{{ sales_forecast_form.actual_revenue.label }}</label>
+            {{ sales_forecast_form.actual_revenue }}
+          </div>
+          <div>
+            <label for="{{ sales_forecast_form.actual_purchase_cost.id_for_label }}">{{ sales_forecast_form.actual_purchase_cost.label }}</label>
+            {{ sales_forecast_form.actual_purchase_cost }}
+          </div>
+          <div class="cashflow-form-wide">
+            <label for="{{ sales_forecast_form.notes.id_for_label }}">{{ sales_forecast_form.notes.label }}</label>
+            {{ sales_forecast_form.notes }}
+          </div>
+          <div class="cashflow-form-wide">
+            <button class="button" type="submit">Guardar prevision ventas</button>
+          </div>
+        </form>
+      </details>
+    </div>
+
+    <section class="card table-card cashflow-card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;">
+        <div>
+          <p class="section-title">Simulacion mensual</p>
+          <h2 style="margin:0;font-size:20px;">Ingresos, gastos, ventas e inversiones</h2>
+        </div>
+        <div class="cashflow-pill-row">
+          <span class="pill">Gastos generales medios {{ cashflow_management.summary.average_general_expenses|floatformat:0 }} EUR</span>
+          <span class="pill">Gastos personales medios {{ cashflow_management.summary.average_personal_expenses|floatformat:0 }} EUR</span>
+        </div>
+      </div>
+      <div class="cashflow-table-scroll" style="margin-top:12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Mes</th>
+              <th>Decision</th>
+              <th>Ingresos base</th>
+              <th>Gastos gen.</th>
+              <th>Gastos pers.</th>
+              <th>Margen sales</th>
+              <th>Inversiones</th>
+              <th>Flujo sim.</th>
+              <th>Caja prevista</th>
+              <th>Capacidad</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in cashflow_management.simulation_rows %}
+              <tr>
+                <td><strong>{{ row.short_label }}</strong></td>
+                <td><span class="{{ row.score_tone }}">{{ row.decision }}</span><div class="metric-sub">{{ row.score|floatformat:0 }}/100</div></td>
+                <td class="good">{{ row.expected_gross_inflows|floatformat:0 }}</td>
+                <td>{{ row.expected_general_expenses|floatformat:0 }}</td>
+                <td>{{ row.expected_personal_expenses|floatformat:0 }}</td>
+                <td class="{% if row.sales_margin_forecast >= 0 %}good{% else %}warn{% endif %}">{{ row.sales_margin_forecast|floatformat:0 }}</td>
+                <td class="{% if row.investment_net >= 0 %}good{% else %}warn{% endif %}">{{ row.investment_net|floatformat:0 }}</td>
+                <td class="{% if row.simulated_net >= 0 %}good{% else %}warn{% endif %}"><strong>{{ row.simulated_net|floatformat:0 }}</strong></td>
+                <td>{{ row.projected_liquidity|floatformat:0 }}</td>
+                <td class="{% if row.investment_capacity > 0 %}good{% else %}warn{% endif %}">{{ row.investment_capacity|floatformat:0 }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="10" class="muted">Todavia no hay datos suficientes para simular cashflow.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="cashflow-split">
+      <section class="card table-card cashflow-card">
+        <p class="section-title">Pagos previstos</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Concepto</th>
+              <th>Bloque</th>
+              <th>Importe</th>
+              <th>Estado</th>
+              <th>Accion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in cashflow_management.investment_plan.upcoming_payments %}
+              <tr>
+                <td>{{ item.payment.due_date|date:"Y-m-d" }}</td>
+                <td><strong>{{ item.payment.title }}</strong><div class="metric-sub">{{ item.payment.get_ownership_category_display }}</div></td>
+                <td>{{ item.payment.get_investment_block_display }}</td>
+                <td class="{{ item.amount_tone }}">{% if item.signed_amount < 0 %}-{% else %}+{% endif %}{{ item.display_amount|floatformat:2 }}</td>
+                <td><span class="{{ item.status_tone }}">{{ item.payment.get_status_display }}{% if item.is_overdue %} vencido{% endif %}</span></td>
+                <td>
+                  <div class="cashflow-actions">
+                    <form method="post">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="mark_planned_payment_paid">
+                      <input type="hidden" name="payment_id" value="{{ item.payment.id }}">
+                      <button class="button secondary small" type="submit">Realizado</button>
+                    </form>
+                    <form method="post" onsubmit="return confirm('Cancelar esta prevision?');">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="cancel_planned_payment">
+                      <input type="hidden" name="payment_id" value="{{ item.payment.id }}">
+                      <button class="button secondary small" type="submit">Cancelar</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="6" class="muted">Sin pagos o cobros de inversion pendientes.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="card table-card cashflow-card">
+        <p class="section-title">Real vs previsto</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Mes</th>
+              <th>Margen previsto</th>
+              <th>Margen real</th>
+              <th>Desviacion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in cashflow_management.real_vs_forecast %}
+              <tr>
+                <td><strong>{{ row.short_label }}</strong></td>
+                <td>{{ row.forecast_margin|floatformat:0 }}</td>
+                <td>{{ row.actual_margin|floatformat:0 }}</td>
+                <td class="{% if row.margin_deviation >= 0 %}good{% else %}warn{% endif %}">{{ row.margin_deviation|floatformat:0 }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="4" class="muted">Cuando guardes reales de ventas se vera aqui la desviacion.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  </div>
+{% endblock %}

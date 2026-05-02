@@ -1,8 +1,9 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from django.urls import reverse
 
 from banking.models import BankBalance, BankMovement, BankStatementImport
@@ -11,7 +12,7 @@ from neos_additives.models import AdditivesHolding
 from neos_ceramica.models import CeramicaHolding
 from neos_materials.models import MaterialsHolding
 from real_estate.models import PropertyInvestment
-from .models import HouseholdAlertSettings, PortfolioSnapshot
+from .models import HouseholdAlertSettings, PlannedInvestmentPayment, PortfolioSnapshot, SalesForecastSnapshot
 from .ownership import AssetOwnershipCategory
 from .services import (
     build_bank_liquidity_context,
@@ -22,6 +23,7 @@ from .services import (
     build_spending_alerts,
     capture_portfolio_snapshot,
 )
+from .planning import build_cashflow_management_context
 
 
 class PortfolioServicesTests(TestCase):
@@ -102,6 +104,51 @@ class PortfolioServicesTests(TestCase):
         self.assertEqual(liquidity["history"][1]["closing_balance"], Decimal("6600.00"))
         self.assertEqual(liquidity["history"][1]["net_cash_flow"], Decimal("2350.00"))
         self.assertTrue(liquidity["history_line"])
+
+    def test_cashflow_management_adds_planned_investment_payments_to_simulation_only(self):
+        today = timezone.localdate()
+        due_date = today + timedelta(days=20)
+        BankStatementImport.objects.create(
+            source_filename="cash-plan.xls",
+            source_file="banking/statements/cash-plan.xls",
+            file_checksum="portfolio-cash-plan",
+            account_label="Cuenta plan",
+            period_end=today,
+            closing_balance=Decimal("10000.00"),
+            import_status=BankStatementImport.ImportStatus.IMPORTED,
+        )
+        PlannedInvestmentPayment.objects.create(
+            title="Compra Iberdrola",
+            due_date=due_date,
+            amount=Decimal("2500.00"),
+            flow_type=PlannedInvestmentPayment.FlowType.OUTFLOW,
+            investment_block=PlannedInvestmentPayment.InvestmentBlock.EQUITIES,
+        )
+
+        cashflow = build_cashflow_management_context(today=today)
+        plan = cashflow["investment_plan"]
+
+        self.assertEqual(plan["summary"]["open_outflow_total"], Decimal("2500.00"))
+        self.assertEqual(plan["summary"]["next_90_days_net"], Decimal("-2500.00"))
+        self.assertEqual(plan["upcoming_payments"][0]["payment"].title, "Compra Iberdrola")
+        self.assertEqual(cashflow["simulation_rows"][0]["investment_net"], Decimal("-2500.00"))
+
+    def test_cashflow_management_uses_sales_forecast_to_recommend_window(self):
+        today = timezone.localdate()
+        forecast_month = (today.replace(day=1) + timedelta(days=35)).replace(day=1)
+        SalesForecastSnapshot.objects.create(
+            month=forecast_month,
+            forecast_revenue=Decimal("90000.00"),
+            forecast_purchase_cost=Decimal("60000.00"),
+            actual_revenue=Decimal("88000.00"),
+            actual_purchase_cost=Decimal("61000.00"),
+        )
+
+        cashflow = build_cashflow_management_context(today=today)
+
+        self.assertIsNotNone(cashflow["best_window"])
+        self.assertGreaterEqual(cashflow["summary"]["prudent_amount"], Decimal("0.00"))
+        self.assertEqual(cashflow["real_vs_forecast"][0]["margin_deviation"], Decimal("-3000.00"))
 
     def test_build_overview_metrics_separates_neos_ibex_and_bank_liquidity(self):
         EquityPosition.objects.create(
@@ -554,3 +601,77 @@ class PortfolioDashboardViewTests(TestCase):
         self.assertContains(response, "La curva usa la rentabilidad total historica")
         self.assertContains(response, "Cambio comparable diario")
         self.assertContains(response, "portfolio-history-table-scroll")
+
+    def test_staff_user_can_create_and_complete_planned_payment(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+        due_date = timezone.localdate() + timedelta(days=12)
+
+        response = self.client.post(
+            reverse("portfolio:cashflow_management"),
+            {
+                "action": "save_planned_payment",
+                "title": "Entrada en banco",
+                "investment_block": PlannedInvestmentPayment.InvestmentBlock.BANKING_PRODUCT,
+                "ownership_category": PlannedInvestmentPayment._meta.get_field("ownership_category").default,
+                "flow_type": PlannedInvestmentPayment.FlowType.OUTFLOW,
+                "due_date": due_date.isoformat(),
+                "amount": "1500,00",
+                "notes": "Tramo inicial",
+            },
+        )
+
+        self.assertRedirects(response, reverse("portfolio:cashflow_management"))
+        payment = PlannedInvestmentPayment.objects.get(title="Entrada en banco")
+        self.assertEqual(payment.amount, Decimal("1500.00"))
+        self.assertEqual(payment.status, PlannedInvestmentPayment.Status.PLANNED)
+
+        response = self.client.post(
+            reverse("portfolio:cashflow_management"),
+            {
+                "action": "mark_planned_payment_paid",
+                "payment_id": payment.id,
+            },
+        )
+
+        self.assertRedirects(response, reverse("portfolio:cashflow_management"))
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, PlannedInvestmentPayment.Status.PAID)
+        self.assertEqual(payment.paid_amount, Decimal("1500.00"))
+
+    def test_staff_user_can_save_sales_forecast(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+        month = timezone.localdate().replace(day=1)
+
+        response = self.client.post(
+            reverse("portfolio:cashflow_management"),
+            {
+                "action": "save_sales_forecast",
+                "month": month.strftime("%Y-%m"),
+                "forecast_units": "100",
+                "forecast_average_purchase_price": "40",
+                "forecast_average_sale_price": "55",
+                "actual_revenue": "5200",
+                "actual_purchase_cost": "4100",
+                "notes": "Desde sales",
+            },
+        )
+
+        self.assertRedirects(response, reverse("portfolio:cashflow_management"))
+        snapshot = SalesForecastSnapshot.objects.get(month=month)
+        self.assertEqual(snapshot.forecast_revenue, Decimal("5500.0000"))
+        self.assertEqual(snapshot.forecast_purchase_cost, Decimal("4000.0000"))
+
+    def test_investment_alias_opens_cashflow_for_staff_only(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+        response = self.client.get(reverse("portfolio:investment"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Cashflow de gestion")
+
+    def test_non_staff_user_cannot_open_cashflow_management(self):
+        response = self.client.get(reverse("portfolio:cashflow_management"))
+
+        self.assertRedirects(response, reverse("portfolio:dashboard"))
