@@ -105,6 +105,12 @@ OPTIMIZER_EXPECTATION_REVIEW_MIN_MEMORY_WEIGHT = Decimal("0.08")
 OPTIMIZER_EXPECTATION_REVIEW_STABLE_SPREAD_PCT = Decimal("10.00")
 OPTIMIZER_EXPECTATION_REVIEW_MAX_BONUS_PCT = Decimal("3.00")
 OPTIMIZER_EXPECTATION_REVIEW_MAX_PENALTY_PCT = Decimal("6.00")
+EXPECTATION_STABILITY_1Y_MIN_MOVE_PCT = Decimal("1.25")
+EXPECTATION_STABILITY_1Y_DAILY_MOVE_PCT = Decimal("0.90")
+EXPECTATION_STABILITY_1Y_MAX_MOVE_PCT = Decimal("3.00")
+EXPECTATION_STABILITY_5Y_MIN_MOVE_PCT = Decimal("1.00")
+EXPECTATION_STABILITY_5Y_DAILY_MOVE_PCT = Decimal("0.55")
+EXPECTATION_STABILITY_5Y_MAX_MOVE_PCT = Decimal("2.50")
 EXPECTATION_REVIEW_CORRECTION_MIN_POINTS = 3
 EXPECTATION_REVIEW_CORRECTION_MIN_ELAPSED_DAYS = 7
 PURCHASE_DISCIPLINE_TARGET_SCORE = Decimal("70.00")
@@ -16345,6 +16351,7 @@ def build_optimizer_expectation_review_horizon_signal(
         "historical_spread_pct": historical_spread_pct,
         "first_review_date": value_rows[0]["analysis_date"],
         "latest_review_date": value_rows[-1]["analysis_date"],
+        "anchor_date": anchor_date,
         "date_span_days": date_span_days,
         "reality_feedback": reality_feedback,
     }
@@ -16464,6 +16471,86 @@ def resolve_card_optimizer_expectation_review_signal(card: dict) -> dict:
     ).get(ticker, {"available": False})
 
 
+def expectation_stability_move_cap(horizon_years: int, elapsed_days: int | None) -> Decimal:
+    elapsed_days = max(int(elapsed_days or 1), 1)
+    if int(horizon_years or 1) >= 5:
+        return clamp_decimal(
+            EXPECTATION_STABILITY_5Y_DAILY_MOVE_PCT * Decimal(elapsed_days),
+            EXPECTATION_STABILITY_5Y_MIN_MOVE_PCT,
+            EXPECTATION_STABILITY_5Y_MAX_MOVE_PCT,
+        )
+    return clamp_decimal(
+        EXPECTATION_STABILITY_1Y_DAILY_MOVE_PCT * Decimal(elapsed_days),
+        EXPECTATION_STABILITY_1Y_MIN_MOVE_PCT,
+        EXPECTATION_STABILITY_1Y_MAX_MOVE_PCT,
+    )
+
+
+def stabilize_return_against_latest_expectation(
+    raw_return_pct: Decimal | None,
+    horizon_signal: dict | None,
+) -> dict:
+    raw_return_pct = quantize_decimal(raw_return_pct, "0.01")
+    if raw_return_pct is None:
+        return {
+            "available": False,
+            "raw_return_pct": None,
+            "stabilized_return_pct": None,
+            "adjustment_pct": None,
+            "applied": False,
+        }
+
+    signal = horizon_signal or {}
+    latest_return_pct = quantize_decimal(signal.get("latest_return_pct"), "0.01")
+    if not signal.get("available") or latest_return_pct is None:
+        return {
+            "available": False,
+            "raw_return_pct": raw_return_pct,
+            "stabilized_return_pct": raw_return_pct,
+            "adjustment_pct": ZERO,
+            "applied": False,
+        }
+
+    anchor_date = signal.get("anchor_date")
+    latest_review_date = signal.get("latest_review_date")
+    elapsed_days = None
+    if isinstance(anchor_date, date) and isinstance(latest_review_date, date):
+        elapsed_days = max((anchor_date - latest_review_date).days, 1)
+    max_move_pct = expectation_stability_move_cap(int(signal.get("horizon_years") or 1), elapsed_days)
+    delta_pct = quantize_decimal(raw_return_pct - latest_return_pct, "0.01") or ZERO
+    if abs(delta_pct) <= max_move_pct:
+        return {
+            "available": True,
+            "raw_return_pct": raw_return_pct,
+            "latest_return_pct": latest_return_pct,
+            "stabilized_return_pct": raw_return_pct,
+            "adjustment_pct": ZERO,
+            "delta_pct": delta_pct,
+            "max_move_pct": quantize_decimal(max_move_pct, "0.01"),
+            "elapsed_days": elapsed_days,
+            "applied": False,
+        }
+
+    bounded_delta_pct = max_move_pct if delta_pct > ZERO else -max_move_pct
+    stabilized_return_pct = quantize_decimal(latest_return_pct + bounded_delta_pct, "0.01")
+    adjustment_pct = quantize_decimal(stabilized_return_pct - raw_return_pct, "0.01")
+    return {
+        "available": True,
+        "raw_return_pct": raw_return_pct,
+        "latest_return_pct": latest_return_pct,
+        "stabilized_return_pct": stabilized_return_pct,
+        "adjustment_pct": adjustment_pct,
+        "delta_pct": delta_pct,
+        "max_move_pct": quantize_decimal(max_move_pct, "0.01"),
+        "elapsed_days": elapsed_days,
+        "applied": True,
+        "note": (
+            "La expectativa se amortigua frente a la ultima revision guardada para evitar cambios bruscos "
+            "sin varias sesiones de confirmacion."
+        ),
+    }
+
+
 def apply_optimizer_expectation_review_adjustment(
     raw_return_pct: Decimal | None,
     horizon_signal: dict | None,
@@ -16557,6 +16644,10 @@ def apply_optimizer_expectation_review_adjustment(
         Decimal("-80.00"),
         Decimal("140.00"),
     )
+    stability = stabilize_return_against_latest_expectation(adjusted_return_pct, signal)
+    if stability.get("applied") and stability.get("stabilized_return_pct") is not None:
+        adjusted_return_pct = stability["stabilized_return_pct"]
+        adjustment_pct = quantize_decimal(adjusted_return_pct - raw_return_pct, "0.01") or ZERO
     return {
         "available": True,
         "sample_count": sample_count,
@@ -16575,6 +16666,7 @@ def apply_optimizer_expectation_review_adjustment(
         "reality_error_penalty_pct": quantize_decimal(reality_error_penalty_pct, "0.01"),
         "adjustment_pct": quantize_decimal(adjustment_pct, "0.01"),
         "adjusted_return_pct": quantize_decimal(adjusted_return_pct, "0.01"),
+        "stability": stability,
         "reality_feedback": reality_feedback,
     }
 
@@ -16824,6 +16916,282 @@ def apply_expectation_review_memory_to_card(card: dict, signal: dict | None = No
         or ((card.get("cycle_projection_5y_chart") or {}).get("available"))
     )
     return refresh_card_projection_visuals(card, include_visuals=keep_visuals)
+
+
+def rebuild_card_trade_alert_from_projection(card: dict) -> dict:
+    position = card.get("position")
+    projection = card.get("projection") or {}
+    if position is None or not projection.get("available"):
+        return card
+    one_year_snapshot = next(
+        (snapshot for snapshot in (card.get("period_snapshots") or []) if snapshot.get("label") == "1Y"),
+        {"available": False},
+    )
+    card["trade_alert"] = build_trade_alert(
+        position,
+        projection,
+        card.get("correlation") or {},
+        card.get("projection_reliability") or {},
+        card.get("relative_trend") or {},
+        card.get("six_month_snapshot") or {"available": False},
+        one_year_snapshot,
+        valuation=card.get("valuation") or {},
+        technical_signal=card.get("technical_signal") or {},
+    )
+    return card
+
+
+def apply_projection_expectation_shift(card: dict, shift_pct: Decimal | None) -> bool:
+    shift_pct = quantize_decimal(shift_pct, "0.01")
+    projection = card.get("projection") or {}
+    if shift_pct is None or abs(shift_pct) < Decimal("0.05") or not projection.get("available"):
+        return False
+
+    latest_price, latest_date = resolve_card_memory_price_and_date(card)
+    if latest_price in {None, ZERO}:
+        return False
+
+    def shifted(field_name: str) -> Decimal | None:
+        value = quantize_decimal(projection.get(field_name), "0.01")
+        return quantize_decimal(value + shift_pct, "0.01") if value is not None else None
+
+    adjusted_base_return_pct = shifted("base_return_pct")
+    adjusted_price_return_pct = shifted("price_return_pct")
+    adjusted_low_return_pct = shifted("low_return_pct")
+    adjusted_high_return_pct = shifted("high_return_pct")
+    adjusted_price_low_return_pct = shifted("price_low_return_pct")
+    adjusted_price_high_return_pct = shifted("price_high_return_pct")
+    if adjusted_base_return_pct is None or adjusted_price_return_pct is None:
+        return False
+
+    projection["base_return_pct"] = clamp_decimal(adjusted_base_return_pct, Decimal("-80.00"), Decimal("140.00"))
+    projection["price_return_pct"] = clamp_decimal(adjusted_price_return_pct, Decimal("-80.00"), Decimal("140.00"))
+    projection["low_return_pct"] = clamp_decimal(adjusted_low_return_pct, Decimal("-80.00"), Decimal("140.00")) if adjusted_low_return_pct is not None else None
+    projection["high_return_pct"] = clamp_decimal(adjusted_high_return_pct, Decimal("-80.00"), Decimal("140.00")) if adjusted_high_return_pct is not None else None
+    projection["price_low_return_pct"] = clamp_decimal(adjusted_price_low_return_pct, Decimal("-80.00"), Decimal("140.00")) if adjusted_price_low_return_pct is not None else None
+    projection["price_high_return_pct"] = clamp_decimal(adjusted_price_high_return_pct, Decimal("-80.00"), Decimal("140.00")) if adjusted_price_high_return_pct is not None else None
+    projection["projected_price"] = quantize_decimal(project_price_from_return(latest_price, projection["price_return_pct"]), "0.0001")
+    projection["low_price"] = quantize_decimal(project_price_from_return(latest_price, projection.get("price_low_return_pct")), "0.0001")
+    projection["high_price"] = quantize_decimal(project_price_from_return(latest_price, projection.get("price_high_return_pct")), "0.0001")
+    projection["monthly_path"] = build_monthly_projection_path(
+        latest_price,
+        projection["price_return_pct"],
+        anchor_date=latest_date,
+        cycle_phase=projection.get("cycle_phase") or "Transicion",
+    )
+    projection["quarterly_path"] = build_quarterly_projection_path_from_monthly_path(projection["monthly_path"])
+    if not projection["quarterly_path"]:
+        projection["quarterly_path"] = build_projection_path(
+            latest_price,
+            projection["price_return_pct"],
+            anchor_date=latest_date,
+            cycle_phase=projection.get("cycle_phase") or "Transicion",
+        )
+    projection["decision_score"] = quantize_decimal(
+        projection["base_return_pct"]
+        * projection_confidence_multiplier(projection.get("confidence_label") or "Baja")
+        * ((projection.get("safety_score") or Decimal("55.00")) / ONE_HUNDRED),
+        "0.01",
+    )
+    projection["scenarios"] = build_one_year_projection_scenarios(
+        latest_price,
+        price_return_pct=projection.get("price_return_pct"),
+        price_low_return_pct=projection.get("price_low_return_pct"),
+        price_high_return_pct=projection.get("price_high_return_pct"),
+        base_return_pct=projection.get("base_return_pct"),
+        low_return_pct=projection.get("low_return_pct"),
+        high_return_pct=projection.get("high_return_pct"),
+        confidence_label=projection.get("confidence_label") or "Baja",
+    )
+    projection["expectation_stability_shift_pct"] = shift_pct
+    card["projection"] = projection
+    rebuild_card_trade_alert_from_projection(card)
+    return True
+
+
+def apply_cycle_expectation_target(card: dict, target_five_year_return_pct: Decimal | None) -> bool:
+    target_five_year_return_pct = quantize_decimal(target_five_year_return_pct, "0.01")
+    cycle_projection = card.get("cycle_projection_5y") or {}
+    if target_five_year_return_pct is None or not cycle_projection.get("available"):
+        return False
+
+    latest_price, latest_date = resolve_card_memory_price_and_date(card)
+    if latest_price in {None, ZERO}:
+        return False
+
+    current_five_year_return_pct = quantize_decimal(cycle_projection.get("five_year_return_pct"), "0.01")
+    if current_five_year_return_pct is None:
+        current_five_year_return_pct = quantize_decimal(
+            (build_scenario_expectation_table(
+                cycle_projection.get("scenarios"),
+                return_key="five_year_return_pct",
+                fallback_value=None,
+            ) or {}).get("expected_return_pct"),
+            "0.01",
+        )
+    if current_five_year_return_pct is None:
+        return False
+
+    shift_pct = quantize_decimal(target_five_year_return_pct - current_five_year_return_pct, "0.01")
+    if shift_pct is None or abs(shift_pct) < Decimal("0.05"):
+        return False
+
+    target_annual_return_pct = annualize_return_pct(target_five_year_return_pct, 60)
+    if target_annual_return_pct is None:
+        return False
+    adjusted_annual_return_pct = clamp_decimal(target_annual_return_pct, Decimal("-12.00"), Decimal("18.00"))
+    scenario_spread_annual_pct = cycle_projection.get("scenario_spread_annual_pct") or Decimal("3.50")
+    cycle_path, adjusted_steps, step_shift = build_cycle_projection_path_for_target(
+        latest_price,
+        annual_return_pct=adjusted_annual_return_pct,
+        step_return_pcts=[Decimal(str(value)) for value in (cycle_projection.get("step_return_pcts") or [])],
+        annualized_volatility_pct=cycle_projection.get("annualized_volatility_pct"),
+        current_drawdown_pct=cycle_projection.get("current_drawdown_pct"),
+        cycle_phase=cycle_projection.get("cycle_phase") or "Transicion",
+        anchor_date=cycle_projection.get("latest_date") or latest_date,
+        years=5,
+        step_months=6,
+    )
+    if not cycle_path:
+        return False
+
+    projected_price = cycle_path[-1]["projected_price"]
+    cycle_projection["annual_return_pct"] = quantize_decimal(adjusted_annual_return_pct)
+    cycle_projection["five_year_return_pct"] = quantize_decimal(percentage_change(projected_price, latest_price))
+    cycle_projection["projected_price"] = quantize_decimal(projected_price, "0.0001")
+    cycle_projection["path"] = cycle_path
+    cycle_projection["step_return_pcts"] = [quantize_decimal(value) or ZERO for value in adjusted_steps]
+    cycle_projection["expectation_stability_step_shift"] = quantize_decimal(step_shift)
+    cycle_projection["expectation_stability_shift_pct"] = shift_pct
+    cycle_projection["scenarios"] = build_five_year_projection_scenarios(
+        latest_price,
+        latest_date=cycle_projection.get("latest_date") or latest_date,
+        annual_return_pct=adjusted_annual_return_pct,
+        scenario_spread_annual_pct=scenario_spread_annual_pct,
+        step_return_pcts=adjusted_steps,
+        annualized_volatility_pct=cycle_projection.get("annualized_volatility_pct"),
+        current_drawdown_pct=cycle_projection.get("current_drawdown_pct"),
+        cycle_phase=cycle_projection.get("cycle_phase") or "Transicion",
+        confidence_label=(card.get("projection") or {}).get("confidence_label") or "Baja",
+    )
+    card["cycle_projection_5y"] = cycle_projection
+    synchronize_projection_path_with_cycle_zoom(
+        card.get("projection") or {},
+        cycle_projection,
+        current_price=latest_price,
+        anchor_date=latest_date,
+    )
+    rebuild_card_trade_alert_from_projection(card)
+    return True
+
+
+def apply_expectation_stability_to_card(card: dict, signal: dict | None = None) -> dict:
+    position = card.get("position")
+    projection = card.get("projection") or {}
+    if position is None or not projection.get("available"):
+        return card
+
+    ticker = clean_ticker(getattr(position, "ticker", "") or "")
+    if signal is None:
+        signal = build_optimizer_expectation_review_signal_map(
+            [ticker],
+            current_cards_by_ticker={ticker: card} if ticker else {},
+        ).get(ticker, {"available": False})
+    if not (signal or {}).get("available"):
+        return card
+
+    scenario_tables = build_card_scenario_tables(card)
+    one_year_expected = (scenario_tables.get("projection_12m") or {}).get("expected_return_pct")
+    one_year_stability = stabilize_return_against_latest_expectation(one_year_expected, signal.get("1y"))
+    five_year_expectations = build_cycle_horizon_expectation_map(
+        (card.get("cycle_projection_5y") or {}).get("scenarios"),
+        current_price=getattr(position, "current_price_per_share", None),
+    )
+    five_year_expected = (
+        five_year_expectations.get(60)
+        or (scenario_tables.get("cycle_5y") or {}).get("expected_return_pct")
+    )
+    five_year_stability = stabilize_return_against_latest_expectation(five_year_expected, signal.get("5y"))
+    one_year_applied = apply_projection_expectation_shift(card, one_year_stability.get("adjustment_pct"))
+    five_year_applied = (
+        apply_cycle_expectation_target(card, five_year_stability.get("stabilized_return_pct"))
+        if five_year_stability.get("applied")
+        else False
+    )
+    if not (one_year_applied or five_year_applied):
+        return card
+
+    card["expectation_stability"] = {
+        "applied": True,
+        "one_year": one_year_stability,
+        "five_year": five_year_stability,
+        "note": "Se limita el cambio entre revisiones para que la tesis se confirme durante varias sesiones antes de girar.",
+    }
+    keep_visuals = bool(
+        ((card.get("projection_12m_chart") or {}).get("available"))
+        or ((card.get("cycle_projection_5y_chart") or {}).get("available"))
+    )
+    return refresh_card_projection_visuals(card, include_visuals=keep_visuals)
+
+
+def apply_expectation_stability_to_cards(cards: list[dict]) -> dict:
+    cards = [card for card in cards or [] if card.get("position") is not None]
+    tickers = [clean_ticker(getattr(card["position"], "ticker", "")) for card in cards]
+    cards_by_ticker = {
+        clean_ticker(getattr(card["position"], "ticker", "")): card
+        for card in cards
+        if clean_ticker(getattr(card["position"], "ticker", ""))
+    }
+    signal_map = build_optimizer_expectation_review_signal_map(
+        tickers,
+        current_cards_by_ticker=cards_by_ticker,
+    )
+    adjusted_count = 0
+    for card in cards:
+        ticker = clean_ticker(getattr(card["position"], "ticker", ""))
+        before = dict(card.get("expectation_stability") or {})
+        apply_expectation_stability_to_card(card, signal=signal_map.get(ticker, {"available": False}))
+        after = card.get("expectation_stability") or {}
+        if after.get("applied") and not before.get("applied"):
+            adjusted_count += 1
+    return {
+        "available": bool(signal_map),
+        "cards_count": len(cards),
+        "adjusted_cards_count": adjusted_count,
+    }
+
+
+def apply_expectation_stability_to_dashboard(dashboard: dict) -> dict:
+    history_cards = list(dashboard.get("history_cards") or [])
+    ibex_cards = list(dashboard.get("ibex_universe_cards") or [])
+    summary = apply_expectation_stability_to_cards([*history_cards, *ibex_cards])
+
+    if history_cards:
+        dashboard["decision_rows"] = build_equity_decision_rows(history_cards)
+        dashboard["optimizer_cards"] = build_optimizer_master_cards(history_cards, ibex_cards)
+        positions = [*(dashboard.get("owned_positions") or []), *(dashboard.get("watchlist_positions") or [])]
+        if positions and dashboard.get("overview") is not None:
+            dashboard["overview"] = build_equity_analysis_overview(
+                positions,
+                history_cards,
+                dashboard["decision_rows"],
+                dashboard.get("ibex_universe_summary") or {},
+            )
+    if ibex_cards:
+        dashboard["ibex_universe_rows"] = build_equity_decision_rows(ibex_cards)
+        ibex_summary = dashboard.get("ibex_universe_summary") or {}
+        ibex_rows = dashboard["ibex_universe_rows"]
+        ibex_summary.update(
+            {
+                "buy_alert_count": sum(1 for row in ibex_rows if row.get("trade_alert_label") == "Comprar"),
+                "sell_alert_count": sum(1 for row in ibex_rows if row.get("trade_alert_label") == "Vender"),
+                "watch_alert_count": sum(1 for row in ibex_rows if row.get("trade_alert_label") == "Vigilar"),
+                "top_pick": ibex_rows[0] if ibex_rows else ibex_summary.get("top_pick"),
+            }
+        )
+        dashboard["ibex_universe_summary"] = ibex_summary
+    dashboard["expectation_stability_summary"] = summary
+    return summary
 
 
 def apply_expectation_review_memory_to_cards(cards: list[dict]) -> dict:

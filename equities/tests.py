@@ -63,6 +63,7 @@ from .services import (
     SPAIN_GAS_CONSUMPTION_SYMBOL,
     ZERO,
     apply_expert_consensus_adjustments_to_dashboard,
+    apply_expectation_stability_to_dashboard,
     apply_expectation_review_memory_to_card,
     apply_optimizer_expectation_review_adjustment,
     apply_news_context_adjustments_to_dashboard,
@@ -109,6 +110,7 @@ from .services import (
     format_percentage_axis_value,
     load_ibex_reference_workbook_snapshot,
     sync_equity_market_data,
+    stabilize_return_against_latest_expectation,
 )
 
 
@@ -8198,6 +8200,119 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(company["reviews_count"], 3)
         self.assertEqual(len(company["rows"]), 3)
 
+    def test_expectation_stability_caps_two_day_forecast_swing(self):
+        result = stabilize_return_against_latest_expectation(
+            Decimal("-5.00"),
+            {
+                "available": True,
+                "horizon_years": 1,
+                "sample_count": 1,
+                "latest_return_pct": Decimal("2.00"),
+                "latest_review_date": date(2026, 5, 5),
+                "anchor_date": date(2026, 5, 7),
+            },
+        )
+
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["max_move_pct"], Decimal("1.80"))
+        self.assertEqual(result["stabilized_return_pct"], Decimal("0.20"))
+
+    def test_expectation_stability_dashboard_rebuilds_visible_one_year_expectation(self):
+        run = EquityNightlyAnalysisRun.objects.create(
+            analysis_date=date(2026, 5, 5),
+            status=EquityNightlyAnalysisRun.Status.COMPLETED,
+            completed_at=timezone.now(),
+            summary_data={},
+        )
+        EquityExpectationReview.objects.create(
+            run=run,
+            analysis_date=date(2026, 5, 5),
+            review_kind=EquityExpectationReview.ReviewKind.SCHEDULED,
+            scope=EquityExpectationReview.Scope.TRACKED,
+            analysis_key="tracked:memory",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            company_name="Iberdrola",
+            current_price=Decimal("100.0000"),
+            expected_return_pct_1y=Decimal("2.00"),
+            projected_return_pct_1y=Decimal("2.00"),
+        )
+        position = EquityPosition(
+            position_kind=EquityPosition.PositionKind.OWNED,
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("100.0000"),
+            current_price_per_share=Decimal("100.0000"),
+        )
+        card = {
+            "position": position,
+            "status_key": "owned",
+            "status_label": "Comprada",
+            "has_history": True,
+            "end_date": date(2026, 5, 7),
+            "reference_label": "IBEX 35",
+            "sector_label": "Electrica",
+            "period_snapshots": [],
+            "six_month_snapshot": {"available": False},
+            "correlation": {},
+            "relative_trend": {},
+            "coefficient_alert": {},
+            "valuation": {},
+            "technical_signal": {},
+            "reference_playbook": {},
+            "market_history_points": [
+                {"date": date(2026, 5, 5), "close": Decimal("100.0000")},
+                {"date": date(2026, 5, 7), "close": Decimal("100.0000")},
+            ],
+            "projection_reliability": {"label": "Media", "score": Decimal("64.00")},
+            "projection": {
+                "available": True,
+                "latest_price": Decimal("100.0000"),
+                "latest_date": date(2026, 5, 7),
+                "price_return_pct": Decimal("-5.00"),
+                "price_low_return_pct": Decimal("-10.00"),
+                "price_high_return_pct": Decimal("0.00"),
+                "base_return_pct": Decimal("-5.00"),
+                "low_return_pct": Decimal("-10.00"),
+                "high_return_pct": Decimal("0.00"),
+                "projected_price": Decimal("95.0000"),
+                "confidence_label": "Media",
+                "confidence_score_pct": Decimal("64.00"),
+                "safety_score": Decimal("60.00"),
+                "safety_label": "Media",
+                "cycle_phase": "Transicion",
+                "scenarios": [
+                    {"key": "bear", "label": "Bajista", "probability_pct": Decimal("20.00"), "total_return_pct": Decimal("-10.00"), "price_return_pct": Decimal("-10.00")},
+                    {"key": "base", "label": "Base", "probability_pct": Decimal("60.00"), "total_return_pct": Decimal("-5.00"), "price_return_pct": Decimal("-5.00")},
+                    {"key": "bull", "label": "Alcista", "probability_pct": Decimal("20.00"), "total_return_pct": Decimal("0.00"), "price_return_pct": Decimal("0.00")},
+                ],
+            },
+            "cycle_projection_5y": {"available": False},
+            "trade_alert": {"label": "Vigilar", "tone": "watch", "score": ZERO},
+        }
+        dashboard = {
+            "history_cards": [card],
+            "ibex_universe_cards": [],
+            "owned_positions": [position],
+            "watchlist_positions": [],
+            "overview": {},
+            "ibex_universe_summary": {},
+        }
+
+        summary = apply_expectation_stability_to_dashboard(dashboard)
+
+        self.assertEqual(summary["adjusted_cards_count"], 1)
+        self.assertEqual(
+            dashboard["decision_rows"][0]["expected_return_1y_pct"],
+            Decimal("0.20"),
+        )
+
     def test_build_expectation_review_dashboard_builds_preview_chart_without_real_history(self):
         run = EquityNightlyAnalysisRun.objects.create(
             analysis_date=date(2026, 4, 26),
@@ -9638,6 +9753,50 @@ class EquitiesViewTests(TestCase):
         clear_market_data_caches()
         super().tearDown()
 
+    def _dashboard_stub(self):
+        return {
+            "overview": {
+                "owned_positions_count": 0,
+                "watchlist_positions_count": 0,
+                "invested_amount": Decimal("0"),
+                "current_value": Decimal("0"),
+                "annual_dividends_total": Decimal("0"),
+                "net_dividends_total": Decimal("0"),
+                "annual_maintenance_total": Decimal("0"),
+                "purchase_cost_total": Decimal("0"),
+                "net_annual_income_total": Decimal("0"),
+                "unrealized_gain_total": Decimal("0"),
+                "unrealized_return_pct": Decimal("0"),
+                "weighted_projected_return_12m": Decimal("0"),
+                "weighted_safety_score": Decimal("0"),
+                "weighted_periods": [],
+                "best_decision": None,
+            },
+            "history_cards": [],
+            "owned_positions": [],
+            "watchlist_positions": [],
+            "owned_history_cards": [],
+            "watchlist_history_cards": [],
+            "decision_rows": [],
+            "ibex_universe_rows": [],
+            "ibex_universe_summary": {
+                "available": False,
+                "analyzed_count": 0,
+                "buy_alert_count": 0,
+                "sell_alert_count": 0,
+                "watch_alert_count": 0,
+                "failed_count": 0,
+                "failures": [],
+                "broker_assumption": "",
+                "trade_channel_label": "",
+                "top_pick": None,
+            },
+            "tracked_reference_rows": [],
+            "reference_guide_rows": [],
+            "reference_guide_summary": {"workbook_loaded": False},
+            "optimizer_cards": [],
+        }
+
     def test_equities_page_shows_nightly_analysis_status_in_hero(self):
         analysis_day = timezone.localdate()
         position = EquityPosition.objects.create(
@@ -10655,6 +10814,33 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Cockpit de acciones")
         self.assertContains(response, "Canal de compra")
         self.assertContains(response, "Indra Sistemas, S.A.")
+
+    @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_LIVE_IBEX_ON_VIEW=False)
+    def test_equities_page_defers_live_ibex_rebuild_when_cache_is_missing(self):
+        EquityPosition.objects.create(
+            ownership_category=AssetOwnershipCategory.JOINT,
+            broker="Interactive Brokers",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola",
+            shares=Decimal("10.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("12.0000"),
+        )
+
+        with (
+            patch("equities.views.build_dashboard_from_nightly_cache", return_value=None) as mocked_cache,
+            patch("equities.views.build_equity_analysis_dashboard", return_value=self._dashboard_stub()) as mocked_dashboard,
+        ):
+            response = self.client.get(reverse("equities:list"))
+
+        self.assertEqual(response.status_code, 200)
+        mocked_cache.assert_called_once()
+        mocked_dashboard.assert_called_once()
+        self.assertFalse(mocked_dashboard.call_args.kwargs["include_ibex_universe"])
+        self.assertTrue(response.context["ibex_analysis_deferred"])
 
     @override_settings(EQUITIES_AUTO_SYNC_ON_VIEW=True)
     def test_optimizer_request_skips_auto_sync_even_when_enabled(self):
@@ -12740,7 +12926,7 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Guia completa IBEX del Excel")
         self.assertContains(response, "Euribor 12m (%)")
 
-    @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_IBEX_UNIVERSE_LIMIT=1)
+    @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_LIVE_IBEX_ON_VIEW=True, EQUITIES_IBEX_UNIVERSE_LIMIT=1)
     def test_ibex_rows_open_detail_in_new_tab(self):
         acs = find_equity_company_profile("ACS")
         company = {
@@ -12791,7 +12977,7 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, 'target="_blank"', html=False)
         self.assertContains(response, "Abrir analisis completo")
 
-    @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_IBEX_UNIVERSE_LIMIT=1)
+    @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_LIVE_IBEX_ON_VIEW=True, EQUITIES_IBEX_UNIVERSE_LIMIT=1)
     def test_ibex_table_shows_five_year_projection_columns(self):
         santander = find_equity_company_profile("Banco Santander")
         company = {
@@ -12854,7 +13040,7 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Razonable")
         self.assertContains(response, 'class="neutral">11,5</strong>', html=False)
 
-    @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_IBEX_UNIVERSE_LIMIT=1)
+    @override_settings(EQUITIES_IBEX_UNIVERSE_ANALYSIS=True, EQUITIES_LIVE_IBEX_ON_VIEW=True, EQUITIES_IBEX_UNIVERSE_LIMIT=1)
     def test_ibex_table_shows_buy_and_sell_recommendation_dates(self):
         acs = find_equity_company_profile("ACS")
         company = {

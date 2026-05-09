@@ -31,6 +31,7 @@ from .news_context import (
 from .services import (
     ZERO,
     apply_expert_consensus_adjustments_to_dashboard,
+    apply_expectation_stability_to_dashboard,
     apply_news_context_adjustments_to_dashboard,
     build_analysis_broker_costs,
     build_cycle_projection_yearly_margins,
@@ -456,6 +457,7 @@ def build_current_dashboard_llm_summary(
     refresh_reason: str = "",
     news_summary: dict | None = None,
     expert_summary: dict | None = None,
+    stability_summary: dict | None = None,
 ) -> dict:
     cards = [card for _, card in iter_dashboard_cards(dashboard)]
     completed_count = 0
@@ -530,6 +532,7 @@ def build_current_dashboard_llm_summary(
         "expert_items_count": int((expert_summary or {}).get("items_count") or 0),
         "expert_ranked_sources_count": int((expert_summary or {}).get("ranked_sources_count") or 0),
         "expert_strong_consensus_count": int((expert_summary or {}).get("strong_consensus_count") or 0),
+        "expectation_stability_adjusted_count": int((stability_summary or {}).get("adjusted_cards_count") or 0),
     }
 
 
@@ -1139,6 +1142,7 @@ def persist_nightly_analysis_dashboard(
                 "reference_guide_summary": dashboard["reference_guide_summary"],
                 "news_summary": dashboard.get("news_summary") or {},
                 "expert_consensus_summary": dashboard.get("expert_consensus_summary") or {},
+                "expectation_stability_summary": dashboard.get("expectation_stability_summary") or {},
                 "expectation_review_kind": review_kind,
                 "expectation_review_count": len(expectation_review_rows),
                 "llm": llm_summary or {},
@@ -1209,6 +1213,7 @@ def run_nightly_equity_analysis(
         expert_summary = attach_expert_consensus_to_dashboard(dashboard)
         apply_news_context_adjustments_to_dashboard(dashboard)
         apply_expert_consensus_adjustments_to_dashboard(dashboard)
+        stability_summary = apply_expectation_stability_to_dashboard(dashboard)
         scheduled_refresh = bool(ai_config.available and should_refresh_nightly_llm(analysis_date=analysis_date, force=force))
         material_news_refresh = bool(
             ai_config.available
@@ -1251,6 +1256,7 @@ def run_nightly_equity_analysis(
                 refresh_reason=refresh_reason,
                 news_summary=news_summary,
                 expert_summary=expert_summary,
+                stability_summary=stability_summary,
             )
         else:
             carry_forward_stats = apply_ai_analysis_carry_forward(
@@ -1272,6 +1278,7 @@ def run_nightly_equity_analysis(
                 refresh_reason="carry_forward",
                 news_summary=news_summary,
                 expert_summary=expert_summary,
+                stability_summary=stability_summary,
             )
         capture_equity_ticket_snapshots(dashboard["owned_history_cards"], snapshot_date=analysis_date)
         return persist_nightly_analysis_dashboard(

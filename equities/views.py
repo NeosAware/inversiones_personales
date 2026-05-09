@@ -176,7 +176,7 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         positions = self._market_sync_candidates(owned_only=True)
         if (
             not positions
-            or not getattr(settings, "EQUITIES_AUTO_SYNC_ON_VIEW", True)
+            or not getattr(settings, "EQUITIES_AUTO_SYNC_ON_VIEW", False)
             or not self._can_manage_finances()
             or self._optimizer_requested()
             or active_run_exists
@@ -212,26 +212,32 @@ class EquityPositionListView(LoginRequiredMixin, EquityPeriodBoundsMixin, Templa
         )
         planning_requested = optimizer_requested or round_plan_requested
         defer_ibex_analysis = bool(active_optimization_runs) and not planning_requested
-        include_ibex_universe = (
+        requested_ibex_universe = (
             False
             if defer_ibex_analysis
             else (True if planning_requested else getattr(settings, "EQUITIES_IBEX_UNIVERSE_ANALYSIS", True))
         )
         dashboard = build_dashboard_from_nightly_cache(
             positions,
-            include_ibex_universe=include_ibex_universe,
+            include_ibex_universe=requested_ibex_universe,
             selected_start_date=selected_start_date,
             selected_end_date=selected_end_date,
         )
         if dashboard is None:
+            live_ibex_on_view = bool(
+                requested_ibex_universe
+                and (planning_requested or getattr(settings, "EQUITIES_LIVE_IBEX_ON_VIEW", False))
+            )
+            if requested_ibex_universe and not live_ibex_on_view:
+                defer_ibex_analysis = True
             dashboard = build_equity_analysis_dashboard(
                 positions,
                 selected_start_date=selected_start_date,
                 selected_end_date=selected_end_date,
-                include_ibex_universe=include_ibex_universe,
+                include_ibex_universe=live_ibex_on_view,
                 ibex_company_limit=(
                     None
-                    if planning_requested
+                    if planning_requested or not live_ibex_on_view
                     else (getattr(settings, "EQUITIES_IBEX_UNIVERSE_LIMIT", 0) or None)
                 ),
             )
