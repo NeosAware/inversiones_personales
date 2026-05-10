@@ -6838,6 +6838,110 @@ def build_global_ticket_daily_change_pct(ticket_items: list[dict]) -> Decimal | 
     )
 
 
+def resolve_tracking_target_annual_return_pct() -> Decimal:
+    raw_target = getattr(settings, "EQUITIES_TRACKING_TARGET_ANNUAL_RETURN_PCT", Decimal("10.00"))
+    try:
+        target = Decimal(str(raw_target))
+    except Exception:
+        target = Decimal("10.00")
+    normalized_target = quantize_decimal(max(target, ZERO), "0.01")
+    return normalized_target if normalized_target is not None else Decimal("10.00")
+
+
+def project_tracking_target_value(
+    baseline_value: Decimal | None,
+    baseline_date: date | None,
+    target_date: date | None,
+    annual_return_pct: Decimal | None = None,
+) -> Decimal | None:
+    normalized_baseline = quantize_decimal(baseline_value, "0.01")
+    if normalized_baseline is None:
+        return None
+    if normalized_baseline <= ZERO or baseline_date is None or target_date is None:
+        return normalized_baseline
+
+    elapsed_days = max((target_date - baseline_date).days, 0)
+    target_pct = resolve_tracking_target_annual_return_pct() if annual_return_pct is None else annual_return_pct
+    if elapsed_days <= 0 or target_pct <= ZERO:
+        return normalized_baseline
+
+    growth_base = max(0.01, 1 + (float(target_pct) / 100))
+    target_multiplier = growth_base ** (elapsed_days / 365)
+    return quantize_decimal(normalized_baseline * Decimal(str(target_multiplier)), "0.01") or normalized_baseline
+
+
+def build_tracking_target_series(
+    ticket_items: list[dict],
+    annual_return_pct: Decimal | None = None,
+) -> list[dict]:
+    target_pct = resolve_tracking_target_annual_return_pct() if annual_return_pct is None else annual_return_pct
+    tracking_dates = sorted(
+        {
+            point["date"]
+            for item in ticket_items
+            for point in item.get("actual_series", [])
+            if point.get("date") is not None
+        }
+    )
+    if not tracking_dates:
+        return []
+
+    target_items = []
+    for item in ticket_items:
+        baseline = item.get("baseline_snapshot")
+        baseline_date = getattr(baseline, "snapshot_date", None)
+        baseline_value = getattr(baseline, "current_value", None)
+        if baseline_date is None or baseline_value in {None, ZERO}:
+            continue
+        series = []
+        for point_date in tracking_dates:
+            if point_date < baseline_date:
+                continue
+            target_value = project_tracking_target_value(
+                baseline_value,
+                baseline_date,
+                point_date,
+                target_pct,
+            )
+            if target_value is not None:
+                series.append({"date": point_date, "value": target_value})
+        if series:
+            target_items.append({"baseline_date": baseline_date, "series": series})
+
+    return build_aggregated_series_entries(target_items)
+
+
+def build_tracking_objective_status(
+    net_gain_value: Decimal | None,
+    annualized_return_pct: Decimal | None,
+    target_annual_return_pct: Decimal,
+) -> dict:
+    target_label = f"{target_annual_return_pct:.0f}"
+    if net_gain_value is not None and net_gain_value < ZERO:
+        return {
+            "label": "Perdiendo dinero",
+            "tone": "warn",
+            "detail": "Primero volver a positivo; IBEX y escenarios solo son referencias secundarias.",
+        }
+    if annualized_return_pct is not None and annualized_return_pct >= target_annual_return_pct:
+        return {
+            "label": f"Cumple {target_label} % anual",
+            "tone": "good",
+            "detail": "La cartera va al ritmo objetivo o por encima.",
+        }
+    if net_gain_value is not None and net_gain_value >= ZERO:
+        return {
+            "label": "Gana, pero bajo objetivo",
+            "tone": "warn",
+            "detail": f"Hay beneficio, aunque todavia no llega al {target_label} % anual.",
+        }
+    return {
+        "label": "Sin lectura completa",
+        "tone": "warn",
+        "detail": "Faltan datos suficientes para medir el objetivo anual.",
+    }
+
+
 def resolve_global_tracking_baseline_value_on_date(ticket_items: list[dict], point_date: date | None) -> Decimal:
     if point_date is None:
         return ZERO
@@ -8773,6 +8877,12 @@ def build_global_equity_ticket_tracking_item(
     chart_5y = build_value_tracking_chart(actual_series, expected_series_5y) if expected_series_5y else {"available": False}
     latest_actual = actual_series[-1]["value"]
     latest_date = actual_series[-1]["date"]
+    target_annual_return_pct = resolve_tracking_target_annual_return_pct()
+    target_series = build_tracking_target_series(ticket_items, target_annual_return_pct)
+    target_today_value = next(
+        (point["value"] for point in reversed(target_series) if point["date"] <= latest_date),
+        None,
+    )
     current_expected_value = next(
         (point["value"] for point in reversed(expected_series) if point["date"] <= latest_date),
         None,
@@ -8815,10 +8925,12 @@ def build_global_equity_ticket_tracking_item(
     daily_change_pct = build_global_ticket_daily_change_pct(ticket_items)
     net_series_12m = build_tracking_series_vs_dynamic_baseline(actual_series, ticket_items)
     net_expected_series_12m = build_tracking_series_vs_dynamic_baseline(expected_series, ticket_items)
+    net_target_series = build_tracking_series_vs_dynamic_baseline(target_series, ticket_items)
     net_series_5y = build_tracking_series_vs_dynamic_baseline(actual_series, ticket_items)
     net_expected_series_5y = build_tracking_series_vs_dynamic_baseline(expected_series_5y, ticket_items)
     return_series_12m = build_tracking_series_vs_dynamic_baseline(actual_series, ticket_items, as_percentage=True)
     return_expected_series_12m = build_tracking_series_vs_dynamic_baseline(expected_series, ticket_items, as_percentage=True)
+    return_target_series = build_tracking_series_vs_dynamic_baseline(target_series, ticket_items, as_percentage=True)
     return_benchmark_series = build_tracking_series_vs_dynamic_baseline(
         benchmark.get("series", []),
         ticket_items,
@@ -8838,6 +8950,21 @@ def build_global_equity_ticket_tracking_item(
     net_chart_12m = build_value_tracking_chart(
         net_series_12m,
         net_expected_series_12m,
+    )
+    target_chart = build_value_tracking_chart(
+        actual_series,
+        target_series,
+    )
+    target_net_chart = build_value_tracking_chart(
+        net_series_12m,
+        net_target_series,
+    )
+    target_return_chart = build_value_tracking_chart(
+        return_series_12m,
+        return_target_series,
+        benchmark_series=return_benchmark_series,
+        value_suffix="%",
+        axis_formatter=format_percentage_axis_value,
     )
     net_chart_5y = build_value_tracking_chart(
         net_series_5y,
@@ -8881,9 +9008,23 @@ def build_global_equity_ticket_tracking_item(
     )
     expected_return_pct_12m = percentage_change(expected_total_value_12m, baseline_value)
     expected_return_pct_5y = percentage_change(expected_total_value_5y, baseline_value)
+    target_gap_value = (
+        quantize_decimal(latest_actual - target_today_value, "0.01")
+        if target_today_value is not None
+        else None
+    )
+    annualized_return_pct = quantize_decimal(comparable_returns.get("annual_equivalent_return_pct"), "0.01")
+    objective_status = build_tracking_objective_status(
+        net_gain_value,
+        annualized_return_pct,
+        target_annual_return_pct,
+    )
     return {
         "available": True,
         "chart": chart,
+        "target_chart": target_chart,
+        "target_net_chart": target_net_chart,
+        "target_return_chart": target_return_chart,
         "chart_5y": chart_5y,
         "net_chart_12m": net_chart_12m,
         "net_chart_5y": net_chart_5y,
@@ -8893,6 +9034,12 @@ def build_global_equity_ticket_tracking_item(
         "weekly_alpha_chart": weekly_alpha_chart,
         "baseline_value": baseline_value,
         "latest_value": latest_actual,
+        "target_annual_return_pct": target_annual_return_pct,
+        "target_today_value": target_today_value,
+        "target_gap_value": target_gap_value,
+        "target_gap_pct": percentage_change(latest_actual, target_today_value) if target_today_value is not None else None,
+        "target_gap_tone": "good" if target_gap_value is not None and target_gap_value >= ZERO else "warn",
+        "objective_status": objective_status,
         "expected_today_value": current_expected_value,
         "expected_today_value_5y": current_expected_value_5y,
         "expected_market_value_12m": expected_series[-1]["value"] if expected_series else baseline_value,
@@ -8910,7 +9057,10 @@ def build_global_equity_ticket_tracking_item(
         "net_gain_value": net_gain_value,
         "net_gain_tone": "good" if net_gain_value is not None and net_gain_value >= ZERO else "warn",
         "invested_return_pct": quantize_decimal(actual_change_pct, "0.01"),
-        "annualized_return_pct": quantize_decimal(comparable_returns.get("annual_equivalent_return_pct"), "0.01"),
+        "annualized_return_pct": annualized_return_pct,
+        "annualized_return_tone": "good"
+        if annualized_return_pct is not None and annualized_return_pct >= target_annual_return_pct
+        else "warn",
         "benchmark": benchmark,
         "portfolio_summary": portfolio_summary,
         "gap_value": gap_value,

@@ -2,14 +2,14 @@
   <div class="equity-panel-head">
     <div>
       <p class="section-title">Seguimiento{% if ticket_tracking.anchor_date %} desde {{ ticket_tracking.anchor_date|date:"Y-m-d" }}{% endif %}</p>
-      <h2>Seguimiento diario frente al IBEX y tus escenarios</h2>
-      <p>La primera grafica reescala tu cartera al nivel del IBEX en cada tramo estable. Solo cambia el factor cuando entra o sale capital, para ver si la cartera va por encima o por debajo del indice. Para aligerar la lectura, los puntos visibles se quedan en lunes, jueves y el ultimo dato.</p>
+      <h2>Seguimiento contra objetivo {{ ticket_tracking.global.target_annual_return_pct|floatformat:0 }} % anual</h2>
+      <p>La lectura principal es absoluta: beneficio real, rentabilidad anualizada y distancia al objetivo compuesto del {{ ticket_tracking.global.target_annual_return_pct|floatformat:0 }} % anual desde la entrada de cada posicion. IBEX y escenarios quedan como referencias secundarias.</p>
     </div>
     <span class="pill">{{ ticket_tracking.tracked_ticket_count }} tickets | {{ ticket_tracking.snapshot_days_count }} dias visibles</span>
   </div>
   <div class="equity-grid-4">
     <div class="equity-box">
-      <span>Cartera base acumulada</span>
+      <span>Capital base</span>
       <strong>{{ ticket_tracking.global.baseline_value|floatformat:0 }} EUR</strong>
       <small>Suma de la base inicial de cada posicion activa.</small>
     </div>
@@ -19,14 +19,14 @@
       <small>{% if ticket_tracking.global.daily_change_pct is not None %}Cambio diario {{ ticket_tracking.global.daily_change_pct|floatformat:2 }} %{% else %}Esperando una segunda foto diaria{% endif %}</small>
     </div>
     <div class="equity-box">
-      <span>Esperado hoy</span>
-      <strong>{% if ticket_tracking.global.expected_today_value is not None %}{{ ticket_tracking.global.expected_today_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-      <small>Escenario agregado respetando la fecha real de arranque de cada accion.</small>
+      <span>Objetivo hoy</span>
+      <strong>{% if ticket_tracking.global.target_today_value is not None %}{{ ticket_tracking.global.target_today_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
+      <small>Valor necesario para ir al {{ ticket_tracking.global.target_annual_return_pct|floatformat:0 }} % anual compuesto.</small>
     </div>
     <div class="equity-box">
-      <span>Gap vs esperado</span>
-      <strong class="{% if ticket_tracking.global.gap_tone == 'good' %}good{% else %}warn{% endif %}">{% if ticket_tracking.global.gap_value is not None %}{{ ticket_tracking.global.gap_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-      <small>{% if ticket_tracking.global.gap_pct is not None %}{{ ticket_tracking.global.gap_pct|floatformat:2 }} %{% else %}Sin comparativa aun{% endif %}</small>
+      <span>Gap vs objetivo</span>
+      <strong class="{% if ticket_tracking.global.target_gap_tone == 'good' %}good{% else %}warn{% endif %}">{% if ticket_tracking.global.target_gap_value is not None %}{{ ticket_tracking.global.target_gap_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
+      <small>{% if ticket_tracking.global.target_gap_pct is not None %}{{ ticket_tracking.global.target_gap_pct|floatformat:2 }} %{% else %}Sin comparativa aun{% endif %}</small>
     </div>
     <div class="equity-box">
       <span>Beneficio neto</span>
@@ -40,13 +40,26 @@
     </div>
     <div class="equity-box">
       <span>Rentabilidad anualizada</span>
-      <strong class="{% if ticket_tracking.global.annualized_return_pct is not None and ticket_tracking.global.annualized_return_pct >= 0 %}good{% elif ticket_tracking.global.annualized_return_pct is not None %}warn{% endif %}">{% if ticket_tracking.global.annualized_return_pct is not None %}{{ ticket_tracking.global.annualized_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong>
-      <small>Equivalente anual del acumulado global visible durante los {{ ticket_tracking.global.tracked_days }} dias seguidos.</small>
+      <strong class="{% if ticket_tracking.global.annualized_return_tone == 'good' %}good{% else %}warn{% endif %}">{% if ticket_tracking.global.annualized_return_pct is not None %}{{ ticket_tracking.global.annualized_return_pct|floatformat:2 }} %{% else %}-{% endif %}</strong>
+      <small>Verde solo si supera el objetivo anual del {{ ticket_tracking.global.target_annual_return_pct|floatformat:0 }} %.</small>
+    </div>
+    <div class="equity-box">
+      <span>Lectura</span>
+      <strong class="{% if ticket_tracking.global.objective_status.tone == 'good' %}good{% else %}warn{% endif %}">{{ ticket_tracking.global.objective_status.label }}</strong>
+      <small>{{ ticket_tracking.global.objective_status.detail }}</small>
+    </div>
+    <div class="equity-box">
+      <span>Referencia IA/IBEX</span>
+      <strong class="{% if ticket_tracking.global.gap_tone == 'good' %}good{% else %}warn{% endif %}">{% if ticket_tracking.global.expected_today_value is not None %}{{ ticket_tracking.global.expected_today_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
+      <small>{% if ticket_tracking.global.gap_value is not None %}Gap escenario {{ ticket_tracking.global.gap_value|floatformat:0 }} EUR | {{ ticket_tracking.global.gap_pct|floatformat:2 }} %{% else %}Sin escenario comparable{% endif %}</small>
     </div>
   </div>
   <div class="equity-grid-2" style="margin-top:18px;">
+    {% if ticket_tracking.global.target_return_chart.available %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.target_return_chart full_width=True title="Rentabilidad vs objetivo anual" note="La linea de objetivo aplica la rentabilidad anual configurada desde cada entrada de capital." actual_label="Cartera real" expected_label="Objetivo anual" benchmark_label=ticket_tracking.global.benchmark.label %}
+    {% endif %}
     {% if ticket_tracking.global.chart.available %}
-      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.chart full_width=True title="Cartera reescalada vs IBEX" note="La cartera se convierte a puntos IBEX con un factor fijo por tramo, y solo se recalcula cuando cambia el capital invertido." actual_label="Cartera reescalada" benchmark_label=ticket_tracking.global.benchmark.label %}
+      {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.chart full_width=True title="Referencia IBEX reescalada" note="La cartera se convierte a puntos IBEX con un factor fijo por tramo para comparar contra el indice sin mezclarlo con el objetivo de rentabilidad." actual_label="Cartera reescalada" benchmark_label=ticket_tracking.global.benchmark.label %}
     {% endif %}
     {% if ticket_tracking.global.portfolio_summary.return_chart_12m.available %}
       {% include "equities/_tracking_value_chart.html" with chart=ticket_tracking.global.portfolio_summary.return_chart_12m title="% rentabilidad 1A" note="Ultimo ano comun de tu cartera y escenario 12M agregando cada accion por su valor real." actual_label="Cartera real" expected_label="Escenario agregado" benchmark_label=ticket_tracking.global.portfolio_summary.benchmark_label range_label=ticket_tracking.global.portfolio_summary.range_label_12m summary_label=ticket_tracking.global.portfolio_summary.weight_mix_label %}

@@ -94,6 +94,7 @@ from .services import (
     build_value_tracking_chart,
     build_equity_optimizer_candidate,
     build_owned_cycle_trade_timing_plan,
+    project_tracking_target_value,
     add_calendar_months,
     archive_equity_position_sale,
     build_trade_alert,
@@ -3517,7 +3518,24 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(tracking["global"]["net_gain_value"], Decimal("16.00"))
         self.assertEqual(tracking["global"]["invested_return_pct"], Decimal("2.91"))
         self.assertEqual(tracking["global"]["annualized_return_pct"], Decimal("3512395.03"))
+        self.assertEqual(tracking["global"]["target_annual_return_pct"], Decimal("10.00"))
+        self.assertEqual(tracking["global"]["target_today_value"], Decimal("550.14"))
+        self.assertEqual(tracking["global"]["target_gap_value"], Decimal("15.86"))
+        self.assertEqual(tracking["global"]["target_gap_tone"], "good")
+        self.assertEqual(tracking["global"]["annualized_return_tone"], "good")
+        self.assertEqual(tracking["global"]["objective_status"]["label"], "Cumple 10 % anual")
+        self.assertTrue(tracking["global"]["target_return_chart"]["available"])
         self.assertEqual(tracking["global"]["daily_change_pct"], Decimal("2.91"))
+
+    def test_tracking_target_value_compounds_from_each_baseline(self):
+        target_value = project_tracking_target_value(
+            Decimal("1000.00"),
+            date(2026, 1, 1),
+            date(2027, 1, 1),
+            Decimal("10.00"),
+        )
+
+        self.assertEqual(target_value, Decimal("1100.00"))
 
     def test_ticket_tracking_recalibrates_expected_curve_when_reality_lags(self):
         position = EquityPosition.objects.create(
@@ -11955,6 +11973,7 @@ class EquitiesViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         page = response.content.decode("utf-8")
         self.assertContains(response, "Seguimiento desde")
+        self.assertContains(response, "Seguimiento contra objetivo 10 % anual")
         self.assertContains(response, "Valor actual cartera")
         self.assertContains(response, "Capital invertido")
         self.assertContains(response, "Proyeccion cartera")
@@ -11967,7 +11986,11 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "3A")
         self.assertContains(response, "4A")
         self.assertContains(response, "5A")
-        self.assertContains(response, "Cartera reescalada vs IBEX")
+        self.assertContains(response, "Objetivo hoy")
+        self.assertContains(response, "Gap vs objetivo")
+        self.assertContains(response, "Referencia IA/IBEX")
+        self.assertContains(response, "Rentabilidad vs objetivo anual")
+        self.assertContains(response, "Referencia IBEX reescalada")
         self.assertContains(response, "Rentabilidad neta 1A")
         self.assertContains(response, "Rentabilidad neta 5A")
         self.assertContains(response, "% rentabilidad 1A")
