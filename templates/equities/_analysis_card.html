@@ -17,11 +17,27 @@
       <div class="equity-panel-head" style="margin-bottom:12px;">
         <div>
           <p class="section-title">Seguimiento desde compra</p>
-          <h3 style="margin:0;">Valor real frente al escenario esperado</h3>
-          <p style="margin:6px 0 0;">Aqui ves la evolucion de esta compra desde su propia base, tomada en la primera foto disponible tras la compra o el alta en la web. La senda esperada 5A que se compara contra esta posicion queda guardada en ese momento y no se va moviendo al entrar de nuevo. El radar general del IBEX y las lecturas de martes y jueves si se recalculan por separado con la informacion nueva.</p>
+          <h3 style="margin:0;">Valor real frente al plan guardado</h3>
+          <p style="margin:6px 0 0;">Aqui ves la evolucion de esta compra desde su propia base. La linea naranja es la prevision que quedo guardada en la primera foto del ticket; los escenarios de abajo son la tesis actual recalculada con la informacion nueva.</p>
         </div>
         <span class="pill">{{ tracking_ticket.snapshot_count }} foto(s) | {{ tracking_ticket.card.reference_label }}</span>
       </div>
+      {% if tracking_ticket.projection_source.conflict %}
+        <div class="equity-compact-note" style="margin-bottom:14px; border-color:#ead6bf; background:#fff9f2; color:#17384e;">
+          <strong style="display:block; color:#17384e; margin-bottom:6px;">{{ tracking_ticket.projection_source.label }}</strong>
+          <p style="margin:0;">
+            Plan guardado {{ tracking_ticket.projection_source.stored_return_12m_pct|floatformat:1 }} %
+            {% if tracking_ticket.projection_source.baseline_date %}desde {{ tracking_ticket.projection_source.baseline_date|date:"Y-m-d" }}{% endif %}
+            {% if tracking_ticket.projection_source.current_return_12m_pct is not None %}
+              | tesis actual 12M {{ tracking_ticket.projection_source.current_return_12m_pct|floatformat:1 }} %
+            {% endif %}
+            {% if tracking_ticket.projection_source.drift_pct is not None %}
+              | cambio {{ tracking_ticket.projection_source.drift_pct|floatformat:1 }} pp.
+            {% endif %}
+            {{ tracking_ticket.projection_source.note }}
+          </p>
+        </div>
+      {% endif %}
       <div class="equity-grid-4">
         <div class="equity-mini-stat">
           <span>Base total</span>
@@ -44,14 +60,14 @@
           <small>{{ tracking_ticket.current_unit_price_note }}{% if tracking_ticket.current_unit_price_date %} {{ tracking_ticket.current_unit_price_date|date:"Y-m-d" }}{% endif %}</small>
         </div>
         <div class="equity-mini-stat">
-          <span>Esperado hoy</span>
+          <span>Plan guardado hoy</span>
           <strong>{% if tracking_ticket.current_expected_value is not None %}{{ tracking_ticket.current_expected_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-          <small>{% if tracking_ticket.expected_change_pct is not None %}{{ tracking_ticket.expected_change_pct|floatformat:2 }} % desde la base{% else %}Sin senda prevista{% endif %}</small>
+          <small>{% if tracking_ticket.expected_change_pct is not None %}{{ tracking_ticket.expected_change_pct|floatformat:2 }} % desde la base inicial{% else %}Sin senda prevista{% endif %}</small>
         </div>
         <div class="equity-mini-stat">
-          <span>Gap</span>
+          <span>Gap vs plan</span>
           <strong class="{% if tracking_ticket.gap_tone == 'good' %}good{% else %}warn{% endif %}">{% if tracking_ticket.gap_value is not None %}{{ tracking_ticket.gap_value|floatformat:0 }} EUR{% else %}-{% endif %}</strong>
-          <small>{% if tracking_ticket.gap_pct is not None %}{{ tracking_ticket.gap_pct|floatformat:2 }} % frente a lo esperado{% else %}Sin comparativa{% endif %}</small>
+          <small>{% if tracking_ticket.gap_pct is not None %}{{ tracking_ticket.gap_pct|floatformat:2 }} % frente al plan guardado{% else %}Sin comparativa{% endif %}</small>
         </div>
       </div>
       {% if tracking_ticket.trade_plan.available %}
@@ -149,9 +165,9 @@
           </svg>
           <div class="equity-chart-foot">
             <span>Azul: valor real desde compra</span>
-            <span>Naranja: senda esperada de mercado</span>
+            <span>Naranja: plan guardado {% if tracking_ticket.projection_source.baseline_date %}{{ tracking_ticket.projection_source.baseline_date|date:"Y-m-d" }}{% endif %}</span>
             <span>{{ tracking_ticket.chart.latest_label }} a {{ tracking_ticket.chart.projection_end_label }}</span>
-            <span>{% if tracking_ticket.expected_total_value_12m is not None %}Escenario total 12M {{ tracking_ticket.expected_total_value_12m|floatformat:0 }} EUR{% endif %}</span>
+            <span>{% if tracking_ticket.expected_total_value_12m is not None %}Plan guardado 12M {{ tracking_ticket.expected_total_value_12m|floatformat:0 }} EUR{% endif %}</span>
           </div>
         </div>
       {% endif %}
@@ -162,7 +178,7 @@
     <div class="equity-section-head" style="margin-top:18px;">
       <div>
         <h5>Graficos clave</h5>
-        <p>Empieza por la tesis 12M visible y luego contrasta 5 anos y backtest. El cierre y la rentabilidad 12M de esta ficha salen de la misma senda naranja que pinta el grafico.</p>
+        <p>Empieza por la tesis 12M visible y luego contrasta 5 anos y backtest. Esta zona muestra la lectura actual; si arriba hay un ticket, su linea naranja puede ser una prevision antigua guardada.</p>
       </div>
     </div>
     {% if card.presentation_projection.available %}

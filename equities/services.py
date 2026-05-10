@@ -8776,6 +8776,50 @@ def build_equity_ticket_tracking_item(
             position.ticker,
         )
         rotation_plan = {"available": False}
+    current_projection = card.get("presentation_projection") or {}
+    current_projection_return_pct = None
+    if current_projection.get("available"):
+        current_projection_return_pct = quantize_decimal(
+            current_projection.get("visible_total_return_pct"),
+            "0.01",
+        )
+    if current_projection_return_pct is None:
+        current_projection_return_pct = quantize_decimal(
+            (card.get("projection") or {}).get("base_return_pct"),
+            "0.01",
+        )
+    stored_projection_return_pct = percentage_change(adjusted_expected_total_value_12m, baseline.current_value)
+    projection_drift_pct = (
+        quantize_decimal(current_projection_return_pct - stored_projection_return_pct, "0.01")
+        if current_projection_return_pct is not None and stored_projection_return_pct is not None
+        else None
+    )
+    projection_direction_changed = (
+        current_projection_return_pct is not None
+        and stored_projection_return_pct is not None
+        and (
+            (current_projection_return_pct < ZERO and stored_projection_return_pct >= ZERO)
+            or (current_projection_return_pct >= ZERO and stored_projection_return_pct < ZERO)
+        )
+    )
+    projection_source = {
+        "available": stored_projection_return_pct is not None,
+        "baseline_date": baseline.snapshot_date,
+        "stored_return_12m_pct": quantize_decimal(stored_projection_return_pct, "0.01"),
+        "current_return_12m_pct": current_projection_return_pct,
+        "drift_pct": projection_drift_pct,
+        "direction_changed": projection_direction_changed,
+        "conflict": bool(projection_direction_changed or (projection_drift_pct is not None and abs(projection_drift_pct) >= Decimal("8.00"))),
+    }
+    if projection_source["conflict"]:
+        projection_source["label"] = "La tesis actual ha cambiado"
+        projection_source["note"] = (
+            "La linea naranja es la prevision guardada al iniciar el ticket; "
+            "los escenarios de abajo son la lectura actual recalculada."
+        )
+    else:
+        projection_source["label"] = "Misma tesis de seguimiento"
+        projection_source["note"] = "La senda guardada y la lectura actual no muestran una ruptura grande."
     return {
         "position": position,
         "card": card,
@@ -8827,6 +8871,7 @@ def build_equity_ticket_tracking_item(
         "projection_end_date": projected_end_date,
         "trade_plan": trade_plan,
         "rotation_plan": rotation_plan,
+        "projection_source": projection_source,
         **unit_price_context,
     }
 
@@ -16081,12 +16126,28 @@ def build_expectation_review_company_context(
         )
         short_formula_label = f"{intercept:+.1f} + {beta:.2f}x"
     else:
-        interpretation = (
-            f"Hacen falta al menos {EXPECTATION_REVIEW_CORRECTION_MIN_POINTS} revisiones con algo de recorrido "
-            "para calcular la ecuacion correctora."
-        )
-        formula_label = "Sin muestras suficientes"
-        short_formula_label = "Sin ecuacion"
+        if calibration_rows and (average_gap_pct or ZERO) >= Decimal("4.00"):
+            interpretation = (
+                "Senal provisional: la realidad reciente esta saliendo mejor que la esperanza. "
+                f"La ecuacion formal necesita {EXPECTATION_REVIEW_CORRECTION_MIN_POINTS} muestras con recorrido, "
+                "pero este valor no deberia tratarse como venta solo por una esperanza negativa temprana."
+            )
+            formula_label = "Modelo demasiado prudente"
+            short_formula_label = "Prudente"
+        elif calibration_rows and (average_gap_pct or ZERO) <= Decimal("-4.00"):
+            interpretation = (
+                "Senal provisional: la realidad reciente esta saliendo peor que la esperanza. "
+                f"La ecuacion formal necesita {EXPECTATION_REVIEW_CORRECTION_MIN_POINTS} muestras con recorrido."
+            )
+            formula_label = "Modelo demasiado optimista"
+            short_formula_label = "Optimista"
+        else:
+            interpretation = (
+                f"Hacen falta al menos {EXPECTATION_REVIEW_CORRECTION_MIN_POINTS} revisiones con algo de recorrido "
+                "para calcular la ecuacion correctora."
+            )
+            formula_label = "Sin muestras suficientes"
+            short_formula_label = "Sin ecuacion"
 
     return {
         "available": bool(comparison_rows) or preview_mode,
@@ -16387,6 +16448,14 @@ def build_expectation_review_reality_feedback(
         weighted_average_decimal([(row["absolute_error_pct"], row["memory_weight"]) for row in rows]),
         "0.01",
     )
+    average_actual_return_pct = quantize_decimal(
+        weighted_average_decimal([(row["actual_return_pct"], row["memory_weight"]) for row in rows]),
+        "0.01",
+    )
+    positive_actual_ratio_pct = quantize_decimal(
+        (Decimal(sum(1 for row in rows if row["actual_return_pct"] > ZERO)) * ONE_HUNDRED) / Decimal(len(rows)),
+        "0.01",
+    )
     direction_hit_rate_pct = quantize_decimal(
         weighted_average_decimal(
             [
@@ -16396,13 +16465,24 @@ def build_expectation_review_reality_feedback(
         ),
         "0.01",
     )
+    positive_feedback_cap = (
+        Decimal("6.00")
+        if len(rows) >= 2 and (recent_average_gap_pct or ZERO) >= Decimal("4.00")
+        else Decimal("3.00")
+    )
     bias_adjustment_pct = clamp_decimal(
         ((average_gap_pct or ZERO) * Decimal("0.50"))
         + ((recent_average_gap_pct or ZERO) * Decimal("0.30"))
         + ((latest_gap_pct or ZERO) * Decimal("0.20")),
         Decimal("-4.50"),
-        Decimal("3.00"),
+        positive_feedback_cap,
     )
+    if (average_gap_pct or ZERO) >= Decimal("2.00"):
+        model_bias_label = "Demasiado prudente"
+    elif (average_gap_pct or ZERO) <= Decimal("-2.00"):
+        model_bias_label = "Demasiado optimista"
+    else:
+        model_bias_label = "Ajustado"
     return {
         "available": True,
         "sample_count": len(rows),
@@ -16410,9 +16490,13 @@ def build_expectation_review_reality_feedback(
         "average_gap_pct": average_gap_pct,
         "recent_average_gap_pct": recent_average_gap_pct,
         "latest_gap_pct": latest_gap_pct,
+        "average_actual_return_pct": average_actual_return_pct,
+        "latest_actual_return_pct": rows[-1]["actual_return_pct"],
+        "positive_actual_ratio_pct": positive_actual_ratio_pct,
         "mean_absolute_error_pct": mean_absolute_error_pct,
         "direction_hit_rate_pct": direction_hit_rate_pct,
         "bias_adjustment_pct": quantize_decimal(bias_adjustment_pct, "0.01"),
+        "model_bias_label": model_bias_label,
         "latest_elapsed_days": rows[-1]["elapsed_days"],
         "oldest_analysis_date": rows[0]["analysis_date"],
         "oldest_analysis_date_label": rows[0]["analysis_date"].isoformat(),
@@ -16749,16 +16833,43 @@ def apply_optimizer_expectation_review_adjustment(
         else ZERO
     ) or ZERO
     reality_error_penalty_pct = ZERO
+    reality_contradiction_floor_pct = None
     if reality_feedback.get("available"):
         mean_absolute_error_pct = quantize_decimal(reality_feedback.get("mean_absolute_error_pct"), "0.01") or ZERO
         direction_hit_rate_pct = quantize_decimal(reality_feedback.get("direction_hit_rate_pct"), "0.01")
-        reality_error_penalty_pct = clamp_decimal(
-            max(mean_absolute_error_pct - Decimal("1.25"), ZERO) * Decimal("0.12"),
-            ZERO,
-            Decimal("1.40"),
+        average_gap_pct = quantize_decimal(reality_feedback.get("average_gap_pct"), "0.01") or ZERO
+        recent_average_gap_pct = quantize_decimal(reality_feedback.get("recent_average_gap_pct"), "0.01") or ZERO
+        latest_gap_pct = quantize_decimal(reality_feedback.get("latest_gap_pct"), "0.01") or ZERO
+        average_actual_return_pct = quantize_decimal(reality_feedback.get("average_actual_return_pct"), "0.01") or ZERO
+        positive_actual_ratio_pct = quantize_decimal(reality_feedback.get("positive_actual_ratio_pct"), "0.01") or ZERO
+        model_too_optimistic = (
+            ((average_gap_pct * Decimal("0.50")) + (recent_average_gap_pct * Decimal("0.30")) + (latest_gap_pct * Decimal("0.20")))
+            < ZERO
         )
-        if direction_hit_rate_pct is not None and direction_hit_rate_pct < Decimal("50.00"):
-            reality_error_penalty_pct += Decimal("0.45")
+        if model_too_optimistic:
+            reality_error_penalty_pct = clamp_decimal(
+                max(mean_absolute_error_pct - Decimal("1.25"), ZERO) * Decimal("0.12"),
+                ZERO,
+                Decimal("1.40"),
+            )
+            if direction_hit_rate_pct is not None and direction_hit_rate_pct < Decimal("50.00"):
+                reality_error_penalty_pct += Decimal("0.45")
+        if (
+            int(reality_feedback.get("sample_count") or 0) >= 2
+            and raw_return_pct < ZERO
+            and average_gap_pct >= Decimal("5.00")
+            and recent_average_gap_pct >= Decimal("3.00")
+            and average_actual_return_pct > ZERO
+            and positive_actual_ratio_pct >= Decimal("60.00")
+        ):
+            reality_contradiction_floor_pct = quantize_decimal(
+                clamp_decimal(
+                    average_actual_return_pct * Decimal("0.15"),
+                    Decimal("0.50"),
+                    Decimal("3.00"),
+                ),
+                "0.01",
+            )
     anchor_return_pct = quantize_decimal(
         average_decimal([item for item in (latest_return_pct, average_return_pct) if item is not None]),
         "0.01",
@@ -16798,6 +16909,11 @@ def apply_optimizer_expectation_review_adjustment(
     if stability.get("applied") and stability.get("stabilized_return_pct") is not None:
         adjusted_return_pct = stability["stabilized_return_pct"]
         adjustment_pct = quantize_decimal(adjusted_return_pct - raw_return_pct, "0.01") or ZERO
+    reality_contradiction_applied = False
+    if reality_contradiction_floor_pct is not None and adjusted_return_pct < reality_contradiction_floor_pct:
+        adjusted_return_pct = reality_contradiction_floor_pct
+        adjustment_pct = quantize_decimal(adjusted_return_pct - raw_return_pct, "0.01") or ZERO
+        reality_contradiction_applied = True
     return {
         "available": True,
         "sample_count": sample_count,
@@ -16814,6 +16930,8 @@ def apply_optimizer_expectation_review_adjustment(
         "actual_feedback_adjustment_pct": quantize_decimal(actual_feedback_adjustment_pct, "0.01"),
         "stability_penalty_pct": quantize_decimal(stability_penalty_pct, "0.01"),
         "reality_error_penalty_pct": quantize_decimal(reality_error_penalty_pct, "0.01"),
+        "reality_contradiction_floor_pct": reality_contradiction_floor_pct,
+        "reality_contradiction_applied": reality_contradiction_applied,
         "adjustment_pct": quantize_decimal(adjustment_pct, "0.01"),
         "adjusted_return_pct": quantize_decimal(adjusted_return_pct, "0.01"),
         "stability": stability,
@@ -16959,6 +17077,8 @@ def apply_expectation_review_memory_to_card(card: dict, signal: dict | None = No
         "spread_pct": projection_adjustment.get("spread_pct"),
         "actual_feedback_adjustment_pct": projection_adjustment.get("actual_feedback_adjustment_pct"),
         "reality_error_penalty_pct": projection_adjustment.get("reality_error_penalty_pct"),
+        "reality_contradiction_floor_pct": projection_adjustment.get("reality_contradiction_floor_pct"),
+        "reality_contradiction_applied": projection_adjustment.get("reality_contradiction_applied"),
         "reality_feedback": reality_feedback,
         "note": "Ajuste aplicado con el historico completo de revisiones guardadas y sus desviaciones reales observadas.",
     }

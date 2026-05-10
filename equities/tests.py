@@ -510,6 +510,41 @@ class EquitiesServicesTests(TestCase):
         self.assertLess(feedback["bias_adjustment_pct"], ZERO)
         self.assertGreater(feedback["mean_absolute_error_pct"], Decimal("1.00"))
 
+    def test_expectation_review_lifts_negative_projection_when_reality_contradicts_it(self):
+        adjusted = apply_optimizer_expectation_review_adjustment(
+            Decimal("-26.60"),
+            {
+                "available": True,
+                "horizon_years": 1,
+                "sample_count": 4,
+                "latest_return_pct": Decimal("-0.20"),
+                "average_return_pct": Decimal("-0.55"),
+                "trend_return_pct": Decimal("0.70"),
+                "recent_delta_pct": Decimal("0.20"),
+                "spread_pct": Decimal("0.70"),
+                "first_review_date": date(2026, 4, 28),
+                "latest_review_date": date(2026, 5, 7),
+                "anchor_date": date(2026, 5, 10),
+                "date_span_days": 9,
+                "reality_feedback": {
+                    "available": True,
+                    "sample_count": 4,
+                    "average_gap_pct": Decimal("10.00"),
+                    "recent_average_gap_pct": Decimal("10.00"),
+                    "latest_gap_pct": Decimal("-2.10"),
+                    "average_actual_return_pct": Decimal("9.50"),
+                    "positive_actual_ratio_pct": Decimal("75.00"),
+                    "mean_absolute_error_pct": Decimal("11.20"),
+                    "direction_hit_rate_pct": Decimal("25.00"),
+                    "bias_adjustment_pct": Decimal("6.00"),
+                },
+            },
+        )
+
+        self.assertTrue(adjusted["reality_contradiction_applied"])
+        self.assertGreater(adjusted["adjusted_return_pct"], ZERO)
+        self.assertEqual(adjusted["reality_error_penalty_pct"], ZERO)
+
     def test_expectation_review_signal_uses_full_historical_memory_not_only_recent_points(self):
         run = EquityNightlyAnalysisRun.objects.create(
             analysis_date=date(2026, 3, 13),
@@ -3536,6 +3571,55 @@ class EquitiesServicesTests(TestCase):
         )
 
         self.assertEqual(target_value, Decimal("1100.00"))
+
+    def test_ticket_tracking_marks_saved_plan_when_current_projection_flips(self):
+        position = EquityPosition.objects.create(
+            broker="Interactive Brokers",
+            ticker="SCYR",
+            quote_symbol="SCYR.MC",
+            reference_profile=EquityPosition.ReferenceProfile.MARKET_INDEX,
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Sacyr",
+            shares=Decimal("100.0000"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.5000"),
+        )
+        snapshot = EquityTicketSnapshot.objects.create(
+            position=position,
+            snapshot_date=date(2026, 4, 16),
+            invested_amount=Decimal("1000.00"),
+            current_value=Decimal("1000.00"),
+            projected_market_value_12m=Decimal("1200.00"),
+            projected_total_value_12m=Decimal("1200.00"),
+            projected_price_12m=Decimal("12.0000"),
+        )
+
+        with patch("equities.services.build_owned_cycle_trade_timing_plan", return_value={"available": False}), patch(
+            "equities.services.build_purchase_trade_rotation_guidance",
+            return_value={"available": False},
+        ):
+            ticket = build_equity_ticket_tracking_item(
+                {
+                    "position": position,
+                    "reference_label": "IBEX 35",
+                    "projection": {"available": True, "base_return_pct": Decimal("-26.60")},
+                    "presentation_projection": {
+                        "available": True,
+                        "visible_total_return_pct": Decimal("-26.60"),
+                    },
+                    "projection_reliability": {"label": "Media", "score": Decimal("64.00")},
+                    "cycle_projection_5y": {"available": False, "path": []},
+                },
+                [snapshot],
+            )
+
+        self.assertIsNotNone(ticket)
+        self.assertTrue(ticket["projection_source"]["conflict"])
+        self.assertTrue(ticket["projection_source"]["direction_changed"])
+        self.assertEqual(ticket["projection_source"]["stored_return_12m_pct"], Decimal("20.00"))
+        self.assertEqual(ticket["projection_source"]["current_return_12m_pct"], Decimal("-26.60"))
+        self.assertIn("prevision guardada", ticket["projection_source"]["note"])
 
     def test_ticket_tracking_recalibrates_expected_curve_when_reality_lags(self):
         position = EquityPosition.objects.create(
@@ -12003,6 +12087,9 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Prediccion frente a realidad")
         self.assertContains(response, "Ticket IBE")
         self.assertContains(response, "Ticket ENG")
+        self.assertContains(response, "Valor real frente al plan guardado")
+        self.assertContains(response, "Plan guardado hoy")
+        self.assertContains(response, "Gap vs plan")
         self.assertContains(response, "Beneficio neto")
         self.assertContains(response, "Rentabilidad sobre base")
         self.assertContains(response, "Rentabilidad anualizada")
