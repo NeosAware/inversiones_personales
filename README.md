@@ -209,6 +209,17 @@ python3 manage.py createsuperuser
 gunicorn config.wsgi:application --bind 127.0.0.1:8082
 ```
 
+If you deployed and cannot log in, create or reset an access user from the server:
+
+```bash
+set -a
+. ../.env
+set +a
+python3 manage.py ensure_household_user --username household --password-env APP_BOOTSTRAP_PASSWORD --superuser
+```
+
+The IONOS deploy script also does this automatically when `APP_BOOTSTRAP_USERNAME` and `APP_BOOTSTRAP_PASSWORD` are set in the production `.env`.
+
 ## Banking extract import
 
 The `banking` module can import monthly account extracts and summarise them into:

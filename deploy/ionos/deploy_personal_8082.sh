@@ -28,6 +28,35 @@ set +a
 python3 manage.py migrate
 python3 manage.py collectstatic --noinput
 
+if [ -n "${APP_BOOTSTRAP_USERNAME:-}" ] || [ -n "${APP_BOOTSTRAP_PASSWORD:-}" ]; then
+  if [ -z "${APP_BOOTSTRAP_USERNAME:-}" ] || [ -z "${APP_BOOTSTRAP_PASSWORD:-}" ]; then
+    echo "APP_BOOTSTRAP_USERNAME y APP_BOOTSTRAP_PASSWORD deben configurarse juntos para crear el acceso inicial." >&2
+    exit 1
+  fi
+
+  bootstrap_args=(manage.py ensure_household_user --username "$APP_BOOTSTRAP_USERNAME" --password-env APP_BOOTSTRAP_PASSWORD)
+  if [ -n "${APP_BOOTSTRAP_EMAIL:-}" ]; then
+    bootstrap_args+=(--email "$APP_BOOTSTRAP_EMAIL")
+  fi
+
+  case "${APP_BOOTSTRAP_ROLE:-superuser}" in
+    superuser|admin)
+      bootstrap_args+=(--superuser)
+      ;;
+    staff)
+      bootstrap_args+=(--staff)
+      ;;
+    user)
+      ;;
+    *)
+      echo "APP_BOOTSTRAP_ROLE debe ser superuser, staff o user." >&2
+      exit 1
+      ;;
+  esac
+
+  python3 "${bootstrap_args[@]}"
+fi
+
 sudo systemctl restart "$SERVICE_NAME"
 sudo systemctl status "$SERVICE_NAME" --no-pager --lines=20
 curl -fsS http://127.0.0.1:8082/health/

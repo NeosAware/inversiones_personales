@@ -1,7 +1,11 @@
+from io import StringIO
+from unittest.mock import patch
+
 from datetime import date, timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.management import CommandError, call_command
 from django.test import TestCase
 from django.utils import timezone
 from django.urls import reverse
@@ -562,6 +566,30 @@ class UserManagementTests(TestCase):
         self.admin.refresh_from_db()
         self.assertTrue(self.admin.is_staff)
         self.assertTrue(self.admin.is_superuser)
+
+
+class EnsureHouseholdUserCommandTests(TestCase):
+    @patch.dict("os.environ", {"HOUSEHOLD_TEST_PASSWORD": "StrongPass123!"})
+    def test_command_can_read_password_from_environment(self):
+        out = StringIO()
+
+        call_command(
+            "ensure_household_user",
+            username="deploy-admin",
+            password_env="HOUSEHOLD_TEST_PASSWORD",
+            superuser=True,
+            stdout=out,
+        )
+
+        user = get_user_model().objects.get(username="deploy-admin")
+        self.assertTrue(user.check_password("StrongPass123!"))
+        self.assertTrue(user.is_staff)
+        self.assertTrue(user.is_superuser)
+        self.assertIn("deploy-admin", out.getvalue())
+
+    def test_command_requires_password_source(self):
+        with self.assertRaisesMessage(CommandError, "Usa --password o --password-env"):
+            call_command("ensure_household_user", username="deploy-admin")
 
 
 class PortfolioDashboardViewTests(TestCase):

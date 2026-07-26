@@ -54,6 +54,10 @@ DJANGO_SECRET_KEY=poner-una-clave-larga-y-aleatoria
 DJANGO_DEBUG=0
 APP_ALLOWED_HOSTS=personal.neosaware.ai
 APP_CSRF_TRUSTED_ORIGINS=https://personal.neosaware.ai,http://personal.neosaware.ai:8082,https://personal.neosaware.ai:8082
+APP_BOOTSTRAP_USERNAME=
+APP_BOOTSTRAP_PASSWORD=
+APP_BOOTSTRAP_EMAIL=
+APP_BOOTSTRAP_ROLE=superuser
 DB_ENGINE=postgresql
 POSTGRES_DB=inversiones_personales
 POSTGRES_USER=inversiones_personales
@@ -83,6 +87,19 @@ APP_EQUITIES_NIGHTLY_ANALYSIS_AGENT_LABEL=Analista nocturno
 
 Importante: la aplicacion ya no cae a SQLite en produccion. Si este `.env` no se carga en el servicio, Django fallara al arrancar para evitar usar una base equivocada.
 
+Si despliegas el proyecto en otro subdominio, por ejemplo `fleet.neosaware.ai`, cambia tambien `APP_ALLOWED_HOSTS`, `APP_CSRF_TRUSTED_ORIGINS`, el bloque de Nginx y las rutas del servicio para ese dominio.
+
+Para recuperar acceso sin escribir la contrasena en la linea de comandos, rellena temporalmente estas variables antes de desplegar:
+
+```dotenv
+APP_BOOTSTRAP_USERNAME=household
+APP_BOOTSTRAP_PASSWORD=CAMBIAR_PASSWORD_SEGURA
+APP_BOOTSTRAP_EMAIL=
+APP_BOOTSTRAP_ROLE=superuser
+```
+
+El script de despliegue creara o actualizara ese usuario. Cuando ya puedas entrar, puedes borrar `APP_BOOTSTRAP_PASSWORD` del `.env` para que futuros despliegues no reseteen la contrasena.
+
 ## 6. Migraciones, estaticos y usuario inicial
 
 ```bash
@@ -96,10 +113,16 @@ python3 manage.py collectstatic --noinput
 python3 manage.py createsuperuser
 ```
 
-Si quieres crear un usuario adicional para acceso normal:
+Si quieres crear o resetear un usuario adicional para acceso normal:
 
 ```bash
 python3 manage.py ensure_household_user --username household --password CAMBIAR_PASSWORD
+```
+
+Tambien puedes leer la contrasena desde el `.env`, que evita dejarla en el historial de shell:
+
+```bash
+python3 manage.py ensure_household_user --username household --password-env APP_BOOTSTRAP_PASSWORD --superuser
 ```
 
 ## 7. Gunicorn
@@ -153,6 +176,8 @@ bash deploy/ionos/deploy_personal_8082.sh
 ```
 
 Hace `git pull`, instala dependencias en el venv propio, ejecuta `migrate`, `collectstatic`, reinicia `personal-neosaware-ai` y comprueba `http://127.0.0.1:8082/health/`.
+
+Si `APP_BOOTSTRAP_USERNAME` y `APP_BOOTSTRAP_PASSWORD` estan configuradas en el `.env`, tambien crea o resetea ese usuario antes de reiniciar el servicio.
 
 Durante el dia, la web y las optimizaciones reutilizan este cache nocturno siempre que siga siendo valido.
 
