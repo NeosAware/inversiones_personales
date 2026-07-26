@@ -8424,6 +8424,45 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(result["max_move_pct"], Decimal("1.80"))
         self.assertEqual(result["stabilized_return_pct"], Decimal("0.20"))
 
+    def test_expectation_stability_anchors_on_recency_weighted_average_not_last_jump(self):
+        # La ultima revision salto a +10 pero la media ponderada por recencia esta
+        # en 0: el ancla debe ser 0.70*0 + 0.30*10 = 3.00, no el ultimo valor solo.
+        result = stabilize_return_against_latest_expectation(
+            Decimal("12.00"),
+            {
+                "available": True,
+                "horizon_years": 1,
+                "sample_count": 6,
+                "latest_return_pct": Decimal("10.00"),
+                "average_return_pct": Decimal("0.00"),
+                "latest_review_date": date(2026, 5, 6),
+                "anchor_date": date(2026, 5, 7),  # 1 dia -> max_move 1.25
+            },
+        )
+
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["anchor_return_pct"], Decimal("3.00"))
+        self.assertEqual(result["max_move_pct"], Decimal("1.25"))
+        # Se amortigua contra la media suavizada (3.00 + 1.25), no contra el salto (10 + 1.25).
+        self.assertEqual(result["stabilized_return_pct"], Decimal("4.25"))
+
+    def test_expectation_stability_falls_back_to_last_review_without_enough_samples(self):
+        result = stabilize_return_against_latest_expectation(
+            Decimal("12.00"),
+            {
+                "available": True,
+                "horizon_years": 1,
+                "sample_count": 2,  # menos de 3: no se puede suavizar todavia
+                "latest_return_pct": Decimal("10.00"),
+                "average_return_pct": Decimal("0.00"),
+                "latest_review_date": date(2026, 5, 6),
+                "anchor_date": date(2026, 5, 7),
+            },
+        )
+
+        self.assertEqual(result["anchor_return_pct"], Decimal("10.00"))
+        self.assertEqual(result["stabilized_return_pct"], Decimal("11.25"))
+
     def test_expectation_stability_dashboard_rebuilds_visible_one_year_expectation(self):
         run = EquityNightlyAnalysisRun.objects.create(
             analysis_date=date(2026, 5, 5),

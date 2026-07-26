@@ -111,6 +111,12 @@ EXPECTATION_STABILITY_1Y_MAX_MOVE_PCT = Decimal("3.00")
 EXPECTATION_STABILITY_5Y_MIN_MOVE_PCT = Decimal("1.00")
 EXPECTATION_STABILITY_5Y_DAILY_MOVE_PCT = Decimal("0.55")
 EXPECTATION_STABILITY_5Y_MAX_MOVE_PCT = Decimal("2.50")
+# Peso del ancla de estabilizacion sobre la media ponderada por recencia (EWMA)
+# frente al ultimo analisis. 1.00 = ancla 100% en la media suavizada (mas robusto,
+# no da saltos); 0.00 = ancla solo en la ultima revision (comportamiento antiguo).
+# Se exige un minimo de muestras para poder suavizar.
+EXPECTATION_STABILITY_SMOOTH_ANCHOR_WEIGHT = Decimal("0.70")
+EXPECTATION_STABILITY_SMOOTH_MIN_SAMPLES = 3
 EXPECTATION_REVIEW_CORRECTION_MIN_POINTS = 3
 EXPECTATION_REVIEW_CORRECTION_MIN_ELAPSED_DAYS = 7
 PURCHASE_DISCIPLINE_TARGET_SCORE = Decimal("70.00")
@@ -16942,18 +16948,34 @@ def stabilize_return_against_latest_expectation(
             "applied": False,
         }
 
+    # Ancla robusta: en vez de amortiguar contra una sola revision (la ultima,
+    # que puede ser un valor saltado), se ancla contra la media ponderada por
+    # recencia de las ultimas revisiones (mas peso a las recientes). Se mantiene
+    # una fraccion del ultimo valor para no perder reactividad ante giros reales.
+    average_return_pct = quantize_decimal(signal.get("average_return_pct"), "0.01")
+    sample_count = int(signal.get("sample_count") or 0)
+    if average_return_pct is not None and sample_count >= EXPECTATION_STABILITY_SMOOTH_MIN_SAMPLES:
+        anchor_return_pct = quantize_decimal(
+            average_return_pct * EXPECTATION_STABILITY_SMOOTH_ANCHOR_WEIGHT
+            + latest_return_pct * (Decimal("1.00") - EXPECTATION_STABILITY_SMOOTH_ANCHOR_WEIGHT),
+            "0.01",
+        )
+    else:
+        anchor_return_pct = latest_return_pct
+
     anchor_date = signal.get("anchor_date")
     latest_review_date = signal.get("latest_review_date")
     elapsed_days = None
     if isinstance(anchor_date, date) and isinstance(latest_review_date, date):
         elapsed_days = max((anchor_date - latest_review_date).days, 1)
     max_move_pct = expectation_stability_move_cap(int(signal.get("horizon_years") or 1), elapsed_days)
-    delta_pct = quantize_decimal(raw_return_pct - latest_return_pct, "0.01") or ZERO
+    delta_pct = quantize_decimal(raw_return_pct - anchor_return_pct, "0.01") or ZERO
     if abs(delta_pct) <= max_move_pct:
         return {
             "available": True,
             "raw_return_pct": raw_return_pct,
             "latest_return_pct": latest_return_pct,
+            "anchor_return_pct": anchor_return_pct,
             "stabilized_return_pct": raw_return_pct,
             "adjustment_pct": ZERO,
             "delta_pct": delta_pct,
@@ -16963,12 +16985,13 @@ def stabilize_return_against_latest_expectation(
         }
 
     bounded_delta_pct = max_move_pct if delta_pct > ZERO else -max_move_pct
-    stabilized_return_pct = quantize_decimal(latest_return_pct + bounded_delta_pct, "0.01")
+    stabilized_return_pct = quantize_decimal(anchor_return_pct + bounded_delta_pct, "0.01")
     adjustment_pct = quantize_decimal(stabilized_return_pct - raw_return_pct, "0.01")
     return {
         "available": True,
         "raw_return_pct": raw_return_pct,
         "latest_return_pct": latest_return_pct,
+        "anchor_return_pct": anchor_return_pct,
         "stabilized_return_pct": stabilized_return_pct,
         "adjustment_pct": adjustment_pct,
         "delta_pct": delta_pct,
@@ -16976,8 +16999,8 @@ def stabilize_return_against_latest_expectation(
         "elapsed_days": elapsed_days,
         "applied": True,
         "note": (
-            "La expectativa se amortigua frente a la ultima revision guardada para evitar cambios bruscos "
-            "sin varias sesiones de confirmacion."
+            "La expectativa se amortigua frente a la media ponderada de las ultimas revisiones "
+            "(con mas peso a las recientes) para evitar saltos sin varias sesiones de confirmacion."
         ),
     }
 
