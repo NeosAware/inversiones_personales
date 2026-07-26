@@ -79,6 +79,8 @@ from .services import (
     build_candlestick_metrics,
     build_cycle_zoomed_monthly_projection_path,
     build_five_year_cycle_projection,
+    build_fundamentals_return_signal,
+    build_backtest_calibration,
     build_equity_round_investment_plan,
     build_equity_sale_preview,
     build_expectation_review_dashboard,
@@ -339,6 +341,109 @@ class EquitiesServicesTests(TestCase):
         load_ibex_reference_workbook_snapshot.cache_clear()
         clear_market_data_caches()
         super().tearDown()
+
+    def test_fundamentals_return_signal_rewards_earnings_growth_and_cheap_valuation(self):
+        fundamentals = {
+            "available": True,
+            "net_income_delta_pct": Decimal("44.00"),  # +44% total en dos ejercicios -> ~20% anual
+            "net_income_rows": [
+                {"value": Decimal("144")},
+                {"value": Decimal("120")},
+                {"value": Decimal("100")},
+            ],
+        }
+        valuation = {"available": True, "score": Decimal("6.00"), "per_value": Decimal("11.0"), "label": "Barata"}
+
+        signal = build_fundamentals_return_signal(fundamentals, valuation)
+
+        self.assertTrue(signal["available"])
+        self.assertEqual(signal["earnings_growth_pct"], Decimal("20.00"))
+        self.assertGreater(signal["annual_adjustment_pct"], ZERO)
+        self.assertGreater(signal["one_year_adjustment_pct"], ZERO)
+        # El ajuste 12M es una fraccion del anual, nunca al reves.
+        self.assertLess(signal["one_year_adjustment_pct"], signal["annual_adjustment_pct"])
+
+    def test_fundamentals_return_signal_penalizes_shrinking_earnings_and_stretched_per(self):
+        fundamentals = {
+            "available": True,
+            "net_income_delta_pct": Decimal("-36.00"),  # -36% total en dos ejercicios -> ~-20% anual
+            "net_income_rows": [
+                {"value": Decimal("64")},
+                {"value": Decimal("80")},
+                {"value": Decimal("100")},
+            ],
+        }
+        valuation = {"available": True, "score": Decimal("-7.00"), "per_value": Decimal("42.0"), "label": "Muy exigente"}
+
+        signal = build_fundamentals_return_signal(fundamentals, valuation)
+
+        self.assertTrue(signal["available"])
+        self.assertLess(signal["annual_adjustment_pct"], ZERO)
+        self.assertLess(signal["one_year_adjustment_pct"], ZERO)
+
+    def test_fundamentals_return_signal_stays_bounded_for_extreme_growth(self):
+        fundamentals = {
+            "available": True,
+            "net_income_delta_pct": Decimal("900.00"),  # crecimiento extremo en un ejercicio
+            "net_income_rows": [
+                {"value": Decimal("1000")},
+                {"value": Decimal("100")},
+            ],
+        }
+
+        signal = build_fundamentals_return_signal(fundamentals, valuation=None)
+
+        # El componente de beneficios esta acotado a +3.00 y sin valoracion no se supera.
+        self.assertLessEqual(signal["annual_adjustment_pct"], Decimal("3.00"))
+        self.assertLessEqual(signal["one_year_adjustment_pct"], Decimal("2.50"))
+
+    def test_fundamentals_return_signal_is_neutral_without_fundamentals(self):
+        signal = build_fundamentals_return_signal({"available": False}, valuation=None)
+
+        self.assertFalse(signal["available"])
+        self.assertEqual(signal["annual_adjustment_pct"], ZERO)
+        self.assertEqual(signal["one_year_adjustment_pct"], ZERO)
+
+    def test_backtest_calibration_corrects_optimistic_bias_downward(self):
+        # El modelo predijo de media 9 puntos por encima de lo ocurrido -> optimista.
+        backtest = {
+            "available": True,
+            "comparisons_count": 24,
+            "mean_signed_error_pct": Decimal("9.00"),
+            "direction_hit_rate_pct": Decimal("60.00"),
+        }
+
+        calibration = build_backtest_calibration(backtest)
+
+        self.assertTrue(calibration["available"])
+        # sesgo +9 -> correccion = -9*0.40*1.00 = -3.60
+        self.assertEqual(calibration["return_adjustment_pct"], Decimal("-3.60"))
+        self.assertEqual(calibration["bias_pct"], Decimal("9.00"))
+
+    def test_backtest_calibration_lifts_pessimistic_bias_and_stays_bounded(self):
+        # Sesgo negativo enorme -> correccion positiva pero acotada a +6.00.
+        backtest = {
+            "available": True,
+            "comparisons_count": 30,
+            "mean_signed_error_pct": Decimal("-40.00"),
+            "direction_hit_rate_pct": Decimal("62.00"),
+        }
+
+        calibration = build_backtest_calibration(backtest)
+
+        self.assertTrue(calibration["available"])
+        self.assertEqual(calibration["return_adjustment_pct"], Decimal("6.00"))
+
+    def test_backtest_calibration_skips_short_or_missing_samples(self):
+        few = build_backtest_calibration(
+            {"available": True, "comparisons_count": 5, "mean_signed_error_pct": Decimal("9.00")}
+        )
+        self.assertFalse(few["available"])
+        self.assertEqual(few["return_adjustment_pct"], ZERO)
+
+        none = build_backtest_calibration({"available": False})
+        self.assertFalse(none["available"])
+        self.assertEqual(none["return_adjustment_pct"], ZERO)
 
     def test_find_equity_company_profile_by_ibex_name_returns_indra_defaults(self):
         profile = find_equity_company_profile("Indra")

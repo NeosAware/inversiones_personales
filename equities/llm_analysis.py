@@ -67,7 +67,7 @@ def resolve_ai_provider_config() -> ProviderConfig:
     rate_limit_retry_seconds = max(int(getattr(settings, "AI_LLM_RATE_LIMIT_RETRY_SECONDS", 15) or 15), 1)
 
     if provider == "anthropic":
-        model = str(getattr(settings, "CLAUDE_DEFAULT_MODEL", "claude-sonnet-4-20250514") or "claude-sonnet-4-20250514").strip()
+        model = str(getattr(settings, "CLAUDE_DEFAULT_MODEL", "claude-opus-4-8") or "claude-opus-4-8").strip()
         api_key = str(getattr(settings, "ANTHROPIC_API_KEY", "") or "").strip()
         pricing = normalize_pricing(getattr(settings, "CLAUDE_PRICING", {}))
         monthly_budget_usd = Decimal(str(getattr(settings, "CLAUDE_MONTHLY_BUDGET_USD", ZERO) or ZERO))
@@ -671,11 +671,12 @@ def call_openai_agent(config: ProviderConfig, *, system_prompt: str, user_prompt
 
 
 def call_anthropic_agent(config: ProviderConfig, *, system_prompt: str, user_prompt: str) -> tuple[dict, dict]:
+    # Los modelos Claude vigentes (Opus 4.8, Sonnet 5) rechazan el parametro
+    # `temperature` con un error 400; se controla el estilo mediante el prompt.
     payload = {
         "model": config.model,
         "system": system_prompt,
         "max_tokens": config.max_tokens,
-        "temperature": 0.2,
         "messages": [
             {
                 "role": "user",

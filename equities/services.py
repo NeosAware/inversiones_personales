@@ -1473,6 +1473,136 @@ def apply_per_valuation_overlay(projection: dict, valuation: dict | None = None)
     }
 
 
+def build_fundamentals_return_signal(
+    fundamentals: dict | None = None,
+    valuation: dict | None = None,
+) -> dict:
+    """Convertir crecimiento de beneficios y valoracion en un ajuste de retorno.
+
+    El motor de proyeccion se apoya casi por completo en el historico de precio.
+    Esta senal incorpora la parte fundamental que faltaba: los beneficios que
+    componen tiran del precio a medio plazo, mientras que un PER estirado limita
+    el recorrido y uno barato amortigua la caida. Los ajustes salen ya acotados
+    para matizar -nunca dominar- el modelo de precio, y se devuelven por separado
+    para el horizonte anual (5A) y el de 12 meses.
+    """
+    unavailable = {
+        "available": False,
+        "annual_adjustment_pct": ZERO,
+        "one_year_adjustment_pct": ZERO,
+        "earnings_growth_pct": None,
+        "valuation_score": ZERO,
+        "label": "Sin lectura fundamental",
+        "note": "Sin beneficio neto suficiente para leer el crecimiento fundamental.",
+    }
+    fundamentals = fundamentals or {}
+    valuation = valuation or {}
+    if not fundamentals.get("available"):
+        return unavailable
+
+    rows = [row for row in (fundamentals.get("net_income_rows") or []) if row.get("value") is not None]
+    if len(rows) < 2:
+        return unavailable
+
+    span_years = max(len(rows) - 1, 1)
+    earnings_growth_pct = annualize_return_pct(fundamentals.get("net_income_delta_pct"), span_years * 12)
+
+    earnings_component = ZERO
+    if earnings_growth_pct is not None:
+        earnings_component = clamp_decimal(earnings_growth_pct * Decimal("0.08"), Decimal("-3.00"), Decimal("3.00"))
+
+    valuation_score = valuation.get("score") or ZERO
+    valuation_component = clamp_decimal(valuation_score * Decimal("0.25"), Decimal("-2.00"), Decimal("2.00"))
+
+    annual_adjustment_pct = clamp_decimal(earnings_component + valuation_component, Decimal("-4.00"), Decimal("4.00"))
+    one_year_adjustment_pct = clamp_decimal(annual_adjustment_pct * Decimal("0.50"), Decimal("-2.50"), Decimal("2.50"))
+
+    growth_label = "beneficios sin lectura"
+    if earnings_growth_pct is not None:
+        if earnings_growth_pct >= Decimal("8.00"):
+            growth_label = "beneficios al alza"
+        elif earnings_growth_pct <= Decimal("-8.00"):
+            growth_label = "beneficios a la baja"
+        else:
+            growth_label = "beneficios estables"
+
+    note_bits = []
+    if earnings_growth_pct is not None:
+        note_bits.append(
+            f"Beneficio neto {earnings_growth_pct:+.1f}% anual compuesto en los ultimos {span_years} ejercicios"
+        )
+    if valuation.get("available") and valuation.get("per_value") is not None:
+        note_bits.append(f"PER {valuation.get('per_value'):.1f} ({str(valuation.get('label') or '').lower()})")
+    note = (". ".join(note_bits) + ".") if note_bits else unavailable["note"]
+
+    return {
+        "available": True,
+        "annual_adjustment_pct": quantize_decimal(annual_adjustment_pct, "0.01") or ZERO,
+        "one_year_adjustment_pct": quantize_decimal(one_year_adjustment_pct, "0.01") or ZERO,
+        "earnings_growth_pct": quantize_decimal(earnings_growth_pct, "0.01") if earnings_growth_pct is not None else None,
+        "valuation_score": quantize_decimal(valuation_score, "0.01") or ZERO,
+        "label": growth_label,
+        "note": note,
+    }
+
+
+def build_backtest_calibration(backtest: dict | None = None) -> dict:
+    """Corregir el sesgo sistematico del modelo con el backtest walk-forward.
+
+    El backtest re-lanza la proyeccion mes a mes sobre el pasado y la compara con
+    lo que ocurrio 12 meses despues. Si el modelo tiende a pasarse de optimista o
+    de prudente, el error firmado medio (prediccion menos realidad) lo delata.
+    Restamos una fraccion de ese sesgo -con mas peso cuantas mas anclas comparadas
+    haya- para acercar la proyeccion a lo que historicamente acabo pasando, con un
+    tope estricto para no sobrecorregir con muestras cortas y solapadas.
+    """
+    unavailable = {
+        "available": False,
+        "return_adjustment_pct": ZERO,
+        "bias_pct": None,
+        "comparisons_count": 0,
+        "label": "Sin calibracion",
+        "note": "Sin backtest suficiente para calibrar el sesgo del modelo.",
+    }
+    backtest = backtest or {}
+    if not backtest.get("available"):
+        return unavailable
+
+    signed_error = backtest.get("mean_signed_error_pct")
+    comparisons = int(backtest.get("comparisons_count") or 0)
+    if signed_error is None or comparisons < 8:
+        return unavailable
+
+    # Confianza en el sesgo: crece con el numero de anclas y satura hacia 24.
+    sample_weight = clamp_decimal(Decimal(comparisons) / Decimal("24"), Decimal("0.30"), Decimal("1.00"))
+    # Se corrige solo una fraccion del sesgo y se acota, porque las ventanas 12M
+    # solapadas hacen que el error firmado medio sea ruidoso.
+    return_adjustment_pct = clamp_decimal(
+        -signed_error * Decimal("0.40") * sample_weight,
+        Decimal("-6.00"),
+        Decimal("6.00"),
+    )
+
+    if signed_error >= Decimal("2.00"):
+        label = "modelo historicamente optimista"
+    elif signed_error <= Decimal("-2.00"):
+        label = "modelo historicamente prudente"
+    else:
+        label = "modelo historicamente centrado"
+
+    return {
+        "available": True,
+        "return_adjustment_pct": quantize_decimal(return_adjustment_pct, "0.01") or ZERO,
+        "bias_pct": quantize_decimal(signed_error, "0.01"),
+        "comparisons_count": comparisons,
+        "label": label,
+        "note": (
+            f"El backtest ({comparisons} anclas) revela un sesgo medio de {signed_error:+.1f} puntos "
+            f"(prediccion menos realidad); la proyeccion se corrige en {return_adjustment_pct:+.1f} puntos."
+        ),
+    }
+
+
 def build_equity_reference_guide(history_cards: list[dict]) -> dict:
     workbook_snapshot = load_ibex_reference_workbook_snapshot()
     rows = []
@@ -4715,6 +4845,8 @@ def build_base_five_year_cycle_projection(
     position: EquityPosition,
     correlation: dict,
     cycle_metrics: dict | None = None,
+    fundamentals: dict | None = None,
+    valuation: dict | None = None,
 ) -> dict:
     if len(history) < 2:
         return {"available": False}
@@ -4793,6 +4925,10 @@ def build_base_five_year_cycle_projection(
         annual_return_components.append(
             clamp_decimal((positive_year_ratio_pct - Decimal("50.00")) * Decimal("0.04"), Decimal("-0.80"), Decimal("0.80"))
         )
+
+    fundamentals_signal = build_fundamentals_return_signal(fundamentals, valuation)
+    if fundamentals_signal.get("available"):
+        annual_return_components.append(fundamentals_signal.get("annual_adjustment_pct") or ZERO)
 
     if not annual_return_components:
         return {"available": False}
@@ -4976,6 +5112,13 @@ def build_base_five_year_cycle_projection(
         "projected_price": projected_price,
         "five_year_return_pct": quantize_decimal(five_year_return_pct),
         "path": path,
+        "fundamentals_signal": {
+            "applied": bool(fundamentals_signal.get("available")),
+            "label": fundamentals_signal.get("label"),
+            "earnings_growth_pct": fundamentals_signal.get("earnings_growth_pct"),
+            "annual_adjustment_pct": fundamentals_signal.get("annual_adjustment_pct"),
+            "note": fundamentals_signal.get("note") or "",
+        },
         "cycle_phase": cycle_metrics.get("cycle_phase"),
         "analysis_years_used": analysis_years_used,
         "history_window_label": "Ultimos 5 anos visibles",
@@ -5006,12 +5149,16 @@ def build_five_year_cycle_projection(
     cycle_metrics: dict | None = None,
     reference_cache: dict | None = None,
     include_visuals: bool = True,
+    fundamentals: dict | None = None,
+    valuation: dict | None = None,
 ) -> dict:
     base_projection = build_base_five_year_cycle_projection(
         history,
         position,
         correlation,
         cycle_metrics=cycle_metrics,
+        fundamentals=fundamentals,
+        valuation=valuation,
     )
     if not base_projection.get("available"):
         return base_projection
@@ -12522,6 +12669,9 @@ def build_one_year_projection(
     six_month_snapshot: dict,
     cycle_metrics: dict | None = None,
     technical_signal: dict | None = None,
+    fundamentals: dict | None = None,
+    valuation: dict | None = None,
+    backtest: dict | None = None,
 ) -> dict:
     if not history:
         return {"available": False}
@@ -12618,8 +12768,15 @@ def build_one_year_projection(
             technical_band_multiplier = clamp_decimal(technical_band_multiplier + Decimal("0.06"), Decimal("0.92"), Decimal("1.16"))
         else:
             technical_alignment_label = "Mixto"
+    fundamentals_signal = build_fundamentals_return_signal(fundamentals, valuation)
+    fundamentals_return_adjustment_pct = fundamentals_signal.get("one_year_adjustment_pct") or ZERO
+    calibration_signal = build_backtest_calibration(backtest)
+    backtest_return_adjustment_pct = calibration_signal.get("return_adjustment_pct") or ZERO
     price_return_pct = clamp_decimal(
-        model_price_return_pct + technical_return_adjustment_pct,
+        model_price_return_pct
+        + technical_return_adjustment_pct
+        + fundamentals_return_adjustment_pct
+        + backtest_return_adjustment_pct,
         Decimal("-35.00"),
         Decimal("40.00"),
     )
@@ -12724,6 +12881,17 @@ def build_one_year_projection(
             f"y queda {technical_alignment_label.lower()} frente al modelo principal."
         )
 
+    if fundamentals_signal.get("available"):
+        explanation += (
+            f" La capa fundamental ({fundamentals_signal.get('label')}) ajusta el retorno de precio en "
+            f"{fundamentals_return_adjustment_pct:+.1f} puntos. {fundamentals_signal.get('note') or ''}"
+        ).rstrip()
+    if calibration_signal.get("available") and backtest_return_adjustment_pct != ZERO:
+        explanation += (
+            f" La calibracion por backtest ({calibration_signal.get('label')}) corrige el sesgo historico "
+            f"en {backtest_return_adjustment_pct:+.1f} puntos."
+        )
+
     price_low_return_pct = clamp_decimal(price_return_pct - band_pct, Decimal("-80.00"), Decimal("120.00"))
     price_high_return_pct = clamp_decimal(price_return_pct + band_pct, Decimal("-80.00"), Decimal("140.00"))
     scenarios = build_one_year_projection_scenarios(
@@ -12816,6 +12984,23 @@ def build_one_year_projection(
             "return_adjustment_pct": quantize_decimal(technical_return_adjustment_pct),
             "band_multiplier": quantize_decimal(technical_band_multiplier, "0.01"),
             "note": technical_signal.get("note") or "",
+        },
+        "fundamentals_signal": {
+            "applied": bool(fundamentals_signal.get("available")),
+            "label": fundamentals_signal.get("label"),
+            "earnings_growth_pct": fundamentals_signal.get("earnings_growth_pct"),
+            "valuation_score": fundamentals_signal.get("valuation_score"),
+            "return_adjustment_pct": quantize_decimal(fundamentals_return_adjustment_pct, "0.01"),
+            "annual_adjustment_pct": fundamentals_signal.get("annual_adjustment_pct"),
+            "note": fundamentals_signal.get("note") or "",
+        },
+        "backtest_calibration": {
+            "applied": bool(calibration_signal.get("available")) and backtest_return_adjustment_pct != ZERO,
+            "label": calibration_signal.get("label"),
+            "bias_pct": calibration_signal.get("bias_pct"),
+            "comparisons_count": calibration_signal.get("comparisons_count"),
+            "return_adjustment_pct": quantize_decimal(backtest_return_adjustment_pct, "0.01"),
+            "note": calibration_signal.get("note") or "",
         },
         "explanation": explanation,
     }
@@ -12930,6 +13115,9 @@ def build_projection_backtest(
     mean_absolute_error_pct = quantize_decimal(
         sum((row["absolute_error_pct"] for row in rows), ZERO) / Decimal(comparisons_count)
     )
+    mean_signed_error_pct = quantize_decimal(
+        sum((row["forecast_return_pct"] - row["actual_return_pct"] for row in rows), ZERO) / Decimal(comparisons_count)
+    )
     direction_hit_rate_pct = quantize_decimal(
         Decimal(sum(1 for row in rows if row["direction_hit"])) * Decimal("100") / Decimal(comparisons_count)
     )
@@ -12950,6 +13138,7 @@ def build_projection_backtest(
         "rows": recent_rows,
         "monthly_chart": monthly_chart,
         "mean_absolute_error_pct": mean_absolute_error_pct,
+        "mean_signed_error_pct": mean_signed_error_pct,
         "direction_hit_rate_pct": direction_hit_rate_pct,
         "in_range_rate_pct": in_range_rate_pct,
         "precision_label": precision_label,
@@ -14655,6 +14844,19 @@ def build_equity_history_card(
     )
     cycle_metrics = build_cycle_metrics(history)
     technical_signal = build_candlestick_metrics(history)
+    valuation = build_equity_per_valuation(
+        position,
+        fundamentals,
+        sector_label=resolved_sector_label,
+    )
+    # El backtest se calcula antes que la proyeccion viva para calibrar su sesgo
+    # historico. Sus proyecciones internas no reciben calibracion (miden el modelo
+    # crudo), asi que no hay recursion.
+    projection_backtest = build_projection_backtest(
+        history,
+        position,
+        include_monthly_chart=include_visuals,
+    )
     projection = build_one_year_projection(
         history,
         position,
@@ -14662,11 +14864,9 @@ def build_equity_history_card(
         six_month_snapshot,
         cycle_metrics=cycle_metrics,
         technical_signal=technical_signal,
-    )
-    valuation = build_equity_per_valuation(
-        position,
-        fundamentals,
-        sector_label=resolved_sector_label,
+        fundamentals=fundamentals,
+        valuation=valuation,
+        backtest=projection_backtest,
     )
     projection = apply_per_valuation_overlay(projection, valuation)
     cycle_projection_5y = build_five_year_cycle_projection(
@@ -14676,17 +14876,14 @@ def build_equity_history_card(
         cycle_metrics=cycle_metrics,
         reference_cache=reference_cache,
         include_visuals=include_visuals,
+        fundamentals=fundamentals,
+        valuation=valuation,
     )
     synchronize_projection_path_with_cycle_zoom(
         projection,
         cycle_projection_5y,
         current_price=latest_point.close_price or position.current_price_per_share,
         anchor_date=latest_point.price_date,
-    )
-    projection_backtest = build_projection_backtest(
-        history,
-        position,
-        include_monthly_chart=include_visuals,
     )
     projection_reliability = (
         build_projection_reliability(projection, projection_backtest)

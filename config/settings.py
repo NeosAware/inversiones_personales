@@ -380,11 +380,17 @@ EQUITIES_NIGHTLY_LLM_NEWS_TIMEOUT_SECONDS = parse_int(
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 CLAUDE_PRICING = {
+    # Modelos vigentes (precios por millon de tokens, USD).
+    "claude-opus-4-8": {"input": Decimal("5.00"), "output": Decimal("25.00")},
+    "claude-sonnet-5": {"input": Decimal("3.00"), "output": Decimal("15.00")},
+    "claude-haiku-4-5": {"input": Decimal("1.00"), "output": Decimal("5.00")},
+    # Modelos legado retirados de la API el 2026-06-15 (se conservan para leer
+    # coste de ejecuciones historicas; no deben usarse como CLAUDE_DEFAULT_MODEL).
     "claude-sonnet-4-20250514": {"input": Decimal("3.00"), "output": Decimal("15.00")},
     "claude-haiku-4-5-20251001": {"input": Decimal("0.80"), "output": Decimal("4.00")},
     "claude-opus-4-20250514": {"input": Decimal("15.00"), "output": Decimal("75.00")},
 }
-CLAUDE_DEFAULT_MODEL = os.environ.get("CLAUDE_DEFAULT_MODEL", "claude-sonnet-4-20250514").strip() or "claude-sonnet-4-20250514"
+CLAUDE_DEFAULT_MODEL = os.environ.get("CLAUDE_DEFAULT_MODEL", "claude-opus-4-8").strip() or "claude-opus-4-8"
 CLAUDE_MAX_TOKENS = parse_int(os.environ.get("CLAUDE_MAX_TOKENS"), 1024)
 CLAUDE_MONTHLY_BUDGET_USD = parse_decimal(os.environ.get("CLAUDE_MONTHLY_BUDGET_USD"), "50.00")
 

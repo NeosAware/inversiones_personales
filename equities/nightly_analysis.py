@@ -1014,6 +1014,10 @@ def build_nightly_completion_note(llm_summary: dict | None) -> str:
     detail_bits = []
     if failed_count:
         detail_bits.append(f"{failed_count} fallo(s)")
+        failures = llm_summary.get("failures") or []
+        first_error = str((failures[0] or {}).get("error") or "").strip() if failures else ""
+        if first_error:
+            detail_bits.append(f"motivo: {first_error}")
     if refresh_failed_count and refresh_failed_count != failed_count:
         detail_bits.append(f"{refresh_failed_count} incidencia(s) de API con respaldo previo")
     if skipped_budget_count:
