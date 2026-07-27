@@ -117,6 +117,20 @@ from .services import (
 )
 
 
+# Campos minimos que hacen viable (perfil conservador del optimizador) a un card
+# sintetico: alerta de compra, seguridad/fiabilidad suficientes, peor escenario
+# acotado y volatilidad baja. Se anaden a fixtures escritos antes de que existiera
+# ese filtro, para que los candidatos entren y se pueda comprobar la logica de
+# asignacion/orden que cada test verifica de verdad.
+OPTIMIZER_VIABLE_PROJECTION_FIELDS = {
+    "safety_score": Decimal("72.00"),
+    "annualized_volatility_pct": Decimal("16.00"),
+    "low_return_pct": Decimal("2.00"),
+}
+OPTIMIZER_VIABLE_TRADE_ALERT = {"label": "Comprar", "tone": "buy"}
+OPTIMIZER_VIABLE_RELIABILITY = {"label": "Alta", "score": Decimal("70.00")}
+
+
 def build_test_reference_workbook() -> str:
     from openpyxl import Workbook
 
@@ -3097,7 +3111,11 @@ class EquitiesServicesTests(TestCase):
         cards_by_ticker = {card["position"].ticker: card for card in cards}
 
         self.assertEqual(cards_by_ticker["IDR"]["trade_alert"]["label"], "Comprar")
-        self.assertEqual(cards_by_ticker["TEF"]["trade_alert"]["label"], "Vender")
+        # TEF esta sobrevendida y su senda 12M visible cierra al alza (rebote de
+        # reversion), asi que reconcile_trade_alert_with_visible_projection rebaja
+        # la venta a "Vigilar" para ser coherente con el grafico. El score sigue
+        # siendo negativo (la tesis de fondo no cambia).
+        self.assertEqual(cards_by_ticker["TEF"]["trade_alert"]["label"], "Vigilar")
         self.assertGreater(cards_by_ticker["IDR"]["trade_alert"]["score"], Decimal("0"))
         self.assertLess(cards_by_ticker["TEF"]["trade_alert"]["score"], Decimal("0"))
 
@@ -4873,7 +4891,11 @@ class EquitiesServicesTests(TestCase):
         self.assertEqual(trade_plan["reentry_window_label"], "junio 2028 (mes 26)")
         self.assertEqual(trade_plan["drawdown_month_number"], 12)
         self.assertEqual(trade_plan["drawdown_margin_pct"], Decimal("-0.13"))
-        self.assertEqual(tracking["tickets"][0]["rotation_plan"]["action"], "rotar")
+        # Tras endurecer el optimizador (retorno de la alternativa calculado desde
+        # la senda 12M conservadora), ELE ya no supera el umbral de rotacion
+        # (pre_sale 8 + drag 2 = 10), asi que la recomendacion pasa a esperar la
+        # reentrada en lugar de rotar. ELE sigue siendo la mejor alternativa.
+        self.assertEqual(tracking["tickets"][0]["rotation_plan"]["action"], "esperar_reentrada")
         self.assertEqual(tracking["tickets"][0]["rotation_plan"]["alternative_ticker"], "ELE")
         sale_timeline = tracking["sale_timeline"]
         self.assertTrue(sale_timeline["available"])
@@ -5197,12 +5219,15 @@ class EquitiesServicesTests(TestCase):
                 current_price_per_share=Decimal("18"),
             ),
             "reference_label": "IBEX 35",
+            "trade_alert": OPTIMIZER_VIABLE_TRADE_ALERT,
+            "projection_reliability": OPTIMIZER_VIABLE_RELIABILITY,
             "projection": {
                 "available": True,
                 "base_return_pct": Decimal("24.0"),
                 "projected_price": Decimal("22.32"),
                 "confidence_label": "Alta",
                 "coefficient": Decimal("0.55"),
+                **OPTIMIZER_VIABLE_PROJECTION_FIELDS,
             },
         }
         medium = {
@@ -5218,12 +5243,15 @@ class EquitiesServicesTests(TestCase):
                 current_price_per_share=Decimal("14"),
             ),
             "reference_label": "Demanda electrica Espana",
+            "trade_alert": OPTIMIZER_VIABLE_TRADE_ALERT,
+            "projection_reliability": OPTIMIZER_VIABLE_RELIABILITY,
             "projection": {
                 "available": True,
                 "base_return_pct": Decimal("16.0"),
                 "projected_price": Decimal("16.24"),
                 "confidence_label": "Media",
                 "coefficient": Decimal("0.31"),
+                **OPTIMIZER_VIABLE_PROJECTION_FIELDS,
             },
         }
         weak = {
@@ -5239,15 +5267,16 @@ class EquitiesServicesTests(TestCase):
                 current_price_per_share=Decimal("10"),
             ),
             "reference_label": "Precio vivienda Espana",
+            "trade_alert": OPTIMIZER_VIABLE_TRADE_ALERT,
             "projection": {
                 "available": True,
                 "base_return_pct": Decimal("8.0"),
                 "projected_price": Decimal("10.80"),
                 "confidence_label": "Media",
-                "safety_score": Decimal("60.00"),
                 "coefficient": Decimal("0.10"),
+                **OPTIMIZER_VIABLE_PROJECTION_FIELDS,
             },
-            "projection_reliability": {"label": "Media", "score": Decimal("62.00")},
+            "projection_reliability": OPTIMIZER_VIABLE_RELIABILITY,
         }
 
         plan = build_equity_allocation_plan([medium, weak, stronger], Decimal("100000"), Decimal("40"))
@@ -5276,10 +5305,11 @@ class EquitiesServicesTests(TestCase):
             ),
             "sector_label": "Distribucion",
             "reference_label": "IBEX 35",
-            "trade_alert": {"label": "Vigilar", "tone": "watch", "note": ""},
+            "trade_alert": OPTIMIZER_VIABLE_TRADE_ALERT,
             "projection": {
                 "available": True,
                 "base_return_pct": Decimal("14.40"),
+                "low_return_pct": Decimal("2.00"),
                 "projected_price": Decimal("29.74"),
                 "confidence_label": "Alta",
                 "coefficient": Decimal("0.48"),
@@ -5315,10 +5345,11 @@ class EquitiesServicesTests(TestCase):
             ),
             "sector_label": "Energia",
             "reference_label": "Demanda electrica Espana",
-            "trade_alert": {"label": "Vigilar", "tone": "watch", "note": ""},
+            "trade_alert": OPTIMIZER_VIABLE_TRADE_ALERT,
             "projection": {
                 "available": True,
                 "base_return_pct": Decimal("13.90"),
+                "low_return_pct": Decimal("2.00"),
                 "projected_price": Decimal("15.95"),
                 "confidence_label": "Alta",
                 "coefficient": Decimal("0.52"),
@@ -5363,10 +5394,11 @@ class EquitiesServicesTests(TestCase):
             ),
             "sector_label": "Energia",
             "reference_label": "IBEX 35",
-            "trade_alert": {"label": "Vigilar", "tone": "watch", "note": ""},
+            "trade_alert": OPTIMIZER_VIABLE_TRADE_ALERT,
             "projection": {
                 "available": True,
                 "base_return_pct": Decimal("18.50"),
+                "low_return_pct": Decimal("2.00"),
                 "projected_price": Decimal("16.59"),
                 "confidence_label": "Alta",
                 "coefficient": Decimal("0.50"),
@@ -5402,10 +5434,11 @@ class EquitiesServicesTests(TestCase):
             ),
             "sector_label": "Electrica",
             "reference_label": "Demanda electrica Espana",
-            "trade_alert": {"label": "Vigilar", "tone": "watch", "note": ""},
+            "trade_alert": OPTIMIZER_VIABLE_TRADE_ALERT,
             "projection": {
                 "available": True,
                 "base_return_pct": Decimal("8.80"),
+                "low_return_pct": Decimal("2.00"),
                 "projected_price": Decimal("15.23"),
                 "confidence_label": "Alta",
                 "coefficient": Decimal("0.52"),
@@ -6189,7 +6222,12 @@ class EquitiesServicesTests(TestCase):
         self.assertTrue(plan["available"])
         self.assertEqual([item["position"].ticker for item in plan["allocations"]], ["IBE"])
 
-    def test_optimizer_soft_penalty_still_keeps_decent_candidate_below_reference_levels(self):
+    def test_optimizer_conservative_profile_excludes_candidate_below_thresholds(self):
+        # El endurecimiento conservador (safety>=68, fiabilidad>=64) queda POR ENCIMA
+        # del suelo de la penalizacion blanda (safety<55, fiabilidad<58): un candidato
+        # que gana penalizacion blanda por debajo de esos suelos ya no puede pasar el
+        # filtro conservador. Se sigue construyendo el candidato y calculando su
+        # penalizacion, pero el filtro positivo lo excluye.
         middling_card = {
             "position": EquityPosition(
                 position_kind=EquityPosition.PositionKind.WATCHLIST,
@@ -6246,7 +6284,9 @@ class EquitiesServicesTests(TestCase):
 
         self.assertIsNotNone(candidate)
         self.assertGreater(candidate["quality_floor_penalty_pct"], ZERO)
-        self.assertEqual([item["position"].ticker for item in filtered], ["AMS"])
+        # Antes sobrevivia ("penalizar pero mantener"); con el perfil conservador
+        # queda excluido por seguridad/fiabilidad por debajo del minimo.
+        self.assertEqual([item["position"].ticker for item in filtered], [])
 
     def test_allocation_plan_recalculates_costs_and_dividends_for_assigned_capital(self):
         anchor_day = date(2026, 4, 25)
@@ -11426,7 +11466,9 @@ class EquitiesViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(mocked_dashboard.call_args.kwargs["include_ibex_universe"])
-        self.assertContains(response, "se aplaza temporalmente mientras hay optimizaciones activas")
+        # El aviso de aplazamiento del radar IBEX se reescribio; se comprueba el
+        # texto actual (el comportamiento -no reconstruir el radar- ya se valida arriba).
+        self.assertContains(response, "no se reconstruye en cada carga")
 
     def test_equities_page_keeps_single_optimization_history_table(self):
         first = EquityOptimizationRun.objects.create(
@@ -12584,8 +12626,10 @@ class EquitiesViewTests(TestCase):
         self.assertContains(response, "Gantt tactico de salidas y neto estimado")
         self.assertContains(response, "Neto estimado 24M")
         self.assertContains(response, "Pendiente 5M")
-        self.assertContains(response, "Rotacion radar")
-        self.assertContains(response, "Rotar a ELE")
+        # Con el optimizador conservador, el radar en vivo ya no propone rotar a ELE
+        # para este historico (su retorno 12M efectivo no supera el umbral de
+        # rotacion). La salida/reentrada tactica -el objeto de este test- si se muestra.
+        self.assertNotContains(response, "Rotar a ELE")
 
     def test_equities_page_backfills_purchase_baseline_for_existing_owned_position(self):
         position = EquityPosition.objects.create(
