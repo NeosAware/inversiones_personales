@@ -26,7 +26,7 @@ from django.utils import timezone as django_timezone
 from banking.services import load_rows_from_workbook
 from portfolio.ownership import AssetOwnershipCategory
 
-from .broker_costs import estimate_broker_costs, resolve_recurring_cost_used
+from .broker_costs import estimate_broker_costs, infer_market_scope, resolve_recurring_cost_used
 from .models import (
     EquityClosedPosition,
     EquityExpectationReview,
@@ -5176,15 +5176,56 @@ def build_five_year_cycle_projection(
         include_visuals=include_visuals,
     )
     if not factor_bundle.get("available"):
-        return {
-            **base_projection,
-            "factor_model_available": False,
-            "factor_blend_ratio_pct": ZERO,
-            "factor_five_year_return_pct": None,
-            "factor_annual_return_pct": None,
-            "factors": [],
-            "factor_model_label": "Solo ciclo historico",
-        }
+        reconciled = dict(base_projection)
+        # Sin modelo multifactor, la rama con factor no se ejecuta y el titular 5A
+        # podia divergir de su propio escenario "Base" cuando la forma sale de una
+        # plantilla de referencia (pasos sin alinear al retorno anual objetivo).
+        # Se alinea aqui la senda al objetivo, igual que hace la rama con factor.
+        if base_projection.get("reference_cycle_template", {}).get("available"):
+            latest_price = base_projection.get("latest_price")
+            latest_date = base_projection.get("latest_date")
+            base_annual_return_pct = base_projection.get("annual_return_pct") or ZERO
+            original_step_returns = [Decimal(str(v)) for v in (base_projection.get("step_return_pcts") or [])]
+            aligned_path, aligned_step_returns, _ = build_cycle_projection_path_for_target(
+                latest_price,
+                annual_return_pct=base_annual_return_pct,
+                step_return_pcts=original_step_returns,
+                annualized_volatility_pct=base_projection.get("annualized_volatility_pct"),
+                current_drawdown_pct=base_projection.get("current_drawdown_pct"),
+                cycle_phase=base_projection.get("cycle_phase") or "Transicion",
+                anchor_date=latest_date,
+                years=5,
+                step_months=6,
+            )
+            if aligned_path:
+                aligned_projected_price = aligned_path[-1]["projected_price"]
+                reconciled["projected_price"] = aligned_projected_price
+                reconciled["five_year_return_pct"] = quantize_decimal(
+                    percentage_change(aligned_projected_price, latest_price)
+                )
+                reconciled["path"] = aligned_path
+                reconciled["scenarios"] = build_five_year_projection_scenarios(
+                    latest_price,
+                    latest_date=latest_date,
+                    annual_return_pct=base_annual_return_pct,
+                    scenario_spread_annual_pct=base_projection.get("scenario_spread_annual_pct"),
+                    step_return_pcts=aligned_step_returns,
+                    annualized_volatility_pct=base_projection.get("annualized_volatility_pct"),
+                    current_drawdown_pct=base_projection.get("current_drawdown_pct"),
+                    cycle_phase=base_projection.get("cycle_phase") or "Transicion",
+                    confidence_label=base_projection.get("confidence_label") or "Media",
+                )
+        reconciled.update(
+            {
+                "factor_model_available": False,
+                "factor_blend_ratio_pct": ZERO,
+                "factor_five_year_return_pct": None,
+                "factor_annual_return_pct": None,
+                "factors": [],
+                "factor_model_label": "Solo ciclo historico",
+            }
+        )
+        return reconciled
 
     latest_price = base_projection.get("latest_price")
     latest_date = base_projection.get("latest_date")
@@ -10192,7 +10233,8 @@ def recent_correlation_window_size(frequency: str) -> int:
 def calculate_years_between(start_date: date | None, end_date: date | None) -> Decimal:
     if not start_date or not end_date or end_date <= start_date:
         return ZERO
-    return Decimal(str(round((end_date - start_date).days / 365.25, 2)))
+    # Convencion de dias unificada a 365 en toda la app (anualizacion, offsets y CAGR).
+    return Decimal(str(round((end_date - start_date).days / 365, 2)))
 
 
 def calculate_series_cagr_pct(
@@ -12799,7 +12841,16 @@ def build_one_year_projection(
     if analysis_value and analysis_value > 0:
         gross_dividend_yield_pct = (annual_dividend_income / analysis_value) * ONE_HUNDRED
         net_income_yield_pct = (net_annual_income / analysis_value) * ONE_HUNDRED
-        transaction_drag_pct = (broker_costs.get("roundtrip_total_cost", ZERO) / analysis_value) * ONE_HUNDRED
+        # En posiciones ya en propiedad la comision de compra y el ITF estan
+        # pagados (hundidos): una proyeccion de "mantener y vender" solo descuenta
+        # el coste de venta. En seguimiento (comprar ahora y vender luego) aplica
+        # el round-trip completo.
+        forward_trade_cost = (
+            broker_costs.get("sale_total_cost", ZERO)
+            if position.is_owned
+            else broker_costs.get("roundtrip_total_cost", ZERO)
+        )
+        transaction_drag_pct = (forward_trade_cost / analysis_value) * ONE_HUNDRED
     base_return_pct = price_return_pct
     if net_income_yield_pct is not None:
         base_return_pct += net_income_yield_pct
@@ -15729,7 +15780,13 @@ def build_projection_horizon_snapshot(card: dict, months: int) -> dict | None:
         current_value * (Decimal("1") + (total_return_pct / ONE_HUNDRED)),
         "0.01",
     )
-    projected_market_value = quantize_decimal(position.shares * projected_price, "0.01")
+    # Rebasar el valor de mercado proyectado sobre el precio ACTUAL de la posicion
+    # (el mismo que current_value / VALOR ACTUAL), aplicando el retorno de precio del
+    # modelo, para no mezclar el ultimo cierre historico con el precio guardado.
+    projected_market_value = quantize_decimal(
+        current_value * (Decimal("1") + (price_return_pct / ONE_HUNDRED)),
+        "0.01",
+    )
     return {
         "months": months,
         "label": f"{months}M" if months < 12 else "12M",
@@ -15744,32 +15801,44 @@ def build_projection_horizon_snapshot(card: dict, months: int) -> dict | None:
 
 
 def build_portfolio_projection_horizons(history_cards: list[dict]) -> list[dict]:
-    owned_projection_cards = [
-        card
-        for card in history_cards
-        if card["position"].is_owned and card.get("projection", {}).get("available")
-    ]
+    owned_cards = [card for card in history_cards if card["position"].is_owned]
     horizon_rows = []
     for months, label in PORTFOLIO_PROJECTION_HORIZONS:
         covered_positions = 0
+        owned_positions_count = 0
         current_value_total = ZERO
         projected_total_value = ZERO
         projected_market_value = ZERO
         latest_projected_date = None
-        for card in owned_projection_cards:
-            snapshot = build_projection_horizon_snapshot(card, months)
-            if snapshot is None or snapshot.get("projected_total_value") is None:
+        for card in owned_cards:
+            position_current_value = quantize_decimal(card["position"].current_value, "0.01") or ZERO
+            if position_current_value <= ZERO:
                 continue
-            covered_positions += 1
-            current_value_total += snapshot["current_value"]
-            projected_total_value += snapshot["projected_total_value"]
-            projected_market_value += snapshot.get("projected_market_value") or ZERO
-            projected_date = snapshot.get("projected_date")
-            if projected_date is not None and (latest_projected_date is None or projected_date > latest_projected_date):
-                latest_projected_date = projected_date
+            owned_positions_count += 1
+            # La base incluye TODAS las posiciones propias, para que el total
+            # proyectado sea comparable con VALOR ACTUAL CARTERA.
+            current_value_total += position_current_value
+            snapshot = (
+                build_projection_horizon_snapshot(card, months)
+                if card.get("projection", {}).get("available")
+                else None
+            )
+            if snapshot is not None and snapshot.get("projected_total_value") is not None:
+                covered_positions += 1
+                projected_total_value += snapshot["projected_total_value"]
+                projected_market_value += snapshot.get("projected_market_value") or position_current_value
+                projected_date = snapshot.get("projected_date")
+                if projected_date is not None and (latest_projected_date is None or projected_date > latest_projected_date):
+                    latest_projected_date = projected_date
+            else:
+                # Sin proyeccion para esta posicion: se arrastra su valor actual
+                # (plano) para no romper la comparabilidad del total.
+                projected_total_value += position_current_value
+                projected_market_value += position_current_value
+        has_data = current_value_total > ZERO and covered_positions > 0
         horizon_return_pct = (
             quantize_decimal(percentage_change(projected_total_value, current_value_total), "0.01")
-            if current_value_total > ZERO
+            if has_data
             else None
         )
         horizon_rows.append(
@@ -15777,9 +15846,11 @@ def build_portfolio_projection_horizons(history_cards: list[dict]) -> list[dict]
                 "label": label,
                 "months": months,
                 "return_pct": horizon_return_pct,
-                "projected_total_value": quantize_decimal(projected_total_value, "0.01") if current_value_total > ZERO else None,
-                "projected_market_value": quantize_decimal(projected_market_value, "0.01") if current_value_total > ZERO else None,
+                "projected_total_value": quantize_decimal(projected_total_value, "0.01") if has_data else None,
+                "projected_market_value": quantize_decimal(projected_market_value, "0.01") if has_data else None,
+                "current_value_total": quantize_decimal(current_value_total, "0.01") if has_data else None,
                 "positions_count": covered_positions,
+                "owned_positions_count": owned_positions_count,
                 "projection_end_date": latest_projected_date,
                 "tone": (
                     "good"
@@ -15869,12 +15940,23 @@ def build_equity_analysis_overview(
     net_annual_income_total = sum((position.net_annual_income for position in owned_positions), ZERO)
     unrealized_gain_total = sum((position.unrealized_gain_after_costs for position in owned_positions), ZERO)
     comparable_summary = build_owned_positions_comparable_summary(history_cards)
+    # Aviso de divisa: los totales suman precios sin convertir. Si hay posiciones
+    # internacionales (no .MC / no euro), los agregados mezclan monedas y no son
+    # fiables hasta incorporar tipos de cambio.
+    foreign_currency_positions = [
+        position
+        for position in owned_positions
+        if infer_market_scope(position.quote_symbol) != "national"
+    ]
+    mixed_currency_warning = bool(foreign_currency_positions)
+    foreign_currency_tickers = [position.ticker for position in foreign_currency_positions]
 
     weighted_periods = []
     for label in ("1Y", "3Y", "5Y", "10Y"):
         weighted_stock = ZERO
         weighted_benchmark = ZERO
         weight_total = ZERO
+        benchmark_weight_total = ZERO
         for card in history_cards:
             if not card["position"].is_owned:
                 continue
@@ -15885,12 +15967,15 @@ def build_equity_analysis_overview(
             weighted_stock += snapshot["stock_return_pct"] * weight
             if snapshot["benchmark_return_pct"] is not None:
                 weighted_benchmark += snapshot["benchmark_return_pct"] * weight
+                # El indice se pondera solo con las posiciones que tienen dato de
+                # referencia; si no, su media queda diluida por las que no lo tienen.
+                benchmark_weight_total += weight
             weight_total += weight
         weighted_periods.append(
             {
                 "label": label,
                 "stock_return_pct": (weighted_stock / weight_total) if weight_total else None,
-                "benchmark_return_pct": (weighted_benchmark / weight_total) if weight_total else None,
+                "benchmark_return_pct": (weighted_benchmark / benchmark_weight_total) if benchmark_weight_total else None,
             }
         )
 
@@ -15988,6 +16073,8 @@ def build_equity_analysis_overview(
         "annual_maintenance_total": annual_maintenance_total,
         "purchase_cost_total": purchase_cost_total,
         "net_annual_income_total": net_annual_income_total,
+        "mixed_currency_warning": mixed_currency_warning,
+        "foreign_currency_tickers": foreign_currency_tickers,
         "unrealized_gain_total": unrealized_gain_total,
         "unrealized_return_pct": (
             (unrealized_gain_total / (invested_amount_total + purchase_cost_total)) * ONE_HUNDRED

@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from portfolio.metrics import build_metrics
 from portfolio.ownership import AssetOwnershipCategory
@@ -133,8 +134,27 @@ class EquityPosition(models.Model):
         return self.current_value - self.invested_amount
 
     @property
+    def holding_days(self):
+        if not self.opened_on:
+            return None
+        return max((timezone.localdate() - self.opened_on).days, 0)
+
+    @property
+    def held_custody_cost(self):
+        """Custodia acumulada durante el tiempo de tenencia (no un ano fijo).
+
+        La ganancia no realizada es de toda la vida de la posicion, asi que el
+        coste de custodia que se le descuenta debe corresponder al periodo
+        realmente mantenido. Sin fecha de apertura se usa un ano como aproximacion.
+        """
+        days = self.holding_days
+        if days is None:
+            return self.recurring_cost_used
+        return self.recurring_cost_used * (Decimal(str(days)) / Decimal("365"))
+
+    @property
     def unrealized_gain_after_costs(self):
-        return self.unrealized_gain - self.purchase_total_cost - self.recurring_cost_used
+        return self.unrealized_gain - self.purchase_total_cost - self.held_custody_cost
 
     @property
     def unrealized_return_pct(self):
@@ -433,7 +453,13 @@ class EquityClosedPosition(models.Model):
         if not self.committed_capital:
             return Decimal("0.00")
         holding_days = max(self.holding_days, 1)
-        return self.cumulative_margin_pct * (Decimal("365") / Decimal(str(holding_days)))
+        # Anualizacion COMPUESTA, coherente con el resto de la app
+        # (calculate_equivalent_return_pct); antes era lineal y divergia.
+        base = 1 + (float(self.cumulative_margin_pct) / 100)
+        if base <= 0:
+            return Decimal("-100.00")
+        annualized = (base ** (365 / holding_days) - 1) * 100
+        return Decimal(str(round(annualized, 4)))
 
 
 class EquityOptimizationRun(models.Model):

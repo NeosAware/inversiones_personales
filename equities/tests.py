@@ -2904,6 +2904,83 @@ class EquitiesServicesTests(TestCase):
             ).quantize(Decimal("0.01")),
         )
 
+    def test_owned_projection_drag_uses_exit_cost_only(self):
+        # F3: en una posicion ya en propiedad, la comision de compra y el ITF estan
+        # hundidos; el drag de la proyeccion debe descontar solo el coste de venta.
+        position = EquityPosition.objects.create(
+            broker="Banco Santander",
+            trade_channel=EquityPosition.TradeChannel.APP,
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            benchmark_symbol="^IBEX",
+            benchmark_name="IBEX 35",
+            company_name="Iberdrola S.A.",
+            shares=Decimal("80"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("13.0000"),
+            annual_dividend_income=Decimal("55.00"),
+        )
+        for price_date, close_price, benchmark_close in (
+            (date(2024, 12, 31), Decimal("9.60"), Decimal("100.00")),
+            (date(2025, 3, 31), Decimal("10.10"), Decimal("102.00")),
+            (date(2025, 6, 30), Decimal("10.70"), Decimal("104.00")),
+            (date(2025, 9, 30), Decimal("11.20"), Decimal("105.50")),
+            (date(2025, 12, 31), Decimal("11.70"), Decimal("107.20")),
+            (date(2026, 3, 31), Decimal("12.20"), Decimal("109.80")),
+            (date(2026, 6, 30), Decimal("13.00"), Decimal("112.40")),
+        ):
+            position.price_history.create(
+                price_date=price_date, close_price=close_price, benchmark_close=benchmark_close
+            )
+
+        projection = build_equity_history_cards([position])[0]["projection"]
+        broker_costs = projection["broker_costs"]
+        analysis_value = projection["analysis_value_amount"]
+        expected_exit_drag = (broker_costs["sale_total_cost"] / analysis_value) * Decimal("100")
+        roundtrip_drag = (broker_costs["roundtrip_total_cost"] / analysis_value) * Decimal("100")
+        self.assertAlmostEqual(float(projection["transaction_drag_pct"]), float(expected_exit_drag), places=2)
+        self.assertLess(projection["transaction_drag_pct"], roundtrip_drag)
+
+    def test_closed_position_annualized_margin_is_compound(self):
+        # F2: +10% en 30 dias -> anualizado COMPUESTO (~219%), no lineal (~122%).
+        closed = EquityClosedPosition(
+            broker="Banco Santander",
+            ticker="IBE",
+            company_name="Iberdrola",
+            opened_on=date(2026, 1, 1),
+            closed_on=date(2026, 1, 31),
+            shares=Decimal("100"),
+            average_cost_per_share=Decimal("10.0000"),
+            sale_price_per_share=Decimal("11.0000"),
+        )
+        self.assertEqual(closed.cumulative_margin_pct.quantize(Decimal("0.01")), Decimal("10.00"))
+        annualized = closed.annualized_margin_pct
+        self.assertGreater(annualized, Decimal("210.00"))
+        self.assertLess(annualized, Decimal("225.00"))
+        # No debe coincidir con la anualizacion lineal antigua (10 * 365/30 = 121.67).
+        self.assertGreater(annualized, Decimal("150.00"))
+
+    def test_unrealized_custody_cost_is_prorated_by_holding_period(self):
+        # F7: la custodia descontada de la ganancia no realizada se prorratea por el
+        # tiempo realmente mantenido, no un ano fijo.
+        base = dict(
+            broker="Banco Santander",
+            ticker="IBE",
+            quote_symbol="IBE.MC",
+            company_name="Iberdrola",
+            shares=Decimal("100"),
+            average_cost_per_share=Decimal("10.0000"),
+            current_price_per_share=Decimal("10.0000"),
+            annual_maintenance_cost=Decimal("36.50"),
+        )
+        two_years = EquityPosition(opened_on=timezone.localdate() - timedelta(days=730), **base)
+        recurring = two_years.recurring_cost_used
+        self.assertGreater(recurring, Decimal("0"))
+        self.assertAlmostEqual(float(two_years.held_custody_cost), float(recurring * Decimal("2")), places=2)
+
+        no_date = EquityPosition(opened_on=None, **base)
+        self.assertEqual(no_date.held_custody_cost, no_date.recurring_cost_used)
+
     def test_watchlist_projection_normalizes_costs_to_analysis_ticket(self):
         position = EquityPosition.objects.create(
             position_kind=EquityPosition.PositionKind.WATCHLIST,
